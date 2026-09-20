@@ -6,27 +6,7 @@ pub(crate) fn redact_secrets(val: &mut Value) {
     match val {
         Value::Object(map) => {
             for (key, value) in map.iter_mut() {
-                let normalized_key: String = key
-                    .chars()
-                    .filter(|c| c.is_ascii_alphanumeric())
-                    .flat_map(|c| c.to_lowercase())
-                    .collect();
-                let is_secret = matches!(
-                    normalized_key.as_str(),
-                    "apikey"
-                        | "apitoken"
-                        | "accesstoken"
-                        | "authtoken"
-                        | "bottoken"
-                        | "clientsecret"
-                        | "password"
-                        | "secret"
-                        | "verifytoken"
-                        | "webhooksecret"
-                        | "privatekey"
-                        | "token"
-                );
-                if is_secret && !value.is_null() {
+                if crate::core::secrets::is_secret_key(key) && !value.is_null() {
                     *value = Value::String("********".to_string());
                 } else {
                     redact_secrets(value);
@@ -56,7 +36,13 @@ fn merge_provider_credential(
         .get_provider_config(provider_name)
         .cloned()
         .unwrap_or_default();
-    if let Some(api_key) = credential.get("api_key").and_then(|v| v.as_str()) {
+    if let Some(api_key) = credential
+        .get("api_key")
+        .or_else(|| credential.get("apiKey"))
+        .or_else(|| credential.get("key"))
+        .or_else(|| credential.get("token"))
+        .and_then(|v| v.as_str())
+    {
         provider.api_key = if api_key.trim().is_empty() {
             None
         } else {
@@ -106,7 +92,15 @@ fn merge_git_credential(
         other => anyhow::bail!("Unsupported git credential service '{}'", other),
     };
 
-    if let Some(token) = credential.get("token").and_then(|v| v.as_str()) {
+    if let Some(token) = credential
+        .get("token")
+        .or_else(|| credential.get("github_token"))
+        .or_else(|| credential.get("gitlab_token"))
+        .or_else(|| credential.get("github_pat"))
+        .or_else(|| credential.get("gitlab_pat"))
+        .or_else(|| credential.get("access_token"))
+        .and_then(|v| v.as_str())
+    {
         git_config.token = if token.trim().is_empty() {
             None
         } else {
@@ -141,6 +135,103 @@ fn merge_git_credential(
         _ => unreachable!(),
     }
     Ok(())
+}
+
+fn extract_credential_map(
+    arguments: &serde_json::Map<String, Value>,
+) -> (String, serde_json::Map<String, Value>) {
+    let mut cred = serde_json::Map::new();
+    if let Some(nested) = arguments.get("credential").and_then(|v| v.as_object()) {
+        cred = nested.clone();
+    }
+
+    // Merge flattened top-level arguments
+    for (k, v) in arguments {
+        if matches!(
+            k.as_str(),
+            "credential"
+                | "action"
+                | "act"
+                | "command"
+                | "cmd"
+                | "op"
+                | "mode"
+                | "updates"
+                | "config"
+                | "settings"
+                | "params"
+        ) {
+            continue;
+        }
+        if !cred.contains_key(k) {
+            cred.insert(k.clone(), v.clone());
+        }
+    }
+
+    // Aliases for GitHub
+    if let Some(tok) = arguments
+        .get("github_token")
+        .or_else(|| arguments.get("github_pat"))
+        .or_else(|| arguments.get("github_access_token"))
+    {
+        cred.entry("target".to_string())
+            .or_insert_with(|| Value::String("github".to_string()));
+        cred.insert("token".to_string(), tok.clone());
+    }
+
+    // Aliases for GitLab
+    if let Some(tok) = arguments
+        .get("gitlab_token")
+        .or_else(|| arguments.get("gitlab_pat"))
+    {
+        cred.entry("target".to_string())
+            .or_insert_with(|| Value::String("gitlab".to_string()));
+        cred.insert("token".to_string(), tok.clone());
+    }
+
+    // Aliases for bot_token
+    if let Some(tok) = arguments.get("bot_token") {
+        if !cred.contains_key("target") {
+            if let Some(chan) = arguments.get("channel").and_then(|c| c.as_str()) {
+                cred.insert("target".to_string(), Value::String(chan.to_lowercase()));
+            }
+        }
+        cred.insert("bot_token".to_string(), tok.clone());
+    }
+
+    // Aliases for provider
+    if let Some(pname) = arguments
+        .get("provider_name")
+        .or_else(|| arguments.get("provider"))
+    {
+        cred.entry("target".to_string())
+            .or_insert_with(|| Value::String("provider".to_string()));
+        cred.insert("provider_name".to_string(), pname.clone());
+    }
+
+    let mut target = cred
+        .get("target")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_lowercase())
+        .unwrap_or_default();
+
+    // Fallback deduction if target was not explicitly named
+    if target.is_empty() {
+        if cred.contains_key("provider_name") {
+            target = "provider".to_string();
+        } else if cred.contains_key("token")
+            || cred.contains_key("github_token")
+            || cred.contains_key("github_pat")
+        {
+            target = "github".to_string();
+        } else if cred.contains_key("phone_number_id") || cred.contains_key("verify_token") {
+            target = "whatsapp".to_string();
+        } else if cred.contains_key("bot_token") {
+            target = "telegram".to_string();
+        }
+    }
+
+    (target, cred)
 }
 
 fn merge_channel_credential(
@@ -251,8 +342,20 @@ impl Tool for ManageConfigTool {
                 "action": {
                     "type": "string",
                     "enum": ["view", "update", "set_credential"],
-                    "description": "Whether to view config, update defaults, or store a credential. Credential writes require approval."
+                    "description": "Whether to view config, update defaults, or store a credential. Inferred automatically if credential fields or target are passed."
                 },
+                "target": {
+                    "type": "string",
+                    "enum": ["provider", "github", "gitlab", "telegram", "discord", "whatsapp"],
+                    "description": "Credential target to store. Can be specified directly at top level or inside 'credential'."
+                },
+                "token": { "type": "string", "description": "GitHub or GitLab personal access token." },
+                "github_token": { "type": "string", "description": "Convenience alias to store a GitHub personal access token (target=github)." },
+                "gitlab_token": { "type": "string", "description": "Convenience alias to store a GitLab token (target=gitlab)." },
+                "provider_name": { "type": "string", "description": "Provider id for target=provider, such as openai, anthropic, groq, deepseek, openrouter, opencode_zen." },
+                "api_key": { "type": "string", "description": "API key for LLM provider or WhatsApp." },
+                "bot_token": { "type": "string", "description": "Telegram or Discord bot token." },
+                "api_base": { "type": "string", "description": "Optional API base URL for provider/GitHub/GitLab." },
                 "updates": {
                     "type": "object",
                     "properties": {
@@ -337,6 +440,14 @@ impl Tool for ManageConfigTool {
                         "skills_write_approval": {
                             "type": "boolean",
                             "description": "Require approval/staging before agent-created skill writes."
+                        },
+                        "github_token": {
+                            "type": "string",
+                            "description": "GitHub personal access token."
+                        },
+                        "gitlab_token": {
+                            "type": "string",
+                            "description": "GitLab personal access token."
                         }
                     },
                     "description": "Key-value map of configuration defaults to update. Ignored for action 'view'."
@@ -369,15 +480,16 @@ impl Tool for ManageConfigTool {
                     },
                     "description": "Credential update payload. Values are saved to ~/.openz/config.json and redacted by view."
                 }
-            },
-            "required": ["action"]
+            }
         })
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
+        let mut obj_map = serde_json::Map::new();
         let (action_str, direct_updates) = if let Some(s) = arguments.as_str() {
-            (Some(s), None)
+            (Some(s.to_string()), None)
         } else if let Some(obj) = arguments.as_object() {
+            obj_map = obj.clone();
             let act = obj
                 .get("action")
                 .or_else(|| obj.get("act"))
@@ -385,15 +497,52 @@ impl Tool for ManageConfigTool {
                 .or_else(|| obj.get("cmd"))
                 .or_else(|| obj.get("op"))
                 .or_else(|| obj.get("mode"))
-                .and_then(|v| v.as_str());
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
             (act, Some(obj))
         } else {
             (None, None)
         };
 
-        let normalized_action = action_str
-            .map(|a| a.trim().to_lowercase())
-            .unwrap_or_else(|| "view".to_string());
+        let has_credential_material = obj_map.contains_key("credential")
+            || obj_map.contains_key("target")
+            || obj_map.contains_key("github_token")
+            || obj_map.contains_key("github_pat")
+            || obj_map.contains_key("gitlab_token")
+            || obj_map.contains_key("gitlab_pat")
+            || obj_map.contains_key("bot_token")
+            || (obj_map.contains_key("token")
+                && (obj_map.contains_key("target")
+                    || obj_map.contains_key("github")
+                    || obj_map.contains_key("gitlab")))
+            || (obj_map.contains_key("api_key")
+                && (obj_map.contains_key("target")
+                    || obj_map.contains_key("provider_name")
+                    || obj_map.contains_key("provider")));
+
+        let normalized_action = match action_str {
+            Some(a) => {
+                let trimmed = a.trim().to_lowercase();
+                if (trimmed == "update" || trimmed == "set")
+                    && has_credential_material
+                    && !obj_map.contains_key("updates")
+                {
+                    "set_credential".to_string()
+                } else {
+                    trimmed
+                }
+            }
+            None => {
+                if has_credential_material {
+                    "set_credential".to_string()
+                } else if obj_map.contains_key("updates") {
+                    "update".to_string()
+                } else {
+                    "view".to_string()
+                }
+            }
+        };
+
         let action = match normalized_action.as_str() {
             "" | "view" | "show" | "get" | "read" | "list" | "inspect" => "view",
             "update" | "set" | "modify" | "write" => "update",
@@ -406,9 +555,47 @@ impl Tool for ManageConfigTool {
                 let config = crate::config::loader::load_config()?;
                 let mut config_val = serde_json::to_value(&config)?;
                 redact_secrets(&mut config_val);
+
+                // Explicitly expose integration slots even if unconfigured so LLMs recognize supported credentials
+                if let Some(integrations_map) =
+                    config_val.get_mut("integrations").and_then(|v| v.as_object_mut())
+                {
+                    if !integrations_map.contains_key("github") {
+                        integrations_map.insert(
+                            "github".to_string(),
+                            serde_json::json!({
+                                "token_configured": config.integrations.github.as_ref().and_then(|g| g.token.as_ref()).is_some(),
+                                "token_env": config.integrations.github.as_ref().and_then(|g| g.token_env.as_ref()),
+                                "token_file": config.integrations.github.as_ref().and_then(|g| g.token_file.as_ref()),
+                                "api_base": config.integrations.github.as_ref().and_then(|g| g.api_base.as_ref()),
+                            }),
+                        );
+                    }
+                    if !integrations_map.contains_key("gitlab") {
+                        integrations_map.insert(
+                            "gitlab".to_string(),
+                            serde_json::json!({
+                                "token_configured": config.integrations.gitlab.as_ref().and_then(|g| g.token.as_ref()).is_some(),
+                                "token_env": config.integrations.gitlab.as_ref().and_then(|g| g.token_env.as_ref()),
+                                "token_file": config.integrations.gitlab.as_ref().and_then(|g| g.token_file.as_ref()),
+                                "api_base": config.integrations.gitlab.as_ref().and_then(|g| g.api_base.as_ref()),
+                            }),
+                        );
+                    }
+                }
+
                 Ok(serde_json::json!({
                     "success": true,
-                    "config": config_val
+                    "config": config_val,
+                    "supported_credential_targets": [
+                        "github",
+                        "gitlab",
+                        "provider",
+                        "telegram",
+                        "discord",
+                        "whatsapp"
+                    ],
+                    "credential_instructions": "To store GitHub, GitLab, LLM provider, or channel credentials into config, call manage_config with action: 'set_credential' (or pass target and token/api_key directly). OpenZ requests user confirmation via SecurityGuard before persisting."
                 }))
             }
             "update" => {
@@ -546,6 +733,36 @@ impl Tool for ManageConfigTool {
                                 config.skills.write_approval = b;
                             }
                         }
+                        "github_token" | "github_pat" | "github_access_token" => {
+                            let mut git_config = config.integrations.github.clone().unwrap_or_default();
+                            git_config.token = v.as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+                            config.integrations.github = Some(git_config);
+                        }
+                        "gitlab_token" | "gitlab_pat" => {
+                            let mut git_config = config.integrations.gitlab.clone().unwrap_or_default();
+                            git_config.token = v.as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+                            config.integrations.gitlab = Some(git_config);
+                        }
+                        "target" => {
+                            let target_str = v.as_str().unwrap_or("").trim().to_lowercase();
+                            match target_str.as_str() {
+                                "github" | "gitlab" => {
+                                    merge_git_credential(&mut config, &target_str, updates)?;
+                                }
+                                "provider" => {
+                                    if let Some(pname) = updates.get("provider_name").and_then(|p| p.as_str()) {
+                                        merge_provider_credential(&mut config, pname, updates)?;
+                                    }
+                                }
+                                "telegram" | "discord" | "whatsapp" => {
+                                    merge_channel_credential(&mut config, &target_str, updates)?;
+                                }
+                                _ => {}
+                            }
+                        }
+                        "token" | "provider_name" | "bot_token" | "credential" => {
+                            // Handled together with target or aliases
+                        }
                         other => {
                             return Ok(serde_json::json!({
                                 "success": false,
@@ -562,18 +779,13 @@ impl Tool for ManageConfigTool {
                 }))
             }
             "set_credential" => {
-                let credential = arguments
-                    .get("credential")
-                    .and_then(|v| v.as_object())
-                    .ok_or_else(|| {
-                        anyhow::anyhow!("Missing credential for action 'set_credential'")
-                    })?;
-                let target = credential
-                    .get("target")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow::anyhow!("Missing credential.target"))?
-                    .trim()
-                    .to_lowercase();
+                let (target, credential) = extract_credential_map(&obj_map);
+                if target.is_empty() {
+                    return Ok(serde_json::json!({
+                        "success": false,
+                        "error": "Missing credential target. Specify target ('github', 'gitlab', 'provider', 'telegram', 'discord', 'whatsapp') or use a dedicated token field (e.g. 'github_token')."
+                    }));
+                }
 
                 let mut config = crate::config::loader::load_config()?;
                 match target.as_str() {
@@ -586,11 +798,11 @@ impl Tool for ManageConfigTool {
                                     "credential.provider_name is required for provider credentials"
                                 )
                             })?;
-                        merge_provider_credential(&mut config, provider_name, credential)?;
+                        merge_provider_credential(&mut config, provider_name, &credential)?;
                     }
-                    "github" | "gitlab" => merge_git_credential(&mut config, &target, credential)?,
+                    "github" | "gitlab" => merge_git_credential(&mut config, &target, &credential)?,
                     "telegram" | "discord" | "whatsapp" => {
-                        merge_channel_credential(&mut config, &target, credential)?
+                        merge_channel_credential(&mut config, &target, &credential)?
                     }
                     other => {
                         return Ok(serde_json::json!({

@@ -10,9 +10,15 @@ fn test_is_secret_key_matching() {
     assert!(is_secret_key("webhook_secret"));
     assert!(is_secret_key("password"));
     assert!(is_secret_key("private_key"));
+    assert!(is_secret_key("github_token"));
+    assert!(is_secret_key("gitlab_token"));
+    assert!(is_secret_key("github_pat"));
+    assert!(is_secret_key("pat"));
     assert!(!is_secret_key("username"));
     assert!(!is_secret_key("model"));
     assert!(!is_secret_key("port"));
+    assert!(!is_secret_key("token_env"));
+    assert!(!is_secret_key("token_file"));
 }
 
 #[test]

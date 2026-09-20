@@ -273,3 +273,135 @@ fn test_manage_config_coercion_and_aliases() {
     }
     let _ = std::fs::remove_dir_all(&openz_dir);
 }
+
+#[test]
+fn test_manage_config_credentials_flattened_and_inferred() {
+    let _env_lock = TestEnvLock::acquire();
+    let previous_config_dir = std::env::var("OPENZ_CONFIG_DIR").ok();
+    let openz_dir = std::env::temp_dir().join(format!(
+        "openz_manage_config_credentials_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&openz_dir).unwrap();
+    std::env::set_var("OPENZ_CONFIG_DIR", &openz_dir);
+
+    let tool = ManageConfigTool;
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    let original_config = crate::config::loader::load_config().unwrap();
+
+    // 1. View initially exposes supported targets and integration slots even before configuration
+    let view_res = rt
+        .block_on(tool.call(&serde_json::json!({
+            "action": "view"
+        })))
+        .unwrap();
+    assert!(view_res["success"].as_bool().unwrap());
+    assert!(view_res["supported_credential_targets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v.as_str() == Some("github")));
+    assert_eq!(
+        view_res["config"]["integrations"]["github"]["token_configured"],
+        false
+    );
+
+    // 2. Flattened set_credential (no nested credential wrapper)
+    let flat_res = rt
+        .block_on(tool.call(&serde_json::json!({
+            "action": "set_credential",
+            "target": "github",
+            "token": "ghp_flattened_test_123"
+        })))
+        .unwrap();
+    assert!(flat_res["success"].as_bool().unwrap());
+    let cfg = crate::config::loader::load_config().unwrap();
+    assert_eq!(
+        cfg.integrations.github.as_ref().unwrap().token.as_deref(),
+        Some("ghp_flattened_test_123")
+    );
+
+    // 3. Inferred action with target and token (no action field)
+    let inferred_res = rt
+        .block_on(tool.call(&serde_json::json!({
+            "target": "github",
+            "token": "ghp_inferred_test_456"
+        })))
+        .unwrap();
+    assert!(inferred_res["success"].as_bool().unwrap());
+    let cfg = crate::config::loader::load_config().unwrap();
+    assert_eq!(
+        cfg.integrations.github.as_ref().unwrap().token.as_deref(),
+        Some("ghp_inferred_test_456")
+    );
+
+    // 4. Direct alias github_token (inferred target=github, action=set_credential)
+    let alias_res = rt
+        .block_on(tool.call(&serde_json::json!({
+            "github_token": "ghp_direct_alias_test_789"
+        })))
+        .unwrap();
+    assert!(alias_res["success"].as_bool().unwrap());
+    let cfg = crate::config::loader::load_config().unwrap();
+    assert_eq!(
+        cfg.integrations.github.as_ref().unwrap().token.as_deref(),
+        Some("ghp_direct_alias_test_789")
+    );
+
+    // 5. Update action with github_token in updates
+    let update_res = rt
+        .block_on(tool.call(&serde_json::json!({
+            "action": "update",
+            "updates": {
+                "github_token": "ghp_update_action_test_101"
+            }
+        })))
+        .unwrap();
+    assert!(update_res["success"].as_bool().unwrap());
+    let cfg = crate::config::loader::load_config().unwrap();
+    assert_eq!(
+        cfg.integrations.github.as_ref().unwrap().token.as_deref(),
+        Some("ghp_update_action_test_101")
+    );
+
+    // 6. Flattened provider credential (inferred target=provider)
+    let provider_res = rt
+        .block_on(tool.call(&serde_json::json!({
+            "provider_name": "groq",
+            "api_key": "gsk_provider_api_key_test"
+        })))
+        .unwrap();
+    assert!(provider_res["success"].as_bool().unwrap());
+    let cfg = crate::config::loader::load_config().unwrap();
+    assert_eq!(
+        cfg.get_provider_config("groq").unwrap().api_key.as_deref(),
+        Some("gsk_provider_api_key_test")
+    );
+
+    // 7. Verify view redacts the stored credentials
+    let view_redacted = rt
+        .block_on(tool.call(&serde_json::json!({
+            "action": "view"
+        })))
+        .unwrap();
+    assert_eq!(
+        view_redacted["config"]["integrations"]["github"]["token"],
+        "********"
+    );
+    let groq_key = view_redacted["config"]["providers"]["groq"]
+        .get("apiKey")
+        .or_else(|| view_redacted["config"]["providers"]["groq"].get("api_key"))
+        .and_then(|v| v.as_str());
+    assert_eq!(groq_key, Some("********"));
+
+    // Restore original config
+    crate::config::loader::save_config(&original_config).unwrap();
+
+    if let Some(prev) = previous_config_dir {
+        std::env::set_var("OPENZ_CONFIG_DIR", prev);
+    } else {
+        std::env::remove_var("OPENZ_CONFIG_DIR");
+    }
+    let _ = std::fs::remove_dir_all(&openz_dir);
+}

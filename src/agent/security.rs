@@ -621,7 +621,13 @@ impl SecurityGuard {
                 .get("action")
                 .and_then(|v| v.as_str())
                 .unwrap_or_default();
-            if action == "set_credential" || Self::contains_secret_material(arguments) {
+            let is_cred = action == "set_credential"
+                || arguments.get("credential").is_some()
+                || arguments.get("target").is_some()
+                || arguments.get("github_token").is_some()
+                || arguments.get("gitlab_token").is_some()
+                || Self::contains_secret_material(arguments);
+            if is_cred {
                 return true;
             }
         } else if Self::path_edit_label(tool_name).is_some() {

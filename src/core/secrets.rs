@@ -15,8 +15,9 @@ pub fn normalized_secret_key(key: &str) -> String {
 
 /// Determine whether a property or environment key name represents a sensitive credential.
 pub fn is_secret_key(key: &str) -> bool {
+    let norm = normalized_secret_key(key);
     matches!(
-        normalized_secret_key(key).as_str(),
+        norm.as_str(),
         "apikey"
             | "apitoken"
             | "accesstoken"
@@ -29,7 +30,11 @@ pub fn is_secret_key(key: &str) -> bool {
             | "webhooksecret"
             | "privatekey"
             | "token"
-    )
+            | "pat"
+    ) || norm.ends_with("token")
+        || norm.ends_with("secret")
+        || norm.ends_with("apikey")
+        || norm.ends_with("pat")
 }
 
 /// Recursively inspect a JSON value to determine if it contains any secret keys or fields.

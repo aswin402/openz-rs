@@ -1,4 +1,41 @@
-### v0.0.209 (Latest Release)
+### v0.0.210 (Latest Release)
+- **Ideas**:
+  - Researched and resolved user-reported agent credential refusal ("Checked config. No GitHub token field exists — config stores only LLM providers. git_provider reads GITHUB_TOKEN env var or the token param, not config. Won't persist chat-posted PAT to config").
+  - Diagnosed root causes:
+    1. `IntegrationsConfig` serialized to empty `{}` when unconfigured due to `skip_serializing_if = "Option::is_none"`, causing LLMs calling `manage_config(action: "view")` to falsely assume GitHub/GitLab tokens are not supported schema fields.
+    2. `ManageConfigTool::call` strictly required a nested `credential: { target: "...", token: "..." }` object and failed with `"Missing credential"` on flattened calls (`target: "github", token: "..."`).
+    3. Missing action inference: Passing direct credentials without an explicit `"action": "set_credential"` defaulted to `"view"`, silently ignoring the user's credential payload.
+    4. Rejecting credential keys in `"update"` action with `"Cannot modify field 'github_token' via manage_config"`.
+    5. Secret key detection in `src/core/secrets.rs` was exact-match only, missing compound token keys such as `github_token`, `gitlab_token`, and `github_pat`.
+    6. System prompt lacked explicit runtime tool discipline instructing the model to use `manage_config` for credential storage rather than refusing and prompting users for manual shell exports.
+  - Implemented comprehensive fixes:
+    - **Flexible Credential Extraction**: Added `extract_credential_map` supporting flattened top-level parameters, nested `credential` objects, and direct field aliases (`github_token`, `github_pat`, `github_access_token`, `gitlab_token`, `gitlab_pat`, `bot_token`, `provider_name`, `api_key`).
+    - **Intelligent Action Inference**: Automatically infers `"set_credential"` whenever credential material or targets are passed without an explicit action, or when `action` is set to `"update"` without a dedicated `updates` map.
+    - **Update Action Support**: Added direct support for `github_token` and `gitlab_token` within `action: "update"`, allowing agents calling either update or credential actions to succeed seamlessly.
+    - **Informative View Inspection**: `manage_config(action: "view")` explicitly exposes `supported_credential_targets` (`github`, `gitlab`, `provider`, `telegram`, `discord`, `whatsapp`), populates integration placeholders with `token_configured: bool`, and provides `credential_instructions` guiding the LLM on how to store credentials.
+    - **Robust Secret Redaction**: Enhanced `src/core/secrets.rs` `is_secret_key` to match `ends_with("token")`, `ends_with("secret")`, `ends_with("apikey")`, and `ends_with("pat")`, deduplicating secret filtering in `manage_config` through `crate::core::secrets::is_secret_key`.
+    - **SecurityGuard Approval Interception**: Updated `SecurityGuard::is_sensitive` to check `target`, `credential`, and token aliases in `manage_config` calls so any credential write safely triggers interactive or headless (`-y`) confirmation with redacted values.
+    - **Runtime Tool Discipline Rule**: Added explicit credential and configuration management guidance in `src/agent/agent_loop/build.rs` instructing the model to invoke `manage_config` when provided API keys or tokens and never claim that OpenZ cannot store credentials.
+- **Inspirations**:
+  - Zero-friction credential onboarding, principle of least surprise in LLM tool calling, and resilient parameter normalization.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/self_management/config.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/config.rs): Upgraded `ManageConfigTool` parameters, action inference, flattened credential extraction, and view schema hints.
+    - [`src/core/secrets.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/secrets.rs): Expanded `is_secret_key` pattern matching for compound tokens and PATs.
+    - [`src/agent/security.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/security.rs): Hardened SecurityGuard sensitivity checks for `manage_config` credential targets and tokens.
+    - [`src/agent/agent_loop/build.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs): Added runtime credential storage discipline rules to system prompt.
+  - Test Modules:
+    - [`src/tools/self_management/config_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/config_tests.rs): Added `test_manage_config_credentials_flattened_and_inferred`.
+    - [`src/core/secrets_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/secrets_tests.rs): Added unit tests for compound token secret key matching.
+- **Details & Metrics**:
+  - 5 modified core source files across self-management, core secrets, security guard, agent loop build, and tests.
+  - Live headless verification turn executed with `exit_code: 0`, confirming automatic PAT storage, view verification, and secret redaction.
+- **Verification**:
+  - Exact 260 registered native tools invariant maintained (`cargo test -p openz --lib test_native_tool_registration_names -j 1`).
+  - 0 compiler and clippy warnings (`cargo clippy -p openz -j 1`).
+  - All unit tests passed (`cargo test -p openz --lib tools::self_management::config::tests -j 1`, `cargo test -p openz --lib core::secrets::tests -j 1`).
+
+### v0.0.209
 - **Ideas**:
   - Registered `openz` as a first-class autonomous subagent profile in OpenZ and thoroughly hardened, tested, and eliminated hardcoded/brittle logic across the 5 core built-in capability suites:
     - **OpenZ Subagent Profile**: Added `"openz"` to default subagent profiles with unrestricted tool access, nested subagent delegation rights (`can_spawn_nested_subagents`), full-stack playbook skill initialization, and title case presentation metadata (`"OpenZ"`).
