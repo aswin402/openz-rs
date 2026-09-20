@@ -295,5 +295,15 @@ pub(super) async fn normalize_response(
         }
     }
 
+    if resp.content.is_none() && resp.reasoning_content.is_none() && resp.tool_calls.is_empty() {
+        let finish = resp.finish_reason.to_lowercase();
+        if finish.contains("filter") || finish.contains("malformed") {
+            resp.content = Some(format!(
+                "The model call ended without output due to provider safety/filter reason: '{}'. Check tool call arguments or system prompt constraints.",
+                resp.finish_reason
+            ));
+        }
+    }
+
     Ok(resp)
 }

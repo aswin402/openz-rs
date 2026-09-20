@@ -61,7 +61,8 @@ impl Tool for ToolCatalogTool {
                 },
                 "resource_overrides": {
                     "type": "object",
-                    "description": "Optional diagnostic overrides for resource-policy preview, such as allow_network_tools, min_free_disk_gb, free_disk_gb, active_process_tools, max_concurrent_process_tools, and warn_before_expensive_tools."
+                    "description": "Optional diagnostic overrides for resource-policy preview, such as allow_network_tools, min_free_disk_gb, free_disk_gb, active_process_tools, max_concurrent_process_tools, and warn_before_expensive_tools.",
+                    "additionalProperties": true
                 }
             }
         })

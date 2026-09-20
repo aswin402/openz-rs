@@ -356,9 +356,34 @@ impl Tool for OrchestrateWorkflowTool {
                         "required": ["id", "agent", "goal"]
                     }
                 },
-                "termination": { "type": "object" },
-                "review": { "type": "object" },
-                "capabilities": { "type": "object" }
+                "termination": {
+                    "type": "object",
+                    "description": "Optional workflow termination policy settings.",
+                    "properties": {
+                        "max_rounds": { "type": "integer", "description": "Maximum execution rounds before stopping (default 8)." },
+                        "success_keyword": { "type": "string", "description": "Keyword indicating workflow goal was satisfied." },
+                        "failure_keyword": { "type": "string", "description": "Keyword indicating workflow failed." }
+                    }
+                },
+                "review": {
+                    "type": "object",
+                    "description": "Optional review loop policy settings.",
+                    "properties": {
+                        "mode": { "type": "string", "enum": ["none", "optional", "required"], "description": "Review mode." },
+                        "reviewer": { "type": "string", "description": "Subagent profile name assigned as reviewer." }
+                    }
+                },
+                "capabilities": {
+                    "type": "object",
+                    "description": "Optional capability restriction policy.",
+                    "properties": {
+                        "allowed_tools": { "type": "array", "items": { "type": "string" }, "description": "Explicit tool allowlist." },
+                        "denied_tools": { "type": "array", "items": { "type": "string" }, "description": "Explicit tool denylist." },
+                        "deny_shell": { "type": "boolean", "description": "Block command and shell execution." },
+                        "deny_filesystem_write": { "type": "boolean", "description": "Block file writes and edits." },
+                        "deny_network": { "type": "boolean", "description": "Block network and scraping tools." }
+                    }
+                }
             },
             "required": ["goal", "mode", "steps"]
         })

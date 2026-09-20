@@ -1,4 +1,55 @@
-### v0.0.213 (Latest Release)
+### v0.0.214 (Latest Release)
+- **Ideas**:
+  - Researched, diagnosed, and overhauled OpenZ's multi-agent workflow systems (`orchestrate_workflow` and `sop` standard operating procedures) through live execution, subagent orchestration, and strict schema verification.
+  - Resolved **Gemini Function Call Malformed Filter** (`MALFORMED_FUNCTION_CALL` / `finish_reason: function_call_filter`):
+    - Under OpenAPI 3.0 / Gemini function calling specifications, tool schemas containing bare `"type": "object"` declarations lacking explicit `properties` or `additionalProperties: true` trigger immediate rejection by Google AI Studio and strict API filters.
+    - Updated [`src/tools/orchestrator.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/orchestrator.rs): Replaced bare objects on `termination` (`max_rounds`, `success_keyword`, `failure_keyword`), `review` (`mode`, `reviewer`), and `capabilities` (`allowed_tools`, `denied_tools`, `deny_shell`, `deny_filesystem_write`, `deny_network`) with concrete property definitions.
+    - Updated [`src/tools/subagent/delegate_task.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_task.rs): Added `"additionalProperties": true` to `json_schema`.
+    - Updated [`src/tools/self_management/catalog.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog.rs): Added `"additionalProperties": true` to `resource_overrides`.
+    - Updated [`src/tools/sop.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/sop.rs): Added `"additionalProperties": true` to `payload`.
+    - Added automated schema safety gate [`src/tools/registry_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry_tests.rs): `test_orchestration_prompt_tool_schemas_have_no_bare_object_types` guarantees that no registered orchestration or delegated tool schema exposes bare object types.
+  - Resolved **SOP CLI Process Drop & Stuck Pending States**:
+    - Previously, `openz sop trigger` spawned the workflow runner in a detached `tokio::spawn` and exited `main()` immediately, terminating the Tokio runtime and leaving instances stuck in `SopStatus::Pending`.
+    - Added synchronous execution mode (`--wait` / `-w`) to `openz sop trigger` and `openz sop resume` in [`src/cli/args.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/args.rs) and [`src/cli/sop.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/sop.rs).
+    - Enhanced [`src/sop/engine.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/sop/engine.rs) with `trigger_sop_with_options` and `resume_sop_with_options` supporting blocking execution until workflow completion.
+    - Fixed resume validation: `resume_sop` now permits `Pending` instances in addition to `Failed` and `Paused`, enabling stuck runs to be revived cleanly.
+  - Upgraded **`trigger_sop` Native Tool into a Full Observable Workflow Lifecycle Tool**:
+    - Preserving the exact 260 registered native tools invariant, upgraded `TriggerSopTool` in [`src/tools/sop.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/sop.rs) to support 5 unified lifecycle actions:
+      1. `"trigger"`: Start a new SOP run by `sop_id`, optionally passing input `payload` and selecting synchronous `wait` (default: true). Returns final execution status, completed steps, and deliverables.
+      2. `"status"`: Inspect the current execution progress, status, and active step of any SOP run by `instance_id`.
+      3. `"output"`: Retrieve completed step outputs, context artifacts, and errors by `instance_id`.
+      4. `"list"`: List all registered SOP definitions and recent execution history.
+      5. `"resume"`: Resume a paused, pending, or failed SOP execution by `instance_id` with optional synchronous wait.
+  - Defensive Model Response Recovery:
+    - Added fallback handling in [`src/agent/agent_loop/run/response.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/response.rs): When a model response returns empty content with a safety or malformed finish reason (`filter` or `malformed`), returns an informative diagnostic message rather than terminating silently.
+- **Inspirations**:
+  - Temporal / Airflow durable workflow execution states, OpenAPI 3.0 strict JSON Schema validator specifications, and CLI synchronous execution ergonomics.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/orchestrator.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/orchestrator.rs): Concrete property schemas for `termination`, `review`, `capabilities`.
+    - [`src/tools/subagent/delegate_task.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_task.rs): Added `additionalProperties: true` on `json_schema`.
+    - [`src/tools/self_management/catalog.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog.rs): Added `additionalProperties: true` on `resource_overrides`.
+    - [`src/tools/sop.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/sop.rs): Multi-action lifecycle support (`trigger`, `status`, `output`, `list`, `resume`), `additionalProperties: true` on `payload`, synchronous wait support.
+    - [`src/sop/engine.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/sop/engine.rs): Synchronous wait support (`trigger_sop_with_options`, `resume_sop_with_options`), and `Pending` state resume.
+    - [`src/cli/args.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/args.rs): Added `-w`/`--wait` flag to `SopAction::Trigger` and `SopAction::Resume`.
+    - [`src/cli/sop.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/sop.rs): Synchronous execution and rich status reporting.
+    - [`src/agent/agent_loop/run/response.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/response.rs): Empty response filter/malformed diagnostic fallback.
+  - Test Modules:
+    - [`src/tools/registry_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry_tests.rs): `test_orchestration_prompt_tool_schemas_have_no_bare_object_types`.
+    - [`src/tools/sop_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/sop_tests.rs): 7 comprehensive tests covering all actions, schemas, errors, and flows.
+- **Details & Metrics**:
+  - 10 core source and test files modified.
+  - 320+ lines of robust, tested Rust code added.
+  - Preserved exact 260 registered native tools invariant.
+- **Verification**:
+  - 260 registered native tools invariant verified (`cargo test -p openz --lib test_native_tool_registration_names -j 1`).
+  - 0 clippy and compiler warnings (`cargo clippy -p openz -j 1`).
+  - All 16 SOP tests passed (`cargo test -p openz --lib sop -j 1`).
+  - All 7 SOP tool action tests passed (`cargo test -p openz --lib tools::sop::tests -j 1`).
+  - All 37 orchestrator tests passed (`cargo test -p openz --lib orchestrator -j 1`).
+  - Bare object schema test passed (`cargo test -p openz --lib test_orchestration_prompt_tool_schemas_have_no_bare_object_types -j 1`).
+
+### v0.0.213
 - **Ideas**:
   - Researched self-improvement and procedural memory architectures from Nous Research's Hermes Agent, Prime Agent, and Pi Agent to overhaul OpenZ's autonomous background learning, user preference tracking, and skill synthesis.
   - Eliminated manual command friction: OpenZ requires zero slash commands (`/learn`) or explicit user prompting to retain skills. All learning operates fully autonomously in the background after each non-trivial turn.

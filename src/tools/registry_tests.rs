@@ -477,3 +477,35 @@ fn route_cache_invalidates_when_filter_scope_changes_or_tool_registers() {
     }));
     assert!(registry.route_cache.lock().unwrap().is_none());
 }
+
+#[tokio::test]
+async fn test_orchestration_prompt_tool_schemas_have_no_bare_object_types() {
+    let config = Config::default();
+    let provider = Arc::new(crate::providers::openai::OpenAIProvider::new(
+        "test".to_string(),
+        "http://localhost".to_string(),
+        "test".to_string(),
+    ));
+    let sessions = SessionManager::new(std::env::temp_dir().join("openz_test_sessions"));
+    let registry = ToolRegistry::new_with_context(config.clone(), provider.clone(), sessions.clone());
+    crate::cli::tools::register_all_tools(&registry, &config, provider, sessions).unwrap();
+
+    let tools = registry.to_openai_format_for_prompt("Use orchestrate_workflow to run a simple sequential workflow with two steps: 1) plan: planner summarizes 'The quick brown fox', 2) review: reviewer checks the summary.");
+    let mut offending = Vec::new();
+    for tool in &tools {
+        let name = tool["function"]["name"].as_str().unwrap_or("");
+        let params = &tool["function"]["parameters"];
+        if let Some(props) = params["properties"].as_object() {
+            for (pname, pval) in props {
+                if pval.get("type").and_then(|v| v.as_str()) == Some("object") {
+                    let has_props = pval.get("properties").is_some();
+                    let has_add_props = pval.get("additionalProperties").is_some();
+                    if !has_props && !has_add_props {
+                        offending.push(format!("{name}.{pname}"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(offending.is_empty(), "Offending tool properties with bare object: {:?}", offending);
+}

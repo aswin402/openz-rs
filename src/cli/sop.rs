@@ -81,7 +81,7 @@ pub async fn handle_sop(action: SopAction) -> Result<()> {
                 }
             }
         }
-        SopAction::Trigger { sop_id, payload } => {
+        SopAction::Trigger { sop_id, payload, wait } => {
             let config = load_config()?;
             let payload_value = if let Some(p) = payload {
                 let p_trimmed = p.trim();
@@ -101,32 +101,67 @@ pub async fn handle_sop(action: SopAction) -> Result<()> {
                 serde_json::json!({})
             };
 
-            println!("Triggering SOP '{}'...", sop_id);
-            match crate::sop::engine::trigger_sop(config, sop_id.clone(), payload_value).await {
+            if wait {
+                println!("Executing SOP '{}' synchronously...", sop_id);
+            } else {
+                println!("Triggering SOP '{}' in background...", sop_id);
+            }
+
+            match crate::sop::engine::trigger_sop_with_options(config, sop_id.clone(), payload_value, wait).await {
                 Ok(instance_id) => {
-                    println!(
-                        "{}✓ SOP successfully triggered!{}",
-                        EMERALD_GREEN, COLOR_RESET
-                    );
-                    println!("Instance ID: {}", instance_id);
+                    if wait {
+                        println!(
+                            "{}✓ SOP execution finished!{}",
+                            EMERALD_GREEN, COLOR_RESET
+                        );
+                        if let Ok(inst) = crate::sop::load_instance(&instance_id) {
+                            println!("Instance ID: {}", instance_id);
+                            println!("Status: {:?}", inst.status);
+                            println!("Steps completed: {}/{}", inst.current_step_index, inst.steps.len());
+                        } else {
+                            println!("Instance ID: {}", instance_id);
+                        }
+                    } else {
+                        println!(
+                            "{}✓ SOP successfully triggered!{}",
+                            EMERALD_GREEN, COLOR_RESET
+                        );
+                        println!("Instance ID: {}", instance_id);
+                    }
                 }
                 Err(e) => {
                     eprintln!(
-                        "{}❌ Failed to trigger SOP: {}{}",
+                        "{}❌ Failed to execute SOP: {}{}",
                         ERROR_RED, e, COLOR_RESET
                     );
                 }
             }
         }
-        SopAction::Resume { instance_id } => {
+        SopAction::Resume { instance_id, wait } => {
             let config = load_config()?;
-            println!("Resuming SOP instance '{}'...", instance_id);
-            match crate::sop::engine::resume_sop(config, instance_id.clone()).await {
+            if wait {
+                println!("Resuming SOP instance '{}' synchronously...", instance_id);
+            } else {
+                println!("Resuming SOP instance '{}' in background...", instance_id);
+            }
+
+            match crate::sop::engine::resume_sop_with_options(config, instance_id.clone(), wait).await {
                 Ok(_) => {
-                    println!(
-                        "{}✓ SOP instance resume initiated successfully!{}",
-                        EMERALD_GREEN, COLOR_RESET
-                    );
+                    if wait {
+                        println!(
+                            "{}✓ SOP instance resumed and execution completed!{}",
+                            EMERALD_GREEN, COLOR_RESET
+                        );
+                        if let Ok(inst) = crate::sop::load_instance(&instance_id) {
+                            println!("Status: {:?}", inst.status);
+                            println!("Steps completed: {}/{}", inst.current_step_index, inst.steps.len());
+                        }
+                    } else {
+                        println!(
+                            "{}✓ SOP instance resume initiated successfully!{}",
+                            EMERALD_GREEN, COLOR_RESET
+                        );
+                    }
                 }
                 Err(e) => {
                     eprintln!("{}❌ Failed to resume SOP: {}{}", ERROR_RED, e, COLOR_RESET);

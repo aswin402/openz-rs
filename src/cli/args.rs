@@ -94,10 +94,14 @@ pub enum SopAction {
     Trigger {
         sop_id: String,
         payload: Option<String>,
+        #[arg(long, short = 'w', default_value_t = false)]
+        wait: bool,
     },
     Resume {
         #[arg(long, short)]
         instance_id: String,
+        #[arg(long, short = 'w', default_value_t = false)]
+        wait: bool,
     },
     Simulate {
         sop_id: String,

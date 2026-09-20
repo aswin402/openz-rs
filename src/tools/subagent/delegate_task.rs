@@ -59,7 +59,8 @@ impl Tool for DelegateTaskTool {
                 },
                 "json_schema": {
                     "type": "object",
-                    "description": "Optional: A JSON Schema definition that the subagent's final output summary MUST strictly conform to."
+                    "description": "Optional: A JSON Schema definition that the subagent's final output summary MUST strictly conform to.",
+                    "additionalProperties": true
                 }
             },
             "required": ["goal"]

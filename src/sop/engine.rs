@@ -200,6 +200,15 @@ pub async fn trigger_sop(
     sop_id: String,
     initial_payload: serde_json::Value,
 ) -> Result<String> {
+    trigger_sop_with_options(config, sop_id, initial_payload, false).await
+}
+
+pub async fn trigger_sop_with_options(
+    config: Config,
+    sop_id: String,
+    initial_payload: serde_json::Value,
+    wait: bool,
+) -> Result<String> {
     let def = get_definition(&sop_id)?
         .ok_or_else(|| anyhow::anyhow!("SOP definition '{}' not found", sop_id))?;
 
@@ -236,14 +245,17 @@ pub async fn trigger_sop(
 
     save_instance(&inst)?;
 
-    // Spawn execution in background
     let config_clone = config.clone();
     let inst_id_clone = instance_id.clone();
-    tokio::spawn(async move {
-        if let Err(e) = run_sop_instance(config_clone, inst_id_clone).await {
-            tracing::error!("SOP background execution failed: {:?}", e);
-        }
-    });
+    if wait {
+        run_sop_instance(config_clone, inst_id_clone).await?;
+    } else {
+        tokio::spawn(async move {
+            if let Err(e) = run_sop_instance(config_clone, inst_id_clone).await {
+                tracing::error!("SOP background execution failed: {:?}", e);
+            }
+        });
+    }
 
     Ok(instance_id)
 }
@@ -301,9 +313,13 @@ pub async fn trigger_sop_simulation(
 }
 
 pub async fn resume_sop(config: Config, instance_id: String) -> Result<()> {
+    resume_sop_with_options(config, instance_id, false).await
+}
+
+pub async fn resume_sop_with_options(config: Config, instance_id: String, wait: bool) -> Result<()> {
     let mut inst = load_instance(&instance_id)?;
-    if inst.status != SopStatus::Failed && inst.status != SopStatus::Paused {
-        anyhow::bail!("Only failed or paused SOP instances can be resumed");
+    if inst.status != SopStatus::Failed && inst.status != SopStatus::Paused && inst.status != SopStatus::Pending {
+        anyhow::bail!("Only pending, failed, or paused SOP instances can be resumed");
     }
 
     inst.status = SopStatus::Running;
@@ -317,11 +333,15 @@ pub async fn resume_sop(config: Config, instance_id: String) -> Result<()> {
 
     let config_clone = config.clone();
     let inst_id_clone = instance_id.clone();
-    tokio::spawn(async move {
-        if let Err(e) = run_sop_instance(config_clone, inst_id_clone).await {
-            tracing::error!("SOP background resume failed: {:?}", e);
-        }
-    });
+    if wait {
+        run_sop_instance(config_clone, inst_id_clone).await?;
+    } else {
+        tokio::spawn(async move {
+            if let Err(e) = run_sop_instance(config_clone, inst_id_clone).await {
+                tracing::error!("SOP background resume failed: {:?}", e);
+            }
+        });
+    }
 
     Ok(())
 }
