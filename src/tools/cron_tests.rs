@@ -205,3 +205,137 @@ async fn test_cron_tools_direct_strings_and_aliases() {
     let _ = std::fs::remove_dir_all(temp_dir);
 }
 
+#[tokio::test]
+async fn test_schedule_job_auto_generates_id_when_omitted() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_cron_autoid_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            let scheduler = ScheduleJobTool;
+            // No id provided; uses command and cron aliases
+            let res = scheduler
+                .call(&serde_json::json!({
+                    "command": "echo cron test",
+                    "cron": "* * * * *"
+                }))
+                .await
+                .unwrap();
+
+            assert_eq!(res["status"], "success");
+            let generated_id = res["id"].as_str().unwrap();
+            let job_id = res["job_id"].as_str().unwrap();
+            assert_eq!(generated_id, job_id);
+            assert!(generated_id.starts_with("echo_cron_test_"));
+
+            // Verify in list_jobs
+            let list_tool = ListJobsTool;
+            let list_res = list_tool.call(&serde_json::json!({})).await.unwrap();
+            let arr = list_res.as_array().unwrap();
+            assert_eq!(arr.len(), 1);
+            assert_eq!(arr[0]["id"], generated_id);
+            assert_eq!(arr[0]["job_id"], generated_id);
+
+            // Verify get_job using job_id
+            let get_tool = GetJobTool;
+            let get_res = get_tool
+                .call(&serde_json::json!({ "job_id": generated_id }))
+                .await
+                .unwrap();
+            assert_eq!(get_res["status"], "success");
+            assert_eq!(get_res["id"], generated_id);
+            assert_eq!(get_res["job_id"], generated_id);
+            assert_eq!(get_res["job"]["job_id"], generated_id);
+
+            // Remove using job_id
+            let remove_tool = RemoveJobTool;
+            let rem_res = remove_tool
+                .call(&serde_json::json!({ "job_id": generated_id }))
+                .await
+                .unwrap();
+            assert_eq!(rem_res["status"], "success");
+            assert_eq!(rem_res["id"], generated_id);
+            assert_eq!(rem_res["job_id"], generated_id);
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(temp_dir);
+}
+
+#[tokio::test]
+async fn test_list_jobs_system_crontab_and_flexible_aliases() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_cron_system_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            let scheduler = ScheduleJobTool;
+            // 1. Schedule with action & every
+            let res = scheduler
+                .call(&serde_json::json!({
+                    "action": "system memory flush",
+                    "every": "15m"
+                }))
+                .await
+                .unwrap();
+            assert_eq!(res["status"], "success");
+            let job_id_1 = res["job_id"].as_str().unwrap().to_string();
+
+            // 2. Schedule with description & numeric interval
+            let res = scheduler
+                .call(&serde_json::json!({
+                    "description": "ping gateway",
+                    "interval": 60
+                }))
+                .await
+                .unwrap();
+            assert_eq!(res["status"], "success");
+            let job_id_2 = res["job_id"].as_str().unwrap().to_string();
+
+            // 3. List jobs with include_system_crontab: true
+            let list_tool = ListJobsTool;
+            let sys_list = list_tool
+                .call(&serde_json::json!({ "include_system_crontab": true }))
+                .await
+                .unwrap();
+            assert_eq!(sys_list["status"], "success");
+            assert!(sys_list["openz_jobs"].is_array());
+            assert_eq!(sys_list["openz_jobs"].as_array().unwrap().len(), 2);
+            assert!(sys_list["system_crontab"].is_array());
+
+            // Pause and resume using job_id
+            let pause_tool = PauseJobTool;
+            let paused = pause_tool
+                .call(&serde_json::json!({ "job_id": &job_id_1 }))
+                .await
+                .unwrap();
+            assert_eq!(paused["status"], "success");
+            assert_eq!(paused["id"], job_id_1);
+            assert_eq!(paused["job_id"], job_id_1);
+
+            let resume_tool = ResumeJobTool;
+            let resumed = resume_tool
+                .call(&serde_json::json!({ "job_id": &job_id_1 }))
+                .await
+                .unwrap();
+            assert_eq!(resumed["status"], "success");
+            assert_eq!(resumed["id"], job_id_1);
+            assert_eq!(resumed["job_id"], job_id_1);
+
+            // Cleanup
+            let remove_tool = RemoveJobTool;
+            let _ = remove_tool.call(&serde_json::json!({ "job_id": &job_id_1 })).await;
+            let _ = remove_tool.call(&serde_json::json!({ "job_id": &job_id_2 })).await;
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(temp_dir);
+}
+
+

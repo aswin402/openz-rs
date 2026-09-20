@@ -1,4 +1,29 @@
-### v0.0.210 (Latest Release)
+### v0.0.211 (Latest Release)
+- **Ideas**:
+  - Addressed real-world friction and tripping points in OpenZ's scheduled task and cron job tooling uncovered during autonomous agent live testing:
+    1. **Auto-Generated Job IDs**: When scheduling automated tasks, agents frequently omit the explicit `id` argument (focusing on `command` and `schedule`). `schedule_job` now automatically generates a clean, readable slug and unique identifier (e.g. `echo_cron_test_412b98db`) if omitted, preventing execution rejection.
+    2. **Flexible Parameter Alias Resolution**:
+       - `schedule`: Expanded alias recognition to accept `cron`, `cron_expression`, `cronExpression`, `expression`, `interval`, `time`, `when`, `every`, `duration`, and `frequency` (including integer seconds e.g. `interval: 60`).
+       - `prompt`: Expanded alias recognition to accept `command`, `cmd`, `task`, `goal`, `message`, `instruction`, `description`, `action`, `job_prompt`, and `text`.
+    3. **Bidirectional & Interchangeable `id` and `job_id`**: Resolved schema mismatch between job creation (`id`) and run records / tool invocations (`job_id`). All cron tools (`schedule_job`, `list_jobs`, `get_job`, `remove_job`, `pause_job`, `resume_job`, `run_job_now`, `get_job_logs`) and runtime inventory items (`CronJobInventoryItem`) now symmetrically accept and return both `id` and `job_id`.
+    4. **System Crontab Inspection**: Callers inspecting the host system's scheduled tasks can now pass `include_system_crontab: true` to `list_jobs` to safely inspect host OS `crontab -l` entries alongside OpenZ internal scheduled jobs without breaking array outputs on standard queries.
+- **Inspirations**:
+  - Unix cron semantics, resilient agent tool ergonomics, forgiving schema validation, and complete bidirectional property interoperability.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/cron.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/cron.rs): Upgraded `job_id_arg`, auto-generated IDs, schedule/prompt alias resolution, bidirectional `id`/`job_id` return schemas, and `get_system_crontab`.
+    - [`src/core/inventory.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/inventory.rs): Populated `job_id` on `CronJobInventoryItem` and runtime cron inventory snapshot.
+  - Test Modules:
+    - [`src/tools/cron_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/cron_tests.rs): Added `test_schedule_job_auto_generates_id_when_omitted` and `test_list_jobs_system_crontab_and_flexible_aliases`.
+- **Details & Metrics**:
+  - 3 core source and test files modified.
+  - Live headless verification turn executed with `exit_code: 0` (`schedule_job` with `command` & `cron` without `id` -> `list_jobs` -> `remove_job` with `job_id`).
+- **Verification**:
+  - Exact 260 registered native tools invariant maintained (`cargo test -p openz --lib test_native_tool_registration_names -j 1`).
+  - 0 compiler and clippy warnings (`cargo clippy -p openz -j 1`).
+  - All 7 cron unit tests passed (`cargo test -p openz --lib tools::cron::tests -j 1`).
+
+### v0.0.210
 - **Ideas**:
   - Researched and resolved user-reported agent credential refusal ("Checked config. No GitHub token field exists — config stores only LLM providers. git_provider reads GITHUB_TOKEN env var or the token param, not config. Won't persist chat-posted PAT to config").
   - Diagnosed root causes:

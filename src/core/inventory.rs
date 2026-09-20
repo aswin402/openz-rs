@@ -176,6 +176,8 @@ pub struct CronInventory {
 #[serde(rename_all = "camelCase")]
 pub struct CronJobInventoryItem {
     pub id: String,
+    #[serde(default)]
+    pub job_id: String,
     pub schedule: String,
     pub prompt: String,
     pub enabled: bool,
@@ -402,7 +404,8 @@ fn build_cron_inventory() -> CronInventory {
         .unwrap_or_default()
         .into_iter()
         .map(|job| CronJobInventoryItem {
-            id: job.id,
+            id: job.id.clone(),
+            job_id: job.id.clone(),
             schedule: job.schedule,
             prompt: job.prompt,
             enabled: job.enabled,
