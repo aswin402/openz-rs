@@ -106,3 +106,45 @@ fn test_load_relevant_skills_content_matching() {
 
     let _ = delete_skill(skill_name);
 }
+
+#[test]
+fn test_skill_frontmatter_metadata_extraction() {
+    let raw = r#"---
+name: cyberpunk_theme
+description: Cyberpunk neon design styling rules
+triggers: ["cyberpunk", "neon theme"]
+vault_category: websites
+---
+
+# Cyberpunk Neon Theme
+Use #00ffcc for cyan glow and #ff007f for pink neon."#;
+
+    let skill = Skill {
+        name: "cyberpunk_theme".to_string(),
+        content: raw.to_string(),
+    };
+
+    assert_eq!(skill.description(), "Cyberpunk neon design styling rules");
+    assert_eq!(skill.vault_category().as_deref(), Some("websites"));
+    let trigs = skill.triggers();
+    assert!(trigs.contains(&"cyberpunk".to_string()));
+    assert!(trigs.contains(&"neon theme".to_string()));
+}
+
+#[test]
+fn test_user_profile_update_and_deduplication() {
+    let temp_profile = format!(
+        "- User prefers Cyberpunk Neon with #00ffcc\n- Use Tailwind CSS v4"
+    );
+    assert!(update_user_profile(&temp_profile).is_ok());
+
+    let loaded = load_user_profile();
+    assert!(loaded.contains("Cyberpunk Neon with #00ffcc"));
+    assert!(loaded.contains("Use Tailwind CSS v4"));
+
+    // Updating with duplicate bullet should not duplicate
+    assert!(update_user_profile("- User prefers Cyberpunk Neon with #00ffcc").is_ok());
+    let loaded2 = load_user_profile();
+    let count = loaded2.matches("Cyberpunk Neon with #00ffcc").count();
+    assert_eq!(count, 1);
+}

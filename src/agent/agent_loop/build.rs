@@ -33,21 +33,46 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     }
 
     let mut skills_part = String::new();
-    if let Ok(skills) = crate::agent::skills::load_relevant_skills_with_profile(
+    let relevant_skills = crate::agent::skills::load_relevant_skills_with_profile(
         ctx.user_content,
         &ctx.session.messages,
         profile_name,
-    ) {
-        if !skills.is_empty() {
-            skills_part =
-                "\n\nHere are the active guidelines and procedural skills you should follow:\n"
-                    .to_string();
-            for skill in skills {
-                skills_part.push_str(&format!(
-                    "=== Skill: {} ===\n{}\n\n",
-                    skill.name, skill.content
-                ));
+    )
+    .unwrap_or_default();
+
+    if !relevant_skills.is_empty() {
+        skills_part =
+            "\n\nHere are the active guidelines and procedural skills you should follow:\n"
+                .to_string();
+        let top_count = 2.min(relevant_skills.len());
+        for skill in relevant_skills.iter().take(top_count) {
+            skills_part.push_str(&format!(
+                "=== Active Skill: {} ===\n{}\n\n",
+                skill.name, skill.content
+            ));
+        }
+        if relevant_skills.len() > top_count {
+            skills_part.push_str("[Indexed Skills Catalog]\nThe following additional skills are active in ~/.openz/skills/:\n");
+            for skill in relevant_skills.iter().skip(top_count) {
+                let desc = skill.description();
+                let triggers = skill.triggers();
+                let triggers_str = if triggers.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (triggers: {})", triggers.join(", "))
+                };
+                skills_part.push_str(&format!("- {}: {}{}\n", skill.name, desc, triggers_str));
             }
+            skills_part.push('\n');
+        }
+    } else if let Ok(all_skills) = crate::agent::skills::load_skills_with_profile(profile_name) {
+        if !all_skills.is_empty() {
+            skills_part = "\n\n[Available Skills Catalog]\nThe following procedural skills are indexed in ~/.openz/skills/:\n".to_string();
+            for skill in all_skills.iter().take(5) {
+                let desc = skill.description();
+                skills_part.push_str(&format!("- {}: {}\n", skill.name, desc));
+            }
+            skills_part.push('\n');
         }
     }
     let mut vision_instruction = "";
@@ -148,6 +173,16 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         ""
     };
 
+    let user_profile_raw = crate::agent::skills::load_user_profile();
+    let user_profile_part = if !user_profile_raw.trim().is_empty() {
+        format!(
+            "\n\n[User Profile & Design Preferences]\nFollow these persistent user preferences and styling guidelines unconditionally across all deliverables:\n{}\n",
+            user_profile_raw.trim()
+        )
+    } else {
+        String::new()
+    };
+
     let pinned_memory =
         retrieve_pinned_identity_memories(&config.agents.defaults.bot_name).await;
     let persona_priority_part = identity_answer_priority_context(ctx.user_content, &pinned_memory);
@@ -179,13 +214,14 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     );
 
     let base_len = header.chars().count()
+        + persona_priority_part.chars().count()
+        + user_profile_part.chars().count()
         + system_guidelines.chars().count()
         + grounding_rules.chars().count()
         + activity_part.chars().count()
         + summary_part.chars().count()
         + memory_part.chars().count()
         + pinned_memory.chars().count()
-        + persona_priority_part.chars().count()
         + recent_session_part.chars().count()
         + brief_context.chars().count()
         + source_context.chars().count()
@@ -232,9 +268,10 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     }
 
     ctx.system_prompt = format!(
-        "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
+        "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
         header,
         persona_priority_part,
+        user_profile_part,
         system_guidelines,
         grounding_rules,
         activity_part,

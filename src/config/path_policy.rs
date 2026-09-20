@@ -84,17 +84,25 @@ impl PathPolicy {
 
         match self.mode {
             PathPolicyMode::Workspace | PathPolicyMode::ApprovalTarget => {
+                let vault_dir = crate::config::loader::load_config()
+                    .map(|cfg| crate::core::vault::resolve_vault_path(&cfg))
+                    .unwrap_or_else(|_| {
+                        dirs::home_dir()
+                            .unwrap_or_else(|| PathBuf::from("."))
+                            .join("openz_vault")
+                    });
                 let allowed = [
                     crate::config::loader::active_workspace_or_current_dir(),
                     crate::config::loader::config_dir(),
                     std::env::temp_dir(),
+                    vault_dir,
                 ];
                 if !allowed
                     .iter()
                     .any(|root| canonical.starts_with(canonicalize_with_missing_leaf(root)))
                 {
                     return Err(anyhow!(
-                        "Path traversal prevention: Path {:?} is not allowed (must be inside workspace, ~/.openz, or temp)",
+                        "Path traversal prevention: Path {:?} is not allowed (must be inside workspace, ~/.openz, openz_vault, or temp)",
                         path
                     ));
                 }

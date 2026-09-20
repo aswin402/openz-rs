@@ -26,6 +26,155 @@ pub struct SkillView {
     pub validation_errors: Vec<String>,
 }
 
+impl Skill {
+    pub fn description(&self) -> String {
+        if let Some(desc) = extract_frontmatter_field(&self.content, "description") {
+            return desc;
+        }
+        for line in self.content.lines() {
+            let trimmed = line.trim();
+            if !trimmed.starts_with('#') && !trimmed.starts_with("---") && !trimmed.is_empty() {
+                let clean: String = trimmed.chars().take(160).collect();
+                return clean;
+            }
+        }
+        format!("Procedural guidelines for {}", self.name.replace('_', " "))
+    }
+
+    pub fn triggers(&self) -> Vec<String> {
+        let mut triggers = Vec::new();
+        if let Some(trig_str) = extract_frontmatter_field(&self.content, "triggers") {
+            let cleaned_str = trig_str.trim();
+            if cleaned_str.starts_with('[') && cleaned_str.ends_with(']') {
+                let inner = &cleaned_str[1..cleaned_str.len() - 1];
+                for part in inner.split(',') {
+                    let cleaned = part.trim().trim_matches(['"', '\'']).to_lowercase();
+                    if !cleaned.is_empty() {
+                        triggers.push(cleaned);
+                    }
+                }
+            } else {
+                for part in cleaned_str.split(',') {
+                    let cleaned = part.trim().trim_matches(['"', '\'']).to_lowercase();
+                    if !cleaned.is_empty() {
+                        triggers.push(cleaned);
+                    }
+                }
+            }
+        }
+        if triggers.is_empty() {
+            triggers.extend(
+                self.name
+                    .split('_')
+                    .filter(|w| w.len() > 2)
+                    .map(|w| w.to_lowercase()),
+            );
+        }
+        triggers
+    }
+
+    pub fn vault_category(&self) -> Option<String> {
+        extract_frontmatter_field(&self.content, "vault_category")
+            .or_else(|| extract_frontmatter_field(&self.content, "category"))
+    }
+}
+
+pub fn extract_frontmatter_field(content: &str, field: &str) -> Option<String> {
+    let trimmed = content.trim_start();
+    if !trimmed.starts_with("---") {
+        return None;
+    }
+    let rest = &trimmed[3..];
+    let end_idx = rest.find("---")?;
+    let yaml_block = &rest[..end_idx];
+    let field_prefix = format!("{}:", field);
+    for line in yaml_block.lines() {
+        let line_trimmed = line.trim();
+        if line_trimmed.starts_with(&field_prefix) {
+            let val = line_trimmed[field_prefix.len()..].trim();
+            return Some(val.trim_matches(['"', '\'']).to_string());
+        }
+    }
+    None
+}
+
+pub fn get_user_profile_path() -> PathBuf {
+    crate::config::runtime_data_dir().join("USER.md")
+}
+
+pub fn load_user_profile() -> String {
+    let path = get_user_profile_path();
+    if path.is_file() {
+        fs::read_to_string(path).unwrap_or_default()
+    } else {
+        String::new()
+    }
+}
+
+pub fn update_user_profile(new_preferences: &str) -> Result<()> {
+    let trimmed_input = new_preferences.trim();
+    if trimmed_input.is_empty() {
+        return Ok(());
+    }
+
+    let path = get_user_profile_path();
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+
+    let existing = if path.is_file() {
+        fs::read_to_string(&path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    let mut existing_bullets: Vec<String> = Vec::new();
+    for line in existing.lines() {
+        let l = line.trim();
+        if l.starts_with('-') || l.starts_with('*') {
+            let text = l[1..]
+                .trim()
+                .trim_start_matches("**")
+                .trim_end_matches("**")
+                .trim()
+                .to_string();
+            if !text.is_empty()
+                && !existing_bullets
+                    .iter()
+                    .any(|b| b.eq_ignore_ascii_case(&text))
+            {
+                existing_bullets.push(text);
+            }
+        }
+    }
+
+    for line in trimmed_input.lines() {
+        let l = line.trim();
+        let text = if l.starts_with('-') || l.starts_with('*') {
+            l[1..].trim().trim_start_matches("**").trim_end_matches("**").trim()
+        } else {
+            l
+        };
+        if text.len() > 3
+            && !existing_bullets.iter().any(|b| {
+                b.eq_ignore_ascii_case(text)
+                    || b.contains(text)
+                    || text.contains(b.as_str())
+            })
+        {
+            existing_bullets.push(text.to_string());
+        }
+    }
+
+    let mut updated_content = String::from("# User Profile & Preferences 👤\n\nDurable user preferences, styling tastes, persona rules, and coding conventions across sessions.\n\n## Preferences\n");
+    for bullet in &existing_bullets {
+        updated_content.push_str(&format!("- {}\n", bullet));
+    }
+
+    fs::write(path, updated_content)?;
+    Ok(())
+}
+
 pub fn validate_skill_metadata(name: &str, content: &str) -> Vec<String> {
     let mut errors = Vec::new();
     if name.trim().is_empty() {
@@ -42,8 +191,9 @@ pub fn validate_skill_metadata(name: &str, content: &str) -> Vec<String> {
     if content.trim().is_empty() {
         errors.push("Skill content is required.".to_string());
     }
-    if !content.trim_start().starts_with('#') {
-        errors.push("Skill content should start with a Markdown heading.".to_string());
+    let trimmed = content.trim_start();
+    if !trimmed.starts_with('#') && !trimmed.starts_with("---") {
+        errors.push("Skill content should start with a Markdown heading or YAML frontmatter.".to_string());
     }
     if !scan_skill_content(content).unwrap_or(false) {
         errors.push("Skill content contains potentially unsafe commands or patterns.".to_string());
@@ -661,7 +811,20 @@ pub fn load_skills_with_profile(profile_name: Option<&str>) -> Result<Vec<Skill>
         }
     }
 
-    // 2. Load explicit workspace skills from .openz/skills. This avoids treating a
+    // 2. Load global disk skills from ~/.openz/skills/
+    let global_skills_dir = get_skills_dir();
+    let _ = load_skill_files_from_dir(&global_skills_dir, &mut skills_map);
+
+    // If profile specified, load from ~/.openz/subagents/<profile>/skills/
+    if let Some(prof) = profile_name {
+        let profile_skills_dir = crate::config::runtime_data_dir()
+            .join("subagents")
+            .join(prof)
+            .join("skills");
+        let _ = load_skill_files_from_dir(&profile_skills_dir, &mut skills_map);
+    }
+
+    // 3. Load explicit workspace skills from .openz/skills. This avoids treating a
     // project-level ./skills directory as writable agent memory.
     let skills_config = crate::config::loader::load_config()
         .map(|config| config.skills)
@@ -840,22 +1003,27 @@ pub fn load_relevant_skills_with_profile(
         search_context.push_str(&msg.content.to_lowercase());
     }
 
-    let mut relevant = Vec::new();
+    let mut relevant_scored = Vec::new();
     for skill in all_skills {
         let is_profile_specific = profile_skills.contains(&skill.name);
+
+        let triggers = skill.triggers();
+        let trigger_match = triggers
+            .iter()
+            .any(|t| !t.trim().is_empty() && search_context.contains(&t.to_lowercase()));
+
+        let name_exact_match = search_context.contains(&skill.name.to_lowercase());
 
         let name_words: Vec<&str> = skill.name.split('_').collect();
         let name_match = name_words
             .iter()
             .any(|word| word.len() > 2 && search_context.contains(word));
 
-        let name_exact_match = search_context.contains(&skill.name.to_lowercase());
-
         let mut content_match = false;
         let desc_sample = skill
             .content
             .chars()
-            .take(400)
+            .take(500)
             .collect::<String>()
             .to_lowercase();
         let search_words: Vec<&str> = search_context
@@ -869,10 +1037,30 @@ pub fn load_relevant_skills_with_profile(
             }
         }
 
-        if is_profile_specific || name_match || name_exact_match || content_match {
-            relevant.push(skill);
+        let mut score = 0.0f32;
+        if trigger_match {
+            score += 10.0;
+        }
+        if name_exact_match {
+            score += 8.0;
+        }
+        if is_profile_specific {
+            score += 5.0;
+        }
+        if name_match {
+            score += 3.0;
+        }
+        if content_match {
+            score += 1.0;
+        }
+
+        if score > 0.0 {
+            relevant_scored.push((score, skill));
         }
     }
+
+    relevant_scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+    let relevant: Vec<Skill> = relevant_scored.into_iter().map(|(_, s)| s).collect();
 
     if !relevant.is_empty() {
         if let Ok(conn) = get_connection() {
@@ -927,7 +1115,7 @@ pub fn save_skill(name: &str, content: &str) -> Result<()> {
         .to_lowercase()
         .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
 
-    let normalized_content = if !content.trim_start().starts_with('#') {
+    let normalized_content = if !content.trim_start().starts_with('#') && !content.trim_start().starts_with("---") {
         format!("# {}\n\n{}", safe_name.replace('_', " "), content.trim())
     } else {
         content.to_string()
@@ -948,6 +1136,12 @@ pub fn save_skill(name: &str, content: &str) -> Result<()> {
         params![safe_name, normalized_content, now],
     )?;
 
+    // Persist as readable Markdown file in ~/.openz/skills/
+    let global_skills_dir = get_skills_dir();
+    let _ = fs::create_dir_all(&global_skills_dir);
+    let skill_file = global_skills_dir.join(format!("{}.md", safe_name));
+    let _ = fs::write(&skill_file, &normalized_content);
+
     Ok(())
 }
 
@@ -966,11 +1160,23 @@ pub fn delete_skill_with_profile(name: &str, profile_name: Option<&str>) -> Resu
             "DELETE FROM skills WHERE name = ?1 AND profile = ?2",
             params![safe_name, prof],
         )?;
+        let file_path = crate::config::runtime_data_dir()
+            .join("subagents")
+            .join(prof)
+            .join("skills")
+            .join(format!("{}.md", safe_name));
+        let _ = fs::remove_file(&file_path);
     } else {
         conn.execute(
             "DELETE FROM skills WHERE name = ?1 AND profile IS NULL",
             params![safe_name],
         )?;
+        let file_path = get_skills_dir().join(format!("{}.md", safe_name));
+        let _ = fs::remove_file(&file_path);
+        let dir_path = get_skills_dir().join(&safe_name);
+        if dir_path.is_dir() {
+            let _ = fs::remove_dir_all(&dir_path);
+        }
     }
 
     Ok(())
@@ -980,6 +1186,18 @@ pub fn clear_skills() -> Result<()> {
     let conn = get_connection()?;
     conn.execute("DELETE FROM skills", [])?;
 
+    let skills_dir = get_skills_dir();
+    if skills_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&skills_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
+                    let _ = fs::remove_file(path);
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -988,7 +1206,7 @@ pub fn save_subagent_skill(profile: &str, name: &str, content: &str) -> Result<(
         .to_lowercase()
         .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
 
-    let normalized_content = if !content.trim_start().starts_with('#') {
+    let normalized_content = if !content.trim_start().starts_with('#') && !content.trim_start().starts_with("---") {
         format!("# {}\n\n{}", safe_name.replace('_', " "), content.trim())
     } else {
         content.to_string()
@@ -1008,6 +1226,16 @@ pub fn save_subagent_skill(profile: &str, name: &str, content: &str) -> Result<(
          ON CONFLICT(name, profile) DO UPDATE SET content = ?2, last_used = ?4",
         params![safe_name, normalized_content, profile, now],
     )?;
+
+    // Persist as readable Markdown file in ~/.openz/subagents/<profile>/skills/<safe_name>.md
+    let profile_skills_dir = crate::config::runtime_data_dir()
+        .join("subagents")
+        .join(profile)
+        .join("skills");
+    let _ = fs::create_dir_all(&profile_skills_dir);
+    let skill_file = profile_skills_dir.join(format!("{}.md", safe_name));
+    let _ = fs::write(&skill_file, &normalized_content);
+
     Ok(())
 }
 

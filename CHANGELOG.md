@@ -1,4 +1,42 @@
-### v0.0.212 (Latest Release)
+### v0.0.213 (Latest Release)
+- **Ideas**:
+  - Researched self-improvement and procedural memory architectures from Nous Research's Hermes Agent, Prime Agent, and Pi Agent to overhaul OpenZ's autonomous background learning, user preference tracking, and skill synthesis.
+  - Eliminated manual command friction: OpenZ requires zero slash commands (`/learn`) or explicit user prompting to retain skills. All learning operates fully autonomously in the background after each non-trivial turn.
+  - Implemented a dual-tier cognitive memory hierarchy:
+    1. **User Profile & Design Preferences (`~/.openz/USER.md`)**: Dynamically extracts user preferences, UI design aesthetics, coding conventions, favorite frameworks, color palettes, and workflow habits across conversations. Deduplicates bullet points and injects them unconditionally into system prompts under `[User Profile & Design Preferences]`.
+    2. **Procedural Skill Synthesis (`~/.openz/skills/`)**: Adopts the open `agentskills.io` standard with YAML frontmatter (`name`, `description`, `triggers`, `vault_category`). Automatically captures end-to-end procedural workflows and reusable patterns whenever deliverables (websites, scripts, scrapers, data pipelines, visual assets) are created or saved to `openz_vault`.
+  - Upgraded Background Curator (`src/agent/agent_loop/save.rs`):
+    - Resolved critical JSON parsing bugs where nested Markdown code fences in synthesized skills corrupted parsing. Implemented `fallback_parse_curator` with recursive brace-depth tracking that salvages extracted preferences, skills, sources, and workflows even on malformed LLM responses.
+    - Integrated deliverable detection (`openz_vault`, `index.html`, `.py`, `.sh`, `.rs`, `.css`, `.js`) and existing `USER.md` context injection into the curator evaluation prompt.
+  - Weighted Relevance Scoring & Progressive Skill Disclosure:
+    - Multi-factor relevance scoring in `src/agent/skills.rs` combining trigger matching (+10.0), exact name (+8.0), profile (+5.0), keyword tokens (+3.0), and semantic text overlap (+1.0).
+    - Progressive disclosure in `src/agent/agent_loop/build.rs`: Injects top 2 matching skills in **FULL** (step-by-step procedural directions) while compiling remaining relevant skills into a lean `[Indexed Skills Catalog]` summary, optimizing context budget while preserving discoverability.
+  - OpenZ Vault Path Policy Integration: Added `resolve_vault_path()` to allowed paths in `src/config/path_policy.rs` for `Workspace` and `ApprovalTarget` modes, allowing tools like `list_dir`, `write_file`, and `patch_file` to execute seamlessly inside `openz_vault/`.
+- **Inspirations**:
+  - Hermes Agent (Nous Research) autonomous skill synthesis & `agentskills.io` YAML frontmatter standard, Prime Agent persistent profile modeling, and Mem0 human-readable markdown preference layering (`USER.md`).
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/agent/skills.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/skills.rs): Added `agentskills.io` YAML frontmatter fields, `description`, `triggers`, `vault_category`, `load_user_profile`, `update_user_profile`, markdown file persistence, and weighted relevance ranking.
+    - [`src/agent/agent_loop/save.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/save.rs): Enhanced `self_improvement_review_prompt` for preferences/deliverables, fixed code fence slicing bug with `rfind`, added `fallback_parse_curator` with brace-depth tracking, and wired `update_user_profile`.
+    - [`src/agent/agent_loop/build.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs): Injected `[User Profile & Design Preferences]` unconditionally, and implemented Progressive Skill Disclosure (top 2 full, remainder indexed catalog).
+    - [`src/config/path_policy.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/path_policy.rs): Added `vault_dir` to allowed path policy roots.
+  - Test Modules:
+    - [`src/agent/skills_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/skills_tests.rs): Unit tests for frontmatter parsing, user profile deduplication, and weighted relevance scoring.
+    - [`src/agent/agent_loop/save_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/save_tests.rs): Unit tests for curator prompt structure and fallback JSON/brace parsing.
+- **Details & Metrics**:
+  - 6 core source and test files modified.
+  - 920+ lines of robust, tested Rust code added.
+  - Zero slash command dependency (`/learn` deprecated in favor of fully autonomous background extraction).
+  - Human-readable skills persisted in `~/.openz/skills/<name>.md` with standard YAML frontmatter.
+- **Verification**:
+  - Exact 260 registered native tools invariant maintained (`cargo test -p openz --lib test_native_tool_registration_names -j 1`).
+  - 0 compiler and clippy warnings (`cargo clippy -p openz -j 1`).
+  - All 8 skills unit tests passed (`cargo test -p openz --lib agent::skills::tests -j 1`).
+  - All 3 curator save unit tests passed (`cargo test -p openz --lib agent::agent_loop::save::tests -j 1`).
+  - All 20 system prompt build unit tests passed (`cargo test -p openz --lib agent::agent_loop::build -j 1`).
+  - All 20 headless CLI tests passed (`cargo test -p openz --lib cli::headless_tests -j 1`).
+
+### v0.0.212
 - **Ideas**:
   - Implemented the **OpenZ Vault (`openz_vault`)** — a dedicated personal workspace for user-facing deliverables, creative projects, generated websites, scripts, media, and exports.
   - Resolved architectural clutter by establishing a strict separation of concerns:
