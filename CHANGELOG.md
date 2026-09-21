@@ -1,4 +1,44 @@
-### v0.0.219 (Latest Release)
+### v0.0.220 (Latest Release)
+- **Ideas**:
+  - Unified Multi-Format Spreadsheet Engine:
+    - Upgraded OpenDoc's spreadsheet loader in [`src/tools/opendoc/handlers/xlsx.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/handlers/xlsx.rs) to `calamine::open_workbook_auto`: transparently supports `.xlsx`, `.xls` (BIFF8 binary format), `.ods` (OpenDocument Spreadsheet), and `.xlsb` without failure.
+    - Updated [`src/tools/opendoc/handlers/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/handlers/mod.rs) to recognize `.ods` and `.xlsb` in file extension dispatch and sniff magic-bytes for OpenDocument XML structures (`content.xml`).
+  - Cross-Tool Document Integration (`read_doc`):
+    - Upgraded OpenZ's native [`src/tools/doc_reader.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/doc_reader.rs) to support `.pptx`, `.ppt`, `.csv`, `.html`, `.md`, and `.txt` by routing directly to `crate::tools::opendoc::get_server().read_document_text()`, providing fallback text extraction for DOCX documents.
+  - Table Preservation in Document Text Extraction:
+    - Fixed an issue in [`src/tools/opendoc/server.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/server.rs) where `read_document_text` dropped document tables if paragraphs were present or if the document consisted only of tables; now uses `ir.to_markdown()` whenever paragraphs or tables exist to format headers and rows.
+  - FastEmbed Dense Vector Generation for Document Chunks:
+    - Extended `opendoc_chunk_for_embedding` with `generate_embeddings: Option<bool>` parameter; integrates directly with OpenZ's pooled embedding model (`crate::tools::shared_memory::with_model`) to compute 384-dimensional dense vectors on chunked passages.
+- **Inspirations**:
+  - Unified document abstraction pipelines, RAG ingestion pipelines, and multi-format office document standards.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/opendoc/handlers/xlsx.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/handlers/xlsx.rs): Upgraded to `open_workbook_auto` for multi-format spreadsheet handling.
+    - [`src/tools/opendoc/handlers/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/handlers/mod.rs): Added `ods` and `xlsb` dispatch and sniffing.
+    - [`src/tools/opendoc/server.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/server.rs): Preserved tables in `read_document_text` and added vector embedding generation in `chunk_for_embedding`.
+    - [`src/tools/opendoc/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs): Added `generate_embeddings` parameter to `ChunkForEmbeddingParams`.
+    - [`src/tools/doc_reader.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/doc_reader.rs): Integrated OpenDoc formats and fallback.
+    - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml): Incremented version to `0.0.220`.
+    - [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json): Incremented version to `0.0.220`.
+    - [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Incremented version badge to `0.0.220`.
+  - Test Modules:
+    - [`src/tools/doc_reader_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/doc_reader_tests.rs): Added `test_doc_reader_reads_csv_via_opendoc` (10 passing tests).
+    - [`src/tools/opendoc/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod_tests.rs): Added `test_opendoc_chunk_for_embedding_options` (10 passing tests).
+- **Details & Metrics**:
+  - Full support for `.ods`, `.xlsb`, `.xls` in OpenDoc via `calamine::open_workbook_auto`.
+  - Seamless fallback and format support for presentations, spreadsheets, and markup across `read_doc`.
+  - 10 out of 10 OpenDoc unit tests and 10 out of 10 DocReader tests passing.
+  - Exact 260 registered native tools invariant preserved.
+  - 0 compiler warnings, 0 clippy warnings.
+- **Verification**:
+  - `cargo check -p openz -j 1`: PASS (0 warnings).
+  - `cargo test -p openz -j 1 --lib tools::opendoc::tests`: 10 passed, 0 failed.
+  - `cargo test -p openz -j 1 --lib tools::doc_reader::tests`: 10 passed, 0 failed.
+  - `cargo test -p openz -j 1 --lib test_native_tool_registration_names`: PASS (exact 260 tools).
+  - `cargo test -p openz -j 1 --lib cli::tools::tests::tool_registry_exposes_every_registered_tool`: PASS.
+  - `cargo clippy -p openz -j 1`: 0 warnings.
+
+### v0.0.219
 - **Ideas**:
   - Full Native In-Process Absorption of OpenDoc Document Intelligence Engine:
     - Completely absorbed the OpenDoc document processing engine into OpenZ core under [`src/tools/opendoc/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/), eliminating the external workspace crate `opendoc-mcp` and removing `tools/opendoc/` in its entirety.

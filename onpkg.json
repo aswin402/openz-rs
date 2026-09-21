@@ -147,7 +147,7 @@
   },
   "project": {
     "name": "openz",
-    "version": "0.0.219",
+    "version": "0.0.220",
     "description": "OpenZ — Async Personal AI Agent Framework in Rust",
     "package_manager": "cargo",
     "runtime": "rust",

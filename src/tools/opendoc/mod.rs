@@ -800,6 +800,10 @@ pub struct ChunkForEmbeddingParams {
     pub max_tokens: Option<usize>,
     #[schemars(description = "Token overlap between consecutive chunks (default: 50)")]
     pub overlap: Option<usize>,
+    #[schemars(
+        description = "Whether to compute dense vector embeddings for chunks using local AllMiniLML6V2 model (default false)"
+    )]
+    pub generate_embeddings: Option<bool>,
 }
 define_opendoc_tool!(
     OpendocChunkForEmbeddingTool,
@@ -807,7 +811,13 @@ define_opendoc_tool!(
     "Chunk document content using smart strategies (fixed token count, heading, page) for RAG input pipelines.",
     ChunkForEmbeddingParams,
     |p: ChunkForEmbeddingParams| {
-        get_server().chunk_for_embedding(p.file_path, p.strategy, p.max_tokens, p.overlap)
+        get_server().chunk_for_embedding(
+            p.file_path,
+            p.strategy,
+            p.max_tokens,
+            p.overlap,
+            p.generate_embeddings,
+        )
     }
 );
 

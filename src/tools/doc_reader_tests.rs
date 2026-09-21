@@ -95,3 +95,20 @@ async fn test_doc_reader_direct_string_and_aliases() {
     assert!(err.to_string().contains("File does not exist: missing.pdf"));
 }
 
+#[tokio::test]
+async fn test_doc_reader_reads_csv_via_opendoc() {
+    let tool = DocReaderTool;
+    let temp_dir = std::env::temp_dir();
+    let csv_file = temp_dir.join("test_openz_doc_reader.csv");
+    std::fs::write(&csv_file, "col1,col2\nval1,val2\n").unwrap();
+
+    let res = tool
+        .call(&json!({ "path": csv_file.to_str().unwrap() }))
+        .await
+        .unwrap();
+    let text = res.get("content").and_then(|c| c.as_str()).unwrap();
+    assert!(text.contains("col1") && text.contains("val2"));
+
+    let _ = std::fs::remove_file(csv_file);
+}
+

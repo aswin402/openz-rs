@@ -36,6 +36,9 @@ fn sniff_format(file_path: &str) -> Option<String> {
                     if name.starts_with("xl/") {
                         return Some("xlsx".to_string());
                     }
+                    if name == "content.xml" {
+                        return Some("ods".to_string());
+                    }
                     if name.starts_with("ppt/") {
                         return Some("pptx".to_string());
                     }
@@ -60,7 +63,7 @@ pub fn load_to_ir_with_password(
 
     if !matches!(
         ext.as_str(),
-        "docx" | "doc" | "pptx" | "ppt" | "pdf" | "xlsx" | "xls" | "md" | "markdown" | "html" | "htm" | "csv" | "txt" | "text"
+        "docx" | "doc" | "pptx" | "ppt" | "pdf" | "xlsx" | "xls" | "ods" | "xlsb" | "md" | "markdown" | "html" | "htm" | "csv" | "txt" | "text"
     ) {
         if let Some(sniffed) = sniff_format(file_path) {
             ext = sniffed;
@@ -90,9 +93,9 @@ pub fn load_to_ir_with_password(
             }
             Ok(doc)
         }
-        "xlsx" | "xls" => {
+        "xlsx" | "xls" | "ods" | "xlsb" => {
             if password.is_some() {
-                return Err(LoadError::ParseError("Password decryption for Office documents (.xlsx) is not supported under offline mode due to missing office_crypto library. Encrypted PDFs are fully supported.".to_string()));
+                return Err(LoadError::ParseError("Password decryption for Office spreadsheets is not supported under offline mode due to missing office_crypto library. Encrypted PDFs are fully supported.".to_string()));
             }
             let doc = xlsx::to_ir(file_path).map_err(LoadError::ParseError)?;
             Ok(doc)

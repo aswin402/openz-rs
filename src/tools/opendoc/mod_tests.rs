@@ -278,5 +278,51 @@ fn test_opendoc_schema_sanitization_details() {
     assert_eq!(values_prop.get("additionalProperties").and_then(|v| v.as_bool()), Some(true));
 }
 
+#[tokio::test]
+async fn test_opendoc_chunk_for_embedding_options() {
+    let tool = OpendocChunkForEmbeddingTool;
+    let temp_file = std::env::temp_dir().join(format!("test_chunk_{}.txt", uuid::Uuid::new_v4()));
+    let content = "OpenZ is an async personal AI agent framework built in Rust.\n\nIt features offline document intelligence and fast vector search.\n\nNative tools provide high performance without external daemon overhead.";
+    std::fs::write(&temp_file, content).unwrap();
+
+    // 1. Chunking without vector generation
+    let res = tool
+        .call(&json!({
+            "file_path": temp_file.to_str().unwrap(),
+            "strategy": "fixed",
+            "max_tokens": 100
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(res.get("success").and_then(|v| v.as_bool()), Some(true));
+    let chunks = res.get("chunks").and_then(|c| c.as_array()).unwrap();
+    assert!(!chunks.is_empty());
+
+    // 2. Chunking with vector generation
+    let res_vec = tool
+        .call(&json!({
+            "file_path": temp_file.to_str().unwrap(),
+            "strategy": "fixed",
+            "max_tokens": 100,
+            "generate_embeddings": true
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        res_vec.get("success").and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    assert_eq!(
+        res_vec.get("embeddings_generated").and_then(|v| v.as_bool()),
+        Some(true)
+    );
+    let vec_chunks = res_vec.get("chunks").and_then(|c| c.as_array()).unwrap();
+    assert!(!vec_chunks.is_empty());
+
+    let _ = std::fs::remove_file(temp_file);
+}
+
 
 

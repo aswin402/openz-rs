@@ -95,9 +95,8 @@ impl OpendocServer {
         let file_path = validate_path!(file_path);
         match handlers::load_to_ir_with_password(&file_path, password.as_deref()) {
             Ok(ir) => {
-                let content = if !ir.paragraphs.is_empty() {
-                    let text: Vec<String> = ir.paragraphs.iter().map(|p| p.text.clone()).collect();
-                    text.join("\n")
+                let content = if !ir.paragraphs.is_empty() || !ir.tables.is_empty() {
+                    ir.to_markdown()
                 } else {
                     ir.text.clone().unwrap_or_default()
                 };
@@ -286,6 +285,7 @@ impl OpendocServer {
                         strategy: Option<String>,
                         max_tokens: Option<usize>,
                         overlap: Option<usize>,
+                        generate_embeddings: Option<bool>,
     ) -> String {
         let file_path = validate_path!(file_path);
         match handlers::load_to_ir(&file_path) {
@@ -301,11 +301,48 @@ impl OpendocServer {
                 let over = overlap.unwrap_or(50);
 
                 let chunks = ir.chunk_with_strategy(chunking_strategy, max_tok, over);
+                let embed = generate_embeddings.unwrap_or(false);
+                let embedded_chunks: Vec<serde_json::Value> = if embed {
+                    let texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
+                    let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+                    let embeddings_res: anyhow::Result<Vec<Vec<f32>>> = crate::tools::shared_memory::with_model(|model| {
+                        model.embed(refs, None).map_err(|e| anyhow::anyhow!(e.to_string()))
+                    });
+                    match embeddings_res {
+                        Ok(vectors) => chunks
+                            .into_iter()
+                            .zip(vectors)
+                            .map(|(c, v)| {
+                                serde_json::json!({
+                                    "index": c.index,
+                                    "heading": c.heading,
+                                    "text": c.text,
+                                    "embedding_dim": v.len(),
+                                    "embedding": v,
+                                })
+                            })
+                            .collect(),
+                        Err(err) => {
+                            tracing::warn!("Failed to compute embeddings for chunks: {}", err);
+                            chunks
+                                .into_iter()
+                                .map(|c| serde_json::to_value(c).unwrap_or_default())
+                                .collect()
+                        }
+                    }
+                } else {
+                    chunks
+                        .into_iter()
+                        .map(|c| serde_json::to_value(c).unwrap_or_default())
+                        .collect()
+                };
+
                 serde_json::json!({
                     "success": true,
                     "strategy": format!("{:?}", chunking_strategy).to_lowercase(),
-                    "chunk_count": chunks.len(),
-                    "chunks": chunks,
+                    "chunk_count": embedded_chunks.len(),
+                    "embeddings_generated": embed,
+                    "chunks": embedded_chunks,
                 })
                 .to_string()
             }

@@ -177,7 +177,7 @@ impl Tool for DocReaderTool {
     }
 
     fn description(&self) -> &str {
-        "Read contents of a document file (PDF, Excel, DOCX Word document) and return its text content."
+        "Read contents of a document file (PDF, DOCX, Excel, PPTX, CSV, HTML, Markdown, Plain Text) and return its text content."
     }
 
     fn parameters(&self) -> Value {
@@ -186,7 +186,7 @@ impl Tool for DocReaderTool {
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Path to the document file (e.g. .pdf, .xlsx, .xls, .ods, .docx, .png, .jpg)."
+                    "description": "Path to the document file (e.g. .pdf, .docx, .xlsx, .pptx, .csv, .html, .md, .txt, .png, .jpg)."
                 },
                 "auto_ocr": {
                     "type": "boolean",
@@ -227,7 +227,9 @@ impl Tool for DocReaderTool {
         let clean_path = path_str.strip_prefix("file://").unwrap_or(&path_str);
         let mut resolved_path = crate::config::loader::resolve_path(clean_path);
         if !resolved_path.exists() && resolved_path.extension().is_none() {
-            for ext in &["pdf", "docx", "xlsx", "xls", "ods"] {
+            for ext in &[
+                "pdf", "docx", "xlsx", "xls", "ods", "xlsb", "pptx", "ppt", "csv", "html", "md", "txt",
+            ] {
                 let with_ext = resolved_path.with_extension(ext);
                 if with_ext.exists() {
                     resolved_path = with_ext;
@@ -299,7 +301,7 @@ impl Tool for DocReaderTool {
                 }
                 Err(err) => return Err(err.into()),
             },
-            Some("xlsx") | Some("xls") | Some("ods") => {
+            Some("xlsx") | Some("xls") | Some("ods") | Some("xlsb") => {
                 let mut sheets = calamine::open_workbook_auto(&resolved_path)?;
                 let mut text = String::new();
                 for sheet_name in sheets.sheet_names().to_owned() {
@@ -320,12 +322,45 @@ impl Tool for DocReaderTool {
                 let mut file = File::open(&resolved_path)?;
                 let mut buf = Vec::new();
                 file.read_to_end(&mut buf)?;
-                extract_docx_text(&buf)?
+                match extract_docx_text(&buf) {
+                    Ok(text) if !text.trim().is_empty() => text,
+                    _ => {
+                        let resp = crate::tools::opendoc::get_server().read_document_text(
+                            resolved_path.to_string_lossy().to_string(),
+                            None,
+                        );
+                        serde_json::from_str::<Value>(&resp)
+                            .ok()
+                            .and_then(|v| {
+                                v.get("text")
+                                    .and_then(|t| t.as_str())
+                                    .map(ToString::to_string)
+                            })
+                            .unwrap_or_default()
+                    }
+                }
+            }
+            Some("pptx" | "ppt" | "csv" | "html" | "htm" | "md" | "markdown" | "txt" | "text") => {
+                let resp = crate::tools::opendoc::get_server().read_document_text(
+                    resolved_path.to_string_lossy().to_string(),
+                    None,
+                );
+                if let Ok(v) = serde_json::from_str::<Value>(&resp) {
+                    if let Some(text) = v.get("text").and_then(|t| t.as_str()) {
+                        text.to_string()
+                    } else if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+                        return Err(anyhow!("Failed to read document: {err}"));
+                    } else {
+                        resp
+                    }
+                } else {
+                    resp
+                }
             }
             ext if auto_ocr && is_image_ocr_extension(ext) => String::new(),
             _ => {
                 return Err(anyhow!(
-                    "Unsupported file extension. Supported formats: .pdf, .xlsx, .xls, .ods, .docx, .png, .jpg, .jpeg, .bmp, .tiff"
+                    "Unsupported file extension. Supported formats: .pdf, .docx, .xlsx, .xls, .ods, .pptx, .ppt, .csv, .html, .md, .txt, .png, .jpg, .jpeg, .bmp, .tiff"
                 ));
             }
         };

@@ -4,14 +4,12 @@
 //! The first row of each sheet is treated as the table header.
 
 use crate::tools::opendoc::ir::{Document, Section, Table};
-use calamine::{open_workbook, Data, Reader, Xlsx};
-use std::fs::File;
-use std::io::BufReader;
+use calamine::{Data, Reader};
 
 /// Load an XLSX file into the Internal Representation
 pub fn to_ir(file_path: &str) -> Result<Document, String> {
-    let mut workbook: Xlsx<BufReader<File>> =
-        open_workbook(file_path).map_err(|e| format!("Failed to open XLSX: {e}"))?;
+    let mut workbook = calamine::open_workbook_auto(file_path)
+        .map_err(|e| format!("Failed to open spreadsheet: {e}"))?;
 
     let sheet_names = workbook.sheet_names().to_vec();
     let mut doc = Document::new("xlsx");
@@ -242,8 +240,8 @@ pub struct XlsxEditRequest {
 /// Edit an existing XLSX file by applying sheet additions and cell updates
 pub fn edit_xlsx(request: &XlsxEditRequest) -> Result<String, String> {
     // 1. Open the existing workbook to read all sheets
-    let mut workbook: Xlsx<BufReader<File>> = open_workbook(&request.file_path)
-        .map_err(|e| format!("Failed to open XLSX for editing: {e}"))?;
+    let mut workbook = calamine::open_workbook_auto(&request.file_path)
+        .map_err(|e| format!("Failed to open spreadsheet for editing: {e}"))?;
 
     let sheet_names = workbook.sheet_names().to_vec();
     let mut sheets_data = Vec::new();
