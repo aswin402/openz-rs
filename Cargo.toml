@@ -1,6 +1,6 @@
 [package]
 name = "openz"
-version = "0.0.215"
+version = "0.0.216"
 edition = "2021"
 
 
@@ -16,8 +16,7 @@ members = [
     "tools/openmedia/process",
     "tools/openmedia/improve",
     "tools/openmedia/mcp",
-    "tools/opendoc",
-    "tools/openz-docs"
+    "tools/opendoc"
 ]
 
 [workspace.package]
@@ -123,7 +122,6 @@ searchxyz = { path = "tools/searchxyz", features = ["js-rendering"] }
 openmedia-core = { workspace = true }
 openmedia-mcp = { workspace = true }
 opendoc-mcp = { path = "tools/opendoc" }
-openz-docs-mcp = { path = "tools/openz-docs" }
 
 [features]
 default = []

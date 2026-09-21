@@ -6626,7 +6626,7 @@ dependencies = [
 
 [[package]]
 name = "openz"
-version = "0.0.215"
+version = "0.0.216"
 dependencies = [
  "ab_glyph",
  "anyhow",
@@ -6665,7 +6665,6 @@ dependencies = [
  "opendoc-mcp",
  "openmedia-core",
  "openmedia-mcp",
- "openz-docs-mcp",
  "oxc_allocator",
  "oxc_ast",
  "oxc_codegen",
@@ -6706,24 +6705,6 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "wavyte",
-]
-
-[[package]]
-name = "openz-docs-mcp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dirs 5.0.1",
- "html2md",
- "percent-encoding",
- "reqwest 0.12.28",
- "rmcp 1.8.0",
- "rusqlite",
- "schemars 1.2.2",
- "scraper 0.19.1",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]

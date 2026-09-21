@@ -1,4 +1,39 @@
-### v0.0.215 (Latest Release)
+### v0.0.216 (Latest Release)
+- **Ideas**:
+  - Native In-Process Documentation Architecture Consolidation:
+    - Continued the architectural initiative to absorb external sub-crates under `tools/` that relied on legacy in-memory JSON-RPC MCP wrappers (`rmcp`), targeting `tools/openz-docs`.
+    - Previously, `tools/openz-docs` was an external sub-crate (`openz-docs-mcp`) wrapping `rmcp` 1.7.0 and SQLite, forcing `src/tools/docs_mcp.rs` to serialize function parameters through `rmcp::handler::server::wrapper::Parameters<T>` across an in-memory JSON-RPC server boundary.
+    - Completely absorbed all 6 documentation tools natively into [`src/tools/docs_mcp.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/docs_mcp.rs) with a dedicated, high-performance in-process `DocsService` backed by OpenZ's canonical SQLite documentation cache (`~/.openz/docs.db`):
+      1. `DocsListDocsetsTool` (`docs_list_docsets`): In-process query of locally installed documentation sets.
+      2. `DocsInstallDocsetTool` (`docs_install_docset`): Direct async streaming and indexing of DevDocs docsets (`index.json` and `db.json`) with SSRF boundary checks into transactional SQLite storage.
+      3. `DocsSearchDocsTool` (`docs_search_docs`): Indexed full-text search across documentation methods, articles, and types.
+      4. `DocsReadDocPageTool` (`docs_read_doc_page`): In-process HTML-to-Markdown translation (`html2md`) with SQLite caching.
+      5. `DocsSearchRustCrateTool` (`docs_search_rust_crate`): Direct crates.io query with user-agent identification and SSRF validation.
+      6. `DocsReadRustDocsTool` (`docs_read_rust_docs`): Docs.rs documentation scraper with DOM extraction (`scraper`) and local SQLite caching.
+    - Deleted the `tools/openz-docs` sub-crate entirely, removing `openz-docs-mcp` from `[workspace.members]`, `dependencies`, `Cargo.lock`, and `onpkg.json`.
+    - Hardened all 6 tool parameter schemas to conform strictly with OpenAPI 3.0 requirements (`type: object`, explicit `properties`, and `additionalProperties: true`).
+- **Inspirations**:
+  - OpenZ's zero-overhead native tool paradigm, eliminating redundant IPC/RPC translation layers for internal services.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/docs_mcp.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/docs_mcp.rs): Native in-process `DocsService` and all 6 Tool implementations.
+    - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml): Removed `tools/openz-docs` from workspace members and dependencies; bumped package version to `0.0.216`.
+    - [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json): Cleaned package manifest and bumped version to `0.0.216`.
+    - [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Synchronized version badge to `v0.0.216`.
+  - Test Modules:
+    - [`src/tools/docs_mcp_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/docs_mcp_tests.rs): 4 unit tests covering tool metadata, OpenAPI schemas, parameter validation, and in-memory SQLite operations.
+    - [`src/cli/builder.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder.rs): `test_native_tool_registration_names` verifying the exact 260 registered native tools invariant.
+- **Details & Metrics**:
+  - Deleted legacy sub-crate `tools/openz-docs` entirely.
+  - Eliminated `openz-docs-mcp` and `rmcp` dependencies from documentation subsystem.
+  - Retained exact tool identifiers (`docs_list_docsets`, `docs_install_docset`, `docs_search_docs`, `docs_read_doc_page`, `docs_search_rust_crate`, `docs_read_rust_docs`).
+  - Exactly 260 registered native tools invariant preserved.
+- **Verification**:
+  - 260 registered native tools invariant verified (`cargo test -p openz --lib test_native_tool_registration_names -j 1`).
+  - Docs MCP tool tests passed (`cargo test -p openz --lib tools::docs_mcp::tests -j 1`).
+  - 0 clippy warnings (`cargo clippy -p openz -j 1`).
+
+### v0.0.215
 - **Ideas**:
   - Native In-Process Architecture Consolidation:
     - Studied the auxiliary sub-crates in `tools/` that relied on legacy in-memory JSON-RPC MCP wrappers (`rmcp`), starting with `tools/openz-github`.
