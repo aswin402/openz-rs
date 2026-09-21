@@ -107,7 +107,7 @@ pub static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
         writes_disk: false,
         uses_network: false,
         recommended_timeout_secs: None,
-        aliases: &["search memories", "retrieve memory", "remember"],
+        aliases: &["search memories", "retrieve memory", "find memory"],
         examples: &["Recall a stored workflow or fact"],
         when_to_use: "Use to search durable cognitive memory for relevant facts, guidelines, or code patterns.",
         when_not_to_use: "Avoid for graph-only queries or when no durable memory lookup is needed.",

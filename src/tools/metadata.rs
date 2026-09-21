@@ -407,6 +407,8 @@ fn tool_uses_network(name: &str) -> bool {
     ) || name.starts_with("searchxyz")
         || name.starts_with("github")
         || name.starts_with("docs_install")
+        || name == "docs_search_rust_crate"
+        || name == "docs_read_rust_docs"
         || name.contains("browser")
         || name.contains("download")
         || name.contains("mcp")

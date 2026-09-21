@@ -1,4 +1,41 @@
-### v0.0.216 (Latest Release)
+### v0.0.217 (Latest Release)
+- **Ideas**:
+  - Live End-to-End Headless Verification of Native Docs and GitHub Tools:
+    - Spawned autonomous subagent validator (`c27a2645-e5af-4c5e-8778-cfccf9e6350a`) and executed end-to-end headless CLI runs with `./target/debug/openz run -p "..." -y` to exercise all consolidated in-process tools under real LLM execution loops.
+    - Verified `docs_search_rust_crate` against live crates.io API (successfully searched `serde` v1.0.229 with compliant user-agent and JSON extraction).
+    - Verified `docs_list_docsets` against local SQLite `~/.openz/docs.db` (retrieved installed `rust` docset in <20ms).
+    - Verified `github_search_issues` against live GitHub REST API (retrieved active diagnostic issues from `rust-lang/rust` with state and formatted Markdown tables).
+    - Verified `github_get_issue_comments` against live GitHub REST API (retrieved first comment on `rust-lang/rust#1` by Graydon Hoare).
+  - Registry Drift & Alias Conflict Disambiguation:
+    - Fixed an alias resolution collision in [`src/tools/defs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/defs.rs): `recall_memory` previously declared `remember` as an alias, conflicting with `store_memory` in `ToolRegistry::resolve_static_name`. Updated `recall_memory` alias to `find memory`, ensuring all curated aliases resolve uniquely without ambiguity.
+    - Verified `cli::tools::tests::tool_registry_exposes_every_registered_tool`: every tool in the registry is uniquely resolvable and all static curated aliases are clean.
+  - Network Capability Classification:
+    - Hardened [`src/tools/metadata.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/metadata.rs): Explicitly categorized `docs_search_rust_crate` (crates.io) and `docs_read_rust_docs` (docs.rs) as network tools in `tool_uses_network`, ensuring security policies, workflow capability gates, and subagent permissions properly enforce network sandboxing.
+- **Inspirations**:
+  - Strict tool registry invariant testing, empirical end-to-end headless verification, and capability-based security gating.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/defs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/defs.rs): Disambiguated `recall_memory` alias from `remember` to `find memory`.
+    - [`src/tools/metadata.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/metadata.rs): Classified `docs_search_rust_crate` and `docs_read_rust_docs` in `tool_uses_network`.
+    - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml): Synchronized version to `0.0.217`.
+    - [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json): Synchronized version to `0.0.217`.
+    - [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Updated version badge to `v0.0.217`.
+  - Test Modules:
+    - [`src/cli/tools_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tools_tests.rs): `tool_registry_exposes_every_registered_tool`.
+    - [`src/tools/docs_mcp_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/docs_mcp_tests.rs): All 4 docs tool tests passed.
+    - [`src/tools/github_mcp_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/github_mcp_tests.rs): All 4 GitHub tool tests passed.
+- **Details & Metrics**:
+  - 1 alias conflict resolved.
+  - 2 documentation tools hardened with network classification.
+  - 100% test pass rate across all registry and integration suites.
+  - Exact 260 registered native tools invariant preserved.
+- **Verification**:
+  - `cargo test -p openz --lib cli::tools::tests::tool_registry_exposes_every_registered_tool -j 1`: PASS.
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1`: PASS.
+  - `cargo clippy -p openz -j 1`: 0 warnings.
+  - Live headless CLI executions verified for both Docs and GitHub native tools.
+
+### v0.0.216
 - **Ideas**:
   - Native In-Process Documentation Architecture Consolidation:
     - Continued the architectural initiative to absorb external sub-crates under `tools/` that relied on legacy in-memory JSON-RPC MCP wrappers (`rmcp`), targeting `tools/openz-docs`.
