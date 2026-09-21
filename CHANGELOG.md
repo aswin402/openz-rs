@@ -1,4 +1,36 @@
-### v0.0.214 (Latest Release)
+### v0.0.215 (Latest Release)
+- **Ideas**:
+  - Native In-Process Architecture Consolidation:
+    - Studied the auxiliary sub-crates in `tools/` that relied on legacy in-memory JSON-RPC MCP wrappers (`rmcp`), starting with `tools/openz-github`.
+    - Previously, `tools/openz-github` was an external sub-crate wrapping `octocrab` and `rmcp`, requiring `src/tools/github_mcp.rs` to serialize function arguments into `rmcp::model::Parameters<T>`, dispatch them across an in-process JSON-RPC protocol barrier, and deserialize the payload.
+    - Completely absorbed the GitHub tools into OpenZ's native async runtime using OpenZ's shared `reqwest` client, dropping the `tools/openz-github` sub-crate and `openz-github-mcp` workspace dependency.
+    - Eliminated heavy transitive dependencies from the dependency tree (`octocrab`, `jsonwebtoken`, `pem`, `simple_asn1`, `snafu`, `secrecy`, and redundant `hyper-rustls`/`tokio-rustls` duplicate versions).
+    - Unified GitHub token resolution with cascading fallbacks (`GITHUB_TOKEN`, `OCTOCRAB_TOKEN`, `GITHUB_PAT`, and `config.json` provider tokens).
+    - Hardened GitHub API requests with OpenZ's SSRF protection boundary (`crate::tools::web::validate_url`).
+    - Standardized all tool schemas to adhere strictly to OpenAPI 3.0 specifications with explicit parameter objects and required array fields, avoiding bare object validation failures.
+- **Inspirations**:
+  - Native in-process tool architecture (following OpenZ's prior native migrations of `sequential-thinking`, `headroom`, and `memory-extra`), eliminating unnecessary IPC/RPC abstractions for embedded tools.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/github_mcp.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/github_mcp.rs): Native in-process implementations of `GithubCreatePullRequestTool`, `GithubSearchIssuesTool`, and `GithubGetIssueCommentsTool` using `reqwest` and unified token resolution.
+    - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml): Removed `tools/openz-github` from `[workspace.members]` and removed `openz-github-mcp` dependency; bumped package version to `0.0.215`.
+    - [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json): Cleaned package manifest and bumped version to `0.0.215`.
+    - [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Synchronized version badge to `v0.0.215`.
+  - Test Modules:
+    - [`src/tools/github_mcp_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/github_mcp_tests.rs): Unit tests for metadata, JSON Schema contracts, and required parameter validations for GitHub tools.
+    - [`src/cli/builder.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder.rs): `test_native_tool_registration_names` verifying the exact 260 registered native tools invariant.
+- **Details & Metrics**:
+  - Deleted legacy sub-crate `tools/openz-github` entirely.
+  - Eliminated `openz-github-mcp` and `octocrab` from workspace dependencies.
+  - Retained exact tool identifiers: `github_create_pull_request`, `github_search_issues`, and `github_get_issue_comments`.
+  - Exactly 260 registered native tools invariant preserved.
+- **Verification**:
+  - 260 registered native tools invariant verified (`cargo test -p openz --lib test_native_tool_registration_names -j 1`).
+  - GitHub MCP tool tests passed (`cargo test -p openz --lib tools::github_mcp::tests -j 1`).
+  - Git provider unit tests passed (`cargo test -p openz --lib tools::github::tests -j 1`).
+  - 0 clippy warnings (`cargo clippy -p openz -j 1`).
+
+### v0.0.214
 - **Ideas**:
   - Researched, diagnosed, and overhauled OpenZ's multi-agent workflow systems (`orchestrate_workflow` and `sop` standard operating procedures) through live execution, subagent orchestration, and strict schema verification.
   - Resolved **Gemini Function Call Malformed Filter** (`MALFORMED_FUNCTION_CALL` / `finish_reason: function_call_filter`):

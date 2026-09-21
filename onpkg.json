@@ -94,7 +94,6 @@
       "openmedia-svg",
       "openmedia-video",
       "openz-docs-mcp",
-      "openz-github-mcp",
       "oxc_allocator",
       "oxc_ast",
       "oxc_codegen",
@@ -138,7 +137,7 @@
   },
   "project": {
     "name": "openz",
-    "version": "0.0.214",
+    "version": "0.0.215",
     "description": "OpenZ — Async Personal AI Agent Framework in Rust",
     "package_manager": "cargo",
     "runtime": "rust",
