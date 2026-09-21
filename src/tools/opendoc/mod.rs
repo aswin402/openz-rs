@@ -1,5 +1,15 @@
+pub mod batch;
+pub mod converters;
+pub mod engine;
+pub mod handlers;
+pub mod ir;
+pub mod ocr;
+pub mod security;
+pub mod server;
+pub mod validators;
+
 use anyhow::Result;
-use opendoc_mcp::server::OpendocServer;
+use crate::tools::opendoc::server::OpendocServer;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{json, Value};

@@ -1019,21 +1019,6 @@ dependencies = [
 
 [[package]]
 name = "calamine"
-version = "0.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a3a315226fdc5b1c3e33521073e1712a05944bc0664d665ff1f6ff0396334da"
-dependencies = [
- "byteorder",
- "codepage",
- "encoding_rs",
- "log",
- "quick-xml 0.31.0",
- "serde",
- "zip 0.6.6",
-]
-
-[[package]]
-name = "calamine"
 version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8822fe6253ca47aa5ad9a3be09f6fe7cd20c6a74e41b0aa42e8f4e3d523508df"
@@ -6370,42 +6355,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "opendoc-mcp"
-version = "0.0.13"
-dependencies = [
- "anyhow",
- "calamine 0.24.0",
- "clap",
- "comrak",
- "csv",
- "flate2",
- "getrandom 0.2.17",
- "getrandom 0.3.4",
- "getrandom 0.4.3",
- "html5ever 0.27.0",
- "image 0.25.10",
- "lopdf 0.31.0",
- "pptx",
- "pulldown-cmark",
- "quick-xml 0.31.0",
- "rayon",
- "rdocx",
- "regex",
- "rmcp 0.1.5",
- "roxmltree 0.19.0",
- "rust_xlsxwriter",
- "scraper 0.19.1",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "toml 0.8.23",
- "tracing",
- "tracing-subscriber",
- "zip 2.4.2",
-]
-
-[[package]]
 name = "openmedia-animate"
 version = "0.0.17"
 dependencies = [
@@ -6490,8 +6439,8 @@ dependencies = [
  "openmedia-process",
  "openmedia-svg",
  "openmedia-video",
- "rmcp 1.8.0",
- "schemars 1.2.2",
+ "rmcp",
+ "schemars",
  "serde",
  "serde_json",
  "tempfile",
@@ -6626,7 +6575,7 @@ dependencies = [
 
 [[package]]
 name = "openz"
-version = "0.0.218"
+version = "0.0.219"
 dependencies = [
  "ab_glyph",
  "anyhow",
@@ -6634,11 +6583,13 @@ dependencies = [
  "async-trait",
  "axum 0.7.9",
  "base64 0.22.1",
- "calamine 0.35.0",
+ "calamine",
  "chrono",
  "clap",
+ "comrak",
  "cron",
  "crossterm 0.29.0",
+ "csv",
  "diffy",
  "dirs 5.0.1",
  "docx-rs",
@@ -6651,18 +6602,19 @@ dependencies = [
  "hex",
  "hmac 0.12.1",
  "html2md",
+ "html5ever 0.27.0",
  "image 0.25.10",
  "imageproc",
  "imap",
  "inquire",
  "lettre",
  "libc",
+ "lopdf 0.31.0",
  "lru",
  "mailparse",
  "mermaid-rs-renderer",
  "notify",
  "open",
- "opendoc-mcp",
  "openmedia-core",
  "openmedia-mcp",
  "oxc_allocator",
@@ -6674,14 +6626,21 @@ dependencies = [
  "pdf-extract 0.10.0",
  "percent-encoding",
  "plotters",
+ "pptx",
  "prost",
+ "pulldown-cmark",
+ "quick-xml 0.31.0",
  "rand 0.8.7",
  "ratatui",
+ "rayon",
+ "rdocx",
  "regex",
  "reqwest 0.12.28",
- "rmcp 1.8.0",
+ "rmcp",
+ "roxmltree 0.19.0",
  "rusqlite",
- "schemars 1.2.2",
+ "rust_xlsxwriter",
+ "schemars",
  "scraper 0.19.1",
  "searchxyz",
  "serde",
@@ -6691,6 +6650,7 @@ dependencies = [
  "spider",
  "tantivy",
  "thirtyfour",
+ "thiserror 2.0.19",
  "tikv-jemallocator",
  "tiny-skia",
  "tokio",
@@ -6705,6 +6665,7 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "wavyte",
+ "zip 2.4.2",
 ]
 
 [[package]]
@@ -7836,7 +7797,6 @@ version = "0.31.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1004a344b30a54e2ee58d66a71b32d2db2feb0a31f9a2d302bf0536f15de2a33"
 dependencies = [
- "encoding_rs",
  "memchr",
 ]
 
@@ -8581,27 +8541,6 @@ dependencies = [
 
 [[package]]
 name = "rmcp"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33a0110d28bd076f39e14bfd5b0340216dd18effeb5d02b43215944cc3e5c751"
-dependencies = [
- "base64 0.21.7",
- "chrono",
- "futures",
- "paste",
- "pin-project-lite",
- "rmcp-macros 0.1.5",
- "schemars 0.8.22",
- "serde",
- "serde_json",
- "thiserror 2.0.19",
- "tokio",
- "tokio-util",
- "tracing",
-]
-
-[[package]]
-name = "rmcp"
 version = "1.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d1f571c72940a19d9532fe52dbea8bc9912bf1d766c2970bb824056b86f3f59"
@@ -8617,8 +8556,8 @@ dependencies = [
  "pastey 0.2.3",
  "pin-project-lite",
  "rand 0.10.2",
- "rmcp-macros 1.8.0",
- "schemars 1.2.2",
+ "rmcp-macros",
+ "schemars",
  "serde",
  "serde_json",
  "sse-stream",
@@ -8629,17 +8568,6 @@ dependencies = [
  "tower-service",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "rmcp-macros"
-version = "0.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6e2b2fd7497540489fa2db285edd43b7ed14c49157157438664278da6e42a7a"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -9016,18 +8944,6 @@ dependencies = [
 
 [[package]]
 name = "schemars"
-version = "0.8.22"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fbf2ae1b8bc8e02df939598064d22402220cd5bbcca1c76f7d6a310974d5615"
-dependencies = [
- "dyn-clone",
- "schemars_derive 0.8.22",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "schemars"
 version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "687274d293b6cdc6e73e0fee520bf2049650090d7164f87672d212a3c530cf4a"
@@ -9035,21 +8951,9 @@ dependencies = [
  "chrono",
  "dyn-clone",
  "ref-cast",
- "schemars_derive 1.2.2",
+ "schemars_derive",
  "serde",
  "serde_json",
-]
-
-[[package]]
-name = "schemars_derive"
-version = "0.8.22"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32e265784ad618884abaea0600a9adf15393368d840e0222d101a072f3f7534d"
-dependencies = [
- "proc-macro2",
- "quote",
- "serde_derive_internals 0.29.1",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -9060,7 +8964,7 @@ checksum = "d98c67716b46af2f0b8cf752abc930f6f9aecfbf671ecfb531db8a31dbe4e2ba"
 dependencies = [
  "proc-macro2",
  "quote",
- "serde_derive_internals 0.30.0",
+ "serde_derive_internals",
  "syn 3.0.3",
 ]
 
@@ -9124,8 +9028,8 @@ dependencies = [
  "pdf-extract 0.7.12",
  "rand 0.9.5",
  "reqwest 0.12.28",
- "rmcp 1.8.0",
- "schemars 1.2.2",
+ "rmcp",
+ "schemars",
  "scraper 0.22.0",
  "serde",
  "serde_json",
@@ -9276,17 +9180,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 3.0.3",
-]
-
-[[package]]
-name = "serde_derive_internals"
-version = "0.29.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18d26a20a969b9e3fdf2fc2d9f21eda6c40e2de84c9408bb5d3b05d499aae711"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.119",
 ]
 
 [[package]]
@@ -13221,18 +13114,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
-]
-
-[[package]]
-name = "zip"
-version = "0.6.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "760394e246e4c28189f19d488c058bf16f564016aefac5d32bb1f3b51d5e9261"
-dependencies = [
- "byteorder",
- "crc32fast",
- "crossbeam-utils",
- "flate2",
 ]
 
 [[package]]

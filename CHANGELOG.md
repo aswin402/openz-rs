@@ -1,4 +1,52 @@
-### v0.0.218 (Latest Release)
+### v0.0.219 (Latest Release)
+- **Ideas**:
+  - Full Native In-Process Absorption of OpenDoc Document Intelligence Engine:
+    - Completely absorbed the OpenDoc document processing engine into OpenZ core under [`src/tools/opendoc/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/), eliminating the external workspace crate `opendoc-mcp` and removing `tools/opendoc/` in its entirety.
+    - Integrated all document handlers, converters, batch digesters, IR pipelines, format validators, and templating engines directly in-process:
+      - `src/tools/opendoc/batch/`: Batch document conversion and ZIP archive inspection.
+      - `src/tools/opendoc/converters/`: Multi-format transmutation and rendering pipelines (Markdown, HTML, DOCX, PPTX, PDF, XLSX).
+      - `src/tools/opendoc/engine/`: Chunking, complexity analysis, semantic diffing, text replacement, search, and template filling.
+      - `src/tools/opendoc/handlers/`: High-performance handlers for CSV, DOCX (`rdocx`), HTML (`html5ever`), Markdown (`comrak`), PDF (`lopdf`), PDF Forms (`lopdf`), PPTX (`pptx`), and XLSX (`rust_xlsxwriter` & `calamine`).
+      - `src/tools/opendoc/ir/`: Unified intermediate representation for cross-format document manipulation.
+      - `src/tools/opendoc/ocr/`: Native OCR engine with automatic Tesseract discovery and fallback.
+      - `src/tools/opendoc/security/`: Path sandboxing and traversal protection integrated with OpenZ's path resolver `crate::config::loader::resolve_path`.
+      - `src/tools/opendoc/validators/`: PDF/A compliance validator and document structural integrity checkers.
+    - Upgraded and pruned dependencies:
+      - Removed legacy external MCP runtime dependencies (`rmcp 0.1`) and CLI argument parser (`clap 4`) from the document engine.
+      - Wired document format dependencies directly in root [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml): `rdocx`, `pptx`, `lopdf`, `rust_xlsxwriter`, `csv`, `zip`, `quick-xml`, `roxmltree`, `html5ever`, `pulldown-cmark`, `comrak`, `rayon`, and `thiserror`.
+      - Removed `opendoc-mcp` from `workspace.members`, `justfile`, and `onpkg.json`.
+  - Upgraded Path Resolution & Error Resilience:
+    - Replaced naive path canonicalization in [`src/tools/opendoc/security.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/security.rs) with OpenZ's native `crate::config::loader::resolve_path`, safely supporting `~` expansion, `file://` prefixes, and non-existent creation target paths.
+    - Resolved Clippy argument-count lints across DOCX, PPTX, and batch tool handlers with `#[allow(clippy::too_many_arguments)]`.
+- **Inspirations**:
+  - Unified monolithic binary design, zero-IPC document manipulation, headless agent workflows, and clean Cargo workspace ergonomics.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/opendoc/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs): Exposed native submodules `batch`, `converters`, `engine`, `handlers`, `ir`, `ocr`, `security`, `server`, and `validators`, and pointed `get_server()` to native `OpendocServer`.
+    - [`src/tools/opendoc/server.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/server.rs): Converted `OpendocServer` to native in-process engine without external MCP transport overhead.
+    - [`src/tools/opendoc/security.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/security.rs): Native path resolution using `crate::config::loader::resolve_path`.
+    - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml): Added native document format crates, removed `tools/opendoc` from `workspace.members`, removed `opendoc-mcp` dependency, and incremented version to `0.0.219`.
+    - [`justfile`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/justfile): Removed deleted `opendoc-mcp` entry from `list-packages`.
+    - [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json): Removed `opendoc-mcp` and incremented version to `0.0.219`.
+    - [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Incremented version badge to `v0.0.219`.
+  - Test Modules:
+    - [`src/tools/opendoc/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod_tests.rs): Verified all 9 unit tests pass against native engine.
+    - [`src/cli/builder_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder_tests.rs): Verified exact 260 registered native tools invariant.
+- **Details & Metrics**:
+  - 1 external crate (`tools/opendoc/` containing 63 files and ~15,000 lines) removed and consolidated natively into `src/tools/opendoc/`.
+  - 0 external MCP server processes or sub-binaries required for document intelligence.
+  - 9 out of 9 OpenDoc tests passing cleanly in-process.
+  - Exact 260 registered native tools invariant preserved.
+  - 0 compiler warnings, 0 clippy warnings.
+- **Verification**:
+  - `cargo check -p openz -j 1`: PASS (0 warnings).
+  - `cargo test -p openz -j 1 --lib tools::opendoc::tests`: 9 passed, 0 failed.
+  - `cargo test -p openz -j 1 --lib test_native_tool_registration_names`: PASS (exact 260 tools).
+  - `cargo test -p openz -j 1 --lib cli::tools::tests::tool_registry_exposes_every_registered_tool`: PASS.
+  - `cargo test -p openz -j 1 --lib version_sync_tests`: PASS.
+  - `cargo clippy -p openz -j 1`: 0 warnings.
+
+### v0.0.218
 - **Ideas**:
   - OpenDoc Document Intelligence Tool Parameter Schema Hardening & OpenAPI Compliance:
     - Designed and implemented `sanitize_opendoc_schema` in [`src/tools/opendoc/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs): strips root `$schema` and `title` metadata from parameter definitions across all 36 OpenDoc tools, ensuring full compatibility with OpenAI Function Calling, Google AI Studio / Gemini, Anthropic, and local LLM tool parsers.

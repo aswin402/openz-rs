@@ -1,6 +1,6 @@
 [package]
 name = "openz"
-version = "0.0.218"
+version = "0.0.219"
 edition = "2021"
 
 
@@ -15,8 +15,7 @@ members = [
     "tools/openmedia/animate",
     "tools/openmedia/process",
     "tools/openmedia/improve",
-    "tools/openmedia/mcp",
-    "tools/opendoc"
+    "tools/openmedia/mcp"
 ]
 
 [workspace.package]
@@ -49,6 +48,7 @@ async-trait = "0.1.80"
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 anyhow = "1.0"
+thiserror = "2.0"
 tokio = { version = "1.38", features = ["rt-multi-thread", "net", "sync", "time", "macros", "io-util", "process", "signal", "fs"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 serde = { version = "1.0", features = ["derive"] }
@@ -121,11 +121,22 @@ schemars = "1.2"
 searchxyz = { path = "tools/searchxyz", features = ["js-rendering"] }
 openmedia-core = { workspace = true }
 openmedia-mcp = { workspace = true }
-opendoc-mcp = { path = "tools/opendoc", default-features = false, features = ["server"] }
+rdocx = "0.1"
+pptx = "0.1"
+lopdf = "0.31"
+rust_xlsxwriter = "0.68"
+csv = "1.3"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+quick-xml = "0.31"
+roxmltree = "0.19"
+html5ever = "0.27"
+pulldown-cmark = "0.11"
+comrak = "0.25"
+rayon = "1.10"
 
 [features]
 default = []
-ocr = ["opendoc-mcp/ocr"]
+ocr = []
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]
 tikv-jemallocator = "0.6"
