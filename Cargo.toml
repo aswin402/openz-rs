@@ -1,6 +1,6 @@
 [package]
 name = "openz"
-version = "0.0.217"
+version = "0.0.218"
 edition = "2021"
 
 
@@ -121,7 +121,7 @@ schemars = "1.2"
 searchxyz = { path = "tools/searchxyz", features = ["js-rendering"] }
 openmedia-core = { workspace = true }
 openmedia-mcp = { workspace = true }
-opendoc-mcp = { path = "tools/opendoc" }
+opendoc-mcp = { path = "tools/opendoc", default-features = false, features = ["server"] }
 
 [features]
 default = []

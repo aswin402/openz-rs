@@ -564,6 +564,70 @@ fn normalize_opendoc_args(tool_name: &str, arguments: &Value) -> Value {
     }
 }
 
+pub fn sanitize_opendoc_schema(mut val: Value) -> Value {
+    if let Value::Object(ref mut map) = val {
+        map.remove("$schema");
+        map.remove("title");
+
+        // Ensure top-level type is "object"
+        if !map.contains_key("type") {
+            map.insert("type".to_string(), Value::String("object".to_string()));
+        }
+
+        // Sanitize properties
+        if let Some(Value::Object(props)) = map.get_mut("properties") {
+            for (k, v) in props.iter_mut() {
+                if let Value::Object(prop_map) = v {
+                    prop_map.remove("title");
+
+                    // If no type specified (common when serde_json::Value is used in params)
+                    if !prop_map.contains_key("type")
+                        && !prop_map.contains_key("$ref")
+                        && !prop_map.contains_key("anyOf")
+                        && !prop_map.contains_key("oneOf")
+                    {
+                        if k == "sheets" || k == "cell_updates" {
+                            prop_map.insert("type".to_string(), Value::String("array".to_string()));
+                            prop_map.insert(
+                                "items".to_string(),
+                                json!({
+                                    "type": "object",
+                                    "additionalProperties": true
+                                }),
+                            );
+                        } else if k == "add_sheets" {
+                            prop_map.insert("type".to_string(), Value::String("array".to_string()));
+                            prop_map.insert(
+                                "items".to_string(),
+                                json!({
+                                    "type": "string"
+                                }),
+                            );
+                        } else {
+                            prop_map.insert("type".to_string(), Value::String("object".to_string()));
+                            prop_map.insert("additionalProperties".to_string(), Value::Bool(true));
+                        }
+                    }
+
+                    // If type is "object" or contains "object", ensure it either has properties or additionalProperties
+                    let is_object_type = match prop_map.get("type") {
+                        Some(Value::String(s)) => s == "object",
+                        Some(Value::Array(arr)) => arr.iter().any(|v| v.as_str() == Some("object")),
+                        _ => false,
+                    };
+                    if is_object_type
+                        && !prop_map.contains_key("properties")
+                        && !prop_map.contains_key("additionalProperties")
+                    {
+                        prop_map.insert("additionalProperties".to_string(), Value::Bool(true));
+                    }
+                }
+            }
+        }
+    }
+    val
+}
+
 macro_rules! define_opendoc_tool {
     ($struct_name:ident, $tool_name:expr, $description:expr, $params_struct:ident, $body:expr) => {
         pub struct $struct_name;
@@ -580,7 +644,8 @@ macro_rules! define_opendoc_tool {
 
             fn parameters(&self) -> Value {
                 let schema = schemars::schema_for!($params_struct);
-                serde_json::to_value(schema).unwrap_or_else(|_| json!({}))
+                let val = serde_json::to_value(schema).unwrap_or_else(|_| json!({"type": "object"}));
+                sanitize_opendoc_schema(val)
             }
 
             async fn call(&self, arguments: &Value) -> Result<Value> {
@@ -1351,7 +1416,8 @@ impl crate::tools::Tool for OpendocCheckOcrAvailableTool {
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
-            "properties": {}
+            "properties": {},
+            "additionalProperties": true
         })
     }
     async fn call(&self, _arguments: &Value) -> Result<Value> {

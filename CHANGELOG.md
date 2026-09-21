@@ -1,4 +1,38 @@
-### v0.0.217 (Latest Release)
+### v0.0.218 (Latest Release)
+- **Ideas**:
+  - OpenDoc Document Intelligence Tool Parameter Schema Hardening & OpenAPI Compliance:
+    - Designed and implemented `sanitize_opendoc_schema` in [`src/tools/opendoc/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs): strips root `$schema` and `title` metadata from parameter definitions across all 36 OpenDoc tools, ensuring full compatibility with OpenAI Function Calling, Google AI Studio / Gemini, Anthropic, and local LLM tool parsers.
+    - Dynamically repaired untyped schema fields (`variables` in `FillTemplateParams`, `sheets` in `CreateXlsxParams`, `values` in `FillPdfFormParams`, `add_sheets` and `cell_updates` in `EditXlsxParams`) by assigning explicit OpenAPI types (`object` with `additionalProperties: true`, `array` with typed item definitions) to prevent strict validation failures in model providers.
+    - Guaranteed all object parameters define either `properties` or `additionalProperties: true` recursively.
+  - Dependency Graph Decoupling & Target Disk Pressure Remediation:
+    - Decoupled `opendoc-mcp` in root [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml) with `default-features = false, features = ["server"]`, completely eliminating unused `clap` CLI dependencies and standalone binary compilation from `tools/opendoc`.
+    - Cleaned up obsolete package listings in [`justfile`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/justfile) (`openz-github-mcp` and `openz-docs-mcp`).
+    - Diagnosed critical disk pressure where incremental compiler caches in `target/debug/incremental` and accumulated test artifacts consumed 103.6 GB; executed cargo cleanup to reclaim 103.6 GB, dropping root disk utilization from 100% to 74% (117 GB free).
+- **Inspirations**:
+  - OpenAPI 3.0 tool calling specifications, Google AI Studio parameter schema requirements, zero-warning Cargo workspace hygiene, and automated disk pressure management.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/opendoc/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs): Added `sanitize_opendoc_schema` and updated `define_opendoc_tool!` and `OpendocCheckOcrAvailableTool`.
+    - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml): Updated `opendoc-mcp` dependency with `default-features = false, features = ["server"]` and incremented package version to `0.0.218`.
+    - [`justfile`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/justfile): Removed deleted auxiliary crate entries from `list-packages`.
+    - [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json): Synchronized project version to `0.0.218`.
+    - [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Updated version badge to `v0.0.218`.
+  - Test Modules:
+    - [`src/tools/opendoc/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod_tests.rs): Added `test_all_opendoc_tool_parameters_schemas_conform_to_openapi` and `test_opendoc_schema_sanitization_details` (all 9 opendoc tests passing).
+- **Details & Metrics**:
+  - 36 OpenDoc document intelligence tools verified and hardened with sanitized OpenAPI schemas.
+  - 9 out of 9 OpenDoc unit tests passing cleanly.
+  - Exact 260 registered native tools invariant preserved.
+  - 103.6 GB disk space reclaimed (disk usage dropped from 100% full with 3.1 GB free to 74% with 117 GB free).
+  - 0 compiler warnings, 0 clippy warnings.
+- **Verification**:
+  - `cargo test -p openz -j 1 --lib tools::opendoc::tests`: 9 passed, 0 failed.
+  - `cargo test -p openz -j 1 --lib test_native_tool_registration_names`: PASS (exact 260 tools).
+  - `cargo test -p openz -j 1 --lib cli::tools::tests::tool_registry_exposes_every_registered_tool`: PASS.
+  - `cargo clippy -p openz -j 1`: 0 warnings.
+  - `df -h`: 117 GB available.
+
+### v0.0.217
 - **Ideas**:
   - Live End-to-End Headless Verification of Native Docs and GitHub Tools:
     - Spawned autonomous subagent validator (`c27a2645-e5af-4c5e-8778-cfccf9e6350a`) and executed end-to-end headless CLI runs with `./target/debug/openz run -p "..." -y` to exercise all consolidated in-process tools under real LLM execution loops.

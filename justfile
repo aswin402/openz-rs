@@ -24,8 +24,6 @@ list-packages:
     @echo " - openmedia-improve"
     @echo " - openmedia-mcp"
     @echo " - opendoc-mcp"
-    @echo " - openz-github-mcp"
-    @echo " - openz-docs-mcp"
 
 # Run cargo check on a specific package (defaults to "openz") using at most 2 parallel jobs
 check package="openz":

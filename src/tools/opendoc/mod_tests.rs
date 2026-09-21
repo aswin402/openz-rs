@@ -151,4 +151,132 @@ async fn test_opendoc_complexity_and_ocr_tools() {
     let _ = std::fs::remove_file(temp_file);
 }
 
+#[test]
+fn test_all_opendoc_tool_parameters_schemas_conform_to_openapi() {
+    let tools: Vec<Box<dyn Tool>> = vec![
+        Box::new(OpendocOpenDocumentTool),
+        Box::new(OpendocReadDocumentTextTool),
+        Box::new(OpendocSearchDocumentTool),
+        Box::new(OpendocReplaceTextTool),
+        Box::new(OpendocDiffDocumentsTool),
+        Box::new(OpendocDiffDocumentsVisualTool),
+        Box::new(OpendocChunkForEmbeddingTool),
+        Box::new(OpendocFillTemplateTool),
+        Box::new(OpendocValidateDocumentTool),
+        Box::new(OpendocValidatePdfAComplianceTool),
+        Box::new(OpendocExtractStructuredMetadataTool),
+        Box::new(OpendocConvertTool),
+        Box::new(OpendocExtractImagesTool),
+        Box::new(OpendocSplitPdfTool),
+        Box::new(OpendocCreateHtmlTool),
+        Box::new(OpendocBatchConvertTool),
+        Box::new(OpendocCreateDocxTool),
+        Box::new(OpendocDocxAddParagraphTool),
+        Box::new(OpendocDocxAddTableTool),
+        Box::new(OpendocDocxAddImageTool),
+        Box::new(OpendocCreatePptxTool),
+        Box::new(OpendocPptxAddSlideTool),
+        Box::new(OpendocCreateXlsxTool),
+        Box::new(OpendocEditXlsxTool),
+        Box::new(OpendocCreatePdfTool),
+        Box::new(OpendocCreateFormattedPdfTool),
+        Box::new(OpendocMergePdfsTool),
+        Box::new(OpendocExtractPdfTextTool),
+        Box::new(OpendocListPdfFieldsTool),
+        Box::new(OpendocFillPdfFormTool),
+        Box::new(OpendocFindTablesTool),
+        Box::new(OpendocAnalyzeDocumentComplexityTool),
+        Box::new(OpendocOcrDocumentTool),
+        Box::new(OpendocCheckOcrAvailableTool),
+        Box::new(OpendocRenderDocumentPagesTool),
+        Box::new(OpendocExtractArchiveDigestTool),
+    ];
+
+    assert_eq!(tools.len(), 36);
+
+    let mut schema_issues = Vec::new();
+
+    for tool in tools {
+        let params = tool.parameters();
+        let name = tool.name();
+
+        if params.get("$schema").is_some() {
+            schema_issues.push(format!("{}: contains '$schema' which should be stripped", name));
+        }
+
+        if params.get("title").is_some() {
+            schema_issues.push(format!("{}: contains top-level 'title' which should be stripped", name));
+        }
+
+        if params.get("type").and_then(|v| v.as_str()) != Some("object") {
+            schema_issues.push(format!("{}: missing top-level type: 'object'", name));
+        }
+
+        if let Some(props) = params.get("properties").and_then(|v| v.as_object()) {
+            for (prop_name, prop_val) in props {
+                // Check for empty schema {}
+                if prop_val.as_object().map_or(false, |m| m.is_empty()) {
+                    schema_issues.push(format!("{}.{}: empty schema {{}}", name, prop_name));
+                }
+
+                // Check for missing type
+                let has_type = prop_val.get("type").is_some();
+                let has_ref = prop_val.get("$ref").is_some();
+                let has_any_of = prop_val.get("anyOf").is_some();
+                let has_one_of = prop_val.get("oneOf").is_some();
+                if !has_type && !has_ref && !has_any_of && !has_one_of {
+                    schema_issues.push(format!("{}.{}: missing 'type'", name, prop_name));
+                }
+
+                // Check for bare object type without properties or additionalProperties
+                let is_object_type = match prop_val.get("type") {
+                    Some(serde_json::Value::String(s)) => s == "object",
+                    Some(serde_json::Value::Array(arr)) => arr.iter().any(|v| v.as_str() == Some("object")),
+                    _ => false,
+                };
+                if is_object_type {
+                    let has_props = prop_val.get("properties").is_some();
+                    let has_add_props = prop_val.get("additionalProperties").is_some();
+                    if !has_props && !has_add_props {
+                        schema_issues.push(format!("{}.{}: bare object type without properties or additionalProperties", name, prop_name));
+                    }
+                }
+            }
+        }
+    }
+
+    if !schema_issues.is_empty() {
+        panic!("Found {} schema issue(s) across opendoc tools:\n{:#?}", schema_issues.len(), schema_issues);
+    }
+}
+
+#[test]
+fn test_opendoc_schema_sanitization_details() {
+    let fill_tool = OpendocFillTemplateTool;
+    let fill_params = fill_tool.parameters();
+    assert!(fill_params.get("$schema").is_none());
+    assert!(fill_params.get("title").is_none());
+    let var_prop = fill_params["properties"]["variables"].as_object().unwrap();
+    assert_eq!(var_prop.get("type").and_then(|v| v.as_str()), Some("object"));
+    assert_eq!(var_prop.get("additionalProperties").and_then(|v| v.as_bool()), Some(true));
+
+    let xlsx_tool = OpendocCreateXlsxTool;
+    let xlsx_params = xlsx_tool.parameters();
+    assert!(xlsx_params.get("$schema").is_none());
+    let sheets_prop = xlsx_params["properties"]["sheets"].as_object().unwrap();
+    assert_eq!(sheets_prop.get("type").and_then(|v| v.as_str()), Some("array"));
+
+    let edit_xlsx_tool = OpendocEditXlsxTool;
+    let edit_params = edit_xlsx_tool.parameters();
+    assert_eq!(edit_params["properties"]["add_sheets"].get("type").and_then(|v| v.as_str()), Some("array"));
+    assert_eq!(edit_params["properties"]["cell_updates"].get("type").and_then(|v| v.as_str()), Some("array"));
+
+    let pdf_form_tool = OpendocFillPdfFormTool;
+    let pdf_form_params = pdf_form_tool.parameters();
+    let values_prop = pdf_form_params["properties"]["values"].as_object().unwrap();
+    assert_eq!(values_prop.get("type").and_then(|v| v.as_str()), Some("object"));
+    assert_eq!(values_prop.get("additionalProperties").and_then(|v| v.as_bool()), Some(true));
+}
+
+
 
