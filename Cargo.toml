@@ -1,49 +1,14 @@
 [package]
 name = "openz"
-version = "0.0.220"
+version = "0.0.222"
 edition = "2021"
 
 
 [workspace]
 members = [
     ".",
-    "tools/searchxyz",
-    "tools/openmedia/core",
-    "tools/openmedia/image",
-    "tools/openmedia/video",
-    "tools/openmedia/svg",
-    "tools/openmedia/animate",
-    "tools/openmedia/process",
-    "tools/openmedia/improve",
-    "tools/openmedia/mcp"
+    "tools/searchxyz"
 ]
-
-[workspace.package]
-version = "0.0.17"
-edition = "2021"
-license = "MIT OR Apache-2.0"
-rust-version = "1.82"
-
-[workspace.dependencies]
-# Internal openmedia crates
-openmedia-core = { path = "tools/openmedia/core" }
-openmedia-image = { path = "tools/openmedia/image" }
-openmedia-video = { path = "tools/openmedia/video" }
-openmedia-svg = { path = "tools/openmedia/svg" }
-openmedia-animate = { path = "tools/openmedia/animate" }
-openmedia-process = { path = "tools/openmedia/process" }
-openmedia-improve = { path = "tools/openmedia/improve" }
-openmedia-mcp = { path = "tools/openmedia/mcp" }
-
-# Shared openmedia dependencies
-tokio = { version = "1.42", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-thiserror = "2.0"
-tracing = "0.1"
-image = "0.25"
-uuid = { version = "1.11", features = ["v7", "v4"] }
-async-trait = "0.1.80"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
@@ -64,7 +29,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 regex = "1.10"
 dirs = "5.0"
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1.8", features = ["v4", "serde"] }
+uuid = { version = "1.8", features = ["v4", "v7", "serde"] }
 rand = "0.8"
 async-trait = "0.1"
 dotenvy = "0.15"
@@ -119,8 +84,19 @@ lru = "0.12"
 rmcp = { version = "1.7.0", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 schemars = "1.2"
 searchxyz = { path = "tools/searchxyz", features = ["js-rendering"] }
-openmedia-core = { workspace = true }
-openmedia-mcp = { workspace = true }
+svg = "0.17"
+resvg = "0.44"
+lyon = "1.0"
+kurbo = "0.11"
+wgpu = "23.0"
+bytemuck = "1.19"
+glob = "0.3"
+pollster = "0.3"
+chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-runtime"] }
+ndarray = "0.17"
+ort = { version = "2.0.0-rc.9", default-features = false, features = ["half", "ndarray", "std", "tls-rustls", "download-binaries"] }
+toml = "0.8"
+sysinfo = "0.32"
 rdocx = "0.1"
 pptx = "0.1"
 lopdf = "0.31"

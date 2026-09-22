@@ -450,14 +450,28 @@ fn normalize_opendoc_args(tool_name: &str, arguments: &Value) -> Value {
             // 14. sheets (create_xlsx)
             if tool_name == "opendoc_create_xlsx" {
                 if !map.contains_key("sheets") {
+                    let sheet_name = get_alias(&map, &["sheet", "sheet_name", "sheetName", "name"])
+                        .and_then(|v| v.as_str().map(|s| s.to_string()))
+                        .unwrap_or_else(|| "Sheet1".to_string());
+                    let headers = get_alias(&map, &["headers", "columns", "header"])
+                        .unwrap_or_else(|| json!([]));
+                    let data = get_alias(&map, &["data", "rows", "values", "records"])
+                        .unwrap_or_else(|| json!([]));
                     map.insert(
                         "sheets".to_string(),
-                        json!([{"name": "Sheet1", "headers": [], "data": []}]),
+                        json!([{"name": sheet_name, "headers": headers, "data": data}]),
                     );
                 } else if let Some(Value::String(s)) = map.get("sheets") {
                     if let Ok(parsed) = serde_json::from_str(s) {
                         map.insert("sheets".to_string(), parsed);
                     }
+                }
+            }
+
+            // docx_add_table (data / rows)
+            if tool_name == "opendoc_docx_add_table" && !map.contains_key("data") {
+                if let Some(val) = get_alias(&map, &["rows", "table_data", "tableData", "values", "records"]) {
+                    map.insert("data".to_string(), val);
                 }
             }
 
@@ -1102,6 +1116,7 @@ pub struct DocxAddTableParams {
     #[schemars(
         description = "Data rows (JSON array of arrays of strings). Must match header length."
     )]
+    #[serde(alias = "rows")]
     pub data: Vec<Vec<String>>,
     #[schemars(description = "Optional table width percentage (0 to 100).")]
     pub width_pct: Option<f64>,

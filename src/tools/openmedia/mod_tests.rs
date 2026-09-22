@@ -272,3 +272,108 @@ fn test_openmedia_image_batch_process_normalizes_operations() {
     assert_eq!(ops[0]["Resize"]["method"], "lanczos3");
     assert_eq!(ops[1], "Invert");
 }
+
+#[test]
+fn test_openmedia_chart_and_icon_normalizations() {
+    let normalized = normalize_openmedia_arguments(
+        "openmedia_create_chart",
+        &json!({
+            "type": "bar",
+            "title": "Throughput",
+            "width": "600",
+            "height": "400",
+            "points": [
+                {"name": "Before", "val": "120.5"},
+                {"name": "After", "val": "25.0"}
+            ]
+        }),
+    );
+
+    assert_eq!(normalized["width"], 600);
+    assert_eq!(normalized["height"], 400);
+    assert_eq!(normalized["points"][0]["val"], 120.5);
+
+    let req: CreateChartRequest = serde_json::from_value(normalized).unwrap();
+    assert_eq!(req.chart_type, "bar");
+    assert_eq!(req.title.as_deref(), Some("Throughput"));
+    assert_eq!(req.data.len(), 2);
+    assert_eq!(req.data[0].label, "Before");
+    assert_eq!(req.data[0].value, 120.5);
+
+    let icon_norm = normalize_openmedia_arguments(
+        "openmedia_create_icon",
+        &json!({
+            "icon": "settings",
+            "size": "48",
+            "strokeWidth": "2.5"
+        }),
+    );
+    assert_eq!(icon_norm["size"], 48);
+    let icon_req: CreateIconRequest = serde_json::from_value(icon_norm).unwrap();
+    assert_eq!(icon_req.name, "settings");
+    assert_eq!(icon_req.size, Some(48));
+    assert_eq!(icon_req.stroke_width, Some(2.5));
+}
+
+#[test]
+fn test_openmedia_mermaid_and_spinner_normalizations() {
+    let mermaid_norm = normalize_openmedia_arguments(
+        "openmedia_diagram_generate_mermaid",
+        &json!({
+            "diagram": "graph LR; A --> B;",
+            "format": "png",
+            "width": "1024",
+            "height": "768",
+            "backgroundColor": "#1e1e2e"
+        }),
+    );
+    assert_eq!(mermaid_norm["width"], 1024);
+    assert_eq!(mermaid_norm["height"], 768);
+    let mermaid_req: GenerateMermaidRequest = serde_json::from_value(mermaid_norm).unwrap();
+    assert_eq!(mermaid_req.code, "graph LR; A --> B;");
+    assert_eq!(mermaid_req.output_format.as_deref(), Some("png"));
+    assert_eq!(mermaid_req.background_color.as_deref(), Some("#1e1e2e"));
+
+    let spinner_norm = normalize_openmedia_arguments(
+        "openmedia_animate_generate_spinner",
+        &json!({
+            "style": "dots",
+            "size": "64",
+            "color": "#10b981"
+        }),
+    );
+    assert_eq!(spinner_norm["size"], 64);
+    let spinner_req: GenerateSpinnerRequest = serde_json::from_value(spinner_norm).unwrap();
+    assert_eq!(spinner_req.spinner_type, "dots");
+    assert_eq!(spinner_req.size, Some(64));
+}
+
+#[test]
+fn test_openmedia_image_operations_normalizations() {
+    let filter_norm = normalize_openmedia_arguments(
+        "openmedia_image_apply_filter",
+        &json!({
+            "path": "/tmp/photo.jpg",
+            "filter": "blur",
+            "radius": "4.5"
+        }),
+    );
+    let filter_req: ImageApplyFilterRequest = serde_json::from_value(filter_norm).unwrap();
+    assert_eq!(filter_req.image_path, "/tmp/photo.jpg");
+    assert_eq!(filter_req.filter_type, "blur");
+    assert_eq!(filter_req.parameter, Some(4.5));
+
+    let resize_norm = normalize_openmedia_arguments(
+        "openmedia_image_resize",
+        &json!({
+            "filePath": "/tmp/photo.jpg",
+            "width": "1280",
+            "height": "720"
+        }),
+    );
+    let resize_req: ImageResizeRequest = serde_json::from_value(resize_norm).unwrap();
+    assert_eq!(resize_req.image_path, "/tmp/photo.jpg");
+    assert_eq!(resize_req.width, 1280);
+    assert_eq!(resize_req.height, 720);
+}
+

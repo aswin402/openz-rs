@@ -1,8 +1,17 @@
 use anyhow::{anyhow, Result};
-use openmedia_core::Config;
-use openmedia_mcp::{McpObject, OpenMediaServer};
-use rmcp::handler::server::wrapper::{Json, Parameters};
+use crate::tools::openmedia::core::Config;
+use crate::tools::openmedia::server::*;
 use serde_json::{json, Value};
+
+pub mod animate;
+pub mod core;
+pub mod handlers;
+pub mod image;
+pub mod improve;
+pub mod process;
+pub mod server;
+pub mod svg;
+pub mod video;
 
 pub async fn get_server() -> Result<&'static OpenMediaServer> {
     static SERVER: std::sync::OnceLock<OpenMediaServer> = std::sync::OnceLock::new();
@@ -50,11 +59,11 @@ macro_rules! define_openmedia_tool {
             async fn call(&self, arguments: &Value) -> Result<Value> {
                 let normalized = normalize_openmedia_arguments($tool_name, arguments);
                 let req: $request_type = serde_json::from_value(normalized)?;
-                let Json(McpObject(res)) = get_server()
+                let res = get_server()
                     .await?
-                    .$server_method(Parameters(req))
+                    .$server_method(req)
                     .await
-                    .map_err(map_mcp_err)?;
+                    .map_err(|e| anyhow!("{e}"))?;
                 Ok(res)
             }
         }
@@ -278,7 +287,7 @@ fn normalize_image_batch_process_arguments(arguments: &Value) -> Value {
     };
     if let Some(ops) = obj.get_mut("operations").and_then(|v| v.as_array_mut()) {
         for op in ops {
-            *op = openmedia_mcp::normalize_process_operation_value(op);
+            *op = crate::tools::openmedia::server::normalize_process_operation_value(op);
         }
     }
     Value::Object(obj)
@@ -312,13 +321,135 @@ fn create_svg_parameter_schema() -> Value {
     })
 }
 
+fn normalize_create_chart_arguments(arguments: &Value) -> Value {
+    let parsed = parse_json_string_fields(arguments, &["data", "data_points", "dataPoints", "points", "rows"]);
+    let Some(mut obj) = parsed.as_object().cloned() else {
+        return parsed;
+    };
+    coerce_numeric_fields(&mut obj, &["width", "height"]);
+
+    let data_key = if obj.contains_key("data") {
+        Some("data")
+    } else if obj.contains_key("data_points") {
+        Some("data_points")
+    } else if obj.contains_key("dataPoints") {
+        Some("dataPoints")
+    } else if obj.contains_key("points") {
+        Some("points")
+    } else if obj.contains_key("rows") {
+        Some("rows")
+    } else {
+        None
+    };
+
+    if let Some(key) = data_key {
+        if let Some(points) = obj.get_mut(key).and_then(|v| v.as_array_mut()) {
+            for pt in points {
+                if let Some(pt_obj) = pt.as_object_mut() {
+                    coerce_numeric_fields(pt_obj, &["value", "val", "count", "amount", "y", "number"]);
+                }
+            }
+        }
+    }
+    Value::Object(obj)
+}
+
+fn normalize_create_icon_arguments(arguments: &Value) -> Value {
+    let Some(mut obj) = arguments.as_object().cloned() else {
+        return arguments.clone();
+    };
+    coerce_numeric_fields(&mut obj, &["size", "stroke_width", "strokeWidth", "stroke", "width"]);
+    Value::Object(obj)
+}
+
+fn normalize_rasterize_svg_arguments(arguments: &Value) -> Value {
+    let Some(mut obj) = arguments.as_object().cloned() else {
+        return arguments.clone();
+    };
+    coerce_numeric_fields(&mut obj, &["width", "height"]);
+    Value::Object(obj)
+}
+
+fn normalize_diagram_generate_mermaid_arguments(arguments: &Value) -> Value {
+    let parsed = parse_json_string_fields(arguments, &["custom_theme"]);
+    let Some(mut obj) = parsed.as_object().cloned() else {
+        return parsed;
+    };
+    coerce_numeric_fields(
+        &mut obj,
+        &[
+            "width",
+            "height",
+            "node_spacing",
+            "rank_spacing",
+            "preferred_aspect_ratio",
+        ],
+    );
+    Value::Object(obj)
+}
+
+fn normalize_animate_generate_spinner_arguments(arguments: &Value) -> Value {
+    let Some(mut obj) = arguments.as_object().cloned() else {
+        return arguments.clone();
+    };
+    coerce_numeric_fields(&mut obj, &["size"]);
+    Value::Object(obj)
+}
+
+fn normalize_image_apply_filter_arguments(arguments: &Value) -> Value {
+    let Some(mut obj) = arguments.as_object().cloned() else {
+        return arguments.clone();
+    };
+    coerce_numeric_fields(&mut obj, &["parameter", "param", "radius", "value", "intensity", "amount"]);
+    Value::Object(obj)
+}
+
+fn normalize_image_resize_arguments(arguments: &Value) -> Value {
+    let Some(mut obj) = arguments.as_object().cloned() else {
+        return arguments.clone();
+    };
+    coerce_numeric_fields(&mut obj, &["width", "height"]);
+    Value::Object(obj)
+}
+
+fn normalize_image_crop_arguments(arguments: &Value) -> Value {
+    let Some(mut obj) = arguments.as_object().cloned() else {
+        return arguments.clone();
+    };
+    coerce_numeric_fields(&mut obj, &["x", "y", "width", "height"]);
+    Value::Object(obj)
+}
+
+fn normalize_image_transform_arguments(arguments: &Value) -> Value {
+    let Some(mut obj) = arguments.as_object().cloned() else {
+        return arguments.clone();
+    };
+    coerce_numeric_fields(&mut obj, &["angle"]);
+    Value::Object(obj)
+}
+
+fn normalize_image_convert_arguments(arguments: &Value) -> Value {
+    let Some(mut obj) = arguments.as_object().cloned() else {
+        return arguments.clone();
+    };
+    coerce_numeric_fields(&mut obj, &["quality"]);
+    Value::Object(obj)
+}
+
 fn normalize_openmedia_arguments(tool_name: &str, arguments: &Value) -> Value {
     match tool_name {
-        "openmedia_diagram_generate_mermaid" => {
-            parse_json_string_fields(arguments, &["custom_theme"])
-        }
+        "openmedia_create_chart" => normalize_create_chart_arguments(arguments),
+        "openmedia_create_icon" => normalize_create_icon_arguments(arguments),
         "openmedia_create_svg" => normalize_create_svg_arguments(arguments),
+        "openmedia_rasterize_svg" => normalize_rasterize_svg_arguments(arguments),
+        "openmedia_diagram_generate_mermaid" => normalize_diagram_generate_mermaid_arguments(arguments),
         "openmedia_animate_svg" => normalize_animate_svg_arguments(arguments),
+        "openmedia_animate_generate_spinner" => normalize_animate_generate_spinner_arguments(arguments),
+        "openmedia_image_apply_filter" => normalize_image_apply_filter_arguments(arguments),
+        "openmedia_image_resize" => normalize_image_resize_arguments(arguments),
+        "openmedia_image_crop" => normalize_image_crop_arguments(arguments),
+        "openmedia_image_transform" => normalize_image_transform_arguments(arguments),
+        "openmedia_image_convert" => normalize_image_convert_arguments(arguments),
         "openmedia_image_batch_process" => normalize_image_batch_process_arguments(arguments),
         "openmedia_video_create_slideshow" => normalize_video_create_slideshow_arguments(arguments),
         "openmedia_video_trim" => normalize_video_trim_arguments(arguments),
@@ -498,28 +629,28 @@ define_openmedia_tool!(
     OpenMediaModelDownloadTool,
     "openmedia_model_download",
     "Download a specified model file (CLIP text/vision or Aesthetic predictor) from Hugging Face Hub with progress tracking.",
-    openmedia_mcp::ModelDownloadRequest,
+    crate::tools::openmedia::server::ModelDownloadRequest,
     model_download
 );
 define_openmedia_tool!(
     OpenMediaRasterizeSvgTool,
     "openmedia_rasterize_svg",
     "Rasterize an SVG string or file path into a PNG, JPEG, or WebP image.",
-    openmedia_mcp::RasterizeSvgRequest,
+    crate::tools::openmedia::server::RasterizeSvgRequest,
     rasterize_svg
 );
 define_openmedia_tool!(
     OpenMediaDiagramGenerateMermaidTool,
     "openmedia_diagram_generate_mermaid",
     "Compile a Mermaid diagram string into an SVG, PNG, JPEG, or WebP diagram.",
-    openmedia_mcp::GenerateMermaidRequest,
+    crate::tools::openmedia::server::GenerateMermaidRequest,
     diagram_generate_mermaid
 );
 define_openmedia_tool!(
     OpenMediaHtmlToImageTool,
     "openmedia_html_to_image",
     "Render HTML and CSS templates/files into an image (PNG, JPEG, or WebP).",
-    openmedia_mcp::HtmlToImageRequest,
+    crate::tools::openmedia::server::HtmlToImageRequest,
     html_to_image
 );
 pub struct OpenMediaCreateSvgTool;
@@ -545,12 +676,12 @@ impl crate::tools::Tool for OpenMediaCreateSvgTool {
             .and_then(|obj| obj.remove("output_path"))
             .and_then(|v| v.as_str().map(|s| s.to_string()));
 
-        let req: openmedia_mcp::CreateSvgRequest = serde_json::from_value(normalized)?;
-        let Json(McpObject(mut res)) = get_server()
+        let req: crate::tools::openmedia::server::CreateSvgRequest = serde_json::from_value(normalized)?;
+        let mut res = get_server()
             .await?
-            .create_svg(Parameters(req))
+            .create_svg(req)
             .await
-            .map_err(map_mcp_err)?;
+            .map_err(|e| anyhow!("{e}"))?;
 
         if let Some(output_path) = output_path {
             if let Some(src_path) = res
@@ -583,14 +714,14 @@ define_openmedia_tool!(
     OpenMediaCreateChartTool,
     "openmedia_create_chart",
     "Generate vertical bars, lines, area, scatter, radar, and pie charts from raw data.",
-    openmedia_mcp::CreateChartRequest,
+    crate::tools::openmedia::server::CreateChartRequest,
     create_chart
 );
 define_openmedia_tool!(
     OpenMediaCreateIconTool,
     "openmedia_create_icon",
     "Retrieve styled vector icons from the embedded Lucide library.",
-    openmedia_mcp::CreateIconRequest,
+    crate::tools::openmedia::server::CreateIconRequest,
     create_icon
 );
 
@@ -599,42 +730,42 @@ define_openmedia_tool!(
     OpenMediaAnimateSvgTool,
     "openmedia_animate_svg",
     "Apply keyframes/SMIL animation presets (fade_in, spin, bounce, etc.) to SVG elements.",
-    openmedia_mcp::AnimateSvgRequest,
+    crate::tools::openmedia::server::AnimateSvgRequest,
     animate_svg
 );
 define_openmedia_tool!(
     OpenMediaAnimateCreateTimelineTool,
     "openmedia_animate_create_timeline",
     "Coordinately sequence animations of multiple elements over a timeline.",
-    openmedia_mcp::AnimateTimelineRequest,
+    crate::tools::openmedia::server::AnimateTimelineRequest,
     animate_create_timeline
 );
 define_openmedia_tool!(
     OpenMediaAnimateMorphPathsTool,
     "openmedia_animate_morph_paths",
     "Interpolate paths morphing between two vector strings.",
-    openmedia_mcp::AnimateMorphRequest,
+    crate::tools::openmedia::server::AnimateMorphRequest,
     animate_morph_paths
 );
 define_openmedia_tool!(
     OpenMediaAnimateGenerateSpinnerTool,
     "openmedia_animate_generate_spinner",
     "Create beautiful animated loading spinners in SVG.",
-    openmedia_mcp::GenerateSpinnerRequest,
+    crate::tools::openmedia::server::GenerateSpinnerRequest,
     animate_generate_spinner
 );
 define_openmedia_tool!(
     OpenMediaAnimateFromLottieTool,
     "openmedia_animate_from_lottie",
     "Convert a Lottie JSON animation into an animated SVG.",
-    openmedia_mcp::LottieToSvgRequest,
+    crate::tools::openmedia::server::LottieToSvgRequest,
     animate_from_lottie
 );
 define_openmedia_tool!(
     OpenMediaAnimateToLottieTool,
     "openmedia_animate_to_lottie",
     "Convert an animated SVG back into Lottie JSON.",
-    openmedia_mcp::SvgToLottieRequest,
+    crate::tools::openmedia::server::SvgToLottieRequest,
     animate_to_lottie
 );
 
@@ -643,42 +774,42 @@ define_openmedia_tool!(
     OpenMediaImageApplyFilterTool,
     "openmedia_image_apply_filter",
     "Apply filters (invert, grayscale, etc.) to an image.",
-    openmedia_mcp::ImageApplyFilterRequest,
+    crate::tools::openmedia::server::ImageApplyFilterRequest,
     image_apply_filter
 );
 define_openmedia_tool!(
     OpenMediaImageResizeTool,
     "openmedia_image_resize",
     "Resize an image with configurable width and height.",
-    openmedia_mcp::ImageResizeRequest,
+    crate::tools::openmedia::server::ImageResizeRequest,
     image_resize
 );
 define_openmedia_tool!(
     OpenMediaImageCropTool,
     "openmedia_image_crop",
     "Crop an image using custom bounding box coordinates.",
-    openmedia_mcp::ImageCropRequest,
+    crate::tools::openmedia::server::ImageCropRequest,
     image_crop
 );
 define_openmedia_tool!(
     OpenMediaImageTransformTool,
     "openmedia_image_transform",
     "Transform an existing image guided by strength parameters.",
-    openmedia_mcp::ImageTransformRequest,
+    crate::tools::openmedia::server::ImageTransformRequest,
     image_transform
 );
 define_openmedia_tool!(
     OpenMediaImageConvertTool,
     "openmedia_image_convert",
     "Convert image file format extension target.",
-    openmedia_mcp::ImageConvertRequest,
+    crate::tools::openmedia::server::ImageConvertRequest,
     image_convert
 );
 define_openmedia_tool!(
     OpenMediaImageBatchProcessTool,
     "openmedia_image_batch_process",
     "Process image filters in batches.",
-    openmedia_mcp::ImageBatchProcessRequest,
+    crate::tools::openmedia::server::ImageBatchProcessRequest,
     image_batch_process
 );
 
@@ -702,12 +833,12 @@ impl crate::tools::Tool for OpenMediaVideoCreateTool {
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let normalized = normalize_video_scene_arguments(arguments);
         let normalized = normalize_openmedia_arguments(self.name(), &normalized);
-        let req: openmedia_mcp::VideoCreateRequest = serde_json::from_value(normalized)?;
-        let Json(McpObject(res)) = get_server()
+        let req: crate::tools::openmedia::server::VideoCreateRequest = serde_json::from_value(normalized)?;
+        let res = get_server()
             .await?
-            .video_create(Parameters(req))
+            .video_create(req)
             .await
-            .map_err(map_mcp_err)?;
+            .map_err(|e| anyhow!("{e}"))?;
         Ok(res)
     }
 }
@@ -731,12 +862,12 @@ impl crate::tools::Tool for OpenMediaVideoPreviewTool {
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let normalized = normalize_video_scene_arguments(arguments);
         let normalized = normalize_openmedia_arguments(self.name(), &normalized);
-        let req: openmedia_mcp::VideoPreviewRequest = serde_json::from_value(normalized)?;
-        let Json(McpObject(res)) = get_server()
+        let req: crate::tools::openmedia::server::VideoPreviewRequest = serde_json::from_value(normalized)?;
+        let res = get_server()
             .await?
-            .video_preview(Parameters(req))
+            .video_preview(req)
             .await
-            .map_err(map_mcp_err)?;
+            .map_err(|e| anyhow!("{e}"))?;
         Ok(res)
     }
 }
@@ -744,42 +875,42 @@ define_openmedia_tool!(
     OpenMediaVideoCreateSlideshowTool,
     "openmedia_video_create_slideshow",
     "Compile an image sequence slideshow with audio overlays.",
-    openmedia_mcp::VideoCreateSlideshowRequest,
+    crate::tools::openmedia::server::VideoCreateSlideshowRequest,
     video_create_slideshow
 );
 define_openmedia_tool!(
     OpenMediaVideoAddTransitionTool,
     "openmedia_video_add_transition",
     "Apply scene transition blend clips.",
-    openmedia_mcp::VideoAddTransitionRequest,
+    crate::tools::openmedia::server::VideoAddTransitionRequest,
     video_add_transition
 );
 define_openmedia_tool!(
     OpenMediaVideoAddAudioTool,
     "openmedia_video_add_audio",
     "Add background narration/music tracks to a video.",
-    openmedia_mcp::VideoAddAudioRequest,
+    crate::tools::openmedia::server::VideoAddAudioRequest,
     video_add_audio
 );
 define_openmedia_tool!(
     OpenMediaVideoFromTemplateTool,
     "openmedia_video_from_template",
     "Instantiate a video template replacing placeholder arguments.",
-    openmedia_mcp::VideoFromTemplateRequest,
+    crate::tools::openmedia::server::VideoFromTemplateRequest,
     video_from_template
 );
 define_openmedia_tool!(
     OpenMediaVideoExtractFramesTool,
     "openmedia_video_extract_frames",
     "Extract frames/images from a video at key timestamp offsets.",
-    openmedia_mcp::VideoExtractFramesRequest,
+    crate::tools::openmedia::server::VideoExtractFramesRequest,
     video_extract_frames
 );
 define_openmedia_tool!(
     OpenMediaVideoTrimTool,
     "openmedia_video_trim",
     "Trim a video file to a specific time range.",
-    openmedia_mcp::VideoTrimRequest,
+    crate::tools::openmedia::server::VideoTrimRequest,
     video_trim
 );
 
@@ -788,28 +919,28 @@ define_openmedia_tool!(
     OpenMediaTemplateCreateTool,
     "openmedia_template_create",
     "Create and save a custom video scene template.",
-    openmedia_mcp::TemplateCreateRequest,
+    crate::tools::openmedia::server::TemplateCreateRequest,
     template_create
 );
 define_openmedia_tool!(
     OpenMediaTemplateReadTool,
     "openmedia_template_read",
     "Read templates configurations details or list templates.",
-    openmedia_mcp::TemplateReadRequest,
+    crate::tools::openmedia::server::TemplateReadRequest,
     template_read
 );
 define_openmedia_tool!(
     OpenMediaTemplateUpdateTool,
     "openmedia_template_update",
     "Update an existing template definition.",
-    openmedia_mcp::TemplateUpdateRequest,
+    crate::tools::openmedia::server::TemplateUpdateRequest,
     template_update
 );
 define_openmedia_tool!(
     OpenMediaTemplateDeleteTool,
     "openmedia_template_delete",
     "Delete an existing template definition.",
-    openmedia_mcp::TemplateDeleteRequest,
+    crate::tools::openmedia::server::TemplateDeleteRequest,
     template_delete
 );
 
@@ -818,35 +949,35 @@ define_openmedia_tool!(
     OpenMediaImproveScoreImageTool,
     "openmedia_improve_score_image",
     "Score prompt alignment using CLIP and Aesthetic models.",
-    openmedia_mcp::ImproveScoreImageRequest,
+    crate::tools::openmedia::server::ImproveScoreImageRequest,
     improve_score_image
 );
 define_openmedia_tool!(
     OpenMediaImproveRefinePromptTool,
     "openmedia_improve_refine_prompt",
     "Get prompt refinement suffix recommendations based on score feedbacks.",
-    openmedia_mcp::ImproveRefinePromptRequest,
+    crate::tools::openmedia::server::ImproveRefinePromptRequest,
     improve_refine_prompt
 );
 define_openmedia_tool!(
     OpenMediaImproveAutoRefineTool,
     "openmedia_improve_auto_refine",
     "Iteratively refine prompts to generate high aesthetic quality assets.",
-    openmedia_mcp::ImproveAutoRefineRequest,
+    crate::tools::openmedia::server::ImproveAutoRefineRequest,
     improve_auto_refine
 );
 define_openmedia_tool!(
     OpenMediaImproveFeedbackTool,
     "openmedia_improve_feedback",
     "Log manual ratings score and description feedback on generations.",
-    openmedia_mcp::ImproveFeedbackRequest,
+    crate::tools::openmedia::server::ImproveFeedbackRequest,
     improve_feedback
 );
 define_openmedia_tool!(
     OpenMediaImproveQualityReportTool,
     "openmedia_improve_quality_report",
     "Fetch comprehensive statistics report of the generation history DB.",
-    openmedia_mcp::ImproveQualityReportRequest,
+    crate::tools::openmedia::server::ImproveQualityReportRequest,
     improve_quality_report
 );
 

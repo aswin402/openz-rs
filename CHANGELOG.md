@@ -1,4 +1,91 @@
-### v0.0.220 (Latest Release)
+### v0.0.222 (Latest Release)
+- **Ideas**:
+  - Comprehensive LLM Resilience & Pre-Deserialization Parameter Coercion for Multimodal & Office Suites:
+    - Dual-layer argument tolerance for OpenMedia vector charts (`openmedia_create_chart`), icons (`openmedia_create_icon`), vector graphics (`openmedia_create_svg`, `openmedia_rasterize_svg`), diagram engines (`openmedia_diagram_generate_mermaid`), animated spinners (`openmedia_animate_generate_spinner`), and the GPU/CPU image processing suite (`openmedia_image_*`).
+    - Robust string-to-number normalizer coercions protecting against LLM JSON stringification across dimensional geometry, filter parameters, and data coordinates.
+    - OpenDoc table insertion resilience mapping (`opendoc_docx_add_table`) and multi-sheet workbook payload auto-bundling (`opendoc_create_xlsx`).
+    - In-process image generation bridging [`src/tools/image_generator.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/image_generator.rs) to headless browser capture without daemon overhead.
+- **Inspirations**:
+  - Robustness Principle (Postel's Law), LLM-agent tool ergonomics, zero-IPC native engines, and resilient in-process media processing.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/openmedia/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/mod.rs): Normalizer functions for charts, icons, svg, mermaid, spinners, and image filters.
+    - [`src/tools/openmedia/server.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/server.rs): Serde aliases on request DTOs (`GenerateMermaidRequest`, `CreateChartRequest`, `ChartPointDto`, `CreateIconRequest`, `RasterizeSvgRequest`, etc.).
+    - [`src/tools/opendoc/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs): Table row aliases and sheet array normalization.
+    - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml): Incremented version to `0.0.222`.
+    - [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json): Incremented version to `0.0.222`.
+    - [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Incremented version badge to `0.0.222`.
+  - Test Modules:
+    - [`src/tools/openmedia/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/mod_tests.rs): 14 passing unit tests covering parameter normalization, schemas, and live ping.
+    - [`src/cli/builder.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder.rs): `test_native_tool_registration_names` (exact 260 registered native tools invariant).
+- **Details & Metrics**:
+  - 14/14 OpenMedia tests passing; 260 registered native tools invariant strictly preserved.
+  - 0 compiler warnings, 0 clippy warnings.
+- **Verification**:
+  - `cargo check -p openz -j 1`: PASS (0 warnings).
+  - `cargo test -p openz -j 1 --lib tools::openmedia::tests`: 14 passed, 0 failed.
+  - `cargo test -p openz -j 1 --lib test_native_tool_registration_names`: 1 passed, exact 260 invariant preserved.
+  - `cargo clippy -p openz -j 1`: 0 warnings.
+
+### v0.0.221
+- **Ideas**:
+  - Full Native In-Process Absorption of OpenMedia Multimodal Generation Engine:
+    - Completely absorbed all 8 external crates (`tools/openmedia/*`) directly into native OpenZ code under [`src/tools/openmedia/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/), removing the legacy external `tools/openmedia/` directory in its entirety:
+      - [`src/tools/openmedia/core/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/core/): Hardware inspection (`sysinfo`), model registry, progress reporting, and core types.
+      - [`src/tools/openmedia/svg/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/svg/): Vector layout engine, rasterization pipeline (`resvg` + `tiny-skia`), dynamic chart generation (`ChartPoint`), and Lucide icon library.
+      - [`src/tools/openmedia/animate/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/animate/): SMIL and CSS SVG animator, multi-track animation timelines, path interpolation & morphing (`lyon` + `kurbo`), animated spinner generator, and bidirectional Lottie conversion.
+      - [`src/tools/openmedia/image/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/image/): Diffusion pipeline abstractions, mock backends, and pipeline specification contracts.
+      - [`src/tools/openmedia/process/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/process/): GPU WGSL shader pipeline (`wgpu`, `bytemuck`, `invert.wgsl`), CPU filter suite (`imageproc`), geometric transforms (rotate, crop, resize, flip), multi-format image encoders (PNG, JPEG, WebP, AVIF), and concurrent batch processing.
+      - [`src/tools/openmedia/video/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/video/): Declarative VideoScene compiler, dual SVG & headless browser frame renderers (`chromiumoxide`), smooth scene transitions, audio muxing, pre-designed templates (slideshow, text explainer, data dashboard, social media, product showcase), keyframe extraction, and video trimming (`ffmpeg`).
+      - [`src/tools/openmedia/improve/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/improve/): Heuristic prompt refiner, generational history SQLite store (`rusqlite`, `schema.sql`), user feedback recorder, and CLIP & aesthetic quality scoring (`ort` + `ndarray`).
+      - [`src/tools/openmedia/server.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/server.rs): Zero-IPC direct in-process `OpenMediaServer` singleton.
+      - [`src/tools/openmedia/handlers/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/handlers/): 8 direct handler modules eliminating `rmcp` RPC overhead and converting all 31 native media tools into high-speed in-process Rust async method calls.
+    - Workspace & Dependency Optimization:
+      - Removed 8 `tools/openmedia/*` entries from `[workspace.members]` and pruned `[workspace.dependencies]`.
+      - Removed `openmedia-core` and `openmedia-mcp` workspace dependencies from root [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml).
+      - Added direct dependencies to root [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml): `svg = "0.17"`, `resvg = "0.44"`, `lyon = "1.0"`, `kurbo = "0.11"`, `wgpu = "23.0"`, `bytemuck = "1.19"`, `glob = "0.3"`, `pollster = "0.3"`, `chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-runtime"] }`, `ndarray = "0.17"`, `ort = { version = "2.0.0-rc.9", default-features = false, features = ["half", "ndarray", "std", "tls-rustls", "download-binaries"] }`, `toml = "0.8"`, `sysinfo = "0.32"`.
+      - Enabled `v7` feature on `uuid` (`uuid = { version = "1.8", features = ["v4", "v7", "serde"] }`).
+  - Runtime Relocation & Path Hardening:
+    - Relocated default OpenMedia storage paths from legacy `~/.openmedia/` to OpenZ's runtime home `~/.openz/media/` (`models/`, `output/`, `history.db`, `checksums.sha256`, `templates/`), fully honoring `$OPENZ_CONFIG_DIR`.
+    - Replaced `directories` crate with `dirs = "5.0"` already used across OpenZ.
+    - Real-Time Resilience & Parameter Aliases:
+      - OpenDoc: Added `rows`, `table_data`, `tableData`, `values`, and `records` aliases for `data` on `DocxAddTableParams` and `normalize_opendoc_args`; auto-bundled root-level `sheet`/`headers`/`rows` into the `sheets` array for `opendoc_create_xlsx`.
+      - OpenMedia: Added bidirectional Serde aliases and normalizer helpers for `openmedia_create_chart` (`type`, `kind`, `chartType`, `data_points`, `points`, `rows`), `openmedia_create_icon` (`icon`, `icon_name`, `strokeWidth`), `openmedia_rasterize_svg` (`svg_path`, `filePath`, `input`), `openmedia_diagram_generate_mermaid` (`diagram`, `mermaid`, `content`, `backgroundColor`), `openmedia_animate_generate_spinner` (`style`, `kind`), and `openmedia_image_*` operations (filter, resize, crop, transform, convert).
+      - Added string number coercion for canvas dimensions, chart point values, and filter thresholds to protect against LLM stringification.
+  - Cross-Tool Integration:
+    - Upgraded [`src/tools/image_generator.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/image_generator.rs) to call in-process `openmedia::get_server().await?.html_to_image(req)` directly.
+- **Inspirations**:
+  - Zero-IPC in-process engine architecture, unified single-binary agent frameworks, and high-performance multimodal media synthesis.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/openmedia/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/mod.rs): In-process tool macros, normalizers, and submodule declarations.
+    - [`src/tools/openmedia/server.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/server.rs): In-process server singleton and typed request contracts with Serde aliases.
+    - [`src/tools/opendoc/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs): Parameter normalization and table row aliases.
+    - [`src/tools/openmedia/core/config.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/core/config.rs): Path relocation to `~/.openz/media/`.
+    - [`src/tools/openmedia/handlers/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/handlers/): In-process async tool execution handlers.
+    - [`src/tools/image_generator.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/image_generator.rs): Direct in-process HTML-to-image delegation.
+    - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml): Incremented version to `0.0.221` and pruned workspace members.
+    - [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json): Incremented version to `0.0.221`.
+    - [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Incremented version badge to `0.0.221`.
+  - Test Modules:
+    - [`src/tools/openmedia/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/mod_tests.rs): 14 passing unit tests covering normalizations, schema, and server ping.
+    - [`src/cli/builder.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder.rs): `test_native_tool_registration_names` (exact 260 registered native tools invariant).
+- **Details & Metrics**:
+  - 8 external workspace crates eliminated; 31 native tools migrated to direct in-process calls.
+  - Exact 260 registered native tools invariant strictly preserved.
+  - 0 compiler warnings, 0 clippy warnings.
+- **Verification**:
+  - `cargo check -p openz -j 1`: PASS (0 warnings).
+  - `cargo test -p openz -j 1 --lib tools::openmedia::tests`: 14 passed, 0 failed.
+  - `cargo test -p openz -j 1 --lib test_native_tool_registration_names`: 1 passed, exact 260 invariant preserved.
+  - `cargo clippy -p openz -j 1`: 0 warnings.
+  - Real-time OpenZ headless execution:
+    - `openmedia_ping`: hardware detection and media server online.
+    - `openmedia_create_icon`: generated 48x48 Lucide SVG icon.
+    - `openmedia_create_chart`: generated 800x600 vector bar chart.
+    - `openmedia_create_svg`: generated custom vector layout to target path.
+
+### v0.0.220
 - **Ideas**:
   - Unified Multi-Format Spreadsheet Engine:
     - Upgraded OpenDoc's spreadsheet loader in [`src/tools/opendoc/handlers/xlsx.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/handlers/xlsx.rs) to `calamine::open_workbook_auto`: transparently supports `.xlsx`, `.xls` (BIFF8 binary format), `.ods` (OpenDocument Spreadsheet), and `.xlsb` without failure.

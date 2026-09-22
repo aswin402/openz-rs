@@ -527,15 +527,14 @@ impl Tool for GenerateImageTool {
             BASE64_STANDARD.decode(base64_data)?
         } else if let Some(html_content) = arguments.get("html").and_then(|v| v.as_str()) {
             if let Ok(server) = crate::tools::openmedia::get_server().await {
-                let req = openmedia_mcp::Parameters(openmedia_mcp::HtmlToImageRequest {
+                let req = crate::tools::openmedia::server::HtmlToImageRequest {
                     html: html_content.to_string(),
                     width: Some(width as u32),
                     height: Some(height as u32),
                     device_scale_factor: Some(device_scale_factor),
                     output_format: Some("png".to_string()),
-                });
-                if let Ok(res) = server.html_to_image(req).await {
-                    let val: Value = serde_json::from_value(res.0 .0)?;
+                };
+                if let Ok(val) = server.html_to_image(req).await {
                     if let Some(path_str) = val.get("path").and_then(|v| v.as_str()) {
                         let gen_path = std::path::Path::new(path_str);
                         if gen_path.exists() {
