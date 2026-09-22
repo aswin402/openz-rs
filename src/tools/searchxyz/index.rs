@@ -198,10 +198,28 @@ impl Tool for SearchXyzExportResearchTool {
         super::map_field_alias(&mut normalized, "query", &["q", "search", "filter"]);
         super::map_field_alias(&mut normalized, "limit", &["max_results", "count"]);
         super::map_field_alias(&mut normalized, "max_chars", &["maxChars", "limit_chars", "maxLength"]);
+        super::map_field_alias(&mut normalized, "file_path", &["filePath", "path", "output_path", "outputPath", "destination", "file", "target"]);
         super::coerce_numeric_fields(&mut normalized, &["limit", "max_chars"]);
+
+        let file_path_opt = normalized.get("file_path").and_then(|v| v.as_str()).map(str::to_string);
         let req: ExportResearchRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .export_research(req).await?;
+
+        if let Some(dest) = file_path_opt {
+            let dest_path = std::path::Path::new(&dest);
+            if let Some(parent) = dest_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            std::fs::write(dest_path, &res)?;
+            return Ok(json!({
+                "status": "success",
+                "file_path": dest,
+                "bytes_written": res.len(),
+                "message": format!("Successfully exported research bundle to {}", dest)
+            }));
+        }
+
         Ok(json!(res))
     }
 }
@@ -225,10 +243,13 @@ impl Tool for SearchXyzImportResearchTool {
             "properties": {
                 "payload": {
                     "type": "string",
-                    "description": "Serialized JSON research bundle payload."
+                    "description": "Serialized JSON research bundle payload or path to a JSON file."
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": "Optional file path to import the research bundle from."
                 }
-            },
-            "required": ["payload"]
+            }
         })
     }
 
@@ -239,6 +260,21 @@ impl Tool for SearchXyzImportResearchTool {
             arguments.clone()
         };
         super::map_field_alias(&mut normalized, "payload", &["bundle", "data", "content"]);
+        super::map_field_alias(&mut normalized, "file_path", &["filePath", "path", "file", "source", "bundle_path", "bundlePath"]);
+
+        if let Some(fp) = normalized.get("file_path").and_then(|v| v.as_str()) {
+            if let Ok(content) = std::fs::read_to_string(fp) {
+                normalized["payload"] = Value::String(content);
+            }
+        } else if let Some(p) = normalized.get("payload").and_then(|v| v.as_str()) {
+            let trimmed = p.trim();
+            if (trimmed.starts_with('/') || trimmed.ends_with(".json")) && std::path::Path::new(trimmed).exists() {
+                if let Ok(content) = std::fs::read_to_string(trimmed) {
+                    normalized["payload"] = Value::String(content);
+                }
+            }
+        }
+
         if let Some(payload_val) = normalized.get("payload") {
             if payload_val.is_object() || payload_val.is_array() {
                 normalized["payload"] = Value::String(payload_val.to_string());

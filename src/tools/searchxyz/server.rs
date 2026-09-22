@@ -645,7 +645,11 @@ impl SearchXyzServer {
         let max = req.max_results.unwrap_or(5);
         let use_semantic = req.semantic.unwrap_or(true);
         let results = if use_semantic {
-            self.index.search_semantic(&req.query, max).await?
+            match self.index.search_semantic(&req.query, max).await {
+                Ok(res) if !res.is_empty() => res,
+                Ok(_) => self.index.search(&req.query, max).unwrap_or_default(),
+                Err(_) => self.index.search(&req.query, max)?,
+            }
         } else {
             self.index.search(&req.query, max)?
         };

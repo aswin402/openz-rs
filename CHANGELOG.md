@@ -1,4 +1,38 @@
-### v0.0.223 (Latest Release)
+### v0.0.224 (Latest Release)
+- **Ideas**:
+  - LLM Argument Resilience, Semantic Search Fallbacks & File-Bound Research Bundles for SearchXyz:
+    - Smart Type Inference & Field Aliasing for Knowledge Graph Operations:
+      - `searchxyz_index_relationship` auto-infers `source_type` and `target_type` to `"Document"` (for URLs) or `"Entity"` when omitted by the LLM, preventing deserialization errors.
+      - Expanded bidirectional aliases for `source` (`"from"`, `"src"`, `"source_entity"`, `"url"`, `"uri"`, `"link"`), `target` (`"to"`, `"dst"`, `"target_entity"`, `"target_url"`), and `relationship` (`"rel"`, `"relation"`, `"predicate"`, `"edge"`, `"label"`).
+      - `searchxyz_query_graph` accepts `"url"`, `"source"`, `"link"`, `"id"` as entity aliases.
+    - File-Bound Research Bundle Round-Trip:
+      - `searchxyz_export_research` now natively accepts `file_path`, automatically writes the JSON research bundle directly to disk, and returns structured metadata (`status`, `file_path`, `bytes_written`), avoiding multi-megabyte tool output strings.
+      - `searchxyz_import_research` now detects disk paths in `file_path` or `payload` and automatically loads bundle files from disk.
+    - Semantic Search Hybrid Fallback:
+      - In `searchxyz_recall`, when vector embedding search returns empty or encounters errors, the engine seamlessly falls back to Tantivy BM25 keyword search, ensuring zero missed recalls on exact term queries like `"Tantivy zero IPC"`.
+- **Inspirations**:
+  - Postel's Robustness Principle, hybrid semantic + lexical search retrieval (Reciprocal Rank Fusion / BM25 fallback), and agent filesystem ergonomics.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/searchxyz/graph.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/graph.rs): Type inference and entity/relationship argument aliases.
+    - [`src/tools/searchxyz/index.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/index.rs): File path support for export and import research tools.
+    - [`src/tools/searchxyz/server.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/server.rs): Tantivy BM25 fallback in `recall`.
+    - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml): Incremented version to `0.0.224`.
+    - [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json): Incremented version to `0.0.224`.
+    - [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Incremented version badge to `0.0.224`.
+  - Test Modules:
+    - [`src/tools/searchxyz/core/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/core/): 96 unit tests passing.
+    - [`src/cli/builder.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder.rs): `test_native_tool_registration_names` (exact 260 registered native tools invariant).
+- **Details & Metrics**:
+  - 96/96 SearchXyz unit tests passing; 260 registered native tools invariant strictly preserved.
+  - 0 compiler warnings, 0 clippy warnings.
+- **Verification**:
+  - `cargo check -p openz -j 1`: PASS (0 warnings).
+  - `cargo test -p openz -j 1 --lib tools::searchxyz`: 96 passed, 0 failed.
+  - `cargo test -p openz -j 1 --lib test_native_tool_registration_names`: 1 passed, exact 260 invariant preserved.
+  - Real-time LLM validation: Successfully ran end-to-end turns for `searchxyz_browser_search` + `searchxyz_read_url` (crates.io registry summary), `searchxyz_index_content` + `searchxyz_index_relationship` + `searchxyz_query_graph` + `searchxyz_recall` (score 0.76 exact match), `searchxyz_export_research` (140,039 bytes written) + `searchxyz_delete_source` + `searchxyz_import_research` (50 docs, 524 graph edges restored), and `searchxyz_doctor` (5,505 indexed sources, 181 graph nodes, 524 edges).
+
+### v0.0.223
 - **Ideas**:
   - Full Native In-Process Absorption of SearchXyz Autonomous Web Crawling & Knowledge Graph Engine:
     - Completely absorbed the standalone `tools/searchxyz` external crate and MCP daemon into native OpenZ code under [`src/tools/searchxyz/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/), eliminating the external `tools/searchxyz/` directory and its IPC/daemon overhead entirely.

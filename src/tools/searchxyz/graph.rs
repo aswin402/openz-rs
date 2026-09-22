@@ -48,11 +48,21 @@ impl Tool for SearchXyzIndexRelationshipTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let mut normalized = arguments.clone();
-        super::map_field_alias(&mut normalized, "source", &["from", "src", "source_entity", "sourceEntity"]);
-        super::map_field_alias(&mut normalized, "source_type", &["sourceType", "from_type", "src_type"]);
-        super::map_field_alias(&mut normalized, "target", &["to", "dst", "target_entity", "targetEntity"]);
+        super::map_field_alias(&mut normalized, "source", &["from", "src", "source_entity", "sourceEntity", "url", "uri", "link"]);
+        super::map_field_alias(&mut normalized, "source_type", &["sourceType", "from_type", "src_type", "type"]);
+        super::map_field_alias(&mut normalized, "target", &["to", "dst", "target_entity", "targetEntity", "target_url", "uri", "link"]);
         super::map_field_alias(&mut normalized, "target_type", &["targetType", "to_type", "dst_type"]);
-        super::map_field_alias(&mut normalized, "relationship", &["rel", "relation", "type", "predicate", "edge"]);
+        super::map_field_alias(&mut normalized, "relationship", &["rel", "relation", "type", "predicate", "edge", "label"]);
+
+        if normalized.get("source_type").is_none() {
+            let is_url = normalized.get("source").and_then(|v| v.as_str()).map(|s| s.contains("://")).unwrap_or(false);
+            normalized["source_type"] = json!(if is_url { "Document" } else { "Entity" });
+        }
+        if normalized.get("target_type").is_none() {
+            let is_url = normalized.get("target").and_then(|v| v.as_str()).map(|s| s.contains("://")).unwrap_or(false);
+            normalized["target_type"] = json!(if is_url { "Document" } else { "Entity" });
+        }
+
         let req: IndexRelationshipRequest = serde_json::from_value(normalized)?;
         let res = get_server()
             .index_relationship(req).await?;
@@ -96,7 +106,7 @@ impl Tool for SearchXyzQueryGraphTool {
         } else {
             arguments.clone()
         };
-        super::map_field_alias(&mut normalized, "entity", &["name", "node", "query", "target"]);
+        super::map_field_alias(&mut normalized, "entity", &["name", "node", "query", "target", "url", "source", "link", "id"]);
         super::map_field_alias(&mut normalized, "max_depth", &["depth", "maxDepth"]);
         super::coerce_numeric_fields(&mut normalized, &["max_depth"]);
         let req: QueryGraphRequest = serde_json::from_value(normalized)?;
