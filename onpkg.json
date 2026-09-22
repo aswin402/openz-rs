@@ -101,6 +101,7 @@
       "oxc_parser",
       "oxc_span",
       "oxc_syntax",
+      "parley",
       "pdf-extract",
       "percent-encoding",
       "plotters",
@@ -143,18 +144,19 @@
       "tracing",
       "tracing-subscriber",
       "url",
+      "usvg",
       "uuid",
+      "vello_cpu",
       "wasmtime",
       "wasmtime-wasi",
-      "wavyte",
       "wgpu",
       "zip"
     ]
   },
   "project": {
     "name": "openz",
-    "version": "0.0.224",
-    "description": "OpenZ — Async Personal AI Agent Framework in Rust",
+    "version": "0.0.225",
+    "description": "High-performance, async personal AI agent framework built in Rust",
     "package_manager": "cargo",
     "runtime": "rust",
     "stack": "rust-cli"

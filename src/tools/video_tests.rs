@@ -1,7 +1,7 @@
 use super::*;
 use std::collections::BTreeMap;
-use wavyte::{
-    Anim, Asset, BlendMode, Canvas, Clip, ClipProps, Fps, FrameIndex, FrameRange, PathAsset,
+use crate::tools::wavyte::{
+    self, Anim, Asset, BlendMode, Canvas, Clip, ClipProps, Fps, FrameIndex, FrameRange, PathAsset,
     Track, Transform2D, Vec2,
 };
 

@@ -122,6 +122,9 @@ pub mod openmedia;
 #[path = "searchxyz/mod.rs"]
 pub mod searchxyz;
 
+/// Programmatic video composition and CPU rendering engine.
+pub mod wavyte;
+
 /// Autonomous self-diagnostics, inventory inspection, and session management.
 pub mod self_management;
 

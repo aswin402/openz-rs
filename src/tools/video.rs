@@ -3,8 +3,8 @@ use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use std::fs;
 
-use wavyte::{
-    create_backend, render_to_mp4, BackendKind, Composition, FrameIndex, FrameRange,
+use crate::tools::wavyte::{
+    self, create_backend, render_to_mp4, BackendKind, Composition, FrameIndex, FrameRange,
     RenderSettings, RenderToMp4Opts,
 };
 

@@ -1,4 +1,56 @@
-### v0.0.224 (Latest Release)
+### v0.0.225 (Latest Release)
+- **Ideas**:
+  - Full Native In-Process Absorption of Wavyte Programmatic Video Engine & Elimination of External `tools/` Subcrates:
+    - Completely absorbed the `wavyte` programmatic video composition and rendering engine directly into [`src/tools/wavyte/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/wavyte/), permanently eliminating the `tools/wavyte/` external directory and completing OpenZ's multi-crate consolidation into a 100% unified, single-crate native architecture.
+    - Subsystems Absorbed into [`src/tools/wavyte/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/wavyte/):
+      - `animation/`: Keyframe interpolation (`linear`, `hold`, `bezier`), procedural noise/RNG, easing curves (`Ease`), and combinators (`sequence`, `mix`, `delay`, `stagger`).
+      - `assets/`: Image decoding (`image` crate), SVG parsing & rasterization, immutable `PreparedAssetStore`, and in-memory frame caches.
+      - `audio/`: Multi-segment audio timeline synthesis, volume envelope mixing, and 32-bit floating point PCM audio export.
+      - `compile/`: Scene graph evaluation fingerprinting and multi-pass IR compilation (`ScenePass`, `OffscreenPass`, `CompositePass`).
+      - `composition/`: Fluent timeline DSL (`CompositionBuilder`, `TrackBuilder`, `ClipBuilder`) and serializable timeline data models.
+      - `effects/`: Alpha compositing (`over`, `add`, `multiply`), spatial blurs (separable box/Gaussian), and animated transitions (`crossfade`, `wipe`).
+      - `encode/`: High-performance FFmpeg stdin streaming encoder with configurable codecs, pixel formats (`rgba` to `yuv420p`), bitrates, and audio multiplexing.
+      - `eval/`: Frame-accurate clip visibility and temporal property evaluator (`Evaluator`).
+      - `foundation/`: Core 2D primitives (`Point`, `Rect`, `Vec2`, `Affine`, `Transform2D`, `Fps`, `FrameIndex`, `FrameRange`).
+      - `layout/`: Track layout solver supporting absolute, horizontal/vertical stacking, grid, and alignment modes.
+      - `render/`: CPU-based rendering backend (`CpuBackend`, `PassBackend`, `execute_plan`) and multi-threaded parallel frame pipeline via `rayon`.
+    - Zero-IPC Native Video Generation Tool:
+      - Updated [`src/tools/video.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/video.rs) and [`src/tools/video_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/video_tests.rs) to import directly from `crate::tools::wavyte`, executing complex video composition tasks fully in-process.
+    - Rust 2021 Edition Alignment & Unconditional Media Processing:
+      - Replaced all Rust 2024 let-chain constructs in `mix.rs`, `plan.rs`, `model.rs`, `cpu.rs`, and `pipeline.rs` with idiomatic nested conditionals compatible with OpenZ's `edition = "2021"`.
+      - Unconditionally enabled video metadata probing (`ffprobe`), RGBA frame decoding, and audio extraction in `assets/media.rs` without requiring feature flags or returning stub errors.
+    - Dependency Harmonization:
+      - Removed `wavyte = { path = "tools/wavyte" }` from root [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml).
+      - Upgraded root `kurbo` to `{ version = "0.13", features = ["serde"] }`.
+      - Upgraded root `resvg` and added `usvg` to `0.46.0`.
+      - Added `parley = { version = "0.7.0", default-features = false, features = ["std"] }` and `vello_cpu = { version = "0.0.6", default-features = false, features = ["std", "text", "u8_pipeline"] }`.
+- **Inspirations**:
+  - Monolithic single-crate Rust architecture, zero external build boundaries, Remotion-style programmatic timeline composition, and CPU-first video rendering.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/wavyte/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/wavyte/): Absorbed programmatic video composition and rendering engine.
+    - [`src/tools/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mod.rs): Registered `pub mod wavyte;`.
+    - [`src/tools/video.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/video.rs): Updated imports to `crate::tools::wavyte`.
+    - [`src/tools/video_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/video_tests.rs): Updated test imports to `crate::tools::wavyte`.
+    - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml): Removed wavyte path dependency, harmonized `kurbo 0.13`, `resvg 0.46`, `parley`, `vello_cpu`, and bumped version to `0.0.225`.
+    - [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json): Incremented version to `0.0.225`.
+    - [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Incremented version badge to `0.0.225`.
+  - Test Modules:
+    - [`src/tools/wavyte/tests/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/wavyte/tests/): 70 unit tests passing.
+    - [`src/tools/video_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/video_tests.rs): Video generator integration test passing.
+    - [`src/cli/builder.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder.rs): `test_native_tool_registration_names` (exact 260 registered native tools invariant).
+- **Details & Metrics**:
+  - Deleted entire `tools/` directory (eliminated all legacy subcrates across OpenDoc, OpenMedia, SearchXyz, and Wavyte).
+  - 70/70 Wavyte unit tests passing; `test_generate_video` passing; 260 registered native tools invariant strictly preserved.
+  - 0 compiler warnings, 0 clippy warnings.
+- **Verification**:
+  - `cargo check -p openz -j 1`: PASS (0 warnings).
+  - `cargo test -p openz -j 1 --lib test_native_tool_registration_names`: 1 passed, exact 260 invariant preserved.
+  - `cargo test -p openz -j 1 --lib tools::video`: 1 passed.
+  - `cargo test -p openz -j 1 --lib tools::wavyte`: 70 passed.
+  - `cargo clippy -p openz -j 1`: PASS (0 warnings).
+
+### v0.0.224
 - **Ideas**:
   - LLM Argument Resilience, Semantic Search Fallbacks & File-Bound Research Bundles for SearchXyz:
     - Smart Type Inference & Field Aliasing for Knowledge Graph Operations:
