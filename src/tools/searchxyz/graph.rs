@@ -1,8 +1,7 @@
-use super::{get_server, map_mcp_err};
+use super::get_server;
 use crate::tools::Tool;
 use anyhow::Result;
-use rmcp::handler::server::wrapper::Parameters;
-use searchxyz::tools::{IndexRelationshipRequest, QueryGraphRequest, ReadGithubRepoRequest};
+use crate::tools::searchxyz::server::{IndexRelationshipRequest, QueryGraphRequest, ReadGithubRepoRequest};
 use serde_json::{json, Value};
 
 // ── 9. Index Relationship ─────────────────────────────────────
@@ -56,9 +55,7 @@ impl Tool for SearchXyzIndexRelationshipTool {
         super::map_field_alias(&mut normalized, "relationship", &["rel", "relation", "type", "predicate", "edge"]);
         let req: IndexRelationshipRequest = serde_json::from_value(normalized)?;
         let res = get_server()
-            .index_relationship(Parameters(req))
-            .await
-            .map_err(map_mcp_err)?;
+            .index_relationship(req).await?;
         Ok(json!(res))
     }
 }
@@ -104,9 +101,7 @@ impl Tool for SearchXyzQueryGraphTool {
         super::coerce_numeric_fields(&mut normalized, &["max_depth"]);
         let req: QueryGraphRequest = serde_json::from_value(normalized)?;
         let res = get_server()
-            .query_graph(Parameters(req))
-            .await
-            .map_err(map_mcp_err)?;
+            .query_graph(req).await?;
         Ok(json!(res))
     }
 }
@@ -155,11 +150,12 @@ fn github_file_limit_should_auto_retry(arguments: &Value, files: u64, max_files:
     auto_expand && files > max_files && files <= 2_000
 }
 
-fn map_github_repo_err(err: rmcp::ErrorData) -> anyhow::Error {
-    if let Some(payload) = github_file_limit_error_value(&err.message) {
+fn map_github_repo_err(err: anyhow::Error) -> anyhow::Error {
+    let msg = err.to_string();
+    if let Some(payload) = github_file_limit_error_value(&msg) {
         return anyhow::anyhow!(payload.to_string());
     }
-    map_mcp_err(err)
+    err
 }
 
 // ── 11. Read GitHub Repo ───────────────────────────────────────
@@ -246,10 +242,11 @@ impl Tool for SearchXyzReadGithubRepoTool {
         );
         super::coerce_bool_fields(&mut normalized, &["auto_expand_max_files"]);
         let req: ReadGithubRepoRequest = serde_json::from_value(normalized.clone())?;
-        let res = match get_server().read_github_repo(Parameters(req)).await {
+        let res = match get_server().read_github_repo(req).await {
             Ok(res) => res,
             Err(err) => {
-                if let Some((files, max_files)) = parse_github_file_limit_error(&err.message) {
+                let err_msg = err.to_string();
+                if let Some((files, max_files)) = parse_github_file_limit_error(&err_msg) {
                     if github_file_limit_should_auto_retry(&normalized, files, max_files) {
                         let mut retry_args = normalized.clone();
                         retry_args["max_files"] = json!(files);
@@ -260,7 +257,7 @@ impl Tool for SearchXyzReadGithubRepoTool {
                         );
                         let retry_req: ReadGithubRepoRequest = serde_json::from_value(retry_args)?;
                         let retry_res = get_server()
-                            .read_github_repo(Parameters(retry_req))
+                            .read_github_repo(retry_req)
                             .await
                             .map_err(map_github_repo_err)?;
                         return Ok(json!({

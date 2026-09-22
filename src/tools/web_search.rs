@@ -119,7 +119,7 @@ fn result_term_coverage(result: &Value, terms: &[String]) -> usize {
     terms.iter().filter(|term| haystack.contains(*term)).count()
 }
 
-fn searchxyz_results_to_json(results: Vec<searchxyz::search::SearchResult>) -> Vec<Value> {
+fn searchxyz_results_to_json(results: Vec<crate::tools::searchxyz::core::search::SearchResult>) -> Vec<Value> {
     results
         .into_iter()
         .map(|r| {
@@ -445,7 +445,7 @@ impl WebSearchTool {
 
         // 0. Try SearchXyz Dispatcher (OpenZ-native search path).
         if policy.allows_native() {
-            let search_query = searchxyz::search::SearchQuery::new(query, 10);
+            let search_query = crate::tools::searchxyz::core::search::SearchQuery::new(query, 10);
             match crate::tools::searchxyz::get_server()
                 .dispatcher
                 .search(&search_query)
@@ -455,7 +455,7 @@ impl WebSearchTool {
                     let search_results = searchxyz_results_to_json(results);
                     if !search_results.is_empty() {
                         if native_search_results_need_merge_retry(query, &search_results) {
-                            let mut merged_query = searchxyz::search::SearchQuery::new(query, 10);
+                            let mut merged_query = crate::tools::searchxyz::core::search::SearchQuery::new(query, 10);
                             merged_query.merge_backends = true;
                             match crate::tools::searchxyz::get_server()
                                 .dispatcher

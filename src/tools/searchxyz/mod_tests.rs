@@ -3,6 +3,7 @@ use crate::tools::Tool;
 
 #[test]
 fn test_openz_embedded_paths_use_openz_dir_for_defaults() {
+    let _guard = crate::tools::searchxyz::core::config::tests::ENV_LOCK.lock().unwrap();
     std::env::remove_var("SEARCHXYZ_INDEX_PATH");
     std::env::remove_var("SEARCHXYZ_CACHE_PATH");
     let mut config = Config::default();

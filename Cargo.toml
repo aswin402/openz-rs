@@ -1,13 +1,12 @@
 [package]
 name = "openz"
-version = "0.0.222"
+version = "0.0.223"
 edition = "2021"
 
 
 [workspace]
 members = [
-    ".",
-    "tools/searchxyz"
+    "."
 ]
 
 [dependencies]
@@ -18,7 +17,7 @@ tokio = { version = "1.38", features = ["rt-multi-thread", "net", "sync", "time"
 tokio-stream = { version = "0.1", features = ["net"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "multipart", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "multipart", "rustls-tls", "gzip", "brotli"] }
 futures-util = "0.3"
 tokio-tungstenite = { version = "0.24.0", features = ["rustls-tls-webpki-roots"] }
 inquire = "0.7"
@@ -83,7 +82,8 @@ governor = "0.8"
 lru = "0.12"
 rmcp = { version = "1.7.0", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 schemars = "1.2"
-searchxyz = { path = "tools/searchxyz", features = ["js-rendering"] }
+tower = { version = "0.5", features = ["util"] }
+url = "2"
 svg = "0.17"
 resvg = "0.44"
 lyon = "1.0"
@@ -111,7 +111,8 @@ comrak = "0.25"
 rayon = "1.10"
 
 [features]
-default = []
+default = ["js-rendering"]
+js-rendering = []
 ocr = []
 
 [target.'cfg(not(target_env = "msvc"))'.dependencies]

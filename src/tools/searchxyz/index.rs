@@ -1,8 +1,7 @@
-use super::{get_server, map_mcp_err};
+use super::get_server;
 use crate::tools::Tool;
 use anyhow::Result;
-use rmcp::handler::server::wrapper::Parameters;
-use searchxyz::tools::{
+use crate::tools::searchxyz::server::{
     ClearIndexRequest, DeleteSourceRequest, ExportResearchRequest, ImportResearchRequest,
     IndexContentRequest, ListSourcesRequest, RecallRequest,
 };
@@ -50,9 +49,7 @@ impl Tool for SearchXyzRecallTool {
         super::coerce_bool_fields(&mut normalized, &["semantic"]);
         let req: RecallRequest = serde_json::from_value(normalized)?;
         let res = get_server()
-            .recall(Parameters(req))
-            .await
-            .map_err(map_mcp_err)?;
+            .recall(req).await?;
         Ok(json!(res))
     }
 }
@@ -102,9 +99,7 @@ impl Tool for SearchXyzListSourcesTool {
         super::coerce_numeric_fields(&mut normalized, &["limit", "offset"]);
         let req: ListSourcesRequest = serde_json::from_value(normalized)?;
         let res = get_server()
-            .list_sources(Parameters(req))
-            .await
-            .map_err(map_mcp_err)?;
+            .list_sources(req).await?;
         Ok(json!(res))
     }
 }
@@ -156,9 +151,7 @@ impl Tool for SearchXyzIndexContentTool {
         super::map_field_alias(&mut normalized, "content", &["text", "body", "data"]);
         let req: IndexContentRequest = serde_json::from_value(normalized)?;
         let res = get_server()
-            .index_content(Parameters(req))
-            .await
-            .map_err(map_mcp_err)?;
+            .index_content(req).await?;
         Ok(json!(res))
     }
 }
@@ -208,9 +201,7 @@ impl Tool for SearchXyzExportResearchTool {
         super::coerce_numeric_fields(&mut normalized, &["limit", "max_chars"]);
         let req: ExportResearchRequest = serde_json::from_value(normalized)?;
         let res = get_server()
-            .export_research(Parameters(req))
-            .await
-            .map_err(map_mcp_err)?;
+            .export_research(req).await?;
         Ok(json!(res))
     }
 }
@@ -259,9 +250,7 @@ impl Tool for SearchXyzImportResearchTool {
         }
         let req: ImportResearchRequest = serde_json::from_value(normalized)?;
         let res = get_server()
-            .import_research(Parameters(req))
-            .await
-            .map_err(map_mcp_err)?;
+            .import_research(req).await?;
         Ok(json!(res))
     }
 }
@@ -313,9 +302,7 @@ impl Tool for SearchXyzDeleteSourceTool {
         super::coerce_bool_fields(&mut normalized, &["confirm"]);
         let req: DeleteSourceRequest = serde_json::from_value(normalized)?;
         let res = get_server()
-            .delete_source(Parameters(req))
-            .await
-            .map_err(map_mcp_err)?;
+            .delete_source(req).await?;
         Ok(json!(res))
     }
 }
@@ -356,9 +343,7 @@ impl Tool for SearchXyzClearIndexTool {
         super::coerce_bool_fields(&mut normalized, &["confirm"]);
         let req: ClearIndexRequest = serde_json::from_value(normalized)?;
         let res = get_server()
-            .clear_index(Parameters(req))
-            .await
-            .map_err(map_mcp_err)?;
+            .clear_index(req).await?;
         Ok(json!(res))
     }
 }

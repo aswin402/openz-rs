@@ -6,7 +6,7 @@ use crate::tools::searchxyz::{
 
 #[test]
 fn backend_health_labels_cover_expected_states() {
-    let mut config = searchxyz::config::Config::default();
+    let mut config = crate::tools::searchxyz::core::config::Config::default();
     config.search.backends = vec![
         "searxng".to_string(),
         "brave".to_string(),

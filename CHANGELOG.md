@@ -1,4 +1,51 @@
-### v0.0.222 (Latest Release)
+### v0.0.223 (Latest Release)
+- **Ideas**:
+  - Full Native In-Process Absorption of SearchXyz Autonomous Web Crawling & Knowledge Graph Engine:
+    - Completely absorbed the standalone `tools/searchxyz` external crate and MCP daemon into native OpenZ code under [`src/tools/searchxyz/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/), eliminating the external `tools/searchxyz/` directory and its IPC/daemon overhead entirely.
+    - Subsystems Absorbed into [`src/tools/searchxyz/core/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/core/):
+      - `cache.rs`: In-memory and persisted JSON LRU crawl cache with TTL, checksum validation, and automatic revalidation.
+      - `config.rs`: Multi-tiered search & crawler configuration, environment overrides, SearXNG routing, and synchronized test locks (`ENV_LOCK`).
+      - `crawler/`: Modular multi-strategy scraping subsystem (`mod.rs`, `fast_spider.rs`, `fingerprint.rs`, `github.rs`, `headless.rs`, `sitemap.rs`, `spider.rs`, `youtube.rs`) supporting transparent `gzip`/`brotli` decompression, headless browser JS-rendering via `chromiumoxide`, robots.txt compliance, sitemap parsing, and YouTube transcript extraction.
+      - `diagnostics.rs` & `evidence.rs`: Machine-readable crawl diagnostics and multi-source claim/conflict extraction dossiers.
+      - `error.rs`: Unified `SearchXyzError` error taxonomy.
+      - `extractor.rs`: DOM readability parser, PDF extractor (`lopdf`), and semantic content extraction pipeline.
+      - `graph.rs`: In-memory and disk-persisted BFS/DFS knowledge graph (`KnowledgeGraph`, `Node`, `Edge`), relationship indexing, entity clustering, and heuristic extraction.
+      - `index.rs`: High-performance Tantivy-backed inverted search index (`SearchIndex`) with schema fields, segment management, sliding window chunking, and FastEmbed / Cloud embedding generation.
+      - `pipeline.rs`: End-to-end `SearchAndReadPipeline` orchestrating search dispatch, concurrent page fetching, extraction, and graph linking.
+      - `search/`: Modular search backend dispatcher (`mod.rs`, `bing.rs`, `brave.rs`, `duckduckgo.rs`, `google.rs`, `searxng.rs`) with rate limiting, result ranking, domain filtering, and deduplication.
+    - Zero-IPC Native In-Process Server ([`src/tools/searchxyz/server.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/server.rs)):
+      - Direct in-process `SearchXyzServer` singleton eliminating `rmcp` RPC envelopes (`Parameters`, `ErrorData`) and turning all 17 search tools into high-speed native async Rust method calls.
+      - Native Tantivy disk storage relocated to OpenZ's runtime home `~/.openz/searchxyz/` (`index/`, `cache.json`, `graph.json`).
+    - Dependency Harmonization & Rand Alignment:
+      - Removed `"tools/searchxyz"` from `[workspace.members]` and pruned `searchxyz = { path = "tools/searchxyz", features = ["js-rendering"] }` from `[dependencies]`.
+      - Added direct dependencies to root [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml): `tower = { version = "0.5", features = ["util"] }`, `url = "2"`, enabled `"gzip"` and `"brotli"` in `reqwest`, and declared `default = ["js-rendering"]` in `[features]`.
+      - Harmonized random selection in crawler and search backends (`SliceRandom`, `rand::thread_rng()`) to match OpenZ's root `rand = "0.8"`.
+- **Inspirations**:
+  - Unified agent memory and research engines, zero-IPC native search pipelines, and Tantivy-powered local retrieval.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/searchxyz/core/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/core/): Native core search, crawl, index, and graph subsystems.
+    - [`src/tools/searchxyz/server.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/server.rs): In-process `SearchXyzServer` async engine.
+    - [`src/tools/searchxyz/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/mod.rs): Direct tool wrappers routing into `SearchXyzServer`.
+    - [`src/tools/web_search.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web_search.rs): Updated imports to internal core search types.
+    - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml): Incremented version to `0.0.223`, added `tower`, `url`, `reqwest` features.
+    - [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json): Incremented version to `0.0.223`.
+    - [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Incremented version badge to `0.0.223`.
+  - Test Modules:
+    - [`src/tools/searchxyz/core/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/core/): 96 unit and integration tests across crawling, search ranking, Tantivy indexing, and graph operations.
+    - [`src/cli/builder.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder.rs): `test_native_tool_registration_names` (exact 260 registered native tools invariant).
+- **Details & Metrics**:
+  - 96/96 SearchXyz unit tests passing; 260 registered native tools invariant strictly preserved.
+  - Complete elimination of external `tools/searchxyz/` directory (62 files removed).
+  - 0 compiler warnings, 0 clippy warnings.
+- **Verification**:
+  - `cargo check -p openz -j 1`: PASS (0 warnings).
+  - `cargo test -p openz -j 1 --lib tools::searchxyz`: 96 passed, 0 failed.
+  - `cargo test -p openz -j 1 --lib test_native_tool_registration_names`: 1 passed, exact 260 invariant preserved.
+  - `cargo clippy -p openz -j 1`: 0 warnings.
+  - Real-time headless agent test: `./target/debug/openz run -p "..." -y` successfully queried `searchxyz_doctor`, indexed content with `searchxyz_index_content`, and recalled from Tantivy with `searchxyz_recall` (status: success).
+
+### v0.0.222
 - **Ideas**:
   - Comprehensive LLM Resilience & Pre-Deserialization Parameter Coercion for Multimodal & Office Suites:
     - Dual-layer argument tolerance for OpenMedia vector charts (`openmedia_create_chart`), icons (`openmedia_create_icon`), vector graphics (`openmedia_create_svg`, `openmedia_rasterize_svg`), diagram engines (`openmedia_diagram_generate_mermaid`), animated spinners (`openmedia_animate_generate_spinner`), and the GPU/CPU image processing suite (`openmedia_image_*`).

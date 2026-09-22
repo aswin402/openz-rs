@@ -1,5 +1,13 @@
 use anyhow::anyhow;
-use searchxyz::{
+use std::sync::{Arc, OnceLock};
+
+pub mod core;
+pub mod graph;
+pub mod index;
+pub mod server;
+pub mod web;
+
+pub use core::{
     cache::Cache,
     config::Config,
     crawler::Crawler,
@@ -10,13 +18,8 @@ use searchxyz::{
         bing::BingBackend, brave::BraveBackend, duckduckgo::DuckDuckGoBackend,
         google::GoogleBackend, searxng::SearXngBackend, SearchBackend, SearchDispatcher,
     },
-    tools::SearchXyzServer,
 };
-use std::sync::{Arc, OnceLock};
-
-pub mod graph;
-pub mod index;
-pub mod web;
+pub use server::SearchXyzServer;
 
 pub use graph::{
     SearchXyzIndexRelationshipTool, SearchXyzQueryGraphTool, SearchXyzReadGithubRepoTool,

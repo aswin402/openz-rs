@@ -1,8 +1,7 @@
-use super::{get_server, map_mcp_err};
+use super::get_server;
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
-use rmcp::handler::server::wrapper::Parameters;
-use searchxyz::tools::{
+use crate::tools::searchxyz::server::{
     DeepResearchRequest, ReadUrlRequest, SearchAndReadRequest, SearchWebRequest, SiteMapRequest,
 };
 use serde_json::{json, Value};
@@ -151,7 +150,7 @@ fn search_failure_error_value(
 fn backend_health_label(
     name: &str,
     configured_order: &[String],
-    config: &searchxyz::config::Config,
+    config: &crate::tools::searchxyz::core::config::Config,
 ) -> String {
     let enabled = configured_order.iter().any(|backend| backend == name);
     let preferred = configured_order
@@ -954,10 +953,10 @@ impl Tool for SearchXyzSearchWebTool {
         let req: SearchWebRequest = serde_json::from_value(normalized)?;
         let server = get_server();
         let configured_backends = server.config.search.backends.clone();
-        match server.search_web(Parameters(req)).await {
+        match server.search_web(req).await {
             Ok(res) => Ok(json!(res)),
             Err(err) => {
-                let raw_error = format!("MCP Error {:?}: {}", err.code, err.message);
+                let raw_error = err.to_string();
                 let kind = classify_search_failure(&raw_error);
                 record_search_backend_failure(&configured_backends, kind);
                 Err(anyhow!(
@@ -1033,9 +1032,7 @@ impl Tool for SearchXyzReadUrlTool {
         super::coerce_bool_fields(&mut normalized, &["render_js", "include_diagnostics"]);
         let req: ReadUrlRequest = serde_json::from_value(normalized)?;
         let res = get_server()
-            .read_url(Parameters(req))
-            .await
-            .map_err(map_mcp_err)?;
+            .read_url(req).await?;
         Ok(json!(res))
     }
 }
@@ -1121,9 +1118,7 @@ impl Tool for SearchXyzSearchAndReadTool {
         super::coerce_bool_fields(&mut normalized, &["merge_backends", "render_js", "include_diagnostics"]);
         let req: SearchAndReadRequest = serde_json::from_value(normalized)?;
         let res = get_server()
-            .search_and_read(Parameters(req))
-            .await
-            .map_err(map_mcp_err)?;
+            .search_and_read(req).await?;
         Ok(json!(res))
     }
 }
@@ -1217,9 +1212,7 @@ impl Tool for SearchXyzDeepResearchTool {
         super::coerce_bool_fields(&mut normalized, &["merge_backends", "render_js", "include_diagnostics"]);
         let req: DeepResearchRequest = serde_json::from_value(normalized)?;
         let res = get_server()
-            .deep_research(Parameters(req))
-            .await
-            .map_err(map_mcp_err)?;
+            .deep_research(req).await?;
         Ok(json!(res))
     }
 }
@@ -1271,9 +1264,7 @@ impl Tool for SearchXyzSiteMapTool {
         super::coerce_bool_fields(&mut normalized, &["use_sitemap", "crawl_links"]);
         let req: SiteMapRequest = serde_json::from_value(normalized)?;
         let res = get_server()
-            .site_map(Parameters(req))
-            .await
-            .map_err(map_mcp_err)?;
+            .site_map(req).await?;
         Ok(json!(res))
     }
 }

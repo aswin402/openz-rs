@@ -1,0 +1,22 @@
+pub mod cache;
+pub mod config;
+pub mod crawler;
+pub mod diagnostics;
+pub mod error;
+pub mod evidence;
+pub mod extractor;
+pub mod graph;
+pub mod index;
+pub mod pipeline;
+pub mod search;
+
+pub use cache::{Cache, CacheEntry};
+pub use config::Config;
+pub use crawler::Crawler;
+pub use error::SearchXyzError;
+pub use evidence::build_evidence_summary;
+pub use extractor::{ExtractedContent, ExtractionPipeline};
+pub use graph::{Edge, KnowledgeGraph, Node};
+pub use index::{EmbeddingGenerator, IndexSearchResult, SearchIndex, SourceEntry};
+pub use pipeline::SearchAndReadPipeline;
+pub use search::{SearchBackend, SearchDispatcher, SearchQuery, SearchResult};
