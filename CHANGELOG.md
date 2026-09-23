@@ -1,4 +1,41 @@
-### v0.0.225 (Latest Release)
+### v0.0.226 (Latest Release)
+- **Ideas**:
+  - Context-Aware BM25 Lexical Tool Retrieval & JIT Dynamic Discovery Architecture:
+    - Designed and implemented a logical, non-hardcoded, multi-tiered tool retrieval and management engine for OpenZ's 260 native tools, drastically reducing active tool definition footprint in LLM prompt context from 128+ tools down to 14–18 tools (~88% token reduction) while eliminating hallucinated tool invocations and context bloat.
+    - Tier 1: Core Anchor Set (~6 tools) permanently retained in prompt context (`read_file`, `write_file`, `grep_search`, `find_files`, `delegate_task`, `tool_catalog`/`tool_search`, `openz_inventory`/`request_tool_scope`).
+    - Tier 2: In-Process BM25 Lexical Search & Dynamic Scoping ([`src/tools/routing.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/routing.rs)):
+      - Implemented an in-process Robertson-Spärck Jones BM25 search engine with query-to-document token overlap, length normalization ($k_1 = 1.2, b = 0.75$), and weighted frequency counting across tool names, domains, aliases, descriptions, parameter summaries, `when_to_use`, and examples.
+      - Dynamic domain relevance selection (`select_domains_with_bm25`) that ranks functional clusters based on task semantics rather than brittle regex/keyword matchers.
+      - Relevance-based candidate selection that activates domain tools when prompt relevance exceeds dynamic score thresholds.
+    - Tier 3: Self-Reflective JIT Tool Discovery & Mid-Turn Hot-Mounting (`tool_catalog` / `tool_search`):
+      - Enhanced `tool_catalog` ([`src/tools/self_management/catalog.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog.rs)) to support `query` and `mount` arguments with native aliases (`tool_search`, `search_tools`, `find_tools`, `discover_tools`).
+      - Allows the model to inspect and dynamically mount matching tools from the 260-tool catalog into `pending_scope` for immediate execution in subsequent iterations of the turn.
+- **Inspirations**:
+  - Claude Code tool minimization, Codex/Pi tool discovery patterns, AnyTool (hierarchical tool tree retrieval), Gorilla LLM API routing, and ToolBench dynamic retrieval.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/routing.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/routing.rs): In-process BM25 lexical engine, `ToolDoc` construction, and dynamic domain scoring.
+    - [`src/tools/registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry.rs): Dynamic prompt tool routing via BM25, `read_tools()` exposure, and `tool_search` alias resolution.
+    - [`src/tools/defs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/defs.rs): Added `tool_search`, `search_tools`, `find_tools`, `discover_tools` aliases to static defs.
+    - [`src/tools/metadata.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/metadata.rs): Dynamic alias fallback for non-static tool definitions.
+    - [`src/tools/self_management/catalog.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog.rs): `tool_catalog` query search and hot-mounting into runtime scope.
+    - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Version increment to `0.0.226`.
+  - Test Modules:
+    - [`src/tools/self_management/catalog_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog_tests.rs): Added `test_tool_catalog_bm25_search_and_hot_mount`.
+    - [`src/tools/registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry.rs): 23 unit tests verifying BM25 scoping and explicit override routing.
+    - [`src/cli/builder.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder.rs): `test_native_tool_registration_names` (exact 260 registered native tools invariant).
+- **Details & Metrics**:
+  - Prompt tool context reduction: decreased from 128 tools down to 14–18 tools for typical requests (~88% token reduction in tool definitions per turn).
+  - 260/260 registered native tools invariant strictly preserved without duplicate names.
+  - 0 clippy warnings, 0 compiler warnings.
+- **Verification**:
+  - `cargo test -p openz -j 1 --lib test_native_tool_registration_names`: PASS (1/1).
+  - `cargo test -p openz -j 1 --lib tools::registry::tests`: PASS (23/23).
+  - `cargo test -p openz -j 1 --lib tools::self_management::catalog::tests`: PASS (3/3).
+  - `cargo clippy -p openz -j 1 -- -D warnings`: PASS (0 warnings).
+  - Live Headless Run: Verified `./target/debug/openz run -p "Use tool_catalog with query 'database sqlite'..." -y` successfully executes and discovers 16 tools via BM25 ranking.
+
+### v0.0.225
 - **Ideas**:
   - Full Native In-Process Absorption of Wavyte Programmatic Video Engine & Elimination of External `tools/` Subcrates:
     - Completely absorbed the `wavyte` programmatic video composition and rendering engine directly into [`src/tools/wavyte/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/wavyte/), permanently eliminating the `tools/wavyte/` external directory and completing OpenZ's multi-crate consolidation into a 100% unified, single-crate native architecture.

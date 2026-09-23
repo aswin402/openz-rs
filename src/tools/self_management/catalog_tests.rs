@@ -126,3 +126,30 @@ fn test_tool_catalog_reports_resource_policy_visibility() {
         Some(0)
     );
 }
+
+#[tokio::test]
+async fn test_tool_catalog_bm25_search_and_hot_mount() {
+    let registry = crate::tools::ToolRegistry::new();
+    registry.register(std::sync::Arc::new(crate::tools::shell::ExecCommandTool));
+    registry.register(std::sync::Arc::new(crate::tools::filesystem::ReadFileTool));
+    registry.register(std::sync::Arc::new(crate::tools::grep::GrepSearchTool));
+
+    let catalog = ToolCatalogTool::new(registry.clone());
+    let res = catalog
+        .call(&serde_json::json!({
+            "query": "read file and inspect contents",
+            "mount": true
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(res["success"].as_bool().unwrap(), true);
+    assert_eq!(res["mounted"].as_bool().unwrap(), true);
+    let mounted = res["mounted_tools"].as_array().unwrap();
+    assert!(mounted.iter().any(|v| v.as_str() == Some("read_file")));
+
+    // Verify hot-mounting in registry pending_scope:
+    let (tools, _) = registry.current_turn_scope();
+    assert!(tools.contains(&"read_file".to_string()));
+}
+

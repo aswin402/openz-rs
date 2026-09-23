@@ -111,7 +111,7 @@ pub(crate) fn resolve_static_name(
                     "search_memory" | "query_memory" | "find_memory" => canonical == "recall_memory",
                     "curate_skills" | "manage_skills" | "save_skill" => canonical == "curate_skill",
                     "inventory" | "runtime_inventory" => canonical == "openz_inventory",
-                    "catalog" | "list_tools" => canonical == "tool_catalog",
+                    "catalog" | "list_tools" | "tool_search" | "search_tools" | "find_tools" | "discover_tools" => canonical == "tool_catalog",
                     _ => false,
                 };
             if is_match {
@@ -307,7 +307,7 @@ impl ToolRegistry {
         }
     }
 
-    fn read_tools(&self) -> std::sync::RwLockReadGuard<'_, HashMap<String, Arc<dyn Tool>>> {
+    pub(crate) fn read_tools(&self) -> std::sync::RwLockReadGuard<'_, HashMap<String, Arc<dyn Tool>>> {
         self.static_tools.read().unwrap_or_else(|p| {
             tracing::warn!("static_tools read lock poisoned; recovering");
             p.into_inner()
@@ -754,7 +754,9 @@ impl ToolRegistry {
             .unwrap_or_default();
         let mut explicit_names = routing::explicitly_requested_tool_names(prompt, &static_tools);
         explicit_names.extend(pending_scope.tools.iter().cloned());
-        let selected_domains_set = routing::select_domains_for_prompt(prompt);
+        let bm25_scores = routing::compute_bm25_scores(prompt, &static_tools);
+        let selected_domains_set =
+            routing::select_domains_with_bm25(prompt, &bm25_scores, &static_tools);
         let mut selected_domain_labels: std::collections::BTreeSet<String> = selected_domains_set
             .iter()
             .map(|domain| (*domain).to_string())
@@ -771,10 +773,16 @@ impl ToolRegistry {
             .filter(|tool| routing::tool_allowed_by_filter(tool.name(), filter.as_ref()))
             .map(|tool| {
                 let metadata = tool.metadata();
+                let bm25 = bm25_scores.get(tool.name()).copied().unwrap_or(0.0);
                 let in_scope = scope.allowed_names.contains(tool.name())
-                    || crate::tools::scope::tool_matches_pack(tool.name(), &metadata, &scope.packs);
-                let base_score =
-                    routing::tool_selection_score(tool.name(), &metadata, &selected_domains_set);
+                    || crate::tools::scope::tool_matches_pack(tool.name(), &metadata, &scope.packs)
+                    || bm25 > 2.0;
+                let base_score = routing::tool_selection_score_with_bm25(
+                    tool.name(),
+                    &metadata,
+                    &selected_domains_set,
+                    bm25,
+                );
                 let explicitly_requested = explicit_names.contains(tool.name())
                     || pending_scope.domains.contains(tool.metadata().domain);
                 let selected_score = if explicitly_requested {
@@ -785,11 +793,15 @@ impl ToolRegistry {
                     base_score
                 };
                 let matched_prompt_domain = selected_domains_set.contains(metadata.domain);
-                let mut selection_reason =
-                    routing::tool_selection_reasons(tool.name(), &metadata, &selected_domains_set)
-                        .into_iter()
-                        .map(str::to_string)
-                        .collect::<Vec<_>>();
+                let mut selection_reason = routing::tool_selection_reasons_with_bm25(
+                    tool.name(),
+                    &metadata,
+                    &selected_domains_set,
+                    bm25,
+                )
+                .into_iter()
+                .map(str::to_string)
+                .collect::<Vec<_>>();
                 if in_scope {
                     selection_reason.push("intent_scope".to_string());
                 }
@@ -819,12 +831,14 @@ impl ToolRegistry {
 
         let mut selected_count = 0usize;
         for entry in entries.iter_mut() {
+            let bm25 = bm25_scores.get(&entry.name).copied().unwrap_or(0.0);
             let in_scope = scope.allowed_names.contains(entry.name.as_str())
                 || crate::tools::scope::tool_matches_pack(
                     &entry.name,
                     &entry.metadata,
                     &scope.packs,
-                );
+                )
+                || bm25 > 2.0;
             let explicitly_requested = explicit_names.contains(entry.name.as_str())
                 || pending_scope.domains.contains(entry.metadata.domain);
             if (in_scope || explicitly_requested) && selected_count < static_limit {
@@ -917,22 +931,13 @@ impl ToolRegistry {
         };
         let route = self.route_for_prompt(prompt);
         let total_tools = route.entries.len() + subagent_tools.len();
-        if total_tools > 128 {
-            tracing::warn!(
-                total_tools,
-                selected_static = route.selected_count,
-                dropped_static = route.dropped_count,
-                selected_domains = ?route.selected_domains,
-                "Too many tools registered; selecting top 128 by prompt/domain priority."
-            );
-        } else {
-            tracing::debug!(
-                total_tools,
-                selected_static = route.selected_count,
-                selected_domains = ?route.selected_domains,
-                "Tool router selected model tool payload."
-            );
-        }
+        tracing::debug!(
+            total_registered = total_tools,
+            selected_static = route.selected_count,
+            dropped_static = route.dropped_count,
+            selected_domains = ?route.selected_domains,
+            "Tool router selected dynamic JIT tool payload."
+        );
 
         let mut selected: Vec<serde_json::Value> = route
             .entries

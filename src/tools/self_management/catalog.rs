@@ -31,13 +31,21 @@ impl Tool for ToolCatalogTool {
     }
 
     fn description(&self) -> &str {
-        "List registered native tools with domain, risk, resource metadata, and whether each tool is currently exposed to the model."
+        "Search, discover, and hot-mount native tools from the 260-tool catalog using BM25 relevance (alias: tool_search). Also lists registered tools by domain, risk, or resource status."
     }
 
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Optional search keywords to discover relevant tools in the 260-tool catalog using BM25 lexical relevance (e.g. 'sqlite inspector', 'video animation', 'diff compression', 'cron job')."
+                },
+                "mount": {
+                    "type": "boolean",
+                    "description": "If true (default when query is provided), automatically hot-mounts the top matched tools into active context for immediate execution in subsequent steps."
+                },
                 "domain": {
                     "type": "string",
                     "description": "Optional domain filter, such as filesystem, shell, web, subagent, memory, document, media, or self_management."
@@ -81,6 +89,12 @@ impl Tool for ToolCatalogTool {
             (None, None)
         };
 
+        let query_str = arguments
+            .get("query")
+            .and_then(|v| v.as_str())
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty());
+        let mount = parse_bool_value(arguments.get("mount"), query_str.is_some());
         let include_schema = parse_bool_value(arguments.get("include_schema"), false);
         let only_exposed = parse_bool_value(arguments.get("only_exposed"), false);
         let domain_filter = arguments
@@ -139,6 +153,26 @@ impl Tool for ToolCatalogTool {
         let mut all_entries = self
             .registry
             .catalog_entries_for_prompt(include_schema, prompt);
+
+        // If query is provided, compute BM25 relevance scores and sort by relevance
+        if let Some(query) = query_str {
+            let static_tools = self.registry.read_tools();
+            let bm25_scores = crate::tools::routing::compute_bm25_scores(query, &static_tools);
+            drop(static_tools);
+
+            for entry in &mut all_entries {
+                let name = entry["name"].as_str().unwrap_or("");
+                let score = bm25_scores.get(name).copied().unwrap_or(0.0);
+                entry["bm25_score"] = serde_json::json!(score);
+            }
+
+            all_entries.sort_by(|a, b| {
+                let sa = a["bm25_score"].as_f64().unwrap_or(0.0);
+                let sb = b["bm25_score"].as_f64().unwrap_or(0.0);
+                sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+
         for entry in &mut all_entries {
             let risk = match entry["risk"].as_str().unwrap_or("low") {
                 "high" => crate::tools::ToolRisk::High,
@@ -184,6 +218,9 @@ impl Tool for ToolCatalogTool {
         let entries: Vec<Value> = all_entries
             .into_iter()
             .filter(|entry| {
+                if query_str.is_some() && entry.get("bm25_score").and_then(|v| v.as_f64()).unwrap_or(0.0) <= 0.0 {
+                    return false;
+                }
                 if only_exposed && !entry["exposed_to_model"].as_bool().unwrap_or(false) {
                     return false;
                 }
@@ -201,6 +238,25 @@ impl Tool for ToolCatalogTool {
             })
             .collect();
 
+        // If mount is enabled, hot-mount top matched tools into active context
+        let mut mounted_tools = Vec::new();
+        let mut mounted_domains = Vec::new();
+        if mount && query_str.is_some() {
+            for entry in entries.iter().take(8) {
+                if let Some(name) = entry["name"].as_str() {
+                    mounted_tools.push(name.to_string());
+                }
+                if let Some(domain) = entry["domain"].as_str() {
+                    if !mounted_domains.contains(&domain.to_string()) {
+                        mounted_domains.push(domain.to_string());
+                    }
+                }
+            }
+            if !mounted_tools.is_empty() {
+                self.registry.request_tool_scope(mounted_tools.clone(), mounted_domains.clone());
+            }
+        }
+
         let mut domains = std::collections::BTreeMap::<String, usize>::new();
         let mut risks = std::collections::BTreeMap::<String, usize>::new();
         for entry in &entries {
@@ -212,7 +268,7 @@ impl Tool for ToolCatalogTool {
             }
         }
 
-        Ok(serde_json::json!({
+        let mut response = serde_json::json!({
             "success": true,
             "tool_count": entries.len(),
             "exposed_count": exposed_count,
@@ -220,7 +276,16 @@ impl Tool for ToolCatalogTool {
             "domains": domains,
             "risks": risks,
             "tools": entries
-        }))
+        });
+        if !mounted_tools.is_empty() {
+            response["mounted"] = serde_json::json!(true);
+            response["mounted_tools"] = serde_json::json!(mounted_tools);
+            response["message"] = serde_json::json!(
+                "Found matching tools and hot-mounted them into active context for immediate execution in subsequent steps."
+            );
+        }
+
+        Ok(response)
     }
 }
 

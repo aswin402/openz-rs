@@ -435,15 +435,25 @@ fn tool_aliases(name: &str, domain: &str) -> &'static [&'static str] {
     if let Some(def) = super::tool_spec(name) {
         return def.aliases;
     }
-    match domain {
-        "code" => &["code search", "compile", "test", "refactor"],
-        "filesystem" => &["file", "directory", "edit file"],
-        "web" => &["website", "browser", "research online"],
-        "media" => &["image", "video", "svg", "diagram"],
-        "document" => &["pdf", "docx", "xlsx", "document"],
-        "memory" => &["remember", "recall", "knowledge graph"],
-        "subagent" => &["delegate", "worker", "specialist"],
-        _ => &[],
+    match name {
+        "open_path" => &[
+            "system image viewer",
+            "image viewer",
+            "default application",
+            "open application",
+            "open in system viewer",
+        ],
+        "device_inventory" => &["device inventory", "list devices", "connected devices"],
+        _ => match domain {
+            "code" => &["code search", "compile", "test", "refactor"],
+            "filesystem" => &["file", "directory", "edit file"],
+            "web" => &["website", "browser", "research online"],
+            "media" => &["image", "video", "svg", "diagram"],
+            "document" => &["pdf", "docx", "xlsx", "document"],
+            "memory" => &["remember", "recall", "knowledge graph"],
+            "subagent" => &["delegate", "worker", "specialist"],
+            _ => &[],
+        },
     }
 }
 
