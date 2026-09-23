@@ -377,3 +377,29 @@ fn test_openmedia_image_operations_normalizations() {
     assert_eq!(resize_req.height, 720);
 }
 
+#[test]
+fn test_openmedia_expanded_icons_available() {
+    use crate::tools::openmedia::svg::icons::{get_icon_inner, get_icon_svg};
+
+    let icons_to_test = [
+        "cpu", "terminal", "database", "server", "code", "git",
+        "shield", "folder", "file", "download", "upload", "refresh",
+        "lock", "unlock", "eye", "copy", "check-circle", "alert-triangle", "zap", "activity",
+    ];
+
+    for name in icons_to_test {
+        assert!(get_icon_inner(name).is_some(), "icon '{}' should exist", name);
+        let svg = get_icon_svg(name, 24, "#000", 2.0);
+        assert!(svg.is_some(), "icon svg for '{}' should generate", name);
+        assert!(svg.unwrap().contains("<svg"));
+    }
+}
+
+#[tokio::test]
+async fn test_openmedia_hardware_detection_real() {
+    let hw = crate::tools::openmedia::core::HardwareInfo::detect().await;
+    assert!(hw.cpu.logical_cores > 0);
+    assert!(hw.ram.total > 0);
+    assert!(!hw.cpu.brand.is_empty());
+}
+

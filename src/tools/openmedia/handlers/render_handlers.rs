@@ -42,16 +42,7 @@ impl OpenMediaServer {
 
         let _ = std::fs::create_dir_all(&self.config.paths.output_dir);
 
-        let svg_content = if req.svg.trim().starts_with('<') {
-            req.svg
-        } else {
-            let path = std::path::Path::new(&req.svg);
-            if path.exists() && path.is_file() {
-                std::fs::read_to_string(path).map_err(|e| e.to_string())?
-            } else {
-                req.svg
-            }
-        };
+        let svg_content = super::helpers::resolve_content_or_file(&req.svg)?;
 
         let output = crate::tools::openmedia::svg::rasterize(
             &svg_content,
@@ -104,35 +95,18 @@ impl OpenMediaServer {
                 .map_err(|e| format!("Failed to render Mermaid diagram: {}", e))?;
 
         let start_time = std::time::Instant::now();
-        let filename = format!("{}.{}", uuid::Uuid::now_v7(), clean_format);
-        let output_path = self.config.paths.output_dir.join(filename);
 
         let output = if clean_format == "svg" {
-            std::fs::write(&output_path, &svg_content)
-                .map_err(|e| format!("Failed to write SVG output: {}", e))?;
-
-            let file_size = std::fs::metadata(&output_path)
-                .map(|m| m.len())
-                .unwrap_or(svg_content.len() as u64);
-
-            let (w, h) = super::helpers::parse_svg_dimensions(&svg_content);
-            let generation_time = start_time.elapsed().as_secs_f64();
-
-            crate::tools::openmedia::core::ImageOutput {
-                path: output_path,
-                width: w,
-                height: h,
-                seed: 0,
-                format: clean_format,
-                file_size,
-                generation_id: uuid::Uuid::now_v7().to_string(),
-                clip_score: None,
-                aesthetic_score: None,
-                model_used: "mermaid-rs-renderer".to_string(),
-                backend_used: "mermaid-rs-renderer".to_string(),
-                generation_time,
-            }
+            super::helpers::save_svg_to_output(
+                &self.config.paths.output_dir,
+                &svg_content,
+                "mermaid-rs-renderer",
+                "mermaid-rs-renderer",
+                start_time,
+            )?
         } else {
+            let filename = format!("{}.{}", uuid::Uuid::now_v7(), clean_format);
+            let output_path = self.config.paths.output_dir.join(filename);
             crate::tools::openmedia::svg::rasterize(
                 &svg_content,
                 req.width,

@@ -1,7 +1,6 @@
 //! SVG animation and Lottie conversion handlers.
 
 use crate::tools::openmedia::animate::*;
-use crate::tools::openmedia::core::AnimatedSvgOutput;
 use crate::tools::openmedia::server::*;
 
 impl OpenMediaServer {
@@ -9,16 +8,7 @@ impl OpenMediaServer {
         &self,
         req: AnimateSvgRequest,
     ) -> Result<serde_json::Value, String> {
-        let svg_content = if req.svg.trim().starts_with('<') {
-            req.svg
-        } else {
-            let path = std::path::Path::new(&req.svg);
-            if path.exists() && path.is_file() {
-                std::fs::read_to_string(path).map_err(|e| e.to_string())?
-            } else {
-                req.svg
-            }
-        };
+        let svg_content = super::helpers::resolve_content_or_file(&req.svg)?;
 
         let preset = super::helpers::parse_preset(&req.preset);
         let duration = req.duration.unwrap_or(1.0);
@@ -69,25 +59,12 @@ impl OpenMediaServer {
             }
         };
 
-        let filename = format!("{}.svg", uuid::Uuid::now_v7());
-        let output_path = self.config.paths.output_dir.join(filename);
-        let _ = std::fs::create_dir_all(&self.config.paths.output_dir);
-        std::fs::write(&output_path, &animated_svg).map_err(|e| e.to_string())?;
-
-        let file_size = std::fs::metadata(&output_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
-        let (width, height) = super::helpers::parse_svg_dimensions(&animated_svg);
-
-        let result = AnimatedSvgOutput {
-            path: output_path,
-            width,
-            height,
+        let result = super::helpers::save_animated_svg_to_output(
+            &self.config.paths.output_dir,
+            &animated_svg,
             duration,
             animation_count,
-            file_size,
-            generation_id: uuid::Uuid::now_v7().to_string(),
-        };
+        )?;
 
         serde_json::to_value(result).map_err(|e| e.to_string())
     }
@@ -96,16 +73,7 @@ impl OpenMediaServer {
         &self,
         req: AnimateTimelineRequest,
     ) -> Result<serde_json::Value, String> {
-        let svg_content = if req.svg.trim().starts_with('<') {
-            req.svg
-        } else {
-            let path = std::path::Path::new(&req.svg);
-            if path.exists() && path.is_file() {
-                std::fs::read_to_string(path).map_err(|e| e.to_string())?
-            } else {
-                req.svg
-            }
-        };
+        let svg_content = super::helpers::resolve_content_or_file(&req.svg)?;
 
         let mode = match req.mode.to_lowercase().as_str() {
             "sequential" => TimelineMode::Sequential,
@@ -156,25 +124,12 @@ impl OpenMediaServer {
         let timeline_xml = timeline.to_svg();
         let animated_svg = super::helpers::inject_style_or_xml(svg_content, &timeline_xml);
 
-        let filename = format!("{}.svg", uuid::Uuid::now_v7());
-        let output_path = self.config.paths.output_dir.join(filename);
-        let _ = std::fs::create_dir_all(&self.config.paths.output_dir);
-        std::fs::write(&output_path, &animated_svg).map_err(|e| e.to_string())?;
-
-        let file_size = std::fs::metadata(&output_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
-        let (width, height) = super::helpers::parse_svg_dimensions(&animated_svg);
-
-        let result = AnimatedSvgOutput {
-            path: output_path,
-            width,
-            height,
-            duration: timeline.total_duration,
-            animation_count: timeline.animations.len() as u32,
-            file_size,
-            generation_id: uuid::Uuid::now_v7().to_string(),
-        };
+        let result = super::helpers::save_animated_svg_to_output(
+            &self.config.paths.output_dir,
+            &animated_svg,
+            timeline.total_duration,
+            timeline.animations.len() as u32,
+        )?;
 
         serde_json::to_value(result).map_err(|e| e.to_string())
     }
@@ -199,24 +154,12 @@ impl OpenMediaServer {
             req.from_path, values_attr, duration
         );
 
-        let filename = format!("{}.svg", uuid::Uuid::now_v7());
-        let output_path = self.config.paths.output_dir.join(filename);
-        let _ = std::fs::create_dir_all(&self.config.paths.output_dir);
-        std::fs::write(&output_path, &animated_svg).map_err(|e| e.to_string())?;
-
-        let file_size = std::fs::metadata(&output_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
-
-        let result = AnimatedSvgOutput {
-            path: output_path,
-            width: 800,
-            height: 600,
+        let result = super::helpers::save_animated_svg_to_output(
+            &self.config.paths.output_dir,
+            &animated_svg,
             duration,
-            animation_count: 1,
-            file_size,
-            generation_id: uuid::Uuid::now_v7().to_string(),
-        };
+            1,
+        )?;
 
         serde_json::to_value(result).map_err(|e| e.to_string())
     }
@@ -290,24 +233,12 @@ impl OpenMediaServer {
             }
         };
 
-        let filename = format!("{}.svg", uuid::Uuid::now_v7());
-        let output_path = self.config.paths.output_dir.join(filename);
-        let _ = std::fs::create_dir_all(&self.config.paths.output_dir);
-        std::fs::write(&output_path, &animated_svg).map_err(|e| e.to_string())?;
-
-        let file_size = std::fs::metadata(&output_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
-
-        let result = AnimatedSvgOutput {
-            path: output_path,
-            width: size,
-            height: size,
-            duration: 1.0,
-            animation_count: 1,
-            file_size,
-            generation_id: uuid::Uuid::now_v7().to_string(),
-        };
+        let result = super::helpers::save_animated_svg_to_output(
+            &self.config.paths.output_dir,
+            &animated_svg,
+            1.0,
+            1,
+        )?;
 
         serde_json::to_value(result).map_err(|e| e.to_string())
     }
@@ -316,38 +247,16 @@ impl OpenMediaServer {
         &self,
         req: LottieToSvgRequest,
     ) -> Result<serde_json::Value, String> {
-        let lottie_json = if req.lottie_json.trim().starts_with('{') {
-            req.lottie_json
-        } else {
-            let path = std::path::Path::new(&req.lottie_json);
-            if path.exists() && path.is_file() {
-                std::fs::read_to_string(path).map_err(|e| e.to_string())?
-            } else {
-                req.lottie_json
-            }
-        };
+        let lottie_json = super::helpers::resolve_content_or_file(&req.lottie_json)?;
 
         let animated_svg = lottie_to_svg(&lottie_json).map_err(|e| e.to_string())?;
 
-        let filename = format!("{}.svg", uuid::Uuid::now_v7());
-        let output_path = self.config.paths.output_dir.join(filename);
-        let _ = std::fs::create_dir_all(&self.config.paths.output_dir);
-        std::fs::write(&output_path, &animated_svg).map_err(|e| e.to_string())?;
-
-        let file_size = std::fs::metadata(&output_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
-        let (width, height) = super::helpers::parse_svg_dimensions(&animated_svg);
-
-        let result = AnimatedSvgOutput {
-            path: output_path,
-            width,
-            height,
-            duration: 3.0,
-            animation_count: 1,
-            file_size,
-            generation_id: uuid::Uuid::now_v7().to_string(),
-        };
+        let result = super::helpers::save_animated_svg_to_output(
+            &self.config.paths.output_dir,
+            &animated_svg,
+            3.0,
+            1,
+        )?;
 
         serde_json::to_value(result).map_err(|e| e.to_string())
     }
@@ -356,16 +265,7 @@ impl OpenMediaServer {
         &self,
         req: SvgToLottieRequest,
     ) -> Result<serde_json::Value, String> {
-        let svg_content = if req.svg.trim().starts_with('<') {
-            req.svg
-        } else {
-            let path = std::path::Path::new(&req.svg);
-            if path.exists() && path.is_file() {
-                std::fs::read_to_string(path).map_err(|e| e.to_string())?
-            } else {
-                req.svg
-            }
-        };
+        let svg_content = super::helpers::resolve_content_or_file(&req.svg)?;
 
         let lottie_json_str = svg_to_lottie(&svg_content).map_err(|e| e.to_string())?;
 

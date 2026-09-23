@@ -1,4 +1,39 @@
-### v0.0.227 (Latest Release)
+### v0.0.228 (Latest Release)
+- **Ideas**:
+  - OpenMedia Subsystem Deep Code Hygiene, Boilerplate Deduplication & Real Hardware Inspection:
+    - Conducted a comprehensive architectural audit of all 38 files across OpenMedia (`src/tools/openmedia/`), identifying critical areas of copy-pasted boilerplate, placeholder hardware detection, and missing standard developer icons.
+    - Real Hardware Detection Engine:
+      - Replaced hardcoded placeholder CPU branding (`"Generic Processor"`) and fixed memory numbers (16 GB) in [`src/tools/openmedia/core/hardware.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/core/hardware.rs) with genuine, in-process `sysinfo` inspection extracting physical/logical CPU core topology, CPU brand strings, exact total/available system RAM, and real `nvidia-smi` GPU inspection (vendor, VRAM, and device name).
+      - Expanded headless browser detection across multiple candidate binaries (`google-chrome`, `chromium`, `chromium-browser`, `brave`, `chrome.exe`, etc.).
+    - DRY Media Handler Pipelines:
+      - Architected shared media-saving and input-resolving adapters in [`src/tools/openmedia/handlers/helpers.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/handlers/helpers.rs): `resolve_content_or_file`, `save_svg_to_output`, and `save_animated_svg_to_output`.
+      - Deduplicated 9 separate media generation handlers across [`svg_handlers.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/handlers/svg_handlers.rs), [`render_handlers.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/handlers/render_handlers.rs), and [`animation_handlers.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/handlers/animation_handlers.rs), eliminating ~300 lines of copy-pasted filesystem writing, UUID v7 generation, SVG dimension parsing, and metadata serialization boilerplate.
+    - Expanded Lucide Vector Icon Suite:
+      - Doubled the built-in icon registry in [`src/tools/openmedia/svg/icons.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/svg/icons.rs) by adding 20 essential developer and infrastructure icons (`cpu`, `terminal`, `database`, `server`, `code`, `git`, `shield`, `folder`, `file`, `download`, `upload`, `refresh`, `lock`, `unlock`, `eye`, `copy`, `check-circle`, `alert-triangle`, `zap`, `activity`).
+- **Inspirations**:
+  - Don't Repeat Yourself (DRY) software design, Unix hardware profiling (`lscpu`, `nvidia-smi`), Lucide open-source icon standards, and zero-redundancy pipeline patterns.
+- **Sources & References**:
+  - Implementation Sources:
+    - [`src/tools/openmedia/core/hardware.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/core/hardware.rs): Wired real `sysinfo` CPU/RAM inspection, `nvidia-smi` GPU queries, and expanded browser discovery.
+    - [`src/tools/openmedia/handlers/helpers.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/handlers/helpers.rs): Created `resolve_content_or_file`, `save_svg_to_output`, and `save_animated_svg_to_output`.
+    - [`src/tools/openmedia/handlers/svg_handlers.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/handlers/svg_handlers.rs): Deduplicated `create_svg`, `create_chart`, and `create_icon`.
+    - [`src/tools/openmedia/handlers/render_handlers.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/handlers/render_handlers.rs): Deduplicated `rasterize_svg` and `diagram_generate_mermaid`.
+    - [`src/tools/openmedia/handlers/animation_handlers.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/handlers/animation_handlers.rs): Deduplicated `animate_svg`, `animate_create_timeline`, `animate_morph_paths`, `animate_generate_spinner`, `animate_from_lottie`, and `animate_to_lottie`.
+    - [`src/tools/openmedia/svg/icons.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/svg/icons.rs): Added 20 new Lucide vector paths.
+    - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Version increment to `0.0.228`.
+  - Test Modules:
+    - [`src/tools/openmedia/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/mod_tests.rs): Added unit tests for expanded icons and real hardware detection.
+    - [`src/cli/builder.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder.rs): `test_native_tool_registration_names` (exact 260 registered native tools invariant).
+- **Details & Metrics**:
+  - Eliminated 317 net redundant lines from OpenMedia handlers.
+  - CPU detection now dynamically extracts model names (e.g., AMD Ryzen / Intel Core) and actual RAM in gigabytes instead of fictitious static fallbacks.
+  - 16/16 OpenMedia unit tests passing; 260 registered native tools invariant intact; 0 clippy warnings.
+- **Verification**:
+  - `cargo test -p openz -j 1 --lib tools::openmedia::tests`: PASS (16/16).
+  - `cargo test -p openz -j 1 --lib test_native_tool_registration_names`: PASS (1/1).
+  - `cargo clippy -p openz -j 1 -- -D warnings`: PASS (0 warnings).
+
+### v0.0.227
 - **Ideas**:
   - Profile-Aware Subagent Tool Scoping, Native Capability Modernization & Self-Discovery:
     - Extended OpenZ's BM25 and domain tool routing into multi-agent subagent delegation, ensuring that each of OpenZ's 15+ built-in and user-custom subagent profiles operates with a laser-focused, domain-specialized tool payload.

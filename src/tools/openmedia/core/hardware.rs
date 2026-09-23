@@ -116,18 +116,29 @@ impl HardwareInfo {
             neon: cfg!(target_arch = "aarch64") || cfg!(target_arch = "arm"),
         };
 
+        let mut sys = sysinfo::System::new();
+        sys.refresh_cpu_all();
+        sys.refresh_memory();
+
+        let cpu_brand = sys
+            .cpus()
+            .first()
+            .map(|c| c.brand().trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "Generic Processor".to_string());
+
         let cpu = CpuInfo {
-            brand: "Generic Processor".to_string(),
+            brand: cpu_brand,
             physical_cores,
             logical_cores,
             arch,
             features,
         };
 
-        // Detect RAM (simplified defaults, since querying OS ram is platform-specific and requires extra dependencies)
+        // Real RAM detected via sysinfo
         let ram = RamInfo {
-            total: 16 * 1024 * 1024 * 1024,    // 16 GB default
-            available: 8 * 1024 * 1024 * 1024, // 8 GB default
+            total: sys.total_memory(),
+            available: sys.available_memory(),
         };
 
         // Simple default backends (CPU fallback always available)
@@ -139,20 +150,76 @@ impl HardwareInfo {
             .output()
             .is_ok();
 
-        // Check if Chrome is available
-        let chrome_cmd = if cfg!(target_os = "windows") {
-            "chrome.exe"
+        // Check if Chrome or Chromium is available
+        let chrome_candidates = if cfg!(target_os = "windows") {
+            vec!["chrome.exe", "msedge.exe"]
+        } else if cfg!(target_os = "macos") {
+            vec![
+                "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                "google-chrome",
+                "chromium",
+            ]
         } else {
-            "google-chrome"
+            vec![
+                "google-chrome",
+                "google-chrome-stable",
+                "chromium",
+                "chromium-browser",
+                "brave",
+            ]
         };
-        let chrome_available = std::process::Command::new(chrome_cmd)
-            .arg("--version")
+
+        let chrome_available = chrome_candidates.iter().any(|cmd| {
+            std::process::Command::new(cmd)
+                .arg("--version")
+                .output()
+                .is_ok()
+        });
+
+        // Detect discrete or integrated GPU if available via nvidia-smi
+        let gpu = if let Ok(out) = std::process::Command::new("nvidia-smi")
+            .arg("--query-gpu=name,memory.total")
+            .arg("--format=csv,noheader,nounits")
             .output()
-            .is_ok();
+        {
+            if out.status.success() {
+                let text = String::from_utf8_lossy(&out.stdout);
+                if let Some(line) = text.lines().next() {
+                    let parts: Vec<&str> = line.split(',').collect();
+                    let name = parts.first().unwrap_or(&"NVIDIA GPU").trim().to_string();
+                    let vram_mb = parts
+                        .get(1)
+                        .and_then(|s| s.trim().parse::<u64>().ok())
+                        .unwrap_or(0);
+                    Some(GpuInfo {
+                        name,
+                        vendor: GpuVendor::Nvidia,
+                        vram_total: vram_mb * 1024 * 1024,
+                        vram_available: vram_mb * 1024 * 1024,
+                        api_support: GpuApiSupport {
+                            vulkan: true,
+                            vulkan_version: None,
+                            metal: false,
+                            dx12: false,
+                            cuda: true,
+                            cuda_version: None,
+                            opencl: true,
+                        },
+                        cuda_compute: None,
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         Self {
             cpu,
-            gpu: None, // Simplified GPU detection in Phase 0
+            gpu,
             ram,
             available_backends,
             ffmpeg_available,

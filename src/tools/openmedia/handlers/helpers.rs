@@ -438,3 +438,85 @@ pub fn parse_transition_type_with_fallback(
         _ => default_type,
     }
 }
+
+pub(crate) fn resolve_content_or_file(input: &str) -> Result<String, String> {
+    let trimmed = input.trim();
+    if trimmed.starts_with('<') || trimmed.starts_with('{') {
+        Ok(input.to_string())
+    } else {
+        let path = std::path::Path::new(trimmed);
+        if path.exists() && path.is_file() {
+            std::fs::read_to_string(path)
+                .map_err(|e| format!("Failed to read file '{}': {}", path.display(), e))
+        } else {
+            Ok(input.to_string())
+        }
+    }
+}
+
+pub(crate) fn save_svg_to_output(
+    output_dir: &std::path::Path,
+    svg_content: &str,
+    model_used: &str,
+    backend_used: &str,
+    start_time: std::time::Instant,
+) -> Result<crate::tools::openmedia::core::ImageOutput, String> {
+    let _ = std::fs::create_dir_all(output_dir);
+    let filename = format!("{}.svg", uuid::Uuid::now_v7());
+    let output_path = output_dir.join(filename);
+
+    std::fs::write(&output_path, svg_content)
+        .map_err(|e| format!("Failed to write SVG output: {}", e))?;
+
+    let file_size = std::fs::metadata(&output_path)
+        .map(|m| m.len())
+        .unwrap_or(svg_content.len() as u64);
+
+    let (width, height) = parse_svg_dimensions(svg_content);
+    let generation_time = start_time.elapsed().as_secs_f64();
+
+    Ok(crate::tools::openmedia::core::ImageOutput {
+        path: output_path,
+        width,
+        height,
+        seed: 0,
+        format: "svg".to_string(),
+        file_size,
+        generation_id: uuid::Uuid::now_v7().to_string(),
+        clip_score: None,
+        aesthetic_score: None,
+        model_used: model_used.to_string(),
+        backend_used: backend_used.to_string(),
+        generation_time,
+    })
+}
+
+pub(crate) fn save_animated_svg_to_output(
+    output_dir: &std::path::Path,
+    animated_svg: &str,
+    duration: f64,
+    animation_count: u32,
+) -> Result<crate::tools::openmedia::core::AnimatedSvgOutput, String> {
+    let _ = std::fs::create_dir_all(output_dir);
+    let filename = format!("{}.svg", uuid::Uuid::now_v7());
+    let output_path = output_dir.join(filename);
+
+    std::fs::write(&output_path, animated_svg)
+        .map_err(|e| format!("Failed to write animated SVG: {}", e))?;
+
+    let file_size = std::fs::metadata(&output_path)
+        .map(|m| m.len())
+        .unwrap_or(animated_svg.len() as u64);
+    let (width, height) = parse_svg_dimensions(animated_svg);
+
+    Ok(crate::tools::openmedia::core::AnimatedSvgOutput {
+        path: output_path,
+        width,
+        height,
+        duration,
+        animation_count,
+        file_size,
+        generation_id: uuid::Uuid::now_v7().to_string(),
+    })
+}
+
