@@ -184,7 +184,7 @@ impl Tool for DelegateProfileTool {
                 }
             };
 
-            let filtered_parent_tools = filter_tools_for_subagent(&self.profile.name, &self.parent_tools);
+            let filtered_parent_tools = super::allowlist::filter_tools_for_profile(&self.profile, &self.parent_tools);
             let mut child_config = self.config.clone();
             child_config.agents.defaults.model = model_name.clone();
             child_config.agents.defaults.fallback_models.clear();

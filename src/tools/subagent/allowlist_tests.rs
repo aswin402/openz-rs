@@ -209,3 +209,100 @@ fn test_filter_tools_for_new_default_subagents() {
         .any(|t| t.name() == "openmedia_video_create"));
     assert!(!filtered.iter().any(|t| t.name() == "exec_command"));
 }
+
+#[test]
+fn test_filter_tools_for_profile_explicit_tools() {
+    let tools: Vec<Arc<dyn Tool>> = vec![
+        Arc::new(DummyTool("read_file")),
+        Arc::new(DummyTool("custom_analysis_tool")),
+        Arc::new(DummyTool("exec_command")),
+        Arc::new(DummyTool("tool_catalog")),
+    ];
+
+    let mut extra = serde_json::Map::new();
+    extra.insert(
+        "tools".to_string(),
+        serde_json::json!(["read_file", "custom_analysis_tool"]),
+    );
+
+    let profile = SubagentProfile {
+        name: "custom_analyst".to_string(),
+        description: "Specialized analyst".to_string(),
+        system_prompt: "Analyze data".to_string(),
+        model: None,
+        fallbacks: None,
+        extra,
+    };
+
+    let filtered = filter_tools_for_profile(&profile, &tools);
+    assert!(filtered.iter().any(|t| t.name() == "read_file"));
+    assert!(filtered.iter().any(|t| t.name() == "custom_analysis_tool"));
+    // tool_catalog is auto-retained for dynamic self-discovery
+    assert!(filtered.iter().any(|t| t.name() == "tool_catalog"));
+    assert!(!filtered.iter().any(|t| t.name() == "exec_command"));
+}
+
+#[test]
+fn test_filter_tools_for_profile_explicit_domains() {
+    let tools: Vec<Arc<dyn Tool>> = vec![
+        Arc::new(DummyTool("read_file")),
+        Arc::new(DummyTool("web_search")),
+        Arc::new(DummyTool("exec_command")),
+        Arc::new(DummyTool("tool_catalog")),
+    ];
+
+    let mut extra = serde_json::Map::new();
+    extra.insert(
+        "domains".to_string(),
+        serde_json::json!(["web"]),
+    );
+
+    let profile = SubagentProfile {
+        name: "custom_web_agent".to_string(),
+        description: "Web only".to_string(),
+        system_prompt: "Search the web".to_string(),
+        model: None,
+        fallbacks: None,
+        extra,
+    };
+
+    let filtered = filter_tools_for_profile(&profile, &tools);
+    assert!(filtered.iter().any(|t| t.name() == "web_search"));
+    assert!(filtered.iter().any(|t| t.name() == "read_file"));
+    assert!(filtered.iter().any(|t| t.name() == "tool_catalog"));
+    assert!(!filtered.iter().any(|t| t.name() == "exec_command"));
+}
+
+#[test]
+fn test_modernized_subagent_native_tools_allowlists() {
+    let researcher_tools = static_allowlist_for_subagent("researcher").expect("researcher allowlist");
+    assert!(researcher_tools.contains(&"searchxyz_search_web"));
+    assert!(researcher_tools.contains(&"searchxyz_read_url"));
+    assert!(researcher_tools.contains(&"searchxyz_recall"));
+    assert!(researcher_tools.contains(&"docs_read_rust_docs"));
+    assert!(researcher_tools.contains(&"tool_catalog"));
+
+    let media_tools = static_allowlist_for_subagent("media_designer").expect("media_designer allowlist");
+    assert!(media_tools.contains(&"openmedia_create_svg"));
+    assert!(media_tools.contains(&"openmedia_create_chart"));
+    assert!(media_tools.contains(&"openmedia_create_icon"));
+    assert!(media_tools.contains(&"tool_catalog"));
+
+    let doc_tools = static_allowlist_for_subagent("document_compiler").expect("document_compiler allowlist");
+    assert!(doc_tools.contains(&"opendoc_create_docx"));
+    assert!(doc_tools.contains(&"opendoc_create_xlsx"));
+    assert!(doc_tools.contains(&"opendoc_create_pptx"));
+    assert!(doc_tools.contains(&"tool_catalog"));
+
+    let db_tools = static_allowlist_for_subagent("database_specialist").expect("database_specialist allowlist");
+    assert!(db_tools.contains(&"db_write"));
+    assert!(db_tools.contains(&"search_text"));
+    assert!(db_tools.contains(&"create_database_branch"));
+    assert!(db_tools.contains(&"tool_catalog"));
+
+    let video_tools = static_allowlist_for_subagent("video_animator").expect("video_animator allowlist");
+    assert!(video_tools.contains(&"generate_video"));
+    assert!(video_tools.contains(&"html_to_video"));
+    assert!(video_tools.contains(&"svg_animator"));
+    assert!(video_tools.contains(&"tool_catalog"));
+}
