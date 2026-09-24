@@ -509,3 +509,75 @@ async fn test_orchestration_prompt_tool_schemas_have_no_bare_object_types() {
     }
     assert!(offending.is_empty(), "Offending tool properties with bare object: {:?}", offending);
 }
+
+#[tokio::test]
+async fn test_dynamic_tool_retrieval_and_scoping_benchmark() {
+    let config = Config::default();
+    let provider = Arc::new(crate::providers::openai::OpenAIProvider::new(
+        "test".to_string(),
+        "http://localhost".to_string(),
+        "test".to_string(),
+    ));
+    let sessions = SessionManager::new(std::env::temp_dir().join("openz_benchmark_sessions"));
+    let registry = ToolRegistry::new_with_context(config.clone(), provider.clone(), sessions.clone());
+    crate::cli::tools::register_all_tools(&registry, &config, provider, sessions).unwrap();
+
+    let total_tools = registry.read_tools().len();
+    assert_eq!(total_tools, 260, "Must have exactly 260 registered native tools");
+
+    // 1. Code Engineering Domain Benchmark
+    let code_prompt = "Inspect src/main.rs and run cargo check on the workspace";
+    let code_tools = registry.to_openai_format_for_prompt(code_prompt);
+    let code_names: Vec<String> = code_tools
+        .iter()
+        .filter_map(|t| t["function"]["name"].as_str().map(String::from))
+        .collect();
+    assert!(code_names.len() <= 20, "Code domain tools must be scoped <= 20, got {}", code_names.len());
+    assert!(code_names.contains(&"read_file".to_string()) || code_names.contains(&"cargo_manager".to_string()));
+    assert!(!code_names.contains(&"openmedia_rasterize_svg".to_string()));
+    assert!(!code_names.contains(&"opendoc_create_docx".to_string()));
+
+    // 2. Document Intelligence Domain Benchmark
+    let doc_prompt = "Create an Excel spreadsheet at report.xlsx and read document text";
+    let doc_tools = registry.to_openai_format_for_prompt(doc_prompt);
+    let doc_names: Vec<String> = doc_tools
+        .iter()
+        .filter_map(|t| t["function"]["name"].as_str().map(String::from))
+        .collect();
+    assert!(doc_names.len() <= 20, "Doc domain tools must be scoped <= 20, got {}", doc_names.len());
+    assert!(doc_names.contains(&"opendoc_create_xlsx".to_string()) || doc_names.contains(&"opendoc_read_document_text".to_string()));
+    assert!(!doc_names.contains(&"openmedia_video_create".to_string()));
+
+    // 3. Vector & Media Generation Domain Benchmark
+    let media_prompt = "Generate a bar chart showing performance and rasterize svg to png";
+    let media_tools = registry.to_openai_format_for_prompt(media_prompt);
+    let media_names: Vec<String> = media_tools
+        .iter()
+        .filter_map(|t| t["function"]["name"].as_str().map(String::from))
+        .collect();
+    assert!(media_names.len() <= 20, "Media domain tools must be scoped <= 20, got {}", media_names.len());
+    assert!(media_names.contains(&"openmedia_create_chart".to_string()) || media_names.contains(&"openmedia_rasterize_svg".to_string()));
+    assert!(!media_names.contains(&"opendoc_create_pptx".to_string()));
+
+    // 4. Web Research Domain Benchmark
+    let research_prompt = "Search the web for latest Rust async runtimes using searchxyz";
+    let research_tools = registry.to_openai_format_for_prompt(research_prompt);
+    let research_names: Vec<String> = research_tools
+        .iter()
+        .filter_map(|t| t["function"]["name"].as_str().map(String::from))
+        .collect();
+    assert!(research_names.len() <= 20, "Research domain tools must be scoped <= 20, got {}", research_names.len());
+    assert!(research_names.contains(&"searchxyz_search_web".to_string()) || research_names.contains(&"web_search".to_string()));
+    assert!(!research_names.contains(&"openmedia_create_chart".to_string()));
+
+    // 5. JIT Hot-Mounting via request_tool_scope
+    assert!(!research_names.contains(&"openmedia_rasterize_svg".to_string()));
+    registry.request_tool_scope(vec!["openmedia_rasterize_svg".to_string()], vec![]);
+    let mounted_tools = registry.to_openai_format_for_prompt(research_prompt);
+    let mounted_names: Vec<String> = mounted_tools
+        .iter()
+        .filter_map(|t| t["function"]["name"].as_str().map(String::from))
+        .collect();
+    assert!(mounted_names.contains(&"openmedia_rasterize_svg".to_string()), "Explicitly requested tool must be hot-mounted into active scope");
+}
+
