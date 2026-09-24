@@ -243,7 +243,12 @@ check_target_disk_usage
 
 # 2. Compile and install globally via Cargo
 echo "📦 Compiling and installing openz globally via Cargo..."
-cargo install $CARGO_FLAGS $CARGO_PROFILE_FLAG --locked --path .
+if cargo install $CARGO_FLAGS $CARGO_PROFILE_FLAG --locked --path . --offline 2>/dev/null; then
+    : # Offline install succeeded immediately from local cache
+else
+    echo "ℹ️ Local cache missing dependencies; fetching from crates.io..."
+    cargo install $CARGO_FLAGS $CARGO_PROFILE_FLAG --locked --path .
+fi
 
 # 3. Setup folder architecture & WebUI
 echo "📁 Setting up directory structures at ~/.openz..."

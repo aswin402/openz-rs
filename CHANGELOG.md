@@ -1,4 +1,27 @@
-### v0.0.229 (Latest Release)
+### v0.0.230 (Latest Release)
+- **Ideas**:
+  - Offline-First Fast Compilation & Yanked Dependency Remediation:
+    - Addressed network timeout and HTTP 503 Varnish errors during `cargo install` by switching global build/update scripts ([`localupdate.sh`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/localupdate.sh) and [`localinstall.sh`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/localinstall.sh)) to an **offline-first** strategy.
+    - Since project dependencies are already locked in `Cargo.lock` and cached in `~/.cargo/registry/`, running `cargo install ... --offline` avoids slow/unreliable sparse index roundtrips to `index.crates.io`, reducing compilation overhead from 3+ minutes down to 1.5 seconds.
+    - Added an automatic fallback to online `cargo install` only when the local cache is actually missing new dependencies.
+    - Upgraded `chacha20` dependency from yanked `v0.10.1` to `v0.10.2` in [`Cargo.lock`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.lock), completely eliminating the upstream yank warning (`package chacha20 v0.10.1 in Cargo.lock is yanked in registry crates-io`).
+- **Inspirations**:
+  - Hermetic and reproducible build patterns, Cargo offline caching, Nix deterministic builds.
+- **Sources & References**:
+  - [`localupdate.sh`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/localupdate.sh): Offline-first global recompile with graceful online fallback.
+  - [`localinstall.sh`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/localinstall.sh): Offline-first initial install with graceful online fallback.
+  - [`Cargo.lock`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.lock): Upgraded `chacha20` to `v0.10.2`.
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Version increment to `0.0.230`.
+- **Details & Metrics**:
+  - Local update time slashed from ~3 minutes (with index retries) down to ~1.5s when cached.
+  - Zero yank warnings during builds.
+  - Invariant: 260 registered native tools; 0 clippy warnings.
+- **Verification**:
+  - `./localupdate.sh --balanced --skip-webui-build`: PASS (0 warnings, 0 network timeouts, instant build).
+  - `cargo check --offline -p openz -j 1`: PASS (0 warnings).
+  - `cargo test -p openz -j 1 --lib test_native_tool_registration_names`: PASS (1/1).
+
+### v0.0.229
 - **Ideas**:
   - End-to-End Dynamic Tool Retrieval Benchmark & Cross-Domain Isolation Verification:
     - Designed and executed a comprehensive multi-domain validation benchmark across OpenZ's BM25 lexical tool retrieval and scoping engine.

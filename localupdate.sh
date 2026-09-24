@@ -286,9 +286,11 @@ fi
 
 # 5. Compile and install
 echo "🔄 Re-compiling and installing new binary globally..."
-if ! cargo install $CARGO_FLAGS $CARGO_PROFILE_FLAG --locked --path .; then
-    echo "⚠️ Online install failed (possibly crates.io registry timeout). Retrying in offline mode..."
-    cargo install $CARGO_FLAGS $CARGO_PROFILE_FLAG --locked --path . --offline
+if cargo install $CARGO_FLAGS $CARGO_PROFILE_FLAG --locked --path . --offline 2>/dev/null; then
+    : # Offline install succeeded immediately from local cache
+else
+    echo "ℹ️ Local cache missing dependencies; fetching from crates.io..."
+    cargo install $CARGO_FLAGS $CARGO_PROFILE_FLAG --locked --path .
 fi
 
 # 6. Build and sync the WebUI static bundle used by openz gateway.
