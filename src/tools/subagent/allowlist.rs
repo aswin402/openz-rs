@@ -130,7 +130,7 @@ pub fn static_allowlist_for_subagent(subagent_name: &str) -> Option<&'static [&'
             "openmedia_rasterize_svg",
             "openmedia_diagram_generate_mermaid",
             "openmedia_animate_generate_spinner",
-            "svg_animator",
+            "create_animated_svg",
             "tool_catalog",
         ]),
         "sop_designer" => Some(&[
@@ -367,7 +367,7 @@ pub fn static_allowlist_for_subagent(subagent_name: &str) -> Option<&'static [&'
             "list_dir",
             "generate_video",
             "html_to_video",
-            "svg_animator",
+            "create_animated_svg",
             "openmedia_video_create",
             "openmedia_video_preview",
             "openmedia_rasterize_svg",

@@ -149,6 +149,7 @@ pub async fn run_sop_instance_inner(
                             "✅ [SOP: {}] Step '{}' completed!",
                             inst.id, def_step.name
                         ));
+                        inst.current_step_index = inst.steps.iter().filter(|s| s.status == "Completed").count();
                     }
                     Err(e) => {
                         let step = &mut inst.steps[idx];
@@ -175,6 +176,7 @@ pub async fn run_sop_instance_inner(
     let all_completed = inst.steps.iter().all(|s| s.status == "Completed");
     if all_completed {
         inst.status = SopStatus::Completed;
+        inst.current_step_index = inst.steps.len();
         inst.completed_at = Some(Utc::now().to_rfc3339());
         save_instance(&inst)?;
 

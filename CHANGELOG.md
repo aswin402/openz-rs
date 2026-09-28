@@ -1,4 +1,30 @@
-### v0.0.235 (Latest Release)
+### v0.0.236 (Latest Release)
+- **Ideas**:
+  - Subagent Allowlist Tool Resolution & SOP Step Progress Engine Hardening:
+    - **Subagent Allowlist Name Resolution**: `media_designer` and `video_animator` static subagent allowlists referenced `svg_animator` instead of the registered tool identifier `create_animated_svg`, causing subagent tool invocations for animated SVG generation to fail and failing the comprehensive allowlist registry verification test. Corrected references in [`src/tools/subagent/allowlist.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/allowlist.rs) and [`src/tools/subagent/allowlist_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/allowlist_tests.rs).
+    - **SOP Step Lifecycle Progress Synchronization**: In [`src/sop/engine.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/sop/engine.rs), `inst.current_step_index` remained at its initial value `0` throughout step execution and after full workflow completion, causing `openz sop instances` and tool responses to display `0/N` steps completed even for fully successful workflows. Hardened the engine to increment `current_step_index` as steps complete in parallel/DAG order and clamp to total step count on completion.
+    - **TUI Theme Parity for SOP CLI**: In [`src/cli/sop.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/sop.rs), upgraded SOP ID and Instance ID bullet styling to `RED_ORANGE` (`\x1b[38;2;255;69;0m`) to match OpenZ's signature orange-red brand palette, and added fallback step calculation so both live and historical runs accurately report `Steps Completed: X/Y`.
+- **Inspirations**:
+  - Unix process status conventions, DAG workflow engines, OpenZ theme consistency guidelines.
+- **Sources & References**:
+  - [`src/tools/subagent/allowlist.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/allowlist.rs): Corrected tool name to `create_animated_svg` for `media_designer` and `video_animator`.
+  - [`src/tools/subagent/allowlist_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/allowlist_tests.rs): Updated allowlist test assertion.
+  - [`src/sop/engine.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/sop/engine.rs): Synchronized `current_step_index` on step completion and overall workflow completion.
+  - [`src/cli/sop.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/sop.rs): Upgraded bullets to `RED_ORANGE` and accurate `Steps Completed` display.
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Version increment to `0.0.236`.
+- **Details & Metrics**:
+  - 68/68 subagent unit tests pass (including `subagent_allowlisted_tools_exist_in_registry`).
+  - 37/37 orchestrator unit tests pass.
+  - 16/16 SOP unit tests pass.
+  - 260 registered native tools invariant maintained; 0 clippy warnings (`-D warnings`).
+- **Verification**:
+  - `cargo test -p openz --lib tools::subagent -j 1`: PASS (68/68).
+  - `cargo test -p openz --lib orchestrator -j 1`: PASS (37/37).
+  - `cargo test -p openz --lib sop -j 1`: PASS (16/16).
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1`: PASS (1/1, 260 tools).
+  - `cargo clippy -p openz -j 1 -- -D warnings`: PASS (0 warnings).
+
+### v0.0.235
 - **Ideas**:
   - Streaming Markdown Box-Drawing Table Rendering & Visual Theme Parity:
     - **Live Markdown Stream Architecture**: In CLI TUI streaming mode, tokens arrived incrementally and bypassed Markdown parsing and terminal box rendering entirely, causing markdown tables to render as raw pipes and hyphens (`|`, `---`), bold phrases to retain raw double asterisks (`**`), and headings to display uncolored. Non-streaming mode, in contrast, rendered tables with full box-drawing borders (`│`, `─`, `┼`), cyan headers (`HEADING_BLUE`), and bold red-orange highlights (`RED_ORANGE`).

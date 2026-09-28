@@ -303,6 +303,6 @@ fn test_modernized_subagent_native_tools_allowlists() {
     let video_tools = static_allowlist_for_subagent("video_animator").expect("video_animator allowlist");
     assert!(video_tools.contains(&"generate_video"));
     assert!(video_tools.contains(&"html_to_video"));
-    assert!(video_tools.contains(&"svg_animator"));
+    assert!(video_tools.contains(&"create_animated_svg"));
     assert!(video_tools.contains(&"tool_catalog"));
 }

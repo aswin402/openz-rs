@@ -16,7 +16,7 @@ pub async fn handle_sop(action: SopAction) -> Result<()> {
                 println!("No SOP definitions found.");
             } else {
                 for def in defs {
-                    println!("{}• ID:{} {}", AURA_PURPLE, COLOR_RESET, def.id);
+                    println!("{}• ID:{} {}", RED_ORANGE, COLOR_RESET, def.id);
                     println!("  {}Name:{} {}", COLOR_BOLD, COLOR_RESET, def.name);
                     println!(
                         "  {}Description:{} {}",
@@ -57,17 +57,23 @@ pub async fn handle_sop(action: SopAction) -> Result<()> {
                         crate::sop::SopStatus::Running => LIGHT_WHITE,
                         _ => COLOR_RESET,
                     };
-                    println!("{}• Instance ID:{} {}", AURA_PURPLE, COLOR_RESET, inst.id);
+                    let completed_count = inst.steps.iter().filter(|s| s.status == "Completed").count();
+                    let display_step = if inst.current_step_index > 0 {
+                        inst.current_step_index
+                    } else {
+                        completed_count
+                    };
+                    println!("{}• Instance ID:{} {}", RED_ORANGE, COLOR_RESET, inst.id);
                     println!("  {}SOP ID:{} {}", COLOR_BOLD, COLOR_RESET, inst.sop_id);
                     println!(
                         "  {}Status:{} {:?}{}",
                         COLOR_BOLD, status_color, inst.status, COLOR_RESET
                     );
                     println!(
-                        "  {}Current Step:{} {}/{}",
+                        "  {}Steps Completed:{} {}/{}",
                         COLOR_BOLD,
                         COLOR_RESET,
-                        inst.current_step_index,
+                        display_step,
                         inst.steps.len()
                     );
                     println!(
