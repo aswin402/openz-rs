@@ -29,7 +29,7 @@ use self::response::normalize_response;
 use self::tool_pipeline::{execute_approved_tool, execute_auto_tool_call, ApprovedToolExec};
 use self::turn::{acquire_provider_turn_lock, RunContext};
 use self::events::{
-    compact_reasoning_summary, format_markdown_line,
+    compact_reasoning_summary,
     normalize_tui_thought_display, should_send_public_reasoning_progress, should_show_tui_thoughts,
     publish_auto_capture_notice, stream_content_chunk,
 };
@@ -358,12 +358,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 );
             }
 
-            // Print the final line in the buffer if any
-            if !current_line_buffer.is_empty() && !silent {
-                print!("\r\x1b[2K");
-                print!("{}", format_markdown_line(&current_line_buffer));
-                let _ = std::io::stdout().flush();
-            }
+            current_line_buffer.clear();
 
             ctx.streamed = true;
 

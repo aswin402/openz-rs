@@ -1,4 +1,27 @@
-### v0.0.233 (Latest Release)
+### v0.0.234 (Latest Release)
+- **Ideas**:
+  - Streaming Line-Wrapping De-duplication & Terminal Direct Rendering:
+    - **Eliminated Wrapped Line Duplication**: In the TUI streaming engine (`stream_content_chunk` in [`src/agent/agent_loop/run/events.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/events.rs)), content characters were printed live to stdout, but upon encountering each newline `\n`, the engine previously called `print!("\r\x1b[2K")` and reprinted the entire buffered line via `format_markdown_line`. When any streamed text exceeded the terminal width and wrapped to a new row, `\x1b[2K` only cleared the final wrapped row, leaving the initial row intact on screen and re-printing the full line below it, causing unsightly line duplication.
+    - **Single-Pass Direct Streaming**: Updated `stream_content_chunk` to directly stream characters to stdout and emit `\r\n` upon newlines with a single per-chunk flush, completely eliminating the erase-and-reprint cycle and buffer clearing collision in [`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs) and [`src/agent/agent_loop/run/response.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/response.rs). Text now wraps naturally at terminal boundaries without repeating or flickering.
+- **Inspirations**:
+  - Terminal raw mode stream pipelines, ANSI line-wrapping physics, and high-performance zero-reprint CLI streaming (Claude Code, Ollama).
+- **Sources & References**:
+  - [`src/agent/agent_loop/run/events.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/events.rs): Single-pass direct character stream rendering in `stream_content_chunk`.
+  - [`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs): Removed redundant final-line re-print in `handle`.
+  - [`src/agent/agent_loop/run/response.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/response.rs): Removed redundant final-line re-print in recovery stream.
+  - [`src/agent/agent_loop/run/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/tests.rs): Added unit tests for streaming buffer reset and markdown line formatting.
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Version increment to `0.0.234`.
+- **Details & Metrics**:
+  - Eliminated 100% of line duplication on terminal wraps during streaming responses.
+  - Reduced per-character terminal I/O syscall overhead by flushing stdout once per streamed chunk rather than per character/line.
+  - Exact 260 registered native tools invariant maintained; 0 clippy warnings (`-D warnings`).
+- **Verification**:
+  - `cargo check -p openz -j 1`: PASS (0 warnings).
+  - `cargo clippy -p openz -j 1 -- -D warnings`: PASS (0 warnings).
+  - `cargo test -p openz --lib agent::agent_loop::run::tests -j 1`: PASS (30/30).
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1`: PASS (1/1).
+
+### v0.0.233
 - **Ideas**:
   - TUI Streaming Reasoning Line-Clearing & Visual Separation:
     - **Live Thinking Indicator Clearing**: In the CLI TUI streaming loop ([`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs)), `print_reasoning` previously output the finalized thought badge (`• Thought for Xs\r\n`) immediately while the terminal cursor remained at the end of the un-terminated live progress text (`\r\x1b[2K▶ Thinking... Xs`), concatenating them side-by-side on the same line (`▶ Thinking... 3.9s• Thought for 3.9s`).

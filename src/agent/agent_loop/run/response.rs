@@ -239,13 +239,7 @@ pub(super) async fn normalize_response(
                         }
                     }
 
-                    if !current_line_buffer.is_empty()
-                        && !crate::agent::style::spinner::is_silent()
-                    {
-                        print!("\r\x1b[2K");
-                        print!("{}", super::events::format_markdown_line(current_line_buffer));
-                        let _ = std::io::stdout().flush();
-                    }
+                    current_line_buffer.clear();
 
                     let recovery_reasoning_visible = recovery_reasoning.trim().to_string();
                     let recovered_content = if !recovery_content.trim().is_empty() {

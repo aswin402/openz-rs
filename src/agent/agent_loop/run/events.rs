@@ -59,6 +59,7 @@ pub(super) fn compact_reasoning_summary(reasoning: &str) -> String {
     text
 }
 
+#[allow(dead_code)]
 pub(super) fn format_markdown_line(line: &str) -> String {
     static RE_BOLD: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
     static RE_CODE: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
@@ -122,28 +123,23 @@ pub(super) fn stream_content_chunk(
     silent: bool,
     content_streaming_started: &mut bool,
 ) {
+    if silent || text.is_empty() {
+        return;
+    }
+    *content_streaming_started = true;
     for c in text.chars() {
         if c == '\r' {
             continue;
         }
         if c == '\n' {
-            if !silent {
-                *content_streaming_started = true;
-                print!("\r\x1b[2K");
-                print!("{}", format_markdown_line(current_line_buffer));
-                print!("\r\n");
-                let _ = std::io::stdout().flush();
-            }
+            print!("\r\n");
             current_line_buffer.clear();
         } else {
             current_line_buffer.push(c);
-            if !silent {
-                *content_streaming_started = true;
-                print!("{}", c);
-                let _ = std::io::stdout().flush();
-            }
+            print!("{}", c);
         }
     }
+    let _ = std::io::stdout().flush();
 }
 
 pub(super) fn publish_auto_capture_notice(

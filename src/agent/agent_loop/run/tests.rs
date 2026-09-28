@@ -217,6 +217,31 @@ fn tui_thought_display_modes_normalize() {
 }
 
 #[test]
+fn test_format_markdown_line_preserves_content() {
+    let formatted = format_markdown_line("**bold** and `code` and *italic*");
+    assert!(formatted.contains("bold"));
+    assert!(formatted.contains("code"));
+    assert!(formatted.contains("italic"));
+}
+
+#[test]
+fn test_stream_content_chunk_clears_buffer_on_newline() {
+    let mut buffer = String::new();
+    let mut started = false;
+    stream_content_chunk("hello world", &mut buffer, true, &mut started);
+    assert!(!started);
+    assert_eq!(buffer, "");
+
+    let mut buffer2 = String::new();
+    let mut started2 = false;
+    stream_content_chunk("test chunk", &mut buffer2, false, &mut started2);
+    assert!(started2);
+    assert_eq!(buffer2, "test chunk");
+    stream_content_chunk("\nsecond", &mut buffer2, false, &mut started2);
+    assert_eq!(buffer2, "second");
+}
+
+#[test]
 fn direct_research_url_deduplicates_fragments_across_readers() {
     let first = direct_research_url(
         "web_fetch",
