@@ -1,4 +1,35 @@
-### v0.0.230 (Latest Release)
+### v0.0.231 (Latest Release)
+- **Ideas**:
+  - OpenMedia & SearchXyz Deep Hygiene, Dead Stub Pruning & Authentic Evaluation:
+    - Remediated hardcoded fake scores in OpenMedia quality evaluation: replaced hardcoded `7.5` in `AestheticScorer::score` with real ONNX tensor inference using normalized image tensors (`[1, 3, 224, 224]`), and made both `AestheticScorer` and `ClipScorer` return typed `OpenMediaError::ModelNotFound` when ONNX model files are not present, instead of returning arbitrary fake numbers (`0.20`/`0.15`).
+    - Made `improve_score_image` and `improve_auto_refine` transparent and authentic: handlers now report `None` for missing scores along with an informative notice and `models_available` indicator, removing simulated iterative score increment formulas (`0.20 + round * 0.05`).
+    - Pruned dead unused dummy stubs (`DummyDiffusionPipeline` in `src/tools/openmedia/image/mod.rs` and `DummyFrameRenderer` in `src/tools/openmedia/video/mod.rs`), reducing binary bloat and dead code paths.
+    - Quiet headless crawler stderr logging in SearchXyz: downgraded unknown/unhandled CDP protocol event errors from `tracing::error!` to `tracing::debug!`, eliminating red error spam during headless web scraping with Chromium.
+    - Shared cached system font database in SVG rasterizer: introduced `default_svg_fontdb()` in `src/tools/openmedia/svg/mod.rs` to load system fonts once into `resvg::usvg::Options`, eliminating the `WARN usvg::text: No match for 'sans-serif' font-family` warning and deduplicating font loading across SVG rasterization and video rendering.
+- **Inspirations**:
+  - Zero-mock policy, honest telemetry and status reporting, resvg fontdb best practices, and clean logging hygiene.
+- **Sources & References**:
+  - [`src/tools/openmedia/improve/scorer.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/improve/scorer.rs): Real ONNX tensor inference, typed `ModelNotFound` error returns, and removal of mock `score_aesthetic`.
+  - [`src/tools/openmedia/handlers/improvement_handlers.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/handlers/improvement_handlers.rs): Transparent Option score handling, `models_available` detection, and removal of simulated score arithmetic.
+  - [`src/tools/openmedia/image/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/image/mod.rs): Pruned dead `DummyDiffusionPipeline`.
+  - [`src/tools/openmedia/video/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/video/mod.rs): Pruned dead `DummyFrameRenderer` and reused `default_svg_fontdb()`.
+  - [`src/tools/openmedia/svg/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/svg/mod.rs): Implemented `default_svg_fontdb()` to eliminate font fallback warnings.
+  - [`src/tools/searchxyz/core/crawler/headless.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/core/crawler/headless.rs): Downgraded CDP event logs from `error!` to `debug!`.
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Version increment to `0.0.231`.
+- **Details & Metrics**:
+  - Eliminated 4 mock/hardcoded score values and formulas across OpenMedia.
+  - Pruned 95 lines of dead stub code across image and video modules.
+  - Eliminated 100% of spurious `tracing::error!` console noise on headless crawls.
+  - Resolved `usvg` sans-serif font fallback warnings via shared system font database.
+  - Exact 260 registered native tools invariant maintained; 0 clippy warnings (`-D warnings`).
+- **Verification**:
+  - `cargo check -p openz -j 1`: PASS (0 warnings).
+  - `cargo clippy -p openz -j 1 -- -D warnings`: PASS (0 warnings).
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1`: PASS (1/1).
+  - `cargo test -p openz --lib tools::openmedia -j 1`: PASS (38/38).
+  - `cargo test -p openz --lib tools::searchxyz -j 1`: PASS (96/96).
+
+### v0.0.230
 - **Ideas**:
   - Offline-First Fast Compilation & Yanked Dependency Remediation:
     - Addressed network timeout and HTTP 503 Varnish errors during `cargo install` by switching global build/update scripts ([`localupdate.sh`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/localupdate.sh) and [`localinstall.sh`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/localinstall.sh)) to an **offline-first** strategy.

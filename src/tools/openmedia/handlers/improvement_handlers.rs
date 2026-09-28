@@ -15,25 +15,36 @@ impl OpenMediaServer {
             let prompt = req.prompt.as_deref().unwrap_or("");
             scorer.score(path, prompt).await.ok()
         } else {
-            Some(0.28)
+            None
         };
 
         let aesthetic = if let Some(scorer) = self.aesthetic_scorer.as_ref() {
             scorer.score(path).await.ok()
         } else {
-            Some(7.5)
+            None
         };
 
         let clip_thresh = self.config.improve.clip_threshold;
         let aes_thresh = self.config.improve.aesthetic_threshold;
 
-        let needs_refinement =
-            clip.unwrap_or(0.0) < clip_thresh || aesthetic.unwrap_or(0.0) < aes_thresh;
+        let needs_refinement = match (clip, aesthetic) {
+            (Some(c), Some(a)) => c < clip_thresh || a < aes_thresh,
+            (Some(c), None) => c < clip_thresh,
+            (None, Some(a)) => a < aes_thresh,
+            (None, None) => false,
+        };
 
+        let models_available = clip.is_some() || aesthetic.is_some();
         let response = serde_json::json!({
             "clip_score": clip,
             "aesthetic_score": aesthetic,
             "needs_refinement": needs_refinement,
+            "models_available": models_available,
+            "notice": if !models_available {
+                Some("Scoring models (CLIP / Aesthetic predictor) are not loaded in models/clip/. Place ONNX models in the openmedia model directory to enable ML evaluation.")
+            } else {
+                None
+            }
         });
 
         Ok(response)
@@ -130,16 +141,21 @@ impl OpenMediaServer {
             let clip = if let Some(scorer) = self.clip_scorer.as_ref() {
                 scorer.score(&output_path, &current_prompt).await.ok()
             } else {
-                Some(0.20 + (round as f32) * 0.05)
+                None
             };
 
             let aesthetic = if let Some(scorer) = self.aesthetic_scorer.as_ref() {
                 scorer.score(&output_path).await.ok()
             } else {
-                Some(7.0 + (round as f32) * 0.3)
+                None
             };
 
-            let overall = (clip.unwrap_or(0.0) * 10.0 + aesthetic.unwrap_or(0.0)) / 2.0;
+            let overall = match (clip, aesthetic) {
+                (Some(c), Some(a)) => (c * 10.0 + a) / 2.0,
+                (Some(c), None) => c * 10.0,
+                (None, Some(a)) => a,
+                (None, None) => 0.0,
+            };
 
             let file_size = std::fs::metadata(&output_path)
                 .map(|m| m.len())
@@ -173,7 +189,7 @@ impl OpenMediaServer {
 
             self.history.record(&record).map_err(|e| e.to_string())?;
 
-            if overall > best_score {
+            if overall > best_score || best_record.is_none() {
                 best_score = overall;
                 best_record = Some(record.clone());
             }
@@ -181,7 +197,8 @@ impl OpenMediaServer {
             let score_struct = QualityScore {
                 clip_score: clip,
                 aesthetic_score: aesthetic,
-                needs_refinement: clip.unwrap_or(0.0) < 0.25 || aesthetic.unwrap_or(0.0) < 4.5,
+                needs_refinement: clip.map(|c| c < 0.25).unwrap_or(false)
+                    || aesthetic.map(|a| a < 4.5).unwrap_or(false),
             };
 
             if !score_struct.needs_refinement {

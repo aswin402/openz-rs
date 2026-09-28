@@ -287,39 +287,6 @@ pub trait FrameRenderer: Send + Sync {
     fn name(&self) -> &str;
 }
 
-pub struct DummyFrameRenderer;
-
-impl DummyFrameRenderer {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-impl Default for DummyFrameRenderer {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-#[async_trait::async_trait]
-impl FrameRenderer for DummyFrameRenderer {
-    async fn render_frame(
-        &self,
-        _scene: &VideoScene,
-        _time: f64,
-        _width: u32,
-        _height: u32,
-    ) -> Result<image::RgbaImage> {
-        Err(OpenMediaError::BackendUnavailable(
-            "Dummy frame renderer".into(),
-        ))
-    }
-
-    fn name(&self) -> &str {
-        "dummy"
-    }
-}
-
 // === Native SVG Frame Renderer ===
 pub struct SvgFrameRenderer;
 
@@ -399,14 +366,8 @@ impl FrameRenderer for SvgFrameRenderer {
             if let Some(db) = found {
                 db
             } else {
-                static BASE_SYSTEM_FONTS: std::sync::OnceLock<resvg::usvg::fontdb::Database> =
-                    std::sync::OnceLock::new();
-                let base_db = BASE_SYSTEM_FONTS.get_or_init(|| {
-                    let mut db = resvg::usvg::fontdb::Database::new();
-                    db.load_system_fonts();
-                    db
-                });
-                let mut fontdb = base_db.clone();
+                let base_db = crate::tools::openmedia::svg::default_svg_fontdb();
+                let mut fontdb = (*base_db).clone();
                 if let Some(ref fonts) = scene.custom_fonts {
                     let resolved = resolve_custom_fonts(fonts).await;
                     for (_, bytes) in resolved {

@@ -993,6 +993,20 @@ pub fn build_svg_from_json(
     Ok(builder.build())
 }
 
+static BASE_SYSTEM_FONTS: std::sync::OnceLock<std::sync::Arc<resvg::usvg::fontdb::Database>> =
+    std::sync::OnceLock::new();
+
+/// Cached system font database loaded once to prevent repeated font scans and missing font warnings.
+pub fn default_svg_fontdb() -> std::sync::Arc<resvg::usvg::fontdb::Database> {
+    BASE_SYSTEM_FONTS
+        .get_or_init(|| {
+            let mut db = resvg::usvg::fontdb::Database::new();
+            db.load_system_fonts();
+            std::sync::Arc::new(db)
+        })
+        .clone()
+}
+
 /// Rasterize an SVG string into an ImageOutput with specified dimensions and background color.
 pub fn rasterize(
     svg_content: &str,
@@ -1006,8 +1020,11 @@ pub fn rasterize(
     use std::time::Instant;
     let start_time = Instant::now();
 
-    // Parse the SVG
-    let opt = usvg::Options::default();
+    // Parse the SVG with system font database
+    let opt = usvg::Options {
+        fontdb: default_svg_fontdb(),
+        ..Default::default()
+    };
     let tree = usvg::Tree::from_str(svg_content, &opt)
         .map_err(|e| OpenMediaError::InvalidSvgInput(e.to_string()))?;
 

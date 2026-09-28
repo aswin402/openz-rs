@@ -88,9 +88,9 @@ impl ClipScorer {
         let (mut text_guard, mut vision_guard) = match (&self.text_session, &self.vision_session) {
             (Some(t), Some(v)) => (t.lock().unwrap(), v.lock().unwrap()),
             _ => {
-                let file_exists = image_path.exists();
-                let score = if file_exists { 0.20 } else { 0.15 };
-                return Ok(score);
+                return Err(OpenMediaError::ModelNotFound(
+                    "CLIP ONNX text/vision models are not loaded. Expected text_model.onnx and vision_model.onnx in model directory.".into(),
+                ));
             }
         };
 
@@ -196,13 +196,12 @@ impl ClipScorer {
         Ok(normalized)
     }
 
-    pub async fn score_aesthetic(&self, _image_path: &Path) -> Result<f32> {
-        Ok(7.2)
+    pub fn is_loaded(&self) -> bool {
+        self.text_session.is_some() && self.vision_session.is_some()
     }
 }
 
 pub struct AestheticScorer {
-    #[allow(dead_code)]
     session: Option<Mutex<Session>>,
 }
 
@@ -237,8 +236,69 @@ impl AestheticScorer {
         Ok(Self { session: None })
     }
 
-    pub async fn score(&self, _image_path: &Path) -> Result<f32> {
-        Ok(7.5)
+    pub fn is_loaded(&self) -> bool {
+        self.session.is_some()
+    }
+
+    pub async fn score(&self, image_path: &Path) -> Result<f32> {
+        let mut session_guard = match &self.session {
+            Some(s) => s.lock().unwrap(),
+            None => {
+                return Err(OpenMediaError::ModelNotFound(
+                    "Aesthetic predictor ONNX model is not loaded. Expected aesthetic-predictor.onnx in model directory.".into(),
+                ));
+            }
+        };
+
+        let img = image::open(image_path).map_err(|e| {
+            OpenMediaError::ImageDecodeError(format!(
+                "Failed to open image for aesthetic scoring: {}",
+                e
+            ))
+        })?;
+
+        let resized = img.resize_exact(224, 224, image::imageops::FilterType::Lanczos3);
+        let rgb = resized.to_rgb8();
+
+        let mean = [0.48145466, 0.4578275, 0.40821073];
+        #[allow(clippy::excessive_precision)]
+        let std = [0.26862954, 0.26130258, 0.27577711];
+
+        let mut pixel_values = Vec::with_capacity(3 * 224 * 224);
+        for c in 0..3 {
+            for y in 0..224 {
+                for x in 0..224 {
+                    let pixel = rgb.get_pixel(x, y);
+                    let val = pixel[c] as f32 / 255.0;
+                    pixel_values.push((val - mean[c]) / std[c]);
+                }
+            }
+        }
+
+        let image_array = Array::from_shape_vec(ndarray::IxDyn(&[1, 3, 224, 224]), pixel_values)
+            .map_err(|e| OpenMediaError::Internal(format!("Failed to build image array: {}", e)))?;
+
+        let image_tensor = Value::from_array(image_array).map_err(|e| {
+            OpenMediaError::Internal(format!("Failed to build image tensor: {}", e))
+        })?;
+
+        let inputs = vec![("pixel_values", image_tensor)];
+        let outputs = session_guard
+            .run(inputs)
+            .map_err(|e| OpenMediaError::Internal(format!("Failed to run aesthetic model: {}", e)))?;
+
+        let output_value = outputs
+            .iter()
+            .next()
+            .map(|(_, v)| v)
+            .ok_or_else(|| OpenMediaError::Internal("Aesthetic model output not found".into()))?;
+
+        let output_view = output_value.try_extract_tensor::<f32>().map_err(|e| {
+            OpenMediaError::Internal(format!("Failed to extract aesthetic score tensor: {}", e))
+        })?;
+
+        let prediction = output_view.1.first().copied().unwrap_or(5.0);
+        Ok(prediction.clamp(1.0, 10.0))
     }
 }
 

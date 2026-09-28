@@ -61,7 +61,7 @@ impl HeadlessBrowser {
         tokio::spawn(async move {
             while let Some(h) = handler.next().await {
                 if let Err(e) = h {
-                    tracing::error!(error = %e, "Chrome event handler error");
+                    tracing::debug!(error = %e, "Chrome event handler warning/unhandled event");
                 }
             }
         });

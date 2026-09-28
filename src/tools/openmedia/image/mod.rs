@@ -1,4 +1,4 @@
-use crate::tools::openmedia::core::{ImageOutput, ModelInfo, OpenMediaError, ProgressReporter, Result};
+use crate::tools::openmedia::core::{ImageOutput, ModelInfo, ProgressReporter, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -136,66 +136,4 @@ pub trait DiffusionPipeline: Send + Sync {
 
     /// Check if a model is currently loaded
     fn is_loaded(&self) -> bool;
-}
-
-#[derive(Default)]
-pub struct DummyDiffusionPipeline;
-
-impl DummyDiffusionPipeline {
-    pub fn new() -> Self {
-        Self
-    }
-}
-
-#[async_trait::async_trait]
-impl DiffusionPipeline for DummyDiffusionPipeline {
-    async fn txt2img(
-        &self,
-        _request: &Txt2ImgRequest,
-        _progress: Arc<dyn ProgressReporter>,
-    ) -> Result<ImageOutput> {
-        Err(OpenMediaError::BackendUnavailable(
-            "Dummy backend".into(),
-        ))
-    }
-
-    async fn img2img(
-        &self,
-        _request: &Img2ImgRequest,
-        _progress: Arc<dyn ProgressReporter>,
-    ) -> Result<ImageOutput> {
-        Err(OpenMediaError::BackendUnavailable(
-            "Dummy backend".into(),
-        ))
-    }
-
-    async fn inpaint(
-        &self,
-        _request: &InpaintRequest,
-        _progress: Arc<dyn ProgressReporter>,
-    ) -> Result<ImageOutput> {
-        Err(OpenMediaError::BackendUnavailable(
-            "Dummy backend".into(),
-        ))
-    }
-
-    fn backend_name(&self) -> &str {
-        "dummy"
-    }
-
-    fn supports_model(&self, _model: &ModelInfo) -> bool {
-        false
-    }
-
-    fn estimate_vram(&self, _width: u32, _height: u32, _model: &ModelInfo) -> u64 {
-        0
-    }
-
-    async fn unload(&mut self) -> Result<()> {
-        Ok(())
-    }
-
-    fn is_loaded(&self) -> bool {
-        false
-    }
 }
