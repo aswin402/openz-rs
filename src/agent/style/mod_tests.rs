@@ -65,13 +65,13 @@ fn test_tree_tool_start_msg() {
     // Without args
     let msg = get_tree_tool_start_msg("exec_command", "");
     assert!(msg.contains("Bash"));
-    assert!(msg.contains('●'));
+    assert!(msg.contains('•'));
 
-    let bullet_idx = msg.find('●').unwrap();
+    let bullet_idx = msg.find('•').unwrap();
     // RED_ORANGE should precede bullet
     assert!(msg[..bullet_idx].ends_with(colors::RED_ORANGE));
     // COLOR_RESET should follow bullet (followed by a space)
-    let after_bullet = &msg[bullet_idx + '●'.len_utf8()..];
+    let after_bullet = &msg[bullet_idx + '•'.len_utf8()..];
     assert!(after_bullet.starts_with(" "));
     assert!(after_bullet[1..].starts_with(colors::COLOR_RESET));
 
@@ -79,11 +79,11 @@ fn test_tree_tool_start_msg() {
     let msg_args = get_tree_tool_start_msg("write_file", "--force");
     assert!(msg_args.contains("Write"));
     assert!(msg_args.contains("--force"));
-    assert!(msg_args.contains('●'));
+    assert!(msg_args.contains('•'));
 
-    let bullet_idx_args = msg_args.find('●').unwrap();
+    let bullet_idx_args = msg_args.find('•').unwrap();
     assert!(msg_args[..bullet_idx_args].ends_with(colors::RED_ORANGE));
-    let after_bullet_args = &msg_args[bullet_idx_args + '●'.len_utf8()..];
+    let after_bullet_args = &msg_args[bullet_idx_args + '•'.len_utf8()..];
     assert!(after_bullet_args.starts_with(" "));
     assert!(after_bullet_args[1..].starts_with(colors::COLOR_RESET));
 }

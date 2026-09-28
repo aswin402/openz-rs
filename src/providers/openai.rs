@@ -1,5 +1,7 @@
 use crate::providers::circuit_breaker::CircuitBreaker;
-use crate::providers::{GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest};
+use crate::providers::{
+    ChatStreamChunk, GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest,
+};
 use crate::providers::transport::{
     build_provider_client, openai_chat_endpoint, post_json_with_retry, ProviderAuth,
 };
@@ -634,7 +636,8 @@ impl LLMProvider for OpenAIProvider {
             },
         );
 
-        Ok(Box::pin(stream))
+        let filtered = filter_think_stream(Box::pin(stream));
+        Ok(Box::pin(filtered))
     }
 }
 
@@ -699,6 +702,224 @@ pub fn split_think_blocks(content: &str) -> (Option<String>, Option<String>) {
         Some(reasoning)
     };
     (visible, reasoning)
+}
+
+#[derive(Debug, Default, Clone)]
+pub struct ThinkStreamFilter {
+    pub in_think: bool,
+    pub buffer: String,
+    pub skip_leading_newlines: bool,
+}
+
+impl ThinkStreamFilter {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn process_chunk(&mut self, chunk: ChatStreamChunk) -> Vec<ChatStreamChunk> {
+        match chunk {
+            ChatStreamChunk::Reasoning(r) => {
+                let mut out = self.flush_buffer();
+                out.push(ChatStreamChunk::Reasoning(r));
+                out
+            }
+            ChatStreamChunk::ToolCall { .. } | ChatStreamChunk::Done { .. } => {
+                let mut out = self.flush_buffer();
+                out.push(chunk);
+                out
+            }
+            ChatStreamChunk::Content(text) => {
+                self.buffer.push_str(&text);
+                let mut out = Vec::new();
+                loop {
+                    if self.buffer.is_empty() {
+                        break;
+                    }
+                    if !self.in_think {
+                        // Looking for <think>
+                        if let Some(start_idx) = self.buffer.find("<think>") {
+                            let mut before = self.buffer[..start_idx].to_string();
+                            if self.skip_leading_newlines {
+                                while before.starts_with('\n') || before.starts_with('\r') {
+                                    before.remove(0);
+                                }
+                                self.skip_leading_newlines = false;
+                            }
+                            if !before.is_empty() {
+                                out.push(ChatStreamChunk::Content(before));
+                            }
+                            self.buffer = self.buffer[start_idx + "<think>".len()..].to_string();
+                            self.in_think = true;
+                            continue;
+                        }
+
+                        // Check if buffer ends with a prefix of "<think>"
+                        let tail_len = longest_suffix_matching_prefix(&self.buffer, "<think>");
+                        if tail_len > 0 {
+                            if self.buffer.len() > tail_len {
+                                let mut safe =
+                                    self.buffer[..self.buffer.len() - tail_len].to_string();
+                                self.buffer =
+                                    self.buffer[self.buffer.len() - tail_len..].to_string();
+                                if self.skip_leading_newlines {
+                                    while safe.starts_with('\n') || safe.starts_with('\r') {
+                                        safe.remove(0);
+                                    }
+                                    if !safe.is_empty() {
+                                        self.skip_leading_newlines = false;
+                                    }
+                                }
+                                if !safe.is_empty() {
+                                    out.push(ChatStreamChunk::Content(safe));
+                                }
+                            }
+                            break;
+                        } else {
+                            let mut content = std::mem::take(&mut self.buffer);
+                            if self.skip_leading_newlines {
+                                while content.starts_with('\n') || content.starts_with('\r') {
+                                    content.remove(0);
+                                }
+                                if !content.is_empty() {
+                                    self.skip_leading_newlines = false;
+                                }
+                            }
+                            if !content.is_empty() {
+                                out.push(ChatStreamChunk::Content(content));
+                            }
+                            break;
+                        }
+                    } else {
+                        // Inside think block, looking for </think>
+                        if let Some(end_idx) = self.buffer.find("</think>") {
+                            let reasoning = self.buffer[..end_idx].to_string();
+                            if !reasoning.is_empty() {
+                                out.push(ChatStreamChunk::Reasoning(reasoning));
+                            }
+                            self.buffer = self.buffer[end_idx + "</think>".len()..].to_string();
+                            self.in_think = false;
+                            self.skip_leading_newlines = true;
+                            continue;
+                        }
+
+                        // Check if buffer ends with a prefix of "</think>"
+                        let tail_len = longest_suffix_matching_prefix(&self.buffer, "</think>");
+                        if tail_len > 0 {
+                            if self.buffer.len() > tail_len {
+                                let safe = self.buffer[..self.buffer.len() - tail_len].to_string();
+                                self.buffer =
+                                    self.buffer[self.buffer.len() - tail_len..].to_string();
+                                if !safe.is_empty() {
+                                    out.push(ChatStreamChunk::Reasoning(safe));
+                                }
+                            }
+                            break;
+                        } else {
+                            let reasoning = std::mem::take(&mut self.buffer);
+                            if !reasoning.is_empty() {
+                                out.push(ChatStreamChunk::Reasoning(reasoning));
+                            }
+                            break;
+                        }
+                    }
+                }
+                out
+            }
+        }
+    }
+
+    pub fn flush_buffer(&mut self) -> Vec<ChatStreamChunk> {
+        let mut out = Vec::new();
+        if !self.buffer.is_empty() {
+            let mut text = std::mem::take(&mut self.buffer);
+            if self.in_think {
+                if !text.is_empty() {
+                    out.push(ChatStreamChunk::Reasoning(text));
+                }
+            } else {
+                if self.skip_leading_newlines {
+                    while text.starts_with('\n') || text.starts_with('\r') {
+                        text.remove(0);
+                    }
+                    self.skip_leading_newlines = false;
+                }
+                if !text.is_empty() {
+                    out.push(ChatStreamChunk::Content(text));
+                }
+            }
+        }
+        out
+    }
+}
+
+fn longest_suffix_matching_prefix(buffer: &str, tag: &str) -> usize {
+    let max_len = (tag.len() - 1).min(buffer.len());
+    for len in (1..=max_len).rev() {
+        if let Some(suffix) = buffer.get(buffer.len() - len..) {
+            if tag.starts_with(suffix) {
+                return len;
+            }
+        }
+    }
+    0
+}
+
+pub fn filter_think_stream<S>(
+    stream: S,
+) -> impl futures_util::Stream<Item = Result<ChatStreamChunk>> + Send
+where
+    S: futures_util::Stream<Item = Result<ChatStreamChunk>> + Send + Unpin + 'static,
+{
+    use futures_util::StreamExt;
+    let initial_state = (
+        stream,
+        ThinkStreamFilter::new(),
+        std::collections::VecDeque::<ChatStreamChunk>::new(),
+        false,
+    );
+
+    futures_util::stream::unfold(
+        initial_state,
+        |(mut stream, mut filter, mut pending, mut done)| async move {
+            if !pending.is_empty() {
+                let chunk = pending.pop_front().unwrap();
+                return Some((Ok(chunk), (stream, filter, pending, done)));
+            }
+
+            if done {
+                return None;
+            }
+
+            loop {
+                match stream.next().await {
+                    Some(Ok(chunk)) => {
+                        let processed = filter.process_chunk(chunk);
+                        for c in processed {
+                            pending.push_back(c);
+                        }
+                        if let Some(first) = pending.pop_front() {
+                            return Some((Ok(first), (stream, filter, pending, done)));
+                        }
+                    }
+                    Some(Err(e)) => {
+                        done = true;
+                        return Some((Err(e), (stream, filter, pending, done)));
+                    }
+                    None => {
+                        done = true;
+                        let flushed = filter.flush_buffer();
+                        for c in flushed {
+                            pending.push_back(c);
+                        }
+                        if let Some(first) = pending.pop_front() {
+                            return Some((Ok(first), (stream, filter, pending, done)));
+                        }
+                        return None;
+                    }
+                }
+            }
+        },
+    )
 }
 
 pub fn merge_reasoning(existing: Option<String>, extracted: Option<String>) -> Option<String> {

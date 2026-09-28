@@ -393,6 +393,25 @@ fn test_compact_approval_description_keeps_short_details() {
 }
 
 #[test]
+fn test_summarize_arguments_compaction() {
+    let args = json!({
+        "width": 400,
+        "height": 400,
+        "elements": [
+            {"type": "rect", "x": 0, "y": 0},
+            {"type": "circle", "cx": 200, "cy": 200},
+            {"type": "line", "x1": 0, "y1": 0, "x2": 100, "y2": 100},
+            {"type": "ellipse", "cx": 50, "cy": 50}
+        ]
+    });
+    let desc = SecurityGuard::format_description("openmedia_create_svg", &args);
+    assert!(desc.contains("width: 400"));
+    assert!(desc.contains("height: 400"));
+    assert!(desc.contains("elements: [4 items]"));
+    assert!(!desc.contains("openmedia_create_svg("));
+}
+
+#[test]
 fn test_forbidden_deletions() {
     // Forbidden dangerous deletions
     assert!(SecurityGuard::is_forbidden(

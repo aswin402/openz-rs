@@ -187,7 +187,7 @@ pub(super) async fn normalize_response(
                                         String::new()
                                     };
                                     crate::tui_println!(
-                                        "{}{}● {}{}{}Thought for {:.1}s{}",
+                                        "{}{}• {}{}{}Thought for {:.1}s{}",
                                         prefix,
                                         crate::agent::style::RED_ORANGE,
                                         crate::agent::style::COLOR_RESET,

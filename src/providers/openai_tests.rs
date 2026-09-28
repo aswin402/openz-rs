@@ -94,3 +94,70 @@ async fn test_serialize_messages_vision_fallback() {
     // Cleanup
     let _ = std::fs::remove_file(test_img_path);
 }
+
+#[test]
+fn test_think_stream_filter_splits_chunks_cleanly() {
+    let mut filter = ThinkStreamFilter::new();
+    let chunks = vec![
+        ChatStreamChunk::Content("<think>\nUser asks who I am.\n</think>\n\nI am OpenZ.".to_string()),
+    ];
+    let mut processed = Vec::new();
+    for c in chunks {
+        processed.extend(filter.process_chunk(c));
+    }
+    processed.extend(filter.flush_buffer());
+
+    assert_eq!(processed.len(), 2);
+    match &processed[0] {
+        ChatStreamChunk::Reasoning(r) => assert_eq!(r, "\nUser asks who I am.\n"),
+        other => panic!("Expected reasoning, got {:?}", other),
+    }
+    match &processed[1] {
+        ChatStreamChunk::Content(c) => assert_eq!(c, "I am OpenZ."),
+        other => panic!("Expected content, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_think_stream_filter_handles_split_tags() {
+    let mut filter = ThinkStreamFilter::new();
+    let chunks = vec![
+        ChatStreamChunk::Content("<th".to_string()),
+        ChatStreamChunk::Content("ink>Inner reasoning</th".to_string()),
+        ChatStreamChunk::Content("ink>\n\nVisible reply".to_string()),
+    ];
+    let mut processed = Vec::new();
+    for c in chunks {
+        processed.extend(filter.process_chunk(c));
+    }
+    processed.extend(filter.flush_buffer());
+
+    assert_eq!(processed.len(), 2);
+    match &processed[0] {
+        ChatStreamChunk::Reasoning(r) => assert_eq!(r, "Inner reasoning"),
+        other => panic!("Expected reasoning, got {:?}", other),
+    }
+    match &processed[1] {
+        ChatStreamChunk::Content(c) => assert_eq!(c, "Visible reply"),
+        other => panic!("Expected content, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_think_stream_filter_non_think_content_passes_through() {
+    let mut filter = ThinkStreamFilter::new();
+    let chunks = vec![
+        ChatStreamChunk::Content("Normal text with <3 heart and <b>html</b>".to_string()),
+    ];
+    let mut processed = Vec::new();
+    for c in chunks {
+        processed.extend(filter.process_chunk(c));
+    }
+    processed.extend(filter.flush_buffer());
+
+    assert_eq!(processed.len(), 1);
+    match &processed[0] {
+        ChatStreamChunk::Content(c) => assert_eq!(c, "Normal text with <3 heart and <b>html</b>"),
+        other => panic!("Expected content, got {:?}", other),
+    }
+}

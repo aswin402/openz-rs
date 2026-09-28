@@ -562,7 +562,10 @@ impl AgentLoop {
             }
         }
 
-        chat_result
+        match chat_result {
+            Ok(stream) => Ok(Box::pin(crate::providers::openai::filter_think_stream(stream))),
+            Err(e) => Err(e),
+        }
     }
 
     pub async fn run(&self, user_content: &str, session_key: &str) -> Result<RunResult> {

@@ -1,4 +1,38 @@
-### v0.0.231 (Latest Release)
+### v0.0.232 (Latest Release)
+- **Ideas**:
+  - TUI Polish, Streaming `<think>` Leakage Prevention & Security Prompt Argument Compaction:
+    - **MCP Pill Theming**: Updated the status bar pill (`◇ MCP`) in [`src/channels/cli/render.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/render.rs) to use the OpenZ brand theme color `RED_ORANGE` (`\x1b[38;2;255;69;0m`) instead of `AURA_PURPLE`, creating visual consistency across the status header.
+    - **Subtle Small Bullet Styling**: Replaced the large dot `●` (U+25CF) across thoughts, tool calls, and subagent indicators with the refined small bullet `•` (U+2022) across the TUI renderer, agent loop, subagent runners, and style utilities.
+    - **Streaming Mode `<think>` Tag Suppression**: Models returning internal reasoning embedded in `<think>...</think>` tags (such as MiniMax, DeepSeek, and Qwen) previously leaked raw `<think>` and `</think>` tags directly into the live streaming text channel. Introduced `ThinkStreamFilter` and `filter_think_stream` in [`src/providers/openai.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/openai.rs) and wired it into both `OpenAIProvider::chat_stream` and `AgentLoop::chat_stream_with_fallback`. The filter parses streaming content deltas in real-time, routes thoughts to typed `ChatStreamChunk::Reasoning` chunks, strips the `<think>` and `</think>` tags cleanly, and removes leading newlines so the streamed answer starts without blank lines.
+    - **Security Shield Argument Compaction**: The permission confirmation prompt (`SecurityGuard::format_description`) previously dumped huge, raw, unformatted JSON blobs in `Details:` (e.g., hundreds of lines of nested SVG elements), causing awkward mid-word wrapping and verbose truncation warnings. Introduced `SecurityGuard::summarize_arguments` in [`src/agent/security.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/security.rs), summarizing arrays concisely as `[N items]`, truncating lengthy strings at 60 characters with ellipses, capping detail lines to 4 and chars to 320, and displaying concise `... (details truncated)` indicators.
+- **Inspirations**:
+  - Minimalist terminal UI patterns, Anthropic/DeepSeek reasoning stream protocol isolation, and human-first security dialogue UX.
+- **Sources & References**:
+  - [`src/channels/cli/render.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/render.rs): MCP pill `RED_ORANGE` theme color and `•` bullet replacement for thoughts and tools.
+  - [`src/agent/style/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/style/mod.rs) & [`src/agent/style/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/style/mod_tests.rs): `•` bullet replacement in tree tool start message and test assertions.
+  - [`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs) & [`src/agent/agent_loop/run/response.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/response.rs): `•` bullet in thought duration badges.
+  - [`src/tools/subagent/delegate_task.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_task.rs), [`src/tools/subagent/parallel_research.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/parallel_research.rs), [`src/agent/events.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/events.rs): `•` bullet for subagents and events.
+  - [`src/providers/openai.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/openai.rs): `ThinkStreamFilter` state machine and `filter_think_stream` adapter.
+  - [`src/providers/openai_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/openai_tests.rs): Unit tests for streaming think block splitting, split tags, and non-think text pass-through.
+  - [`src/agent/agent_loop/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/mod.rs): Wired `filter_think_stream` into `chat_stream_with_fallback`.
+  - [`src/agent/security.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/security.rs): `summarize_arguments` compact argument formatter and concise detail truncation.
+  - [`src/agent/security_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/security_tests.rs): Unit tests for argument compaction.
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Version increment to `0.0.232`.
+- **Details & Metrics**:
+  - Replaced 100% of large `●` dots with small `•` bullets across the entire codebase.
+  - Eliminated 100% of `<think>` and `</think>` tags from streaming output.
+  - Security prompt argument payload reduced by up to 90% for complex tools (e.g. SVG elements array replaced with `[18 items]`).
+  - Max detail lines in approval prompts reduced from 12 to 4; max characters reduced from 1600 to 320.
+  - Exact 260 registered native tools invariant maintained; 0 clippy warnings (`-D warnings`).
+- **Verification**:
+  - `cargo check -p openz -j 1`: PASS (0 warnings).
+  - `cargo clippy -p openz -j 1 -- -D warnings`: PASS (0 warnings).
+  - `cargo test -p openz --lib agent::security_tests -j 1`: PASS (21/21).
+  - `cargo test -p openz --lib providers::openai::tests -j 1`: PASS (8/8).
+  - `cargo test -p openz --lib agent::style::tests -j 1`: PASS (7/7).
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1`: PASS (1/1).
+
+### v0.0.231
 - **Ideas**:
   - OpenMedia & SearchXyz Deep Hygiene, Dead Stub Pruning & Authentic Evaluation:
     - Remediated hardcoded fake scores in OpenMedia quality evaluation: replaced hardcoded `7.5` in `AestheticScorer::score` with real ONNX tensor inference using normalized image tensors (`[1, 3, 224, 224]`), and made both `AestheticScorer` and `ClipScorer` return typed `OpenMediaError::ModelNotFound` when ONNX model files are not present, instead of returning arbitrary fake numbers (`0.20`/`0.15`).

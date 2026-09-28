@@ -537,7 +537,7 @@ pub fn print_session_history(session: &crate::session::Session) {
                     if let Some(reasoning_str) = reasoning_val.as_str() {
                         let trimmed_reasoning = reasoning_str.trim();
                         if !trimmed_reasoning.is_empty() {
-                            println!("{}● {}Thought{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET);
+                            println!("{}• {}Thought{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET);
                             crate::agent::style::print_tree_monologue("  L ", trimmed_reasoning);
                             println!();
                         }
@@ -579,12 +579,12 @@ pub fn print_session_history(session: &crate::session::Session) {
 
                     if details.is_empty() {
                         println!(
-                            "{}● {}{}{}{}{}",
+                            "{}• {}{}{}{}{}",
                             RED_ORANGE, COLOR_RESET, COLOR_BOLD, LIGHT_WHITE, title, COLOR_RESET
                         );
                     } else {
                         println!(
-                            "{}● {}{}{}{} {}{}{}{}",
+                            "{}• {}{}{}{} {}{}{}{}",
                             RED_ORANGE,
                             COLOR_RESET,
                             COLOR_BOLD,
@@ -815,7 +815,7 @@ pub fn render_box(
                 format!(" ◇ MCP {}/{} {}  │ ", processed, total, frame),
                 format!(
                     " {}◇ MCP {}{}/{} {}{}  {}│{} ",
-                    AURA_PURPLE,
+                    RED_ORANGE,
                     AURA_GOLD,
                     processed,
                     total,
@@ -830,7 +830,7 @@ pub fn render_box(
                 format!(" ◇ MCP {}  │ ", frame),
                 format!(
                     " {}◇ MCP {}{}  {}│{} ",
-                    AURA_PURPLE, frame, COLOR_RESET, AURA_SLATE, COLOR_RESET
+                    RED_ORANGE, frame, COLOR_RESET, AURA_SLATE, COLOR_RESET
                 ),
             )
         }
@@ -839,7 +839,7 @@ pub fn render_box(
             format!(" ◇ MCP {}✓  │ ", mcp_loaded),
             format!(
                 " {}◇ MCP {}{}{}✓{}  {}│{} ",
-                AURA_PURPLE,
+                RED_ORANGE,
                 AURA_GREEN,
                 mcp_loaded,
                 AURA_GREEN,
@@ -853,7 +853,7 @@ pub fn render_box(
             format!(" ◇ MCP {}✓ {}✗  │ ", mcp_loaded, mcp_failed),
             format!(
                 " {}◇ MCP {}{}{}✓{} {}{}{}✗{}  {}│{} ",
-                AURA_PURPLE,
+                RED_ORANGE,
                 AURA_GREEN,
                 mcp_loaded,
                 AURA_GREEN,

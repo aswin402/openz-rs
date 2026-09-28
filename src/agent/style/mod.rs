@@ -238,7 +238,7 @@ pub fn get_tree_tool_start_msg(name: &str, formatted_args: &str) -> String {
     let details = clean_tool_args_msg(name, formatted_args);
     if details.is_empty() {
         format!(
-            "{}{}{}{}● {}{}{}{}{}",
+            "{}{}{}{}• {}{}{}{}{}",
             colors::AURA_SLATE,
             prefix,
             colors::COLOR_RESET,
@@ -251,7 +251,7 @@ pub fn get_tree_tool_start_msg(name: &str, formatted_args: &str) -> String {
         )
     } else {
         format!(
-            "{}{}{}{}● {}{}{}{}{} {}{}{}",
+            "{}{}{}{}• {}{}{}{}{} {}{}{}",
             colors::AURA_SLATE,
             prefix,
             colors::COLOR_RESET,

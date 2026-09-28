@@ -169,7 +169,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             "".to_string()
                         };
                         crate::tui_println!(
-                            "{}{}● {}{}{}Thought for {:.1}s{}",
+                            "{}{}• {}{}{}Thought for {:.1}s{}",
                             prefix,
                             RED_ORANGE,
                             COLOR_RESET,
@@ -506,7 +506,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     // finalize the spinner and print the badge now.
                     if !content_streaming_started && !reasoning_printed {
                         crate::tui_println!(
-                            "{}{}● {}{}{}Thought for {:.1}s{}",
+                            "{}{}• {}{}{}Thought for {:.1}s{}",
                             prefix,
                             RED_ORANGE,
                             COLOR_RESET,
@@ -519,7 +519,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 } else {
                     // Non-streaming path: print the badge and thinking summary
                     crate::tui_println!(
-                        "{}{}● {}{}{}Thought for {:.1}s{}",
+                        "{}{}• {}{}{}Thought for {:.1}s{}",
                         prefix,
                         RED_ORANGE,
                         COLOR_RESET,

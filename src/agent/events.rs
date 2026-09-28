@@ -70,9 +70,9 @@ impl AgentEvent {
             Self::PublicMessage(text) | Self::PublicProgress(text) => Some(text.clone()),
             Self::ToolStarted { name, summary } => {
                 if summary.trim().is_empty() {
-                    Some(format!("● {name}"))
+                    Some(format!("• {name}"))
                 } else {
-                    Some(format!("● {summary}"))
+                    Some(format!("• {summary}"))
                 }
             }
             Self::ToolFinished { name, status } => {

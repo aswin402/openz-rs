@@ -199,7 +199,7 @@ impl Tool for ParallelResearchTool {
                     let leaf_prefix =
                         crate::agent::style::get_tree_prefix_for_depth(true, current_depth);
                     crate::tui_println!(
-                        "{}{}{}● {}{}\u{2014} running...{}",
+                        "{}{}{}• {}{}\u{2014} running...{}",
                         AURA_SLATE,
                         leaf_prefix,
                         RED_ORANGE,

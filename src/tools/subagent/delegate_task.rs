@@ -177,7 +177,7 @@ impl Tool for DelegateTaskTool {
         if !crate::agent::style::is_silent() {
             let prefix = crate::agent::style::get_tree_prefix(false);
             crate::tui_println!(
-                "{}{}{}● {}{}Subagent{} {}using {}{}",
+                "{}{}{}• {}{}Subagent{} {}using {}{}",
                 AURA_SLATE, prefix, COLOR_RESET,
                 RED_ORANGE, COLOR_BOLD, COLOR_RESET,
                 AURA_SLATE, selected_model, COLOR_RESET

@@ -660,6 +660,76 @@ impl SecurityGuard {
         Self::redacted_value(arguments)
     }
 
+    /// Formats a concise, human-readable summary of tool arguments for permission prompts.
+    pub fn summarize_arguments(arguments: &Value) -> String {
+        match arguments {
+            Value::Object(map) => {
+                if map.is_empty() {
+                    return "(no arguments)".to_string();
+                }
+                let mut parts = Vec::new();
+                for (k, v) in map {
+                    let val_str = match v {
+                        Value::String(s) => {
+                            let char_count = s.chars().count();
+                            if char_count > 60 {
+                                let truncated: String = s.chars().take(60).collect();
+                                format!("\"{}...\"", truncated)
+                            } else {
+                                format!("\"{s}\"")
+                            }
+                        }
+                        Value::Number(n) => n.to_string(),
+                        Value::Bool(b) => b.to_string(),
+                        Value::Array(arr) => {
+                            if arr.len() <= 3 && arr.iter().all(|x| x.is_string() || x.is_number()) {
+                                let items = arr
+                                    .iter()
+                                    .map(|x| match x {
+                                        Value::String(s) if s.chars().count() > 20 => {
+                                            let trunc: String = s.chars().take(20).collect();
+                                            format!("\"{}...\"", trunc)
+                                        }
+                                        _ => x.to_string(),
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                format!("[{items}]")
+                            } else {
+                                format!("[{} items]", arr.len())
+                            }
+                        }
+                        Value::Object(obj) => {
+                            format!("{{{} fields}}", obj.len())
+                        }
+                        Value::Null => "null".to_string(),
+                    };
+                    parts.push(format!("{k}: {val_str}"));
+                }
+                parts.join(", ")
+            }
+            Value::String(s) => {
+                let char_count = s.chars().count();
+                if char_count > 80 {
+                    let truncated: String = s.chars().take(80).collect();
+                    format!("\"{}...\"", truncated)
+                } else {
+                    format!("\"{s}\"")
+                }
+            }
+            other => {
+                let s = other.to_string();
+                let char_count = s.chars().count();
+                if char_count > 80 {
+                    let truncated: String = s.chars().take(80).collect();
+                    format!("{}...", truncated)
+                } else {
+                    s
+                }
+            }
+        }
+    }
+
     /// Formats a descriptive string showing the details of the sensitive action.
     pub fn format_description(tool_name: &str, arguments: &Value) -> String {
         let canonical_name = crate::tools::canonical_tool_name(tool_name);
@@ -675,12 +745,13 @@ impl SecurityGuard {
             let path = Self::tool_path_arg(arguments).unwrap_or("unknown");
             return format!("{} -> {}", action_label, path);
         }
-        format!("{}({})", tool_name, arguments)
+        let redacted = Self::redacted_value(arguments);
+        Self::summarize_arguments(&redacted)
     }
 }
 
-pub(crate) const APPROVAL_DETAIL_MAX_LINES: usize = 12;
-const APPROVAL_DETAIL_MAX_CHARS: usize = 1600;
+pub(crate) const APPROVAL_DETAIL_MAX_LINES: usize = 4;
+const APPROVAL_DETAIL_MAX_CHARS: usize = 320;
 
 pub(crate) fn compact_approval_description(description: &str, max_width: usize) -> String {
     let mut compact = String::new();
@@ -721,7 +792,7 @@ pub(crate) fn compact_approval_description(description: &str, max_width: usize) 
     }
 
     if truncated {
-        compact.push_str("\n             ... details truncated; inspect the full tool arguments above or deny if unsure");
+        compact.push_str("\n             ... (details truncated)");
     }
 
     compact
