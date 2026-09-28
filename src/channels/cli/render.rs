@@ -261,48 +261,23 @@ fn format_cell_text(text: &str) -> String {
     formatted
 }
 
-fn print_normal_line(line: &str) {
+pub fn format_markdown_line(line: &str) -> String {
     let trimmed = line.trim();
     if trimmed.chars().all(|c| c == '-') && trimmed.len() >= 3 && !trimmed.is_empty() {
-        println!("{}──────{}", LIGHT_WHITE, COLOR_RESET);
-        return;
+        return format!("{}──────{}", LIGHT_WHITE, COLOR_RESET);
     }
 
-    let light_blue = "\x1b[38;2;135;206;250m";
-    if line.trim_start().starts_with("#") {
-        println!("{}{}{}", HEADING_BLUE, line, COLOR_RESET);
-    } else {
-        let mut formatted = line.to_string();
-
-        formatted = formatted
-            .replace("✔", &format!("{}{}{}", EMERALD_GREEN, "✔", COLOR_RESET))
-            .replace("✅", &format!("{}{}{}", EMERALD_GREEN, "✅", COLOR_RESET))
-            .replace("✓", &format!("{}{}{}", EMERALD_GREEN, "✓", COLOR_RESET))
-            .replace("✖", &format!("{}{}{}", ERROR_RED, "✖", COLOR_RESET))
-            .replace("❌", &format!("{}{}{}", ERROR_RED, "❌", COLOR_RESET))
-            .replace("✗", &format!("{}{}{}", ERROR_RED, "✗", COLOR_RESET));
-
-        if let Some(re) = cli_re_bold() {
-            formatted = re
-                .replace_all(
-                    &formatted,
-                    &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET),
-                )
-                .to_string();
-        }
-        if let Some(re) = cli_re_code() {
-            formatted = re
-                .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
-                .to_string();
-        }
-        if let Some(re) = cli_re_italic() {
-            formatted = re
-                .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
-                .to_string();
-        }
-
-        println!("{}", formatted);
+    if line.trim_start().starts_with('#') {
+        return format!("{}{}{}", HEADING_BLUE, line, COLOR_RESET);
     }
+
+    format_cell_text(line)
+}
+
+pub fn print_normal_line(line: &str) {
+    let formatted = format_markdown_line(line);
+    print!("{}\r\n", formatted);
+    let _ = std::io::stdout().flush();
 }
 
 fn clean_cell_text(text: &str) -> String {
@@ -325,12 +300,9 @@ fn clean_cell_text(text: &str) -> String {
     cleaned.to_string()
 }
 
-fn render_table(table_lines: &[&str]) {
+pub fn render_table_lines(table_lines: &[&str]) -> Vec<String> {
     if table_lines.len() < 2 {
-        for line in table_lines {
-            print_normal_line(line);
-        }
-        return;
+        return table_lines.iter().map(|l| format_markdown_line(l)).collect();
     }
 
     let headers: Vec<String> = split_row(table_lines[0])
@@ -339,10 +311,7 @@ fn render_table(table_lines: &[&str]) {
         .collect();
     let num_cols = headers.len();
     if num_cols == 0 {
-        for line in table_lines {
-            print_normal_line(line);
-        }
-        return;
+        return table_lines.iter().map(|l| format_markdown_line(l)).collect();
     }
 
     let mut data_rows = Vec::new();
@@ -432,6 +401,8 @@ fn render_table(table_lines: &[&str]) {
         header_cell_lines.push(lines);
     }
 
+    let mut result_lines = Vec::new();
+
     for line_idx in 0..max_header_lines {
         let mut header_line_parts = Vec::new();
         for col in 0..num_cols {
@@ -452,10 +423,10 @@ fn render_table(table_lines: &[&str]) {
             );
             header_line_parts.push(colored);
         }
-        println!("{}", header_line_parts.join(&separator));
+        result_lines.push(header_line_parts.join(&separator));
     }
 
-    println!("{}", divider_colored);
+    result_lines.push(divider_colored);
 
     for row in data_rows {
         let mut cell_lines = Vec::new();
@@ -476,9 +447,18 @@ fn render_table(table_lines: &[&str]) {
                 let padded = format!("{}{}", formatted, " ".repeat(padding_len));
                 row_line_parts.push(padded);
             }
-            println!("{}", row_line_parts.join(&separator));
+            result_lines.push(row_line_parts.join(&separator));
         }
     }
+
+    result_lines
+}
+
+pub fn render_table(table_lines: &[&str]) {
+    for line in render_table_lines(table_lines) {
+        print!("{}\r\n", line);
+    }
+    let _ = std::io::stdout().flush();
 }
 
 pub fn print_session_history(session: &crate::session::Session) {
@@ -667,42 +647,187 @@ pub fn print_session_history(session: &crate::session::Session) {
     );
 }
 
-pub fn print_colored_markdown(content: &str) {
-    let lines: Vec<&str> = content.lines().collect();
-    let mut i = 0;
-    let mut in_code_block = false;
+#[derive(Debug, Clone)]
+pub struct StreamingMarkdownRenderer {
+    current_line: String,
+    pending_table_header: Option<String>,
+    table_lines: Vec<String>,
+    in_table: bool,
+    in_code_block: bool,
+    silent: bool,
+    started: bool,
+    captured_lines: Option<Vec<String>>,
+}
 
-    while i < lines.len() {
-        let line = lines[i];
-        let trimmed = line.trim_start();
-
-        if trimmed.starts_with("```") {
-            in_code_block = !in_code_block;
-            print_normal_line(line);
-            i += 1;
-            continue;
-        }
-
-        if !in_code_block
-            && i + 1 < lines.len()
-            && is_table_row(lines[i])
-            && is_divider_row(lines[i + 1])
-        {
-            let mut table_lines = Vec::new();
-            table_lines.push(lines[i]);
-            i += 1;
-            table_lines.push(lines[i]);
-            i += 1;
-            while i < lines.len() && is_table_row(lines[i]) {
-                table_lines.push(lines[i]);
-                i += 1;
-            }
-            render_table(&table_lines);
-        } else {
-            print_normal_line(line);
-            i += 1;
+impl StreamingMarkdownRenderer {
+    pub fn new(silent: bool) -> Self {
+        Self {
+            current_line: String::new(),
+            pending_table_header: None,
+            table_lines: Vec::new(),
+            in_table: false,
+            in_code_block: false,
+            silent,
+            started: false,
+            captured_lines: None,
         }
     }
+
+    pub fn new_with_capture() -> Self {
+        Self {
+            current_line: String::new(),
+            pending_table_header: None,
+            table_lines: Vec::new(),
+            in_table: false,
+            in_code_block: false,
+            silent: true,
+            started: false,
+            captured_lines: Some(Vec::new()),
+        }
+    }
+
+    pub fn has_started(&self) -> bool {
+        self.started
+    }
+
+    pub fn current_buffer(&self) -> &str {
+        &self.current_line
+    }
+
+    pub fn captured(&self) -> &[String] {
+        self.captured_lines.as_deref().unwrap_or(&[])
+    }
+
+    pub fn push_chunk(&mut self, text: &str) {
+        if (self.silent && self.captured_lines.is_none()) || text.is_empty() {
+            return;
+        }
+        self.started = true;
+
+        for c in text.chars() {
+            if c == '\r' {
+                continue;
+            }
+            if c == '\n' {
+                let line = std::mem::take(&mut self.current_line);
+                self.process_completed_line(line);
+            } else {
+                self.current_line.push(c);
+            }
+        }
+    }
+
+    fn process_completed_line(&mut self, line: String) {
+        let trimmed_start = line.trim_start();
+
+        if trimmed_start.starts_with("```") {
+            if self.in_table {
+                self.flush_table();
+            }
+            if let Some(header) = self.pending_table_header.take() {
+                self.output_line(&header);
+            }
+            self.in_code_block = !self.in_code_block;
+            self.output_raw_line(&line);
+            return;
+        }
+
+        if self.in_code_block {
+            self.output_raw_line(&line);
+            return;
+        }
+
+        if self.in_table {
+            if is_table_row(&line) {
+                self.table_lines.push(line);
+            } else {
+                self.flush_table();
+                self.process_completed_line(line);
+            }
+            return;
+        }
+
+        if let Some(header) = self.pending_table_header.take() {
+            if is_divider_row(&line) {
+                self.in_table = true;
+                self.table_lines.push(header);
+                self.table_lines.push(line);
+            } else {
+                self.output_line(&header);
+                if is_table_row(&line) {
+                    self.pending_table_header = Some(line);
+                } else {
+                    self.output_line(&line);
+                }
+            }
+            return;
+        }
+
+        if is_table_row(&line) {
+            self.pending_table_header = Some(line);
+        } else {
+            self.output_line(&line);
+        }
+    }
+
+    fn flush_table(&mut self) {
+        if !self.table_lines.is_empty() {
+            let refs: Vec<&str> = self.table_lines.iter().map(|s| s.as_str()).collect();
+            for rendered in render_table_lines(&refs) {
+                if let Some(ref mut cap) = self.captured_lines {
+                    cap.push(rendered.clone());
+                }
+                if !self.silent {
+                    print!("{}\r\n", rendered);
+                }
+            }
+            if !self.silent {
+                let _ = std::io::stdout().flush();
+            }
+            self.table_lines.clear();
+        }
+        self.in_table = false;
+    }
+
+    fn output_line(&mut self, line: &str) {
+        let formatted = format_markdown_line(line);
+        if let Some(ref mut cap) = self.captured_lines {
+            cap.push(formatted.clone());
+        }
+        if !self.silent {
+            print!("{}\r\n", formatted);
+            let _ = std::io::stdout().flush();
+        }
+    }
+
+    fn output_raw_line(&mut self, line: &str) {
+        if let Some(ref mut cap) = self.captured_lines {
+            cap.push(line.to_string());
+        }
+        if !self.silent {
+            print!("{}\r\n", line);
+            let _ = std::io::stdout().flush();
+        }
+    }
+
+    pub fn finish(&mut self) {
+        if !self.current_line.is_empty() {
+            let line = std::mem::take(&mut self.current_line);
+            self.process_completed_line(line);
+        }
+        if self.in_table {
+            self.flush_table();
+        }
+        if let Some(header) = self.pending_table_header.take() {
+            self.output_line(&header);
+        }
+    }
+}
+
+pub fn print_colored_markdown(content: &str) {
+    let mut streamer = StreamingMarkdownRenderer::new(false);
+    streamer.push_chunk(content);
+    streamer.finish();
 }
 
 #[allow(clippy::too_many_arguments)]

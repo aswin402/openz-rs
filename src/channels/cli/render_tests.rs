@@ -81,3 +81,111 @@ fn test_horizontal_rule_detection() {
     assert!(!is_hr(line4));
     assert!(!is_hr(line5));
 }
+
+#[test]
+fn test_format_markdown_line_bold_and_code() {
+    let formatted = format_markdown_line("**hello** `world`");
+    assert!(formatted.contains("hello"));
+    assert!(formatted.contains("world"));
+    assert!(!formatted.contains("**"));
+    assert!(!formatted.contains('`'));
+}
+
+#[test]
+fn test_format_markdown_line_heading() {
+    let formatted = format_markdown_line("# OpenZ Engine");
+    assert!(formatted.contains("OpenZ Engine"));
+    assert!(formatted.contains("\x1b[38;2;135;206;250m") || formatted.contains("\x1b["));
+}
+
+#[test]
+fn test_format_markdown_line_horizontal_rule() {
+    let formatted = format_markdown_line("---");
+    assert!(formatted.contains("──────"));
+}
+
+#[test]
+fn test_render_table_lines() {
+    let table = ["| Name | Role |", "|---|---|", "| OpenZ | Agent |"];
+    let lines = render_table_lines(&table);
+    assert_eq!(lines.len(), 3);
+    assert!(lines[0].contains("Name") && lines[0].contains("Role"));
+    assert!(lines[1].contains('┼') && lines[1].contains('─'));
+    assert!(lines[2].contains("OpenZ") && lines[2].contains("Agent") && lines[2].contains('│'));
+}
+
+#[test]
+fn test_streaming_markdown_renderer_normal_lines() {
+    let mut streamer = StreamingMarkdownRenderer::new_with_capture();
+    streamer.push_chunk("Line 1\n");
+    streamer.push_chunk("Line 2 with **bold**\n");
+    streamer.finish();
+
+    let captured = streamer.captured();
+    assert_eq!(captured.len(), 2);
+    assert!(captured[0].contains("Line 1"));
+    assert!(captured[1].contains("Line 2 with ") && captured[1].contains("bold"));
+    assert!(!captured[1].contains("**"));
+}
+
+#[test]
+fn test_streaming_markdown_renderer_table() {
+    let mut streamer = StreamingMarkdownRenderer::new_with_capture();
+    streamer.push_chunk("Here is comparison:\n\n");
+    streamer.push_chunk("**OpenZ** | **Hermes Agent**\n");
+    streamer.push_chunk("---|---\n");
+    streamer.push_chunk("Rust | Python\n");
+    streamer.push_chunk("260 native tools | 70+ tools\n\n");
+    streamer.push_chunk("Summary line\n");
+    streamer.finish();
+
+    let captured = streamer.captured();
+    // Intro line, empty line, header, divider, 2 data rows, empty line, summary line
+    assert!(captured.iter().any(|l| l.contains("Here is comparison:")));
+    assert!(captured.iter().any(|l| l.contains('┼')));
+    assert!(captured.iter().any(|l| l.contains('│') && l.contains("Rust")));
+    assert!(captured.iter().any(|l| l.contains('│') && l.contains("260 native tools")));
+    assert!(captured.iter().any(|l| l.contains("Summary line")));
+}
+
+#[test]
+fn test_streaming_markdown_renderer_table_finish_without_trailing_newline() {
+    let mut streamer = StreamingMarkdownRenderer::new_with_capture();
+    streamer.push_chunk("| Col A | Col B |\n|---|---|\n| val1 | val2");
+    streamer.finish();
+
+    let captured = streamer.captured();
+    assert!(captured.iter().any(|l| l.contains('┼')));
+    assert!(captured.iter().any(|l| l.contains("val1") && l.contains("val2")));
+}
+
+#[test]
+fn test_streaming_markdown_renderer_pipe_not_table() {
+    let mut streamer = StreamingMarkdownRenderer::new_with_capture();
+    streamer.push_chunk("Option A | Option B\n");
+    streamer.push_chunk("Next sentence without divider\n");
+    streamer.finish();
+
+    let captured = streamer.captured();
+    assert_eq!(captured.len(), 2);
+    assert!(captured[0].contains("Option A | Option B"));
+    assert!(captured[1].contains("Next sentence without divider"));
+    // Ensure no table divider was generated
+    assert!(!captured.iter().any(|l| l.contains('┼')));
+}
+
+#[test]
+fn test_streaming_markdown_renderer_code_block() {
+    let mut streamer = StreamingMarkdownRenderer::new_with_capture();
+    streamer.push_chunk("```rust\n");
+    streamer.push_chunk("let x = a | b;\n");
+    streamer.push_chunk("```\n");
+    streamer.finish();
+
+    let captured = streamer.captured();
+    assert_eq!(captured.len(), 3);
+    assert!(captured[0].contains("```rust"));
+    assert!(captured[1].contains("let x = a | b;"));
+    assert!(captured[2].contains("```"));
+    assert!(!captured.iter().any(|l| l.contains('┼')));
+}

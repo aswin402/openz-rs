@@ -1,4 +1,30 @@
-### v0.0.234 (Latest Release)
+### v0.0.235 (Latest Release)
+- **Ideas**:
+  - Streaming Markdown Box-Drawing Table Rendering & Visual Theme Parity:
+    - **Live Markdown Stream Architecture**: In CLI TUI streaming mode, tokens arrived incrementally and bypassed Markdown parsing and terminal box rendering entirely, causing markdown tables to render as raw pipes and hyphens (`|`, `---`), bold phrases to retain raw double asterisks (`**`), and headings to display uncolored. Non-streaming mode, in contrast, rendered tables with full box-drawing borders (`│`, `─`, `┼`), cyan headers (`HEADING_BLUE`), and bold red-orange highlights (`RED_ORANGE`).
+    - **StreamingMarkdownRenderer Engine**: Introduced `StreamingMarkdownRenderer` in [`src/channels/cli/render.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/render.rs), a streaming markdown state machine that buffers incoming text chunks into completed lines, detects table headers (`is_table_row`) and divider rows (`is_divider_row`), buffers table blocks until completion, and dynamically formats aligned box-drawing tables with exact column calculations via `render_table_lines`.
+    - **Zero-Flicker Full Theme Parity**: Normal lines, headings, horizontal rules, checkmarks, and bold/code elements are formatted with full OpenZ brand colors via `format_markdown_line`, code blocks (```` ``` ````) are preserved verbatim without regex alteration, and every emitted line uses `\r\n` to maintain column 0 alignment in raw terminal mode. Unified `print_colored_markdown` to share the exact same streaming parser, guaranteeing visual consistency between streaming and non-streaming modes.
+- **Inspirations**:
+  - Rich CLI formatting, glow markdown rendering, terminal raw mode CRLF discipline, and box-drawing table algorithms.
+- **Sources & References**:
+  - [`src/channels/cli/render.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/render.rs): `StreamingMarkdownRenderer`, `render_table_lines`, and `format_markdown_line`.
+  - [`src/channels/cli/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/mod.rs): Re-exported `StreamingMarkdownRenderer`.
+  - [`src/agent/agent_loop/run/events.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/events.rs): Updated `stream_content_chunk` to route through `StreamingMarkdownRenderer`.
+  - [`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs): Integrated `StreamingMarkdownRenderer` into the primary streaming loop and turn state.
+  - [`src/agent/agent_loop/run/response.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/response.rs): Integrated `StreamingMarkdownRenderer` into the recovery stream.
+  - [`src/channels/cli/render_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/render_tests.rs): 9 new unit tests covering table streaming, raw code blocks, non-table pipes, and markdown formatting.
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Version increment to `0.0.235`.
+- **Details & Metrics**:
+  - Streaming mode now outputs identical box-drawing borders (`│`, `─`, `┼`), column alignments, cyan headers, and bold `RED_ORANGE` highlights as non-streaming mode.
+  - Zero duplicate characters, zero terminal cursor drift in raw mode.
+  - 15/15 render unit tests passing; 260 registered native tools invariant maintained; 0 clippy warnings (`-D warnings`).
+- **Verification**:
+  - `cargo test -p openz --lib channels::cli::render::tests -j 1`: PASS (15/15).
+  - `cargo test -p openz --lib agent::agent_loop::run::tests -j 1`: PASS (30/30).
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1`: PASS (1/1, 260 tools).
+  - `cargo clippy -p openz -j 1 -- -D warnings`: PASS (0 warnings).
+
+### v0.0.234
 - **Ideas**:
   - Streaming Line-Wrapping De-duplication & Terminal Direct Rendering:
     - **Eliminated Wrapped Line Duplication**: In the TUI streaming engine (`stream_content_chunk` in [`src/agent/agent_loop/run/events.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/events.rs)), content characters were printed live to stdout, but upon encountering each newline `\n`, the engine previously called `print!("\r\x1b[2K")` and reprinted the entire buffered line via `format_markdown_line`. When any streamed text exceeded the terminal width and wrapped to a new row, `\x1b[2K` only cleared the final wrapped row, leaving the initial row intact on screen and re-printing the full line below it, causing unsightly line duplication.

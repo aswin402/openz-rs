@@ -1,8 +1,5 @@
 //! Terminal-facing reasoning and Markdown event formatting for the run loop.
 
-use crate::agent::style::*;
-use std::io::Write;
-
 pub(super) fn summarize_auto_capture_topics(
     capture_summaries: &[crate::tools::shared_memory::AutoCaptureSummary],
 ) -> String {
@@ -61,85 +58,21 @@ pub(super) fn compact_reasoning_summary(reasoning: &str) -> String {
 
 #[allow(dead_code)]
 pub(super) fn format_markdown_line(line: &str) -> String {
-    static RE_BOLD: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
-    static RE_CODE: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
-    static RE_ITALIC: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
-
-    let re_bold = RE_BOLD
-        .get_or_init(|| regex::Regex::new(r"\*\*(.*?)\*\*").ok())
-        .as_ref();
-    let re_code = RE_CODE
-        .get_or_init(|| regex::Regex::new(r"`(.*?)`").ok())
-        .as_ref();
-    let re_italic = RE_ITALIC
-        .get_or_init(|| regex::Regex::new(r"\*(.*?)\*").ok())
-        .as_ref();
-
-    let light_blue = "\x1b[38;2;135;206;250m";
-
-    let trimmed = line.trim();
-    if trimmed.chars().all(|c| c == '-') && trimmed.len() >= 3 && !trimmed.is_empty() {
-        return format!("{}──────{}", LIGHT_WHITE, COLOR_RESET);
-    }
-
-    if line.trim_start().starts_with('#') {
-        return format!("{}{}{}", HEADING_BLUE, line, COLOR_RESET);
-    }
-
-    let mut formatted = line.to_string();
-    formatted = formatted
-        .replace('✔', &format!("{}{}{}", EMERALD_GREEN, "✔", COLOR_RESET))
-        .replace("✅", &format!("{}{}{}", EMERALD_GREEN, "✅", COLOR_RESET))
-        .replace('✓', &format!("{}{}{}", EMERALD_GREEN, "✓", COLOR_RESET))
-        .replace('✖', &format!("{}{}{}", ERROR_RED, "✖", COLOR_RESET))
-        .replace("❌", &format!("{}{}{}", ERROR_RED, "❌", COLOR_RESET))
-        .replace('✗', &format!("{}{}{}", ERROR_RED, "✗", COLOR_RESET));
-
-    if let Some(re_bold) = re_bold {
-        formatted = re_bold
-            .replace_all(
-                &formatted,
-                &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET),
-            )
-            .to_string();
-    }
-    if let Some(re_code) = re_code {
-        formatted = re_code
-            .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
-            .to_string();
-    }
-    if let Some(re_italic) = re_italic {
-        formatted = re_italic
-            .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
-            .to_string();
-    }
-
-    formatted
+    crate::channels::cli::render::format_markdown_line(line)
 }
 
 pub(super) fn stream_content_chunk(
     text: &str,
-    current_line_buffer: &mut String,
-    silent: bool,
+    streamer: &mut crate::channels::cli::render::StreamingMarkdownRenderer,
     content_streaming_started: &mut bool,
 ) {
-    if silent || text.is_empty() {
+    if text.is_empty() {
         return;
     }
-    *content_streaming_started = true;
-    for c in text.chars() {
-        if c == '\r' {
-            continue;
-        }
-        if c == '\n' {
-            print!("\r\n");
-            current_line_buffer.clear();
-        } else {
-            current_line_buffer.push(c);
-            print!("{}", c);
-        }
+    streamer.push_chunk(text);
+    if streamer.has_started() {
+        *content_streaming_started = true;
     }
-    let _ = std::io::stdout().flush();
 }
 
 pub(super) fn publish_auto_capture_notice(

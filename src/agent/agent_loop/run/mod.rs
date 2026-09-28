@@ -128,7 +128,10 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         let mut content_streaming_started = false;
         let mut reasoning_printed = false;
         let mut tool_call_stream_started = false;
-        let mut current_line_buffer = String::new();
+        let mut markdown_streamer =
+            crate::channels::cli::render::StreamingMarkdownRenderer::new(
+                crate::agent::style::spinner::is_silent(),
+            );
         let mut resp = if config.agents.defaults.streaming {
             let mut stream = loop_ref
                 .chat_stream_with_fallback(
@@ -250,8 +253,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                         full_content.push_str(&text);
                         stream_content_chunk(
                             &text,
-                            &mut current_line_buffer,
-                            silent,
+                            &mut markdown_streamer,
                             &mut content_streaming_started,
                         );
                         super::tool_execution::send_progress_update(ctx.session_key, &text).await;
@@ -358,7 +360,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 );
             }
 
-            current_line_buffer.clear();
+            markdown_streamer.finish();
 
             ctx.streamed = true;
 
@@ -419,7 +421,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             start_time,
             &mut reasoning_printed,
             &mut content_streaming_started,
-            &mut current_line_buffer,
+            &mut markdown_streamer,
         )
         .await?;
 

@@ -14,8 +14,8 @@ pub use mcp::{
     send_notification, set_mcp_done, set_mcp_status,
 };
 
-// Re-export render custom limit
-pub use render::CUSTOM_CONTEXT_LIMIT;
+// Re-export render custom limit and streaming renderer
+pub use render::{StreamingMarkdownRenderer, CUSTOM_CONTEXT_LIMIT};
 
 // Re-export device command handler
 pub use device::handle_device_command;

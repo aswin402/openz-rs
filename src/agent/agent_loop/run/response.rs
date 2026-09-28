@@ -22,7 +22,7 @@ pub(super) async fn normalize_response(
     start_time: std::time::Instant,
     reasoning_printed: &mut bool,
     content_streaming_started: &mut bool,
-    current_line_buffer: &mut String,
+    markdown_streamer: &mut crate::channels::cli::render::StreamingMarkdownRenderer,
 ) -> Result<crate::providers::LLMResponse> {
     if resp.finish_reason == "length" {
         let mut accumulated_content = resp.content.clone();
@@ -217,8 +217,7 @@ pub(super) async fn normalize_response(
                                 recovery_content.push_str(&text);
                                 stream_content_chunk(
                                     &text,
-                                    current_line_buffer,
-                                    crate::agent::style::spinner::is_silent(),
+                                    markdown_streamer,
                                     content_streaming_started,
                                 );
                                 crate::agent::agent_loop::tool_execution::send_progress_update(
@@ -239,7 +238,7 @@ pub(super) async fn normalize_response(
                         }
                     }
 
-                    current_line_buffer.clear();
+                    markdown_streamer.finish();
 
                     let recovery_reasoning_visible = recovery_reasoning.trim().to_string();
                     let recovered_content = if !recovery_content.trim().is_empty() {

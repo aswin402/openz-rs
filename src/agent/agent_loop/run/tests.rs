@@ -226,19 +226,19 @@ fn test_format_markdown_line_preserves_content() {
 
 #[test]
 fn test_stream_content_chunk_clears_buffer_on_newline() {
-    let mut buffer = String::new();
+    let mut streamer = crate::channels::cli::render::StreamingMarkdownRenderer::new(true);
     let mut started = false;
-    stream_content_chunk("hello world", &mut buffer, true, &mut started);
+    stream_content_chunk("hello world", &mut streamer, &mut started);
     assert!(!started);
-    assert_eq!(buffer, "");
+    assert_eq!(streamer.current_buffer(), "");
 
-    let mut buffer2 = String::new();
+    let mut streamer2 = crate::channels::cli::render::StreamingMarkdownRenderer::new(false);
     let mut started2 = false;
-    stream_content_chunk("test chunk", &mut buffer2, false, &mut started2);
+    stream_content_chunk("test chunk", &mut streamer2, &mut started2);
     assert!(started2);
-    assert_eq!(buffer2, "test chunk");
-    stream_content_chunk("\nsecond", &mut buffer2, false, &mut started2);
-    assert_eq!(buffer2, "second");
+    assert_eq!(streamer2.current_buffer(), "test chunk");
+    stream_content_chunk("\nsecond", &mut streamer2, &mut started2);
+    assert_eq!(streamer2.current_buffer(), "second");
 }
 
 #[test]
