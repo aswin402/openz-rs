@@ -1,4 +1,29 @@
-### v0.0.232 (Latest Release)
+### v0.0.233 (Latest Release)
+- **Ideas**:
+  - TUI Streaming Reasoning Line-Clearing & Visual Separation:
+    - **Live Thinking Indicator Clearing**: In the CLI TUI streaming loop ([`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs)), `print_reasoning` previously output the finalized thought badge (`• Thought for Xs\r\n`) immediately while the terminal cursor remained at the end of the un-terminated live progress text (`\r\x1b[2K▶ Thinking... Xs`), concatenating them side-by-side on the same line (`▶ Thinking... 3.9s• Thought for 3.9s`).
+    - **Clean Escape Sequence Wiping**: Added explicit carriage return and line clearing (`\r\x1b[2K`) followed by `stdout().flush()` at the entrance of `print_reasoning` and the tool-call fallback badges before calling `crate::tui_println!`. This erases the live `▶ Thinking...` indicator from the terminal buffer, repositioning the cursor at column 0 so that `• Thought for Xs` and the subsequent monologue tree block (`  L ...`) start cleanly on their own lines.
+    - **Recovery Stream Hardening**: Applied the same line-clearing guarantee to `normalize_response` in [`src/agent/agent_loop/run/response.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/response.rs), preventing live indicator artifacts during reasoning recovery streams.
+- **Inspirations**:
+  - Crossterm ANSI terminal line state management, TUI cursor positioning best practices, and clean thought tree rendering.
+- **Sources & References**:
+  - [`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs): Line clearing in `print_reasoning` and fallback badge before `tui_println!`.
+  - [`src/agent/agent_loop/run/response.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/response.rs): Line clearing before thought badge in streaming recovery loop.
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Version increment to `0.0.233`.
+- **Details & Metrics**:
+  - Fixed terminal line collision bug causing `▶ Thinking... 3.9s• Thought for 3.9s` in all streaming models with reasoning.
+  - Formatted thought output now cleanly displays:
+    ```text
+    • Thought for 4.5s
+      L The user asks what tools I have...
+    ```
+  - Exact 260 registered native tools invariant maintained; 0 clippy warnings (`-D warnings`).
+- **Verification**:
+  - `cargo check -p openz -j 1`: PASS (0 warnings).
+  - `cargo clippy -p openz -j 1 -- -D warnings`: PASS (0 warnings).
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1`: PASS (1/1).
+
+### v0.0.232
 - **Ideas**:
   - TUI Polish, Streaming `<think>` Leakage Prevention & Security Prompt Argument Compaction:
     - **MCP Pill Theming**: Updated the status bar pill (`◇ MCP`) in [`src/channels/cli/render.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/render.rs) to use the OpenZ brand theme color `RED_ORANGE` (`\x1b[38;2;255;69;0m`) instead of `AURA_PURPLE`, creating visual consistency across the status header.

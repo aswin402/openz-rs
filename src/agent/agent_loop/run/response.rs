@@ -177,6 +177,8 @@ pub(super) async fn normalize_response(
                                     && should_show_tui_thoughts(mode)
                                     && !crate::agent::style::spinner::is_silent()
                                 {
+                                    print!("\r\x1b[2K");
+                                    let _ = std::io::stdout().flush();
                                     let duration_secs = start_time.elapsed().as_secs_f32();
                                     let depth = crate::tools::subagent::DELEGATION_DEPTH
                                         .try_with(|d| *d)

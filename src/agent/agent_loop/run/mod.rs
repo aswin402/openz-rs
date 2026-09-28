@@ -162,6 +162,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                         .try_with(|d| *d)
                         .unwrap_or(0);
                     if !silent {
+                        print!("\r\x1b[2K");
+                        let _ = std::io::stdout().flush();
                         let elapsed = start_time.elapsed().as_secs_f32();
                         let prefix = if depth > 0 {
                             crate::agent::style::get_tree_prefix(false)
@@ -505,6 +507,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     // arrived and no reasoning was printed (e.g. pure tool-call-only response),
                     // finalize the spinner and print the badge now.
                     if !content_streaming_started && !reasoning_printed {
+                        print!("\r\x1b[2K");
+                        let _ = std::io::stdout().flush();
                         crate::tui_println!(
                             "{}{}• {}{}{}Thought for {:.1}s{}",
                             prefix,
