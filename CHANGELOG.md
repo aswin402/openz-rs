@@ -1,4 +1,32 @@
-### v0.0.239 (Latest Release)
+### v0.0.240 (Latest Release)
+- **Ideas**:
+  - Parity Absorption of Rich CLI Formatting, Markdown Tables & Visual Depth into Ratatui:
+    - **Native Markdown Table Engine**: Implemented `render_markdown_table_to_lines` in [`src/channels/ratatui/markdown.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/markdown.rs) and table block recognition in [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs). Replaces raw pipes with dynamically column-aligned ASCII/Unicode grid boxes featuring bold white headers, `─┼─` dividers, `│` column separators, cell wrapping, and inline status icon coloring.
+    - **Tree-Structured Tool Execution & Outcome Summaries**: Added `ChatMessage::from_session_messages` in [`src/channels/ratatui/app.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/app.rs) to build `tool_calls_map` across assistant messages. Formats clean presentation titles (e.g. `Write File`, `Bash`, `Git Status`), formatted argument details, and authentic outcome summaries (`  L ✓ all tests passing`, `  L 45 lines`, `  L add use std::sync::Arc`) with mint green checkmarks and coral red error markers instead of raw JSON dumps.
+    - **Extended Markdown Syntax**: Added blockquote recognition (`▎ ` with italic text), task lists (`- [x]` with green `✔ ` and `- [ ]` with muted `☐ `), inline italic, and colored status glyphs (`✔`, `✅`, `✓`, `✖`, `❌`, `✗`, `⚠`, `⚡`, `ℹ`).
+    - **Dynamic Context Window & Token Tracking**: In [`src/channels/ratatui/ui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/ui.rs), replaced hardcoded `/1M` with `DynamicContextRegistry::resolve_context_window(&app.model, &config)` and active session token counting (`update_approx_tokens`), rendering formatted token ratios (e.g., `2.4K/128K`, `12.5K/200K`) alongside animated MCP status pills.
+- **Inspirations**:
+  - Original OpenZ CLI TUI styling, Dalton Menezes' Aura Theme specifications, GitHub Flavored Markdown table formatting, and lazygit inspection views.
+- **Sources & References**:
+  - [`src/channels/ratatui/markdown.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/markdown.rs): Added table parser, divider calculator, blockquotes, task lists, and inline formatting.
+  - [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs): Added table streaming block detection, clean tool presentation titles, and tree outcome leaf rendering.
+  - [`src/channels/ratatui/app.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/app.rs): Added `tool_summary`, `from_session_messages` with tool calls resolution, and `update_approx_tokens`.
+  - [`src/channels/ratatui/ui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/ui.rs): Added dynamic context window limit calculation and MCP pill styling.
+  - [`src/channels/ratatui/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/mod.rs): Integrated `from_session_messages` into session turns, startup load, and history restores.
+  - [`src/channels/ratatui/markdown_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/markdown_tests.rs): Added unit tests for markdown tables, blockquotes, and task lists.
+  - [`src/channels/ratatui/app_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/app_tests.rs): Added unit tests for session tool calls resolution and token computation.
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Synchronous SemVer increment to `0.0.240`.
+- **Details & Metrics**:
+  - 25/25 Ratatui unit tests passing.
+  - Exact 260 registered native tools invariant maintained (`test_native_tool_registration_names`).
+  - 0 clippy warnings (`cargo clippy -p openz -j 1 -- -D warnings`).
+- **Verification**:
+  - `cargo check -p openz -j 1`: PASS.
+  - `cargo test -p openz --lib channels::ratatui -j 1`: PASS (25/25).
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1`: PASS (1/1, 260 tools).
+  - `cargo clippy -p openz -j 1 -- -D warnings`: PASS (0 warnings).
+
+### v0.0.239
 - **Ideas**:
   - Ratatui Chrome Decluttering & Pure Frameless Scroll Experience:
     - **Visual Widget Pruning Without Functional Loss**: Removed the high-contrast vertical scrollbar widget from the right margin of the timeline in [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs) and the bottom status bar indicator badge (`↑ scrolled (offset/max) • End: bottom`) in [`src/channels/ratatui/ui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/ui.rs).

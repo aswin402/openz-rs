@@ -216,30 +216,45 @@ fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
         ));
     }
 
-    // MCP status
+    // MCP status pill
     footer_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
     if !mcp_done {
         let frame_idx = app.spinner_idx % theme::SPINNER_FRAMES.len();
         footer_spans.push(Span::styled(
-            format!("mcp:{} ", theme::SPINNER_FRAMES[frame_idx]),
-            Style::default().fg(theme.brand_accent),
+            format!("◇ MCP {} ", theme::SPINNER_FRAMES[frame_idx]),
+            Style::default().fg(theme.warning),
         ));
     } else if mcp_failed == 0 {
         footer_spans.push(Span::styled(
-            format!("mcp:{} active", mcp_loaded),
+            format!("◇ MCP {}✓", mcp_loaded),
             Style::default().fg(theme.brand_accent),
         ));
     } else {
         footer_spans.push(Span::styled(
-            format!("mcp:{}✓ {}✗", mcp_loaded, mcp_failed),
+            format!("◇ MCP {}✓ {}✗", mcp_loaded, mcp_failed),
             Style::default().fg(theme.destructive),
         ));
     }
 
-    // Token context
+    // Token context & Dynamic Context Window
+    let limit_tokens = crate::providers::DynamicContextRegistry::resolve_context_window(
+        &app.model,
+        &crate::config::schema::Config::default(),
+    );
+    let limit_str = if limit_tokens >= 1_000_000 {
+        format!("{}M", limit_tokens / 1_000_000)
+    } else {
+        format!("{}K", limit_tokens / 1000)
+    };
+    let approx_tokens_str = if app.approx_tokens >= 1000 {
+        format!("{:.1}K", app.approx_tokens as f64 / 1000.0)
+    } else {
+        format!("{}", app.approx_tokens)
+    };
+
     footer_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
     footer_spans.push(Span::styled(
-        format!("{}/1M", app.approx_tokens),
+        format!("{}/{}", approx_tokens_str, limit_str),
         Style::default().fg(theme.info),
     ));
 

@@ -201,3 +201,63 @@ fn test_wrapped_paragraph_line_count_and_max_scroll() {
     let max_scroll = (line_count as u32).saturating_sub(2);
     assert_eq!(max_scroll, 1);
 }
+
+#[test]
+fn test_from_session_messages_resolves_tool_calls_map() {
+    let mut assistant_extra = serde_json::Map::new();
+    assistant_extra.insert(
+        "tool_calls".into(),
+        serde_json::json!([
+            {
+                "id": "call_123",
+                "type": "function",
+                "function": {
+                    "name": "write_file",
+                    "arguments": "{\"path\":\"src/lib.rs\",\"content\":\"pub fn test() {}\"}"
+                }
+            }
+        ]),
+    );
+
+    let assistant_msg = crate::session::Message {
+        role: "assistant".into(),
+        content: String::new(),
+        timestamp: None,
+        extra: assistant_extra,
+    };
+
+    let mut tool_extra = serde_json::Map::new();
+    tool_extra.insert("tool_call_id".into(), serde_json::json!("call_123"));
+
+    let tool_msg = crate::session::Message {
+        role: "tool".into(),
+        content: "{\"status\":\"success\",\"bytes\":18}".into(),
+        timestamp: None,
+        extra: tool_extra,
+    };
+
+    let chat_msgs = ChatMessage::from_session_messages(&[assistant_msg, tool_msg]);
+    assert_eq!(chat_msgs.len(), 2);
+
+    let tool_chat = &chat_msgs[1];
+    assert!(tool_chat.is_tool);
+    assert_eq!(tool_chat.tool_name.as_deref(), Some("Write"));
+    assert_eq!(tool_chat.tool_details.as_deref(), Some("lib.rs"));
+    assert_eq!(tool_chat.tool_success, Some(true));
+    assert!(tool_chat.tool_summary.is_some());
+}
+
+#[test]
+fn test_update_approx_tokens() {
+    let mut app = RatatuiApp::new(
+        "test-model".into(),
+        "test-provider".into(),
+        "cli:test".into(),
+    );
+    assert_eq!(app.approx_tokens, 0);
+
+    app.messages.push(ChatMessage::simple("user", "12345678".to_string())); // 8 chars -> 2 tokens
+    app.update_approx_tokens();
+    assert_eq!(app.approx_tokens, 2);
+}
+

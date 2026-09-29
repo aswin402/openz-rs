@@ -85,10 +85,7 @@ fn spawn_agent_turn(
         match run_result {
             Ok(_res) => {
                 if let Ok(session) = session_manager.load(&session_key) {
-                    let mut msgs = Vec::new();
-                    for m in session.messages {
-                        msgs.push(ChatMessage::from_session_message(&m));
-                    }
+                    let msgs = ChatMessage::from_session_messages(&session.messages);
                     let _ = turn_tx.send(TurnEvent::SyncSession(msgs));
                 } else {
                     let _ = turn_tx.send(TurnEvent::SingleMessage(
@@ -353,9 +350,8 @@ pub async fn handle_ratatui_tui() -> Result<()> {
 
     // Load selected session history into Ratatui conversation stream
     if let Ok(session) = session_manager.load(&active_key) {
-        for msg in session.messages {
-            app.messages.push(ChatMessage::from_session_message(&msg));
-        }
+        app.messages = ChatMessage::from_session_messages(&session.messages);
+        app.update_approx_tokens();
     }
 
     let (turn_tx, mut turn_rx) = tokio::sync::mpsc::unbounded_channel::<TurnEvent>();
@@ -701,13 +697,9 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                 .await;
                                                 *session_key.write().await = target_key.clone();
 
-                                                app.messages.clear();
+                                                app.messages = ChatMessage::from_session_messages(&loaded.messages);
+                                                app.update_approx_tokens();
                                                 app.session_key = target_key.clone();
-                                                for msg in loaded.messages {
-                                                    app.messages.push(
-                                                        ChatMessage::from_session_message(&msg),
-                                                    );
-                                                }
                                                 app.scroll_to_bottom();
                                                 app.messages.push(ChatMessage::notice(format!(
                                                     "✓ Restored session: {}",

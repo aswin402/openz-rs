@@ -22,6 +22,8 @@ pub struct ChatMessage {
     pub tool_name: Option<String>,
     /// Tool arguments/details string
     pub tool_details: Option<String>,
+    /// Tool outcome summary (e.g., "45 lines", "✓ all tests passing")
+    pub tool_summary: Option<String>,
     /// Reasoning/thinking content from the LLM
     pub reasoning: Option<String>,
     /// Time spent thinking (in seconds)
@@ -43,6 +45,7 @@ impl ChatMessage {
             is_tool: role == "tool",
             tool_name: None,
             tool_details: None,
+            tool_summary: None,
             reasoning: None,
             thinking_time: None,
             tool_success: None,
@@ -59,6 +62,7 @@ impl ChatMessage {
             is_tool: false,
             tool_name: None,
             tool_details: None,
+            tool_summary: None,
             reasoning: None,
             thinking_time: None,
             tool_success: None,
@@ -98,12 +102,100 @@ impl ChatMessage {
             is_tool: msg.role == "tool",
             tool_name,
             tool_details,
+            tool_summary: None,
             reasoning,
             thinking_time,
             tool_success,
             tool_duration_ms: None,
             ephemeral: false,
         }
+    }
+
+    /// Converts a slice of persisted session messages, resolving tool calls and formatting summaries.
+    pub fn from_session_messages(messages: &[crate::session::Message]) -> Vec<Self> {
+        let mut tool_calls_map = std::collections::HashMap::new();
+        for msg in messages {
+            if let Some(tool_calls) = msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
+                for tc in tool_calls {
+                    if let (Some(id), Some(name)) = (
+                        tc.get("id").and_then(|v| v.as_str()),
+                        tc.get("function")
+                            .and_then(|f| f.get("name"))
+                            .and_then(|v| v.as_str()),
+                    ) {
+                        let args = tc
+                            .get("function")
+                            .and_then(|f| f.get("arguments"))
+                            .cloned()
+                            .unwrap_or(serde_json::Value::Null);
+                        let parsed_args = if let Some(s) = args.as_str() {
+                            serde_json::from_str(s).unwrap_or(serde_json::Value::Null)
+                        } else {
+                            args
+                        };
+                        tool_calls_map.insert(id.to_string(), (name.to_string(), parsed_args));
+                    }
+                }
+            }
+        }
+
+        let mut result = Vec::with_capacity(messages.len());
+        for msg in messages {
+            if msg.role == "tool" {
+                let tool_call_id = msg
+                    .extra
+                    .get("tool_call_id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+
+                if let Some((raw_name, args)) = tool_calls_map.get(tool_call_id) {
+                    let formatted_args = crate::agent::agent_loop::tool_execution::format_tool_args(
+                        raw_name,
+                        args,
+                    );
+                    let clean_name = crate::agent::style::get_tool_clean_name(raw_name);
+                    let details = crate::agent::style::clean_tool_args_msg(raw_name, &formatted_args);
+
+                    let outcome_val: serde_json::Value = serde_json::from_str(&msg.content)
+                        .unwrap_or_else(|_| {
+                            serde_json::json!({
+                                "status": "success",
+                                "output": &msg.content
+                            })
+                        });
+
+                    let summary = crate::agent::style::format_tool_outcome_summary(
+                        raw_name,
+                        args,
+                        &outcome_val,
+                    );
+
+                    let success = outcome_val.get("error").is_none()
+                        && outcome_val.get("status_code").is_none_or(|c| c == 0)
+                        && !summary.contains("Failed")
+                        && !summary.contains('\u{2715}');
+
+                    result.push(ChatMessage {
+                        role: "tool".to_string(),
+                        content: msg.content.clone(),
+                        is_tool: true,
+                        tool_name: Some(clean_name),
+                        tool_details: if details.is_empty() { None } else { Some(details) },
+                        tool_summary: Some(summary),
+                        reasoning: None,
+                        thinking_time: None,
+                        tool_success: Some(success),
+                        tool_duration_ms: None,
+                        ephemeral: false,
+                    });
+                } else {
+                    result.push(ChatMessage::from_session_message(msg));
+                }
+            } else {
+                result.push(ChatMessage::from_session_message(msg));
+            }
+        }
+        result
     }
 
     pub fn tool_start(name: String, details: String) -> Self {
@@ -113,6 +205,7 @@ impl ChatMessage {
             is_tool: true,
             tool_name: Some(name),
             tool_details: Some(details),
+            tool_summary: None,
             reasoning: None,
             thinking_time: None,
             tool_success: None,
@@ -134,6 +227,7 @@ impl ChatMessage {
             is_tool: true,
             tool_name: Some(name),
             tool_details: Some(details),
+            tool_summary: None,
             reasoning: None,
             thinking_time: None,
             tool_success: Some(success),
@@ -392,7 +486,14 @@ impl RatatuiApp {
         kept.reverse();
         self.messages = disk_msgs;
         self.messages.append(&mut kept);
+        self.update_approx_tokens();
         self.scroll_to_bottom();
+    }
+
+    /// Recalculates approximate token usage from all timeline messages
+    pub fn update_approx_tokens(&mut self) {
+        let total_chars: usize = self.messages.iter().map(|m| m.content.len()).sum();
+        self.approx_tokens = total_chars / 4;
     }
 
     /// Retrieve current git branch with background cache refresh
