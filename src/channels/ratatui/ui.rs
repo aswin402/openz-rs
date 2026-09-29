@@ -392,16 +392,6 @@ fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
         ));
     }
 
-    // Right-aligned quick shortcut hints if terminal width allows
-    let right_hints = "[F1] Help · [Ctrl+L] Model · [Ctrl+H] History · [Ctrl+C] Exit";
-    let left_len: usize = footer_spans.iter().map(|s| s.width()).sum();
-    let available = area.width as usize;
-    if available > left_len + right_hints.len() + 4 {
-        let padding = available - left_len - right_hints.len() - 1;
-        footer_spans.push(Span::raw(" ".repeat(padding)));
-        footer_spans.push(Span::styled(right_hints, Style::default().fg(theme.muted)));
-    }
-
     let footer_line = Line::from(footer_spans);
     let p = Paragraph::new(footer_line).block(Block::default().borders(Borders::NONE));
     f.render_widget(p, area);

@@ -158,11 +158,14 @@ debug = false
 [profile.dev]
 opt-level = 0
 debug = 0               # Disable debug symbols to eliminate multi-gigabyte linker RAM exhaustion
-codegen-units = 2       # Cap internal codegen threads to 2 to prevent RAM exhaustion and laptop lag
+codegen-units = 1       # Cap internal codegen threads to 1 to prevent RAM exhaustion and laptop lag
+incremental = false     # Disable incremental compilation bloat to stop rustc from loading gigabytes of graph into RAM
 
 [profile.test]
 opt-level = 0
 debug = 0               # Disable debug symbols to eliminate test linker memory spikes
-codegen-units = 2       # Cap test compile parallel units to 2 to eliminate swap thrashing
+codegen-units = 1       # Cap test compile parallel units to 1 to eliminate swap thrashing
+incremental = false     # Disable incremental compilation bloat to stop test memory spikes
+strip = "debuginfo"     # Strip debug symbols from test binaries to reduce memory during linking
 
 

@@ -1,9 +1,19 @@
 use super::app::RatatuiApp;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
+
+/// Authentic OpenZ ASCII banner lines: "OPEN" (white), "Z" (brand orange).
+pub const BANNER_PARTS: &[(&str, &str)] = &[
+    ("     ██████╗ ██████╗ ███████╗███╗   ██╗", "███████╗"),
+    ("    ██╔═══██╗██╔══██╗██╔════╝████╗  ██║", "╚══███╔╝"),
+    ("    ██║   ██║██████╔╝█████╗  ██╔██╗ ██║", "  ███╔╝ "),
+    ("    ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║", " ███╔╝  "),
+    ("    ╚██████╔╝██║     ███████╗██║ ╚████║", "███████╗"),
+    ("     ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝", "╚══════╝"),
+];
 
 /// Renders the Zen Welcome Screen when the conversation timeline is empty.
 pub fn render_welcome_screen(
@@ -20,72 +30,105 @@ pub fn render_welcome_screen(
     frame.render_widget(bg_block, area);
 
     // Fallback for constrained terminal dimensions
-    if area.height < 12 || area.width < 34 {
+    if area.height < 10 || area.width < 34 {
         return;
     }
 
-    // Vertical layout hierarchy
+    let show_full_banner = area.width >= 50 && area.height >= 16;
+    let logo_height = if show_full_banner { 9 } else { 3 };
+
+    // Vertical layout hierarchy: Centered Banner/Details -> Centered Input Dock -> Bottom Bar
     let vert_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(1),    // 0: Top spacer
-            Constraint::Length(4), // 1: Brand logo lockup
-            Constraint::Length(1), // 2: Spacer
-            Constraint::Length(3), // 3: Centered Dynamic Input Dock
-            Constraint::Length(2), // 4: Recommended command hints
-            Constraint::Min(2),    // 5: Bottom spacer
-            Constraint::Length(1), // 6: Bottom Edge Bar
+            Constraint::Min(1),              // 0: Top spacer
+            Constraint::Length(logo_height), // 1: Brand logo banner + version & details
+            Constraint::Length(1),           // 2: Spacer
+            Constraint::Length(3),           // 3: Centered Dynamic Input Dock
+            Constraint::Min(1),              // 4: Bottom spacer
+            Constraint::Length(1),           // 5: Bottom Edge Bar
         ])
         .split(area);
 
-    // ── 1. Brand Logo Lockup ────────────────────────────────────────────────
-    let version_str = format!("OpenZ v{} • Ready", env!("CARGO_PKG_VERSION"));
-    let slogan = "High-Performance Local-First AI Agent";
-    let max_text_len = slogan.chars().count().max(version_str.chars().count());
-    let lockup_width = (18 + max_text_len) as u16;
-    let lockup_area = if vert_chunks[1].width > lockup_width {
-        let offset_x = (vert_chunks[1].width - lockup_width) / 2;
-        Rect {
-            x: vert_chunks[1].x + offset_x,
-            y: vert_chunks[1].y,
-            width: lockup_width,
-            height: 4,
+    // ── 1. Brand Logo & Details Lockup ──────────────────────────────────────
+    let mut logo_lines = Vec::new();
+
+    if show_full_banner {
+        for (white_part, orange_part) in BANNER_PARTS {
+            logo_lines.push(Line::from(vec![
+                Span::styled(
+                    white_part.to_string(),
+                    Style::default()
+                        .fg(theme.brand_white)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    orange_part.to_string(),
+                    Style::default()
+                        .fg(theme.brand_accent)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            ]));
         }
+
+        // Blank line spacer
+        logo_lines.push(Line::from(String::new()));
+
+        // Version & Model details line
+        logo_lines.push(Line::from(vec![
+            Span::styled(
+                format!("openz v{}", env!("CARGO_PKG_VERSION")),
+                Style::default()
+                    .fg(theme.brand_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" · ", Style::default().fg(theme.muted)),
+            Span::styled(
+                format!("{} | {}", app.provider, app.model),
+                Style::default().fg(theme.warning),
+            ),
+        ]));
+
+        // Workspace and Git branch line
+        let mut detail_spans = vec![
+            Span::styled(app.cwd_display.clone(), Style::default().fg(theme.info)),
+        ];
+        if let Some(branch) = RatatuiApp::get_git_branch(&app.workspace_root) {
+            detail_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
+            detail_spans.push(Span::styled(
+                format!("git:{}", branch),
+                Style::default().fg(theme.success),
+            ));
+        }
+        logo_lines.push(Line::from(detail_spans));
     } else {
-        vert_chunks[1]
-    };
+        logo_lines.push(Line::from(vec![
+            Span::styled(
+                "OpenZ 🦊 ",
+                Style::default()
+                    .fg(theme.brand_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("v{}", env!("CARGO_PKG_VERSION")),
+                Style::default()
+                    .fg(theme.brand_white)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        logo_lines.push(Line::from(vec![
+            Span::styled(
+                format!("{} | {}", app.provider, app.model),
+                Style::default().fg(theme.warning),
+            ),
+        ]));
+        logo_lines.push(Line::from(vec![
+            Span::styled(app.cwd_display.clone(), Style::default().fg(theme.info)),
+        ]));
+    }
 
-    let line1 = Line::from(vec![
-        Span::styled("████", Style::default().fg(theme.brand_accent)),
-        Span::raw("    "),
-        Span::styled("████", Style::default().fg(theme.info)),
-        Span::raw("   "),
-        Span::styled(
-            "OpenZ 🦊",
-            Style::default()
-                .fg(theme.brand_white)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]);
-
-    let line2 = Line::from(vec![
-        Span::styled("████", Style::default().fg(theme.brand_accent)),
-        Span::raw("    "),
-        Span::styled("████", Style::default().fg(theme.info)),
-        Span::raw("   "),
-        Span::styled(slogan, Style::default().fg(theme.muted)),
-    ]);
-
-    let line3 = Line::from(vec![
-        Span::styled("██  ", Style::default().fg(theme.brand_accent)),
-        Span::raw("    "),
-        Span::styled("  ██", Style::default().fg(theme.info)),
-        Span::raw("   "),
-        Span::styled(version_str, Style::default().fg(theme.brand_accent)),
-    ]);
-
-    let logo_para = Paragraph::new(vec![line1, line2, line3]);
-    frame.render_widget(logo_para, lockup_area);
+    let logo_para = Paragraph::new(logo_lines).alignment(Alignment::Center);
+    frame.render_widget(logo_para, vert_chunks[1]);
 
     // ── 2. Centered Input Dock ──────────────────────────────────────────────
     let input_width = (vert_chunks[3].width * 65 / 100)
@@ -156,21 +199,7 @@ pub fn render_welcome_screen(
     };
     frame.set_cursor_position((inner.x + cursor_col as u16, inner.y));
 
-    // ── 3. Quick Command Starter Chips ──────────────────────────────────────
-    let hints_line = Line::from(vec![
-        Span::styled(" [Ctrl+L] ", Style::default().fg(theme.warning)),
-        Span::styled("/model  ", Style::default().fg(theme.muted)),
-        Span::styled(" [Ctrl+H] ", Style::default().fg(theme.warning)),
-        Span::styled("/history  ", Style::default().fg(theme.muted)),
-        Span::styled(" [Ctrl+N] ", Style::default().fg(theme.warning)),
-        Span::styled("/new-session  ", Style::default().fg(theme.muted)),
-        Span::styled(" [F1] ", Style::default().fg(theme.info)),
-        Span::styled("/commands", Style::default().fg(theme.muted)),
-    ]);
-    let hints_para = Paragraph::new(hints_line).alignment(ratatui::layout::Alignment::Center);
-    frame.render_widget(hints_para, vert_chunks[4]);
-
-    // ── 4. Bottom Edge Bar ──────────────────────────────────────────────────
+    // ── 3. Bottom Edge Bar ──────────────────────────────────────────────────
     let mut left_spans = vec![
         Span::raw(" "),
         Span::styled(
@@ -210,11 +239,11 @@ pub fn render_welcome_screen(
     let bottom_layout = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Min(20), Constraint::Length(35)])
-        .split(vert_chunks[6]);
+        .split(vert_chunks[5]);
 
     frame.render_widget(Paragraph::new(Line::from(left_spans)), bottom_layout[0]);
     frame.render_widget(
-        Paragraph::new(Line::from(right_spans)).alignment(ratatui::layout::Alignment::Right),
+        Paragraph::new(Line::from(right_spans)).alignment(Alignment::Right),
         bottom_layout[1],
     );
 }

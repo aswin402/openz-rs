@@ -1,2 +1,5 @@
 [build]
-jobs = 2
+jobs = 1
+
+[env]
+RUST_TEST_THREADS = "1"
