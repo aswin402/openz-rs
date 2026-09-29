@@ -798,6 +798,24 @@ pub(crate) fn compact_approval_description(description: &str, max_width: usize) 
     compact
 }
 
+pub fn trust_tool_for_session(session_key: &str, tool_name: &str) {
+    let trust_key = format!("{}:{}", session_key, tool_name);
+    let map = TRUSTED_SESSION_TOOLS.get_or_init(|| Mutex::new(HashSet::new()));
+    if let Ok(mut guard) = map.lock() {
+        guard.insert(trust_key);
+    }
+}
+
+pub fn is_tool_trusted_for_session(session_key: &str, tool_name: &str) -> bool {
+    let trust_key = format!("{}:{}", session_key, tool_name);
+    let map = TRUSTED_SESSION_TOOLS.get_or_init(|| Mutex::new(HashSet::new()));
+    if let Ok(guard) = map.lock() {
+        guard.contains(&trust_key)
+    } else {
+        false
+    }
+}
+
 /// Request approval for a sensitive tool call over TUI, Telegram, or the WebUI.
 pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value) -> Result<bool> {
     if let Some(policy) = crate::cli::headless::current_headless_policy() {
@@ -941,12 +959,17 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
             _ => Ok(false),
         }
     } else if actual_session.starts_with("cli:") {
-        let trust_key = format!("{}:{}", actual_session, tool_name);
-        let map = TRUSTED_SESSION_TOOLS.get_or_init(|| Mutex::new(HashSet::new()));
-        if let Ok(guard) = map.lock() {
-            if guard.contains(&trust_key) {
-                return Ok(true); // Automatically approved per session trust decision
-            }
+        if is_tool_trusted_for_session(&actual_session, tool_name) {
+            return Ok(true); // Automatically approved per session trust decision
+        }
+
+        if crate::channels::ratatui::IS_RATATUI_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
+            return crate::channels::ratatui::request_ratatui_security_approval(
+                tool_name,
+                &description,
+                &actual_session,
+            )
+            .await;
         }
 
         // CLI / TUI approval flow
@@ -984,10 +1007,7 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
             Ok(Some(0)) => Ok(true), // Approve once
             Ok(Some(1)) => {
                 // Save to trusted set for this session
-                let map = TRUSTED_SESSION_TOOLS.get_or_init(|| Mutex::new(HashSet::new()));
-                if let Ok(mut guard) = map.lock() {
-                    guard.insert(trust_key);
-                }
+                trust_tool_for_session(&actual_session, tool_name);
                 crate::tui_println!(
                     "{}◇ [Security] Trusted '{}' for session {}.{}",
                     crate::agent::style::colors::AURA_BLUE,

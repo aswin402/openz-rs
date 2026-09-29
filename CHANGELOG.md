@@ -1,4 +1,38 @@
-### v0.0.236 (Latest Release)
+### v0.0.237 (Latest Release)
+- **Ideas**:
+  - Unified Asynchronous Ratatui Terminal Interface:
+    - **Interactive Terminal Experience Unification**: Completely unified OpenZ's interactive terminal experience (`openz agent` and default bare invocation `openz`) onto the modernized Ratatui TUI engine, eliminating the previous dual-UI discrepancy where the legacy CLI style and Ratatui TUI offered fragmented capabilities.
+    - **Asynchronous Non-Blocking Input Dock & Queueing**: Modern AI agents never freeze user interaction during tool execution or LLM reasoning. Kept the elevated bottom input dock active, editable, and responsive at all times. Users can type follow-up prompts, slash commands, or task steers while the agent is actively thinking or running long-running tools. Submitted prompts during active turns are gracefully placed into a FIFO queue (`queued_prompts: VecDeque<String>`), badged with `[N queued]` on the status bar, and automatically dispatched sequentially when the active turn completes.
+    - **Safe In-Flight Turn Cancellation**: Implemented instant task cancellation via `JoinHandle::abort()` triggered by `Ctrl+C` or `Esc` while the agent is thinking, without exiting the TUI or tearing down the terminal alternate screen buffer.
+    - **Background Channel Daemons & Graceful Shutdown**: Ported background channel supervisor logic (WebSocket gateway on port 8765, Telegram bot polling, Discord gateway, WhatsApp webhook on port 8090, Email polling, and cron scheduler) into the Ratatui lifecycle alongside the 5-second `activity.json` session heartbeat loop, with clean signal cancellation and gateway shutdown hooks on exit.
+    - **Modular Slash Command Suite**: Created [`src/channels/ratatui/commands.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/commands.rs) providing full command parity with the legacy CLI: `/exit`, `/clear`, `/help`, `/history`, `/model`, `/new-session`, `/settings`, `/streaming`, `/servers`, `/stop-server`, `/device`, `/memory`, `/sources`, `/workflows`, `/skills`, `/mcps`, `/audit`, `/sop`, and `/logs`.
+    - **Native Security Approval Modal**: Replaced stdout prompt hijacking (`select_menu_custom`) with an in-memory `ModalState::SecurityApproval` modal rendered natively on top of the Ratatui layout via `SECURITY_APPROVAL_CHANNEL`, allowing users to approve once, approve & trust for the session, or deny sensitive actions without corrupting raw terminal buffers.
+    - **Live Background Status Indicators**: Added live badges to the status bar indicating queued turn count (`[N queued]`) and active background daemon servers (`⚙ N srv`).
+- **Inspirations**:
+  - Ratatui terminal widget ecosystem, Dalton Menezes' official Aura Theme specifications, Hermes Agent asynchronous steer pipelines, Oh My Pi / Pi Agent non-blocking terminal input paradigms, and Claude Code interactive workflow overlays.
+- **Sources & References**:
+  - [`src/cli/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/mod.rs): Redirected `Command::Agent` and default TTY execution to `channels::handle_ratatui_tui().await`.
+  - [`src/channels/ratatui/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/mod.rs): Integrated background daemons, turn handle cancellation, prompt queue drain, and security approval channel.
+  - [`src/channels/ratatui/app.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/app.rs): Added `queued_prompts`, `queue_prompt`, `pop_next_prompt`, and `ModalState::SecurityApproval`.
+  - [`src/channels/ratatui/commands.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/commands.rs): Modular slash command handler porting full CLI command suite.
+  - [`src/channels/ratatui/modals.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/modals.rs): Rendered `SecurityApproval` modal dialog overlay.
+  - [`src/channels/ratatui/ui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/ui.rs): Added status bar queued prompt and server badges.
+  - [`src/agent/security.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/security.rs): Session tool trust helpers and Ratatui approval delegation.
+  - [`src/channels/ratatui/app_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/app_tests.rs): Added FIFO prompt queue unit test.
+  - [`src/channels/ratatui/modals_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/modals_tests.rs): Added security approval modal unit test.
+  - [`docs/superpowers/plans/2026-09-29-unified-ratatui-async-plan.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/plans/2026-09-29-unified-ratatui-async-plan.md): Architectural implementation plan.
+  - [`docs/superpowers/specs/2026-09-29-unified-ratatui-async-design.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/docs/superpowers/specs/2026-09-29-unified-ratatui-async-design.md): System architecture specification.
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Version increment to `0.0.237`.
+- **Details & Metrics**:
+  - 19/19 Ratatui unit tests passing (including prompt queue ordering and security approval modal tests).
+  - Exact 260 registered native tools invariant maintained (`test_native_tool_registration_names`).
+  - 0 clippy warnings (`cargo clippy -p openz -j 1 -- -D warnings`).
+- **Verification**:
+  - `cargo test -p openz --lib channels::ratatui -j 1`: PASS (19/19).
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1`: PASS (1/1, 260 tools).
+  - `cargo clippy -p openz -j 1 -- -D warnings`: PASS (0 warnings).
+
+### v0.0.236
 - **Ideas**:
   - Subagent Allowlist Tool Resolution & SOP Step Progress Engine Hardening:
     - **Subagent Allowlist Name Resolution**: `media_designer` and `video_animator` static subagent allowlists referenced `svg_animator` instead of the registered tool identifier `create_animated_svg`, causing subagent tool invocations for animated SVG generation to fail and failing the comprehensive allowlist registry verification test. Corrected references in [`src/tools/subagent/allowlist.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/allowlist.rs) and [`src/tools/subagent/allowlist_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/allowlist_tests.rs).

@@ -143,7 +143,7 @@ impl ChatMessage {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum ModalState {
     None,
     ProviderSelect {
@@ -164,6 +164,39 @@ pub enum ModalState {
         sessions: Vec<(String, String, String)>, // (key, title, timestamp)
         selected_idx: usize,
     },
+    SecurityApproval {
+        tool_name: String,
+        description: String,
+        options: Vec<String>,
+        selected_idx: usize,
+        session_key: String,
+        tx: std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<bool>>>>,
+    },
+}
+
+impl std::fmt::Debug for ModalState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ModalState::None => write!(f, "ModalState::None"),
+            ModalState::ProviderSelect { selected_idx, .. } => {
+                write!(f, "ModalState::ProviderSelect({selected_idx})")
+            }
+            ModalState::ModelSelect {
+                provider_name,
+                selected_idx,
+                ..
+            } => write!(f, "ModalState::ModelSelect({provider_name}, {selected_idx})"),
+            ModalState::Help => write!(f, "ModalState::Help"),
+            ModalState::History { selected_idx, .. } => {
+                write!(f, "ModalState::History({selected_idx})")
+            }
+            ModalState::SecurityApproval {
+                tool_name,
+                selected_idx,
+                ..
+            } => write!(f, "ModalState::SecurityApproval({tool_name}, {selected_idx})"),
+        }
+    }
 }
 
 impl ModalState {
@@ -232,6 +265,8 @@ pub struct RatatuiApp {
     pub theme: Theme,
     /// Active interactive modal overlay
     pub modal: ModalState,
+    /// Queue of user prompts submitted while agent is actively executing
+    pub queued_prompts: std::collections::VecDeque<String>,
 }
 
 pub const SLASH_COMMANDS: &[(&str, &str)] = &[
@@ -246,12 +281,16 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/mcps", "List configured MCP servers and active status"),
     ("/memory", "Inspect cognitive facts and knowledge graph"),
     ("/skills", "List active learned skills"),
+    ("/sources", "Search saved knowledge source bookmarks"),
     ("/workflows", "Search and execute reusable SOP workflows"),
     ("/servers", "List OpenZ background server instances"),
+    ("/stop-server", "Stop background server instance by ID or all"),
     ("/logs", "Stream real-time color-coded structured logs"),
     ("/settings", "View and adjust active configuration"),
     ("/streaming", "Toggle response streaming preference"),
     ("/device", "Manage local application and device inventory"),
+    ("/audit", "Cryptographically verify session SHA-256 ledger"),
+    ("/sop", "Inspect Standard Operating Procedure workflows"),
     ("/exit", "Quit OpenZ interactive terminal session"),
 ];
 
@@ -293,7 +332,19 @@ impl RatatuiApp {
             spinner_idx: 0,
             theme: Theme::aura_dark(),
             modal: ModalState::None,
+            queued_prompts: std::collections::VecDeque::new(),
         }
+    }
+
+    pub fn queue_prompt(&mut self, prompt: String) {
+        let trimmed = prompt.trim().to_string();
+        if !trimmed.is_empty() {
+            self.queued_prompts.push_back(trimmed);
+        }
+    }
+
+    pub fn pop_next_prompt(&mut self) -> Option<String> {
+        self.queued_prompts.pop_front()
     }
 
     pub fn scroll_up(&mut self, lines: u32) {

@@ -243,6 +243,27 @@ fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
         Style::default().fg(theme.info),
     ));
 
+    // Queued prompts indicator
+    if !app.queued_prompts.is_empty() {
+        footer_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
+        footer_spans.push(Span::styled(
+            format!("[{} queued]", app.queued_prompts.len()),
+            Style::default()
+                .fg(theme.brand_accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    // Background servers indicator
+    let bg_servers = crate::shutdown::list_registered_children();
+    if !bg_servers.is_empty() {
+        footer_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
+        footer_spans.push(Span::styled(
+            format!("⚙ {} srv", bg_servers.len()),
+            Style::default().fg(theme.info),
+        ));
+    }
+
     let footer_line = Line::from(footer_spans);
     let p = Paragraph::new(footer_line).block(Block::default().borders(Borders::NONE));
     f.render_widget(p, area);

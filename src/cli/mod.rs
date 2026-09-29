@@ -117,7 +117,10 @@ pub async fn run_cli() -> Result<()> {
             std::process::exit(0);
         }
         Some(Command::Agent) => {
-            agent::handle_agent().await?;
+            channels::handle_ratatui_tui().await?;
+            let _ = crossterm::terminal::disable_raw_mode();
+            let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
+            std::process::exit(0);
         }
         Some(Command::Gateway { action }) => match action {
             Some(ChannelAction::Logs { tail }) => {

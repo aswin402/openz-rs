@@ -161,3 +161,26 @@ fn notice_is_ephemeral_and_defaults_are_not() {
     assert!(!ChatMessage::simple("user", "x".into()).ephemeral);
     assert!(!ChatMessage::tool_start("t".into(), "d".into()).ephemeral);
 }
+
+#[test]
+fn test_prompt_queue_fifo_order() {
+    let mut app = RatatuiApp::new(
+        "test-model".into(),
+        "test-provider".into(),
+        "cli:test".into(),
+    );
+    assert!(app.queued_prompts.is_empty());
+    assert_eq!(app.pop_next_prompt(), None);
+
+    app.queue_prompt("first prompt".to_string());
+    app.queue_prompt("second prompt".to_string());
+    app.queue_prompt("third prompt".to_string());
+
+    assert_eq!(app.queued_prompts.len(), 3);
+    assert_eq!(app.pop_next_prompt(), Some("first prompt".to_string()));
+    assert_eq!(app.pop_next_prompt(), Some("second prompt".to_string()));
+    assert_eq!(app.queued_prompts.len(), 1);
+    assert_eq!(app.pop_next_prompt(), Some("third prompt".to_string()));
+    assert_eq!(app.pop_next_prompt(), None);
+    assert!(app.queued_prompts.is_empty());
+}

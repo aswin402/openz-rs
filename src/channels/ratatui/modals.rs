@@ -289,6 +289,90 @@ pub(crate) fn render_modal_overlay(f: &mut Frame, app: &RatatuiApp, area: Rect) 
             let list = List::new(items).block(block);
             f.render_widget(list, popup_area);
         }
+        ModalState::SecurityApproval {
+            tool_name,
+            description,
+            options,
+            selected_idx,
+            ..
+        } => {
+            let popup_area = centered_rect(70, 60, area);
+            f.render_widget(Clear, popup_area);
+
+            let block = Block::default()
+                .title(" 🔒 Security Shield: Tool Execution Request ")
+                .title_alignment(Alignment::Center)
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.warning).add_modifier(Modifier::BOLD))
+                .style(Style::default().bg(theme.bg_elevated));
+
+            let inner = block.inner(popup_area);
+            f.render_widget(block, popup_area);
+
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(1), // Tool name
+                    Constraint::Min(4),    // Description box
+                    Constraint::Length(options.len() as u16 + 1), // Options
+                    Constraint::Length(1), // Hint line
+                ])
+                .split(inner);
+
+            // Tool header
+            let tool_line = Line::from(vec![
+                Span::styled(" Requested Tool: ", Style::default().fg(theme.muted)),
+                Span::styled(
+                    tool_name.as_str(),
+                    Style::default().fg(theme.warning).add_modifier(Modifier::BOLD),
+                ),
+            ]);
+            f.render_widget(Paragraph::new(tool_line), chunks[0]);
+
+            // Description block
+            let desc_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.border))
+                .title(" Action Details ")
+                .style(Style::default().bg(theme.bg_input));
+            let desc_inner = desc_block.inner(chunks[1]);
+            f.render_widget(desc_block, chunks[1]);
+
+            let desc_p = Paragraph::new(description.as_str())
+                .style(Style::default().fg(theme.info))
+                .wrap(ratatui::widgets::Wrap { trim: false });
+            f.render_widget(desc_p, desc_inner);
+
+            // Options
+            let items: Vec<ListItem> = options
+                .iter()
+                .enumerate()
+                .map(|(i, opt)| {
+                    let is_selected = i == *selected_idx;
+                    let prefix = if is_selected { " › " } else { "   " };
+                    let style = if is_selected {
+                        let fg = if i == 2 { theme.destructive } else { theme.success };
+                        Style::default()
+                            .fg(theme.bg_primary)
+                            .bg(fg)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(theme.text_primary)
+                    };
+                    ListItem::new(format!("{}{}", prefix, opt)).style(style)
+                })
+                .collect();
+            let list = List::new(items);
+            f.render_widget(list, chunks[2]);
+
+            // Hint
+            let hint = Line::from(vec![
+                Span::styled(" [↑/↓] Navigate  ", Style::default().fg(theme.muted)),
+                Span::styled("[Enter] Confirm  ", Style::default().fg(theme.brand_accent)),
+                Span::styled("[Esc] Deny", Style::default().fg(theme.destructive)),
+            ]);
+            f.render_widget(Paragraph::new(hint).alignment(Alignment::Center), chunks[3]);
+        }
     }
 }
 
