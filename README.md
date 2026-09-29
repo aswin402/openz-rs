@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.242-orange.svg" alt="Version 0.0.242"/></a>
+  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.243-orange.svg" alt="Version 0.0.243"/></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.82%2B-blue.svg" alt="Rust 1.82+"/></a>
   <a href="https://tokio.rs/"><img src="https://img.shields.io/badge/runtime-tokio-purple.svg" alt="Tokio Async"/></a>
   <a href="https://github.com/aswin402/openz-rs/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-green.svg" alt="License"/></a>
@@ -108,14 +108,14 @@ openz onboard
 openz configure
 
 # 3. Start interactive TUI terminal agent
-openz agent
+openz
 ```
 
 ---
 
 ## ⌨️ TUI Slash Commands Cheatsheet
 
-While in `openz agent` TUI mode, type `/` to access built-in slash commands:
+While in OpenZ TUI mode, type `/` to access built-in slash commands:
 
 | Command | Description |
 |---|---|
@@ -182,7 +182,7 @@ OpenZ includes multi-layered safety controls:
 
 | Command | Purpose |
 |---|---|
-| `openz agent` | Start interactive TUI terminal chat |
+| `openz` | Start interactive TUI terminal chat |
 | `openz run "<prompt>" \| openz -p "<prompt>"` | Execute in headless mode (for AI subagents, automated scripts, and test harnesses; supports `--output-format <text\|json\|stream-json>`, `-y`, and piped stdin) |
 | `openz configure` | Full config UI (providers, gateway, channels) |
 | `openz onboard` | First-time setup wizard |

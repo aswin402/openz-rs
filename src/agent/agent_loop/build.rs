@@ -114,7 +114,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
           * CLI Subcommands & Flags: The executable is launched via:\n\
             - 'openz onboard': Runs the setup wizard for LLM provider API keys.\n\
             - 'openz configure': Configures providers, gateways, channels, and preferences.\n\
-            - 'openz agent': Starts the TUI terminal chat loop (auto-starts background channels & cron job scheduler).\n\
+            - 'openz': Starts the interactive TUI terminal chat loop (auto-starts background channels & cron job scheduler).\n\
             - 'openz gateway': Starts the WebSocket + WebUI server (default port 8765).\n\
             - 'openz telegram': Starts the Telegram bot polling listener.\n\
             - 'openz discord': Starts the Discord bot gateway listener.\n\

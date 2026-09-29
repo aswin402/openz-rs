@@ -23,6 +23,7 @@ pub enum Command {
     Run(HeadlessArgs),
     Onboard,
     Configure,
+    #[command(hide = true)]
     Agent,
     Gateway {
         #[command(subcommand)]

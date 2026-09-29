@@ -30,7 +30,7 @@ No Makefile; low-resource development commands live in `justfile`. No CI config 
 |---|---|
 | `onboard` | First-time LLM provider setup wizard |
 | `configure` | Full config UI: providers, gateway, Telegram, Discord, WhatsApp |
-| `agent` | Terminal TUI chat (also auto-starts configured background channels) |
+| `(none)` / `agent` | Terminal TUI chat (running `openz` directly starts the TUI and background channels) |
 | `gateway` | WebSocket + WebUI server (port 8765 default) |
 | `telegram` | Telegram bot polling listener |
 | `discord` | Discord bot gateway listener |

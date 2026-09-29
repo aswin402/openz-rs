@@ -445,7 +445,7 @@ pub(crate) async fn handle_command(
             client.clone(),
             token.to_string(),
             chat_id,
-            "No active OpenZ TUI sessions found. Start `openz agent` in a terminal, then use /remote again.".to_string(),
+            "No active OpenZ TUI sessions found. Start `openz` in a terminal, then use /remote again.".to_string(),
         );
         return true;
     }

@@ -332,7 +332,7 @@ pub(crate) async fn handle_socket(socket: WebSocket, state: WsState) {
                             continue;
                         }
                         if let Some(_stripped) = content.trim().strip_prefix("/device") {
-                            let response = "Device clipboard and app suggestions are currently managed locally. To audit device details, use the CLI `openz agent`.".to_string();
+                            let response = "Device clipboard and app suggestions are currently managed locally. To audit device details, use the CLI `openz`.".to_string();
                             let delta_evt = protocol::delta_without_turn(chat_id.clone(), response);
                             send_event(&tx, delta_evt).await;
                             let turn_end_evt = protocol::turn_end(chat_id.clone(), None);

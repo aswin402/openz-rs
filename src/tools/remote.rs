@@ -67,7 +67,7 @@ impl Tool for SendRemoteInputTool {
             && !crate::agent::activity::active_tui_session_exists(&target_session)
         {
             return Err(anyhow!(
-                "No active TUI session matches '{}'; start openz agent first",
+                "No active TUI session matches '{}'; start openz first",
                 target_session
             ));
         }

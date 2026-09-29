@@ -1,4 +1,33 @@
-### v0.0.242 (Latest Release)
+### v0.0.243 (Latest Release)
+- **Ideas**:
+  - Unified CLI Invocations, Welcome Logo Parity & Memory-Safe Profiling:
+    - **Single Command TUI Launch (`openz`)**: Streamlined the CLI entry point so running `openz` alone in a terminal directly launches the interactive Ratatui agent TUI. Replaced all legacy references to `openz agent` across documentation, system prompts, and channel error hints. Hidden the `agent` subcommand in Clap (`#[command(hide = true)]`) to declutter `--help` menus while preserving full backwards-compatibility.
+    - **Authentic OpenZ ASCII Banner in Welcome Screen**: Replaced placeholder blocks on the empty-session welcome screen with the authentic 6-line OpenZ ASCII logo ("OPEN" in bold white, "Z" in bold red-orange `#ff5500`), centered alongside package version, active provider and model, and current workspace directory.
+    - **UI Decluttering**: Removed starter command chips (`[Ctrl+L] /model ...`) from the welcome screen and removed bottom-right shortcut hint words (`[F1] Help · [Ctrl+L] Model ...`) from the status bar, yielding a clean, distraction-free interface.
+    - **Compilation Memory Hardening & Cache Recovery**: Purged 72+ GB of bloated incremental compilation and stale test artifacts from `target/debug`. Added `incremental = false`, `codegen-units = 1`, and `strip = "debuginfo"` to `[profile.dev]` and `[profile.test]` in [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), and configured `jobs = 1` and `RUST_TEST_THREADS = "1"` in [`.cargo/config.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/.cargo/config.toml) to eliminate compiler memory spikes, swap thrashing, and system freezes.
+- **Inspirations**:
+  - Claude Code / Ollama single-binary developer experience, where the root CLI command directly launches the interactive agent session.
+- **Sources & References**:
+  - [`src/cli/args.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/args.rs): Marked `Command::Agent` as hidden in Clap.
+  - [`src/cli/onboard.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/onboard.rs): Updated onboarding completion message to instruct running `openz`.
+  - [`src/agent/agent_loop/build.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs): Updated agent system prompt CLI subcommands list to feature `openz`.
+  - [`src/tools/remote.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/remote.rs), [`src/channels/telegram/commands.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/telegram/commands.rs), [`src/channels/websocket/socket.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/socket.rs): Updated error and notice messages to direct users to `openz`.
+  - [`src/channels/ratatui/welcome.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/welcome.rs): Rendered authentic OpenZ ASCII banner, version, provider/model, and removed starter chips.
+  - [`src/channels/ratatui/ui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/ui.rs): Removed right-aligned shortcut hints from status bar.
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`.cargo/config.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/.cargo/config.toml): Configured memory-safe dev/test profiles and sequential test threads.
+  - [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md), [`AGENTS.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/AGENTS.md): Updated docs and tables to present `openz` as the single command.
+- **Details & Metrics**:
+  - 36/36 Ratatui unit tests passing in 0.03s.
+  - 72+ GB disk space reclaimed (target/ reduced from 96G to 28G).
+  - Exact 260 registered native tools invariant maintained (`test_native_tool_registration_names`).
+  - 0 clippy warnings (`cargo clippy -p openz -j 1 -- -D warnings`).
+- **Verification**:
+  - `cargo check -p openz -j 1`: PASS.
+  - `cargo test -p openz --lib channels::ratatui -j 1`: PASS (36/36).
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1`: PASS (1/1, 260 tools).
+  - `cargo clippy -p openz -j 1 -- -D warnings`: PASS (0 warnings).
+
+### v0.0.242
 - **Ideas**:
   - Parity Absorption of Minicode Thoughts, Live Activity Pipelines & Zen UI Architecture:
     - **Monologue Thoughts & Reasoning System**: Integrated deep thought extraction and rendering modeled on Minicode and modern reasoning models (DeepSeek-R1, QwQ, Claude 3.7). Implemented `sanitize_thought_text`, `sanitize_assistant_text`, and `extract_thoughts_from_content` in [`src/channels/ratatui/app.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/app.rs). Automatically extracts `<think>`, `<thought>`, `<thinking>`, `<reasoning>`, and `<antThinking>` tags (including unclosed streaming chunks) into `msg.reasoning` while stripping tag residue from assistant markdown output. In [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs), thoughts render with a clean bullet header (`• Thought for {:.1}s` or `• Thoughts`), formatted left border bar (`  │ `), dimmed italic styling, and word-wrapped chunks avoiding line-wrap overflow.

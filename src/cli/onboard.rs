@@ -117,7 +117,7 @@ pub async fn handle_onboard() -> Result<()> {
         "\n✅ Onboarding complete! Settings saved to {:?}",
         crate::config::config_path()
     );
-    println!("You can now run 'openz agent' to start chatting.");
+    println!("You can now run 'openz' to start chatting.");
 
     Ok(())
 }
