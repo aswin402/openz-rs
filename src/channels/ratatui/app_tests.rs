@@ -184,3 +184,20 @@ fn test_prompt_queue_fifo_order() {
     assert_eq!(app.pop_next_prompt(), None);
     assert!(app.queued_prompts.is_empty());
 }
+
+#[test]
+fn test_wrapped_paragraph_line_count_and_max_scroll() {
+    use ratatui::text::Line;
+    use ratatui::widgets::{Paragraph, Wrap};
+
+    // 1 line with 200 characters
+    let long_line = "A".repeat(200);
+    let p = Paragraph::new(vec![Line::from(long_line)]).wrap(Wrap { trim: false });
+    // In an 80-column viewport, a 200-char line wraps to 3 visual lines (80 + 80 + 40)
+    let line_count = p.line_count(80);
+    assert_eq!(line_count, 3);
+
+    // If viewport height is 2, max_scroll should be 1
+    let max_scroll = (line_count as u32).saturating_sub(2);
+    assert_eq!(max_scroll, 1);
+}

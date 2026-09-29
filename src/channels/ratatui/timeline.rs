@@ -327,9 +327,13 @@ pub(crate) fn render_timeline(f: &mut Frame, app: &mut RatatuiApp, area: Rect) {
         ]));
     }
 
-    let total_lines = lines.len() as u32;
+    let paragraph = Paragraph::new(lines)
+        .block(Block::default().borders(Borders::NONE))
+        .wrap(Wrap { trim: false });
+
+    let total_rendered_lines = paragraph.line_count(area.width) as u32;
     let viewport_height = area.height as u32;
-    let max_scroll = total_lines.saturating_sub(viewport_height);
+    let max_scroll = total_rendered_lines.saturating_sub(viewport_height);
     app.max_scroll = max_scroll;
 
     let scroll = if app.auto_scroll {
@@ -341,10 +345,23 @@ pub(crate) fn render_timeline(f: &mut Frame, app: &mut RatatuiApp, area: Rect) {
     // Paragraph can only scroll within u16 range; clamp oversized timelines
     let scroll_u16 = scroll.min(u16::MAX as u32) as u16;
 
-    let paragraph = Paragraph::new(lines)
-        .block(Block::default().borders(Borders::NONE))
-        .wrap(Wrap { trim: false })
-        .scroll((scroll_u16, 0));
-
+    let paragraph = paragraph.scroll((scroll_u16, 0));
     f.render_widget(paragraph, area);
+
+    if max_scroll > 0 {
+        use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
+        let mut scrollbar_state = ScrollbarState::default()
+            .content_length(total_rendered_lines as usize)
+            .position(scroll as usize);
+        f.render_stateful_widget(
+            Scrollbar::default()
+                .orientation(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .thumb_style(Style::default().fg(theme.brand_accent))
+                .track_style(Style::default().fg(theme.border)),
+            area,
+            &mut scrollbar_state,
+        );
+    }
 }

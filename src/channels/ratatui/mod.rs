@@ -107,8 +107,8 @@ fn spawn_agent_turn(
 const TICK_MS: u64 = 50;
 /// Mouse wheel and modifier-arrow scroll amount
 const SCROLL_STEP: u32 = 3;
-/// Plain Up/Down when input is empty
-const SCROLL_JUMP: u32 = 2;
+/// Plain Up/Down when input is empty or scrolled up
+const SCROLL_JUMP: u32 = 3;
 /// Ctrl+P / Ctrl+N line scroll
 const SCROLL_STEP_EM: u32 = 4;
 /// PageUp / PageDown
@@ -444,15 +444,19 @@ pub async fn handle_ratatui_tui() -> Result<()> {
 
         if event::poll(Duration::from_millis(TICK_MS))? {
             match event::read()? {
-                Event::Mouse(mouse) => match mouse.kind {
-                    MouseEventKind::ScrollUp => {
-                        app.scroll_up(SCROLL_STEP);
+                Event::Mouse(mouse) => {
+                    if !app.modal.is_active() {
+                        match mouse.kind {
+                            MouseEventKind::ScrollUp => {
+                                app.scroll_up(SCROLL_STEP);
+                            }
+                            MouseEventKind::ScrollDown => {
+                                app.scroll_down(SCROLL_STEP);
+                            }
+                            _ => {}
+                        }
                     }
-                    MouseEventKind::ScrollDown => {
-                        app.scroll_down(SCROLL_STEP);
-                    }
-                    _ => {}
-                },
+                }
                 Event::Key(key) => {
                     if key.kind == KeyEventKind::Press {
                         // Global interrupt: Ctrl+C
@@ -832,6 +836,9 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     } else {
                                         app.selected_index = Some(matches.len().saturating_sub(1));
                                     }
+                                } else if !app.auto_scroll {
+                                    // When scrolled up in history, plain Up continues scrolling up
+                                    app.scroll_up(SCROLL_JUMP);
                                 } else if !app.prompt_history.is_empty()
                                     && (app.history_idx.is_some() || !app.typed_input.is_empty())
                                 {
@@ -845,7 +852,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         app.cursor_idx = app.typed_input.len();
                                     }
                                 } else {
-                                    // When input is empty, plain Up scrolls the timeline
+                                    // When input is empty at the bottom, plain Up scrolls the timeline
                                     app.scroll_up(SCROLL_JUMP);
                                 }
                             }
@@ -866,6 +873,9 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     } else {
                                         app.selected_index = Some(0);
                                     }
+                                } else if !app.auto_scroll {
+                                    // When scrolled up, plain Down continues scrolling down toward the bottom
+                                    app.scroll_down(SCROLL_JUMP);
                                 } else if let Some(i) = app.history_idx {
                                     if i + 1 < app.prompt_history.len() {
                                         let next_idx = i + 1;
@@ -896,6 +906,12 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                 } else if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'd'
                                 {
                                     app.scroll_down(SCROLL_HALF);
+                                } else if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'b'
+                                {
+                                    app.scroll_up(SCROLL_PAGE);
+                                } else if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'f'
+                                {
+                                    app.scroll_down(SCROLL_PAGE);
                                 } else {
                                     app.typed_input.insert(app.cursor_idx, c);
                                     app.cursor_idx += 1;
@@ -914,6 +930,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                             KeyCode::Home => {
                                 if key.modifiers.contains(KeyModifiers::SHIFT)
                                     || key.modifiers.contains(KeyModifiers::CONTROL)
+                                    || app.typed_input.is_empty()
                                 {
                                     app.scroll_to_top();
                                 } else {
@@ -923,6 +940,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                             KeyCode::End => {
                                 if key.modifiers.contains(KeyModifiers::SHIFT)
                                     || key.modifiers.contains(KeyModifiers::CONTROL)
+                                    || app.typed_input.is_empty()
                                 {
                                     app.scroll_to_bottom();
                                 } else {

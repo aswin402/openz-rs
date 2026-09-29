@@ -1,4 +1,28 @@
-### v0.0.237 (Latest Release)
+### v0.0.238 (Latest Release)
+- **Ideas**:
+  - Ratatui Wrapped Timeline Scrolling & Line Count Engine Architecture:
+    - **Root-Cause Resolution for Frozen Scrolling**: In [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs), `max_scroll` was previously calculated as `lines.len().saturating_sub(viewport_height)` where `lines.len()` was the count of raw unwrapped `Line`s in the `Vec`. Because assistant messages, tool logs, and bullet lists contained lines longer than the viewport width that wrapped to 2–5 terminal rows via `Wrap { trim: false }`, `lines.len()` was often less than or equal to `viewport_height` even when rendered content exceeded 40–80 visual lines. Consequently, `max_scroll` evaluated to `0` (or single-digit numbers), clamping `scroll_offset` to `0` and rendering the viewport completely frozen and unscrollable in both directions.
+    - **Accurate Pre-Render Line Counting**: Enabled the `unstable-rendered-line-info` feature on `ratatui` in [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml) and replaced `lines.len()` with `paragraph.line_count(area.width) as u32`. This calculates the exact number of wrapped visual rows that Ratatui's `WordWrapper` produces at the current terminal width, providing 100% accurate `max_scroll` boundaries and pixel-perfect scrolling from row 0 to the absolute bottom row.
+    - **Visual Scrollbar & Dynamic Scroll Indicator**: Integrated a sleek vertical Ratatui `Scrollbar` with `ScrollbarState` along the right border of the timeline, themed with OpenZ brand accent (`#ff5500`) and subtle border track (`#3d375e`). Added a status bar indicator in [`src/channels/ratatui/ui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/ui.rs) displaying `↑ scrolled (offset/max) • End: bottom` whenever the user is scrolled up into history.
+    - **Expanded Keyboard Navigation**: In [`src/channels/ratatui/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/mod.rs), enhanced `KeyCode::Up` and `KeyCode::Down` to seamlessly continue scrolling when the user is scrolled up (`!app.auto_scroll`), added `Ctrl+B` (page up) and `Ctrl+F` (page down), enabled `Home`/`End` full jumps when input is empty, and guarded mouse wheel scrolling to prevent timeline drift when modal dialogs are active.
+- **Inspirations**:
+  - Ratatui WordWrapper engine, terminal pager scrolling discipline (less, glow), lazygit vertical scroll indicators, and readline navigation standards.
+- **Sources & References**:
+  - [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs): Replaced `lines.len()` with `paragraph.line_count(area.width)` and integrated `Scrollbar`.
+  - [`src/channels/ratatui/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/mod.rs): Enhanced Up/Down scrolling while scrolled up, added `Ctrl+B`/`Ctrl+F`, `Home`/`End`, and modal mouse guards.
+  - [`src/channels/ratatui/ui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/ui.rs): Added `↑ scrolled (offset/max) • End: bottom` indicator to status line.
+  - [`src/channels/ratatui/app_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/app_tests.rs): Added `test_wrapped_paragraph_line_count_and_max_scroll`.
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Version increment to `0.0.238`.
+- **Details & Metrics**:
+  - 20/20 Ratatui unit tests passing (including wrapped paragraph line count test).
+  - Exact 260 registered native tools invariant maintained (`test_native_tool_registration_names`).
+  - 0 clippy warnings (`cargo clippy -p openz -j 1 -- -D warnings`).
+- **Verification**:
+  - `cargo test -p openz --lib channels::ratatui -j 1`: PASS (20/20).
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1`: PASS (1/1, 260 tools).
+  - `cargo clippy -p openz -j 1 -- -D warnings`: PASS (0 warnings).
+
+### v0.0.237
 - **Ideas**:
   - Unified Asynchronous Ratatui Terminal Interface:
     - **Interactive Terminal Experience Unification**: Completely unified OpenZ's interactive terminal experience (`openz agent` and default bare invocation `openz`) onto the modernized Ratatui TUI engine, eliminating the previous dual-UI discrepancy where the legacy CLI style and Ratatui TUI offered fragmented capabilities.
