@@ -263,16 +263,6 @@ fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
             Style::default().fg(theme.info),
         ));
     }
-
-    // Scroll state indicator when scrolled up into history
-    if !app.auto_scroll && app.max_scroll > 0 {
-        footer_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
-        footer_spans.push(Span::styled(
-            format!("↑ scrolled ({}/{}) • End: bottom", app.scroll_offset, app.max_scroll),
-            Style::default().fg(theme.warning).add_modifier(Modifier::BOLD),
-        ));
-    }
-
     let footer_line = Line::from(footer_spans);
     let p = Paragraph::new(footer_line).block(Block::default().borders(Borders::NONE));
     f.render_widget(p, area);

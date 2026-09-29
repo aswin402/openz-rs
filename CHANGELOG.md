@@ -1,4 +1,25 @@
-### v0.0.238 (Latest Release)
+### v0.0.239 (Latest Release)
+- **Ideas**:
+  - Ratatui Chrome Decluttering & Pure Frameless Scroll Experience:
+    - **Visual Widget Pruning Without Functional Loss**: Removed the high-contrast vertical scrollbar widget from the right margin of the timeline in [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs) and the bottom status bar indicator badge (`↑ scrolled (offset/max) • End: bottom`) in [`src/channels/ratatui/ui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/ui.rs).
+    - **Preserved Smooth Sub-pixel & Wrapped Scroll Mechanics**: Retained 100% of the underlying wrapped pre-render line count engine (`paragraph.line_count(area.width)`), viewport-height saturating subtraction (`max_scroll`), auto-scroll engagement/disengagement state machine, mouse wheel scroll listeners, and full keyboard navigation suite (`Up`/`Down`, `PageUp`/`PageDown`, `Ctrl+B`/`Ctrl+F`, `Ctrl+U`/`Ctrl+D`, `Ctrl+P`/`Ctrl+N`, `Home`/`End`). Users experience an ultra-clean, distraction-free terminal layout without visually intrusive chrome.
+- **Inspirations**:
+  - Minimalist terminal aesthetics, frameless editor viewports, and modern clean CLI paradigms (e.g. Helix, Kakoune, lazygit minimal chrome).
+- **Sources & References**:
+  - [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs): Removed vertical `Scrollbar` widget rendering block while retaining exact scroll clamping and line calculation.
+  - [`src/channels/ratatui/ui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/ui.rs): Removed bottom scroll status badge from `footer_spans`.
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Synchronous SemVer increment to `0.0.239`.
+- **Details & Metrics**:
+  - 20/20 Ratatui unit tests passing.
+  - Exact 260 registered native tools invariant maintained (`test_native_tool_registration_names`).
+  - 0 clippy warnings (`cargo clippy -p openz -j 1 -- -D warnings`).
+- **Verification**:
+  - `cargo check -p openz -j 1`: PASS.
+  - `cargo test -p openz --lib channels::ratatui -j 1`: PASS (20/20).
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1`: PASS (1/1, 260 tools).
+  - `cargo clippy -p openz -j 1 -- -D warnings`: PASS (0 warnings).
+
+### v0.0.238
 - **Ideas**:
   - Ratatui Wrapped Timeline Scrolling & Line Count Engine Architecture:
     - **Root-Cause Resolution for Frozen Scrolling**: In [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs), `max_scroll` was previously calculated as `lines.len().saturating_sub(viewport_height)` where `lines.len()` was the count of raw unwrapped `Line`s in the `Vec`. Because assistant messages, tool logs, and bullet lists contained lines longer than the viewport width that wrapped to 2–5 terminal rows via `Wrap { trim: false }`, `lines.len()` was often less than or equal to `viewport_height` even when rendered content exceeded 40–80 visual lines. Consequently, `max_scroll` evaluated to `0` (or single-digit numbers), clamping `scroll_offset` to `0` and rendering the viewport completely frozen and unscrollable in both directions.
