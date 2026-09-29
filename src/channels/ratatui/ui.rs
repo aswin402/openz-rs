@@ -3,10 +3,10 @@ use super::modals::render_modal_overlay;
 use super::theme;
 use super::timeline::render_timeline;
 use ratatui::{
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
-    text::{Line, Span, Text},
-    widgets::{Block, Borders, Paragraph},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, Paragraph},
     Frame,
 };
 
@@ -21,21 +21,11 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &mut RatatuiApp) {
         .style(Style::default().bg(theme.bg_primary));
     f.render_widget(bg_block, f.area());
 
-    let matches = app.matching_slash_commands();
-    let has_popup = !matches.is_empty();
-
-    let popup_lines_count = if has_popup {
-        (matches.len().min(5) + 2) as u16
-    } else {
-        0
-    };
-
-    // Layout: Conversation (flex) -> Slash suggestions (if typing /) -> Input Box (3) -> Bottom Status Bar (1)
+    // Layout: Conversation Timeline (flex) -> Elevated Input Dock (3) -> Bottom Status Bar (1)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(4),
-            Constraint::Length(popup_lines_count),
             Constraint::Length(3),
             Constraint::Length(1),
         ])
@@ -44,16 +34,16 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &mut RatatuiApp) {
     // 1. Conversation Timeline
     render_timeline(f, app, chunks[0]);
 
-    // 2. Autocomplete Suggestions (placed right above input box)
-    if has_popup {
-        render_autocomplete_dock(f, app, &matches, chunks[1]);
+    // 2. Elevated Input Dock
+    render_input_dock(f, app, chunks[1]);
+
+    // 3. Minimal Bottom Status Line
+    render_status_bar(f, app, chunks[2]);
+
+    // 4. Floating Spotlight Slash Command Palette (if typing '/')
+    if app.has_active_slash_query() && !app.modal.is_active() {
+        render_slash_palette(f, app, f.area());
     }
-
-    // 3. Elevated Input Dock
-    render_input_dock(f, app, chunks[2]);
-
-    // 4. Minimal Bottom Status Line
-    render_status_bar(f, app, chunks[3]);
 
     // 5. Modal Dialogs (Overlay)
     if app.modal.is_active() {
@@ -125,68 +115,162 @@ fn render_input_dock(f: &mut Frame, app: &RatatuiApp, area: Rect) {
     f.set_cursor_position((inner.x + cursor_col as u16, inner.y));
 }
 
-// ── Autocomplete Suggestions Dock ───────────────────────────────────────────
+// ── Floating Spotlight Slash Command Palette ─────────────────────────────────
 
-fn render_autocomplete_dock(
-    f: &mut Frame,
-    app: &RatatuiApp,
-    matches: &[(String, String)],
-    area: Rect,
-) {
+fn render_slash_palette(f: &mut Frame, app: &RatatuiApp, area: Rect) {
+    if !app.has_active_slash_query() {
+        return;
+    }
+
     let theme = &app.theme;
+    let matches = app.matching_palette_commands();
 
-    let block = Block::default()
+    // Modal dimensions (responsive spotlight centered in upper-middle of screen)
+    let width = 68.min(area.width.saturating_sub(4)).max(48);
+    let height = 11.min(area.height.saturating_sub(4)).max(6);
+
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 3;
+    let popup_area = Rect::new(x, y, width, height);
+
+    f.render_widget(Clear, popup_area);
+
+    // Build Title Bar with Category Radio Tabs on right
+    let current_cat_idx = app.slash_category_idx % super::app::CommandCategory::all().len();
+    let mut title_spans = vec![
+        Span::styled(
+            " ⌘ Commands ",
+            Style::default()
+                .fg(theme.brand_accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("[Tab] ", Style::default().fg(theme.muted)),
+    ];
+
+    for (idx, cat) in super::app::CommandCategory::all().iter().enumerate() {
+        let is_active = idx == current_cat_idx;
+        if is_active {
+            title_spans.push(Span::styled(
+                format!("◉ {} ", cat.label()),
+                Style::default()
+                    .fg(theme.brand_accent)
+                    .add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            title_spans.push(Span::styled(
+                format!("○ {} ", cat.label()),
+                Style::default().fg(theme.muted),
+            ));
+        }
+    }
+    title_spans.push(Span::raw(" "));
+
+    let outer_block = Block::default()
+        .title(Line::from(title_spans))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.border))
-        .title(" Commands ")
-        .title_alignment(Alignment::Left)
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_style(Style::default().fg(theme.brand_accent))
         .style(Style::default().bg(theme.bg_elevated));
 
-    let inner = block.inner(area);
-    f.render_widget(block, area);
+    let inner_area = outer_block.inner(popup_area);
+    f.render_widget(outer_block, popup_area);
 
-    let display_limit = 5;
-    let selected_idx = app.selected_index.unwrap_or(0);
-    let start_idx = if selected_idx >= display_limit {
-        selected_idx - display_limit + 1
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // Search row: › /search█
+            Constraint::Length(1), // Divider
+            Constraint::Min(3),    // Commands list
+        ])
+        .split(inner_area);
+
+    // 1. Search Query Row
+    let typed_text: String = app.typed_input.iter().collect();
+    let search_line = Line::from(vec![
+        Span::styled(
+            "  › ",
+            Style::default()
+                .fg(theme.brand_accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            if typed_text.is_empty() { "/" } else { &typed_text },
+            Style::default()
+                .fg(theme.text_primary)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("█", Style::default().fg(theme.brand_accent)),
+    ]);
+    f.render_widget(Paragraph::new(search_line), chunks[0]);
+
+    // Top Divider
+    let divider = Paragraph::new(Line::from(vec![Span::styled(
+        "─".repeat(inner_area.width as usize),
+        Style::default().fg(theme.border),
+    )]));
+    f.render_widget(divider, chunks[1]);
+
+    // 2. Command Items List
+    let list_height = chunks[2].height as usize;
+    let selected_idx = app.slash_selected_idx.min(matches.len().saturating_sub(1));
+    let scroll_offset = super::modals::compute_scroll_offset(selected_idx, list_height);
+
+    let mut item_lines = Vec::new();
+    let inner_width = inner_area.width as usize;
+
+    if matches.is_empty() {
+        item_lines.push(Line::from(vec![Span::styled(
+            "   No matching commands found",
+            Style::default().fg(theme.muted),
+        )]));
     } else {
-        0
-    };
-    let end_idx = (start_idx + display_limit).min(matches.len());
+        for (i, &cmd_idx) in matches
+            .iter()
+            .skip(scroll_offset)
+            .take(list_height)
+            .enumerate()
+        {
+            let actual_idx = scroll_offset + i;
+            let is_selected = actual_idx == selected_idx;
+            let cmd = &super::app::PALETTE_COMMANDS[cmd_idx];
+            let shortcut_str = cmd.shortcut.unwrap_or("");
 
-    let mut list_lines = Vec::new();
-    for (i, (cmd, desc)) in matches.iter().enumerate().take(end_idx).skip(start_idx) {
-        let is_selected = app.selected_index == Some(i);
-        if is_selected {
-            list_lines.push(Line::from(vec![
-                Span::styled(
-                    " › ",
+            let prefix = if is_selected { " ❯ " } else { "   " };
+            let left_content = format!("{}{:<13} {}", prefix, cmd.slash_name, cmd.title);
+            let left_width = left_content.chars().count();
+            let shortcut_width = shortcut_str.chars().count();
+
+            let avail_space = inner_width.saturating_sub(left_width + shortcut_width + 2);
+            let padding = " ".repeat(avail_space);
+
+            if is_selected {
+                let line_str = format!("{}{}{}", left_content, padding, shortcut_str);
+                let current_width = line_str.chars().count();
+                let trailing_spaces = " ".repeat(inner_width.saturating_sub(current_width));
+                let full_padded = format!("{}{}", line_str, trailing_spaces);
+                item_lines.push(Line::from(vec![Span::styled(
+                    full_padded,
                     Style::default()
-                        .fg(theme.brand_accent)
+                        .bg(theme.brand_accent)
+                        .fg(theme.bg_primary)
                         .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    format!("{:<20}", cmd),
-                    Style::default()
-                        .fg(theme.brand_accent)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(desc.as_str(), Style::default().fg(theme.text_primary)),
-            ]));
-        } else {
-            list_lines.push(Line::from(vec![
-                Span::raw("   "),
-                Span::styled(
-                    format!("{:<20}", cmd),
-                    Style::default().fg(theme.text_primary),
-                ),
-                Span::styled(desc.as_str(), Style::default().fg(theme.muted)),
-            ]));
+                )]));
+            } else {
+                let mut spans = vec![
+                    Span::styled(left_content, Style::default().fg(theme.text_primary)),
+                    Span::raw(padding),
+                ];
+                if !shortcut_str.is_empty() {
+                    spans.push(Span::styled(shortcut_str, Style::default().fg(theme.warning)));
+                }
+                spans.push(Span::raw(" "));
+                item_lines.push(Line::from(spans));
+            }
         }
     }
 
-    let p = Paragraph::new(Text::from(list_lines));
-    f.render_widget(p, inner);
+    let list_p = Paragraph::new(item_lines);
+    f.render_widget(list_p, chunks[2]);
 }
 
 // ── Status Bar (Bottom line) ────────────────────────────────────────────────

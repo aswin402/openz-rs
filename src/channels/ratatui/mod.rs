@@ -459,6 +459,10 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                         if key.modifiers.contains(KeyModifiers::CONTROL)
                             && key.code == KeyCode::Char('c')
                         {
+                            if let ModalState::ExitConfirm { .. } = &app.modal {
+                                // Double Ctrl+C inside exit confirmation dialog exits immediately
+                                break;
+                            }
                             if let ModalState::SecurityApproval { tx, .. } = &app.modal {
                                 if let Ok(mut guard) = tx.try_lock() {
                                     if let Some(sender) = guard.take() {
@@ -484,12 +488,72 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                 ));
                                 continue;
                             }
-                            break;
+                            app.modal = ModalState::ExitConfirm { selected_yes: false };
+                            continue;
                         }
 
                         // ── 1. Modal Key Interception ───────────────────────────
                         if app.modal.is_active() {
                             match &mut app.modal {
+                                ModalState::ExitConfirm { selected_yes } => match key.code {
+                                    KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => {
+                                        *selected_yes = !*selected_yes;
+                                    }
+                                    KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                        break;
+                                    }
+                                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                                        app.modal = ModalState::None;
+                                    }
+                                    KeyCode::Enter => {
+                                        if *selected_yes {
+                                            break;
+                                        } else {
+                                            app.modal = ModalState::None;
+                                        }
+                                    }
+                                    _ => {}
+                                },
+                                ModalState::CommandCatalog {
+                                    filtered_indices,
+                                    selected_index,
+                                    filter,
+                                } => match key.code {
+                                    KeyCode::Up => {
+                                        if *selected_index > 0 {
+                                            *selected_index -= 1;
+                                        } else {
+                                            *selected_index = filtered_indices.len().saturating_sub(1);
+                                        }
+                                    }
+                                    KeyCode::Down => {
+                                        if *selected_index + 1 < filtered_indices.len() {
+                                            *selected_index += 1;
+                                        } else {
+                                            *selected_index = 0;
+                                        }
+                                    }
+                                    KeyCode::Esc => {
+                                        app.modal = ModalState::None;
+                                    }
+                                    KeyCode::Backspace => {
+                                        filter.pop();
+                                        app.modal.update_command_catalog_filter();
+                                    }
+                                    KeyCode::Char(c) => {
+                                        filter.push(c);
+                                        app.modal.update_command_catalog_filter();
+                                    }
+                                    KeyCode::Enter => {
+                                        if let Some(&cmd_idx) = filtered_indices.get(*selected_index) {
+                                            let cmd = &app::PALETTE_COMMANDS[cmd_idx];
+                                            app.typed_input = cmd.slash_name.chars().collect();
+                                            app.cursor_idx = app.typed_input.len();
+                                        }
+                                        app.modal = ModalState::None;
+                                    }
+                                    _ => {}
+                                },
                                 ModalState::ProviderSelect {
                                     providers,
                                     selected_idx,
@@ -770,6 +834,113 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                             continue;
                         }
 
+                        // ── Global Function & Shortcut Keys ────────────────────
+                        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('l') {
+                            let configured = crate::channels::build_configured_providers(&config);
+                            app.modal = ModalState::ProviderSelect {
+                                providers: configured,
+                                selected_idx: 0,
+                            };
+                            continue;
+                        }
+                        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('h') {
+                            let sessions = crate::cli::load_session_history().unwrap_or_default();
+                            let items: Vec<(String, String, String)> = sessions
+                                .into_iter()
+                                .map(|s| (s.key, s.display_title, s.updated_at.format("%Y-%m-%d %H:%M").to_string()))
+                                .collect();
+                            app.modal = ModalState::History {
+                                sessions: items,
+                                selected_idx: 0,
+                            };
+                            continue;
+                        }
+                        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('n') {
+                            if !app.is_thinking {
+                                reset_active_session(&session_key, &session_manager, &base_session_key).await;
+                                let new_key = format!("cli:{}", uuid::Uuid::new_v4());
+                                *session_key.write().await = new_key.clone();
+                                app.messages.clear();
+                                app.update_approx_tokens();
+                                app.session_key = new_key.clone();
+                                app.messages.push(ChatMessage::notice(
+                                    "✓ Started a fresh conversation session.".to_string(),
+                                ));
+                                let _ = write_tui_marker_in_dir(
+                                    &marker_dir,
+                                    std::process::id(),
+                                    &new_key,
+                                    &app.model,
+                                    &app.provider,
+                                );
+                            }
+                            continue;
+                        }
+                        if key.code == KeyCode::F(1) {
+                            app.modal = ModalState::new_command_catalog();
+                            continue;
+                        }
+                        if key.code == KeyCode::F(3) {
+                            let current_key = session_key.read().await.clone();
+                            if let commands::SlashResult::Message(msg) = commands::handle_slash_command(
+                                "/settings",
+                                &mut app,
+                                &agent_loop,
+                                &current_key,
+                                &session_manager,
+                                &config,
+                            )
+                            .await
+                            {
+                                app.messages.push(msg);
+                                app.scroll_to_bottom();
+                            }
+                            continue;
+                        }
+
+                        // ── Spotlight Command Palette Navigation ─────────────────
+                        if app.has_active_slash_query() {
+                            match key.code {
+                                KeyCode::Esc => {
+                                    app.typed_input.clear();
+                                    app.cursor_idx = 0;
+                                    app.slash_selected_idx = 0;
+                                    continue;
+                                }
+                                KeyCode::Tab => {
+                                    app.cycle_slash_category(true);
+                                    continue;
+                                }
+                                KeyCode::BackTab => {
+                                    app.cycle_slash_category(false);
+                                    continue;
+                                }
+                                KeyCode::Up => {
+                                    let matches = app.matching_palette_commands();
+                                    if !matches.is_empty() {
+                                        if app.slash_selected_idx > 0 {
+                                            app.slash_selected_idx -= 1;
+                                        } else {
+                                            app.slash_selected_idx = matches.len().saturating_sub(1);
+                                        }
+                                    }
+                                    continue;
+                                }
+                                KeyCode::Down => {
+                                    let matches = app.matching_palette_commands();
+                                    if !matches.is_empty() {
+                                        if app.slash_selected_idx + 1 < matches.len() {
+                                            app.slash_selected_idx += 1;
+                                        } else {
+                                            app.slash_selected_idx = 0;
+                                        }
+                                    }
+                                    continue;
+                                }
+                                _ => {}
+                            }
+                        }
+
                         // ── 2. Standard View & Input Key Events ─────────────────
                         let matches = app.matching_slash_commands();
                         let has_matches = !matches.is_empty();
@@ -908,6 +1079,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     app.typed_input.insert(app.cursor_idx, c);
                                     app.cursor_idx += 1;
                                     app.selected_index = None;
+                                    app.slash_selected_idx = 0;
                                     app.history_idx = None;
                                 }
                             }
@@ -945,10 +1117,20 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     app.cursor_idx -= 1;
                                 }
                                 app.selected_index = None;
+                                app.slash_selected_idx = 0;
                                 app.history_idx = None;
                             }
                             KeyCode::Enter => {
-                                let input_str = if let Some(idx) = app.selected_index {
+                                let input_str = if app.has_active_slash_query() {
+                                    let typed: String = app.typed_input.iter().collect();
+                                    if typed.contains(' ') {
+                                        typed
+                                    } else if let Some(cmd) = app.selected_palette_command() {
+                                        cmd.slash_name.to_string()
+                                    } else {
+                                        typed
+                                    }
+                                } else if let Some(idx) = app.selected_index {
                                     if idx < matches.len() {
                                         matches[idx].0.to_string()
                                     } else {
@@ -1060,6 +1242,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     app.typed_input.clear();
                                     app.cursor_idx = 0;
                                     app.selected_index = None;
+                                    app.slash_selected_idx = 0;
                                     app.history_idx = None;
                                 }
                             }

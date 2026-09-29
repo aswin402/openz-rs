@@ -24,15 +24,15 @@ pub async fn handle_slash_command(
     config: &crate::config::schema::Config,
 ) -> SlashResult {
     if trimmed == "/exit" || trimmed == "exit" || trimmed == "quit" {
-        return SlashResult::Exit;
+        return SlashResult::OpenModal(ModalState::ExitConfirm { selected_yes: true });
     }
 
     if trimmed == "/clear" {
         return SlashResult::ClearTimeline;
     }
 
-    if trimmed == "/help" {
-        return SlashResult::OpenModal(ModalState::Help);
+    if trimmed == "/help" || trimmed == "/commands" {
+        return SlashResult::OpenModal(ModalState::new_command_catalog());
     }
 
     if trimmed == "/history" {

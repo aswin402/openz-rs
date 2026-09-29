@@ -12,6 +12,16 @@ pub(crate) fn render_modal_overlay(f: &mut Frame, app: &RatatuiApp, area: Rect) 
 
     match &app.modal {
         ModalState::None => {}
+        ModalState::ExitConfirm { selected_yes } => {
+            render_exit_confirm(f, area, theme, *selected_yes);
+        }
+        ModalState::CommandCatalog {
+            filtered_indices,
+            selected_index,
+            filter,
+        } => {
+            render_command_catalog(f, area, theme, filtered_indices, *selected_index, filter);
+        }
         ModalState::ProviderSelect {
             providers,
             selected_idx,
@@ -376,8 +386,318 @@ pub(crate) fn render_modal_overlay(f: &mut Frame, app: &RatatuiApp, area: Rect) 
     }
 }
 
-/// Helper function to create a centered Rect for modals
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+pub fn render_exit_confirm(
+    f: &mut Frame,
+    area: Rect,
+    theme: &super::theme::Theme,
+    selected_yes: bool,
+) {
+    let popup_area = centered_rect_exact(54, 7, area);
+    f.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(Line::from(vec![Span::styled(
+            " ⏻ Exit OpenZ ",
+            Style::default()
+                .fg(theme.brand_accent)
+                .add_modifier(Modifier::BOLD),
+        )]))
+        .title_alignment(Alignment::Left)
+        .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_style(Style::default().fg(theme.brand_accent))
+        .style(Style::default().bg(theme.bg_elevated));
+
+    let inner_area = block.inner(popup_area);
+    f.render_widget(block, popup_area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1), // Spacer
+            Constraint::Length(1), // Question
+            Constraint::Length(1), // Spacer
+            Constraint::Length(1), // Buttons row
+            Constraint::Min(0),
+        ])
+        .split(inner_area);
+
+    // Question
+    let question_p = Paragraph::new(Line::from(vec![Span::styled(
+        "Are you sure you want to quit OpenZ?",
+        Style::default()
+            .fg(theme.text_primary)
+            .add_modifier(Modifier::BOLD),
+    )]))
+    .alignment(Alignment::Center);
+    f.render_widget(question_p, chunks[1]);
+
+    // Buttons
+    let yep_style = if selected_yes {
+        Style::default()
+            .bg(theme.destructive)
+            .fg(theme.bg_primary)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().bg(theme.bg_primary).fg(theme.text_primary)
+    };
+
+    let nope_style = if !selected_yes {
+        Style::default()
+            .bg(theme.brand_accent)
+            .fg(theme.bg_primary)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().bg(theme.bg_primary).fg(theme.text_primary)
+    };
+
+    let yep_spans = if selected_yes {
+        vec![Span::styled("  ✖ Yep, Quit (Y)  ", yep_style)]
+    } else {
+        vec![
+            Span::styled("  ✖ ", yep_style),
+            Span::styled("Y", yep_style.add_modifier(Modifier::UNDERLINED)),
+            Span::styled("ep, Quit  ", yep_style),
+        ]
+    };
+
+    let nope_spans = if !selected_yes {
+        vec![Span::styled("  ✔ Stay in Session (N)  ", nope_style)]
+    } else {
+        vec![
+            Span::styled("  ✔ Stay in Session (", nope_style),
+            Span::styled("N", nope_style.add_modifier(Modifier::UNDERLINED)),
+            Span::styled(")  ", nope_style),
+        ]
+    };
+
+    let mut buttons_line = Vec::new();
+    buttons_line.extend(yep_spans);
+    buttons_line.push(Span::raw("   "));
+    buttons_line.extend(nope_spans);
+
+    let buttons_p = Paragraph::new(Line::from(buttons_line)).alignment(Alignment::Center);
+    f.render_widget(buttons_p, chunks[3]);
+}
+
+pub fn render_command_catalog(
+    f: &mut Frame,
+    area: Rect,
+    theme: &super::theme::Theme,
+    filtered_indices: &[usize],
+    selected_index: usize,
+    filter: &str,
+) {
+    let popup_area = centered_rect(78, 72, area);
+    f.render_widget(Clear, popup_area);
+
+    let root_block = Block::default()
+        .title(" 🧭 OpenZ Slash Commands & Capabilities Catalog ")
+        .title_alignment(Alignment::Center)
+        .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_style(Style::default().fg(theme.brand_accent))
+        .style(Style::default().bg(theme.bg_elevated));
+
+    let inner_area = root_block.inner(popup_area);
+    f.render_widget(root_block, popup_area);
+
+    let v_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Search bar
+            Constraint::Min(8),    // Split view
+        ])
+        .split(inner_area);
+
+    // Search bar
+    let count_badge = format!(
+        " [{}/{}] ",
+        if filtered_indices.is_empty() {
+            0
+        } else {
+            selected_index + 1
+        },
+        filtered_indices.len()
+    );
+
+    let search_block = Block::default()
+        .title(" 🔍 Filter Commands ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(theme.brand_accent))
+        .style(Style::default().bg(theme.bg_elevated));
+
+    let search_p = Paragraph::new(Line::from(vec![
+        Span::styled(
+            "❯ ",
+            Style::default()
+                .fg(theme.brand_accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            filter,
+            Style::default()
+                .fg(theme.text_primary)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("█", Style::default().fg(theme.brand_accent)),
+        Span::styled(
+            format!(
+                "{:>width$}",
+                count_badge,
+                width = (v_chunks[0].width as usize).saturating_sub(filter.len() + 8)
+            ),
+            Style::default().fg(theme.muted),
+        ),
+    ]))
+    .block(search_block);
+    f.render_widget(search_p, v_chunks[0]);
+
+    // Split [Left List (42%), Right Details (58%)]
+    let h_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(42),
+            Constraint::Percentage(58),
+        ])
+        .split(v_chunks[1]);
+
+    let list_block = Block::default()
+        .title(" Commands ")
+        .borders(Borders::RIGHT)
+        .border_style(Style::default().fg(theme.border));
+
+    let mut list_lines = Vec::new();
+    let max_visible = (h_chunks[0].height as usize).saturating_sub(2).max(1);
+    let scroll_offset = compute_scroll_offset(selected_index, max_visible);
+
+    for (idx_rel, &item_idx) in filtered_indices
+        .iter()
+        .skip(scroll_offset)
+        .take(max_visible)
+        .enumerate()
+    {
+        let real_idx = scroll_offset + idx_rel;
+        let item = &super::app::PALETTE_COMMANDS[item_idx];
+        let is_selected = real_idx == selected_index;
+
+        let cursor = if is_selected { "▶ " } else { "  " };
+        let name_style = if is_selected {
+            Style::default()
+                .fg(theme.brand_accent)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(theme.text_primary)
+        };
+
+        let shortcut_style = Style::default().fg(theme.warning);
+        let shortcut_str = item.shortcut.map(|s| format!(" [{}]", s)).unwrap_or_default();
+
+        list_lines.push(Line::from(vec![
+            Span::styled(
+                cursor,
+                Style::default()
+                    .fg(theme.brand_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("{:<15}", item.slash_name),
+                name_style,
+            ),
+            Span::styled(shortcut_str, shortcut_style),
+        ]));
+    }
+
+    if filtered_indices.is_empty() {
+        list_lines.push(Line::from(Span::styled(
+            "  No matching commands found",
+            Style::default().fg(theme.muted),
+        )));
+    }
+
+    let left_p = Paragraph::new(list_lines).block(list_block);
+    f.render_widget(left_p, h_chunks[0]);
+
+    // Right Details Pane
+    let mut detail_lines = Vec::new();
+    if let Some(&selected_item_idx) = filtered_indices.get(selected_index) {
+        let cmd = &super::app::PALETTE_COMMANDS[selected_item_idx];
+
+        detail_lines.push(Line::from(vec![
+            Span::styled(
+                cmd.slash_name,
+                Style::default()
+                    .fg(theme.brand_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("  •  {} ({})", cmd.title, cmd.category.label()),
+                Style::default().fg(theme.muted),
+            ),
+        ]));
+        detail_lines.push(Line::from(""));
+
+        if let Some(shortcut) = cmd.shortcut {
+            detail_lines.push(Line::from(vec![
+                Span::styled(
+                    "⚡ Shortcut: ",
+                    Style::default()
+                        .fg(theme.warning)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(shortcut, Style::default().fg(theme.text_primary)),
+            ]));
+            detail_lines.push(Line::from(""));
+        }
+
+        detail_lines.push(Line::from(vec![Span::styled(
+            "📖 Description:",
+            Style::default()
+                .fg(theme.success)
+                .add_modifier(Modifier::BOLD),
+        )]));
+        detail_lines.push(Line::from(vec![Span::styled(
+            format!("  {}", cmd.description),
+            Style::default().fg(theme.text_primary),
+        )]));
+        detail_lines.push(Line::from(""));
+
+        detail_lines.push(Line::from(vec![Span::styled(
+            "💡 Usage Example:",
+            Style::default()
+                .fg(theme.brand_accent)
+                .add_modifier(Modifier::BOLD),
+        )]));
+        detail_lines.push(Line::from(vec![Span::styled(
+            format!("  {}", cmd.example),
+            Style::default()
+                .fg(theme.muted)
+                .add_modifier(Modifier::ITALIC),
+        )]));
+        detail_lines.push(Line::from(""));
+
+        detail_lines.push(Line::from(vec![Span::styled(
+            "🤖 Autonomous Intent Routing:",
+            Style::default()
+                .fg(theme.brand_accent)
+                .add_modifier(Modifier::BOLD),
+        )]));
+        detail_lines.push(Line::from(vec![Span::styled(
+            "  You can type natural language in the input prompt. OpenZ's",
+            Style::default().fg(theme.muted),
+        )]));
+        detail_lines.push(Line::from(vec![Span::styled(
+            "  intent router will recognize and trigger this workflow automatically.",
+            Style::default().fg(theme.muted),
+        )]));
+    }
+
+    let right_p = Paragraph::new(detail_lines);
+    f.render_widget(right_p, h_chunks[1]);
+}
+
+/// Helper function to create a centered Rect for modals using percentage constraints
+pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -395,6 +715,32 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
             Constraint::Percentage((100 - percent_x) / 2),
         ])
         .split(popup_layout[1])[1]
+}
+
+/// Computes a centered sub-rectangle using exact width and height in terminal cells.
+pub fn centered_rect_exact(width: u16, height: u16, r: Rect) -> Rect {
+    let w = width.min(r.width.saturating_sub(2));
+    let h = height.min(r.height.saturating_sub(2));
+    let x = r.x + (r.width.saturating_sub(w)) / 2;
+    let y = r.y + (r.height.saturating_sub(h)) / 2;
+    Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    }
+}
+
+/// Computes the scroll offset for a list widget so that the selected item remains visible.
+pub fn compute_scroll_offset(selected_index: usize, max_visible: usize) -> usize {
+    if max_visible == 0 {
+        return 0;
+    }
+    if selected_index < max_visible {
+        0
+    } else {
+        selected_index.saturating_sub(max_visible - 1)
+    }
 }
 
 #[cfg(test)]

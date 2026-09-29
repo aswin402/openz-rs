@@ -1,4 +1,32 @@
-### v0.0.240 (Latest Release)
+### v0.0.241 (Latest Release)
+- **Ideas**:
+  - Spotlight Command Palette, Interactive Command Catalog & Safe Interrupt Modals:
+    - **Floating Spotlight Slash Command Palette**: Replaced the legacy input dock displacement layout with a zero-layout-shift floating spotlight overlay rendered via `Clear` directly above the input box in [`src/channels/ratatui/ui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/ui.rs). Opens automatically when typing `/` without displacing the input prompt. Displays top category radio tabs (`⌘ Commands [Tab] ◉ All ○ System ○ Agent ○ Tools`), live search row (`› /<query>█`), solid `#ff5500` brand accent selection highlight, and right-aligned shortcut badges (`[Ctrl+L]`, `[Ctrl+H]`, `[F1]`, etc.). Automatically dismisses once an argument space is typed.
+    - **Interactive Command & Capability Catalog Modal**: Implemented `ModalState::CommandCatalog` in [`src/channels/ratatui/app.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/app.rs) and [`src/channels/ratatui/modals.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/modals.rs), accessible via `/commands`, `/help`, or `F1`. Features a split-view modal with real-time text query filtering, `[X/N]` match counter, scrollable command list on the left, and rich capability details (description, usage examples, and autonomous execution behavior) on the right.
+    - **Safe Quit Confirmation Dialog (`Ctrl+C`)**: Replaced abrupt process termination with `ModalState::ExitConfirm`. When an active agent turn is running, `Ctrl+C` cancels the turn non-destructively while preserving the chat session. When idle, `Ctrl+C` opens a centered confirmation dialog (`⏻ Exit OpenZ`) with keyboard-selectable `[ ✖ Yep, Quit (Y) ]` and `[ ✔ Stay in Session (N) ]` options (defaulting safely to Stay on Ctrl+C, or Quit on `/exit`), while a consecutive `Ctrl+C` exits immediately.
+    - **Global Accelerators**: Added dedicated single-key accelerators in [`src/channels/ratatui/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/mod.rs): `Ctrl+L` (Switch Model), `Ctrl+H` (Restore Session), `Ctrl+N` (New Session), `F1` (Command Catalog), `F3` (Settings), and Tab/BackTab category switching.
+- **Inspirations**:
+  - Minicode (`/home/aswin/programming/vscode/myProjects/ai_agent_tools/minicode`) floating palette and modal architectures, macOS Spotlight, Sublime Text Command Palette, and Aura Dark theme standards.
+- **Sources & References**:
+  - [`src/channels/ratatui/app.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/app.rs): Added `ModalState::ExitConfirm` and `ModalState::CommandCatalog`, `CommandCategory`, `PaletteCommand`, `PALETTE_COMMANDS` registry, and slash query state helpers.
+  - [`src/channels/ratatui/modals.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/modals.rs): Implemented `render_exit_confirm`, `render_command_catalog`, `centered_rect_exact`, and `compute_scroll_offset`.
+  - [`src/channels/ratatui/ui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/ui.rs): Replaced autocomplete dock with floating spotlight command palette (`render_slash_palette`).
+  - [`src/channels/ratatui/commands.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/commands.rs): Wired `/exit` and `/quit` to `ModalState::ExitConfirm`, and `/commands` and `/help` to `ModalState::new_command_catalog()`.
+  - [`src/channels/ratatui/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/mod.rs): Integrated safe `Ctrl+C` interrupt and exit dialog, global accelerators (`Ctrl+L`, `Ctrl+H`, `Ctrl+N`, `F1`, `F3`), and palette navigation.
+  - [`src/channels/ratatui/modals_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/modals_tests.rs): Added unit tests for `centered_rect_exact`, `compute_scroll_offset`, `ExitConfirm`, and `CommandCatalog` modal states.
+  - [`src/channels/ratatui/app_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/app_tests.rs): Added unit tests for spotlight palette matching, search text extraction, and category cycling.
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Synchronous SemVer increment to `0.0.241`.
+- **Details & Metrics**:
+  - 32/32 Ratatui unit tests passing (+7 new tests covering modals and palette).
+  - Exact 260 registered native tools invariant maintained (`test_native_tool_registration_names`).
+  - 0 clippy warnings (`cargo clippy -p openz -j 1 -- -D warnings`).
+- **Verification**:
+  - `cargo check -p openz -j 1`: PASS.
+  - `cargo test -p openz --lib channels::ratatui -j 1`: PASS (32/32).
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1`: PASS (1/1, 260 tools).
+  - `cargo clippy -p openz -j 1 -- -D warnings`: PASS (0 warnings).
+
+### v0.0.240
 - **Ideas**:
   - Parity Absorption of Rich CLI Formatting, Markdown Tables & Visual Depth into Ratatui:
     - **Native Markdown Table Engine**: Implemented `render_markdown_table_to_lines` in [`src/channels/ratatui/markdown.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/markdown.rs) and table block recognition in [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs). Replaces raw pipes with dynamically column-aligned ASCII/Unicode grid boxes featuring bold white headers, `─┼─` dividers, `│` column separators, cell wrapping, and inline status icon coloring.

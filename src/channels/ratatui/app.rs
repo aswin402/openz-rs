@@ -240,6 +240,14 @@ impl ChatMessage {
 #[derive(Clone)]
 pub enum ModalState {
     None,
+    ExitConfirm {
+        selected_yes: bool,
+    },
+    CommandCatalog {
+        filtered_indices: Vec<usize>,
+        selected_index: usize,
+        filter: String,
+    },
     ProviderSelect {
         providers: Vec<(String, String)>, // (name, display_name)
         selected_idx: usize,
@@ -272,6 +280,12 @@ impl std::fmt::Debug for ModalState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ModalState::None => write!(f, "ModalState::None"),
+            ModalState::ExitConfirm { selected_yes } => {
+                write!(f, "ModalState::ExitConfirm({selected_yes})")
+            }
+            ModalState::CommandCatalog { selected_index, .. } => {
+                write!(f, "ModalState::CommandCatalog({selected_index})")
+            }
             ModalState::ProviderSelect { selected_idx, .. } => {
                 write!(f, "ModalState::ProviderSelect({selected_idx})")
             }
@@ -296,6 +310,45 @@ impl std::fmt::Debug for ModalState {
 impl ModalState {
     pub fn is_active(&self) -> bool {
         !matches!(self, ModalState::None)
+    }
+
+    pub fn new_command_catalog() -> Self {
+        let indices = (0..PALETTE_COMMANDS.len()).collect();
+        Self::CommandCatalog {
+            filtered_indices: indices,
+            selected_index: 0,
+            filter: String::new(),
+        }
+    }
+
+    pub fn update_command_catalog_filter(&mut self) {
+        if let ModalState::CommandCatalog {
+            filtered_indices,
+            selected_index,
+            filter,
+        } = self
+        {
+            let query = filter.trim().to_lowercase();
+            *filtered_indices = PALETTE_COMMANDS
+                .iter()
+                .enumerate()
+                .filter(|(_, cmd)| {
+                    if query.is_empty() {
+                        true
+                    } else {
+                        cmd.slash_name.to_lowercase().contains(&query)
+                            || cmd.title.to_lowercase().contains(&query)
+                            || cmd.description.to_lowercase().contains(&query)
+                            || cmd.category.label().to_lowercase().contains(&query)
+                    }
+                })
+                .map(|(i, _)| i)
+                .collect();
+
+            if *selected_index >= filtered_indices.len() {
+                *selected_index = filtered_indices.len().saturating_sub(1);
+            }
+        }
     }
 
     pub fn update_model_filter(&mut self) {
@@ -328,6 +381,209 @@ impl ModalState {
     }
 }
 
+/// Categories for organizing spotlight palette commands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandCategory {
+    All,
+    System,
+    Agent,
+    Tools,
+}
+
+impl CommandCategory {
+    pub fn all() -> &'static [CommandCategory] {
+        &[
+            CommandCategory::All,
+            CommandCategory::System,
+            CommandCategory::Agent,
+            CommandCategory::Tools,
+        ]
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            CommandCategory::All => "All",
+            CommandCategory::System => "System",
+            CommandCategory::Agent => "Agent",
+            CommandCategory::Tools => "Tools",
+        }
+    }
+}
+
+/// A command item displayed in the floating spotlight palette and catalog.
+#[derive(Debug, Clone, Copy)]
+pub struct PaletteCommand {
+    pub slash_name: &'static str,
+    pub title: &'static str,
+    pub description: &'static str,
+    pub category: CommandCategory,
+    pub shortcut: Option<&'static str>,
+    pub example: &'static str,
+}
+
+pub const PALETTE_COMMANDS: &[PaletteCommand] = &[
+    PaletteCommand {
+        slash_name: "/model",
+        title: "Switch Model & Provider",
+        description: "Choose active LLM model or provider interactively",
+        category: CommandCategory::Agent,
+        shortcut: Some("Ctrl+L"),
+        example: "/model | /model claude-3-5-sonnet | /model openai/gpt-4o",
+    },
+    PaletteCommand {
+        slash_name: "/history",
+        title: "Restore Chat Session",
+        description: "Browse & reload past chat sessions",
+        category: CommandCategory::System,
+        shortcut: Some("Ctrl+H"),
+        example: "/history | /history <session_key>",
+    },
+    PaletteCommand {
+        slash_name: "/new-session",
+        title: "New Conversation Session",
+        description: "Start fresh session & reset conversation timeline",
+        category: CommandCategory::System,
+        shortcut: Some("Ctrl+N"),
+        example: "/new-session",
+    },
+    PaletteCommand {
+        slash_name: "/clear",
+        title: "Clear Timeline",
+        description: "Clear active conversation timeline messages",
+        category: CommandCategory::System,
+        shortcut: None,
+        example: "/clear",
+    },
+    PaletteCommand {
+        slash_name: "/commands",
+        title: "Command & Capabilities Catalog",
+        description: "Interactive catalog of all slash commands & keybindings",
+        category: CommandCategory::System,
+        shortcut: None,
+        example: "/commands",
+    },
+    PaletteCommand {
+        slash_name: "/help",
+        title: "Help & Shortcuts Cheatsheet",
+        description: "Interactive keyboard shortcuts cheatsheet",
+        category: CommandCategory::System,
+        shortcut: Some("F1"),
+        example: "/help",
+    },
+    PaletteCommand {
+        slash_name: "/settings",
+        title: "Settings & Configuration",
+        description: "View and adjust active configuration, security & sandbox",
+        category: CommandCategory::System,
+        shortcut: Some("F3"),
+        example: "/settings",
+    },
+    PaletteCommand {
+        slash_name: "/streaming",
+        title: "Toggle Response Streaming",
+        description: "Toggle live response token streaming on/off",
+        category: CommandCategory::System,
+        shortcut: None,
+        example: "/streaming",
+    },
+    PaletteCommand {
+        slash_name: "/memory",
+        title: "Knowledge Graph & Memory",
+        description: "Inspect cognitive knowledge graph, facts & entities",
+        category: CommandCategory::Agent,
+        shortcut: None,
+        example: "/memory",
+    },
+    PaletteCommand {
+        slash_name: "/skills",
+        title: "Learned Autonomous Skills",
+        description: "List and view active autonomous skills",
+        category: CommandCategory::Agent,
+        shortcut: None,
+        example: "/skills",
+    },
+    PaletteCommand {
+        slash_name: "/sop",
+        title: "SOP Workflow Engine",
+        description: "Inspect and trigger Standard Operating Procedure workflows",
+        category: CommandCategory::Agent,
+        shortcut: None,
+        example: "/sop list | /sop simulate <name> | /sop resume <id>",
+    },
+    PaletteCommand {
+        slash_name: "/workflows",
+        title: "Multi-Agent Orchestrator",
+        description: "Search and execute reusable multi-agent workflows",
+        category: CommandCategory::Agent,
+        shortcut: None,
+        example: "/workflows",
+    },
+    PaletteCommand {
+        slash_name: "/audit",
+        title: "Session Merkle Ledger",
+        description: "Cryptographically verify session SHA-256 Merkle chain",
+        category: CommandCategory::Agent,
+        shortcut: None,
+        example: "/audit",
+    },
+    PaletteCommand {
+        slash_name: "/mcps",
+        title: "MCP Server Registry",
+        description: "List configured MCP servers and active connection status",
+        category: CommandCategory::Tools,
+        shortcut: None,
+        example: "/mcps",
+    },
+    PaletteCommand {
+        slash_name: "/servers",
+        title: "Background Dev Servers",
+        description: "List OpenZ background dev servers & subprocesses",
+        category: CommandCategory::Tools,
+        shortcut: None,
+        example: "/servers",
+    },
+    PaletteCommand {
+        slash_name: "/stop-server",
+        title: "Stop Server Process",
+        description: "Stop background server instance by PID or all",
+        category: CommandCategory::Tools,
+        shortcut: None,
+        example: "/stop-server <id|all>",
+    },
+    PaletteCommand {
+        slash_name: "/logs",
+        title: "Structured Color Logs",
+        description: "Stream real-time color-coded structured logs",
+        category: CommandCategory::Tools,
+        shortcut: None,
+        example: "/logs | /logs --tail 50 --level debug",
+    },
+    PaletteCommand {
+        slash_name: "/device",
+        title: "Device & App Inventory",
+        description: "Manage local hardware and application inventory",
+        category: CommandCategory::Tools,
+        shortcut: None,
+        example: "/device",
+    },
+    PaletteCommand {
+        slash_name: "/sources",
+        title: "Saved Research Sources",
+        description: "Search and inspect saved knowledge source bookmarks",
+        category: CommandCategory::Tools,
+        shortcut: None,
+        example: "/sources",
+    },
+    PaletteCommand {
+        slash_name: "/exit",
+        title: "Exit OpenZ Session",
+        description: "Quit OpenZ interactive terminal session cleanly",
+        category: CommandCategory::System,
+        shortcut: Some("Ctrl+C"),
+        example: "/exit | quit | Ctrl+C",
+    },
+];
+
 // Re-export shared provider data from channels/mod.rs — single source of truth
 pub use crate::channels::{build_configured_providers, curated_models_for, PROVIDER_REGISTRY};
 
@@ -359,6 +615,10 @@ pub struct RatatuiApp {
     pub theme: Theme,
     /// Active interactive modal overlay
     pub modal: ModalState,
+    /// Active category index for spotlight slash palette
+    pub slash_category_idx: usize,
+    /// Selected index inside matching palette commands
+    pub slash_selected_idx: usize,
     /// Queue of user prompts submitted while agent is actively executing
     pub queued_prompts: std::collections::VecDeque<String>,
 }
@@ -372,6 +632,7 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/history", "Restore or switch chat sessions"),
     ("/new-session", "Start a clean conversation session"),
     ("/help", "Show help, keybindings and commands"),
+    ("/commands", "Open interactive command and capability catalog"),
     ("/mcps", "List configured MCP servers and active status"),
     ("/memory", "Inspect cognitive facts and knowledge graph"),
     ("/skills", "List active learned skills"),
@@ -426,6 +687,8 @@ impl RatatuiApp {
             spinner_idx: 0,
             theme: Theme::aura_dark(),
             modal: ModalState::None,
+            slash_category_idx: 0,
+            slash_selected_idx: 0,
             queued_prompts: std::collections::VecDeque::new(),
         }
     }
@@ -566,6 +829,102 @@ impl RatatuiApp {
             .filter(|(cmd, _)| cmd.starts_with(&input_str))
             .map(|(cmd, desc)| (cmd.to_string(), desc.to_string()))
             .collect()
+    }
+
+    /// Whether user is currently typing a slash command
+    /// Checks whether the user is typing a slash command (starts with '/' and hasn't started typing arguments)
+    pub fn has_active_slash_query(&self) -> bool {
+        self.typed_input.first() == Some(&'/') && !self.typed_input.contains(&' ')
+    }
+
+    /// Extract query text without leading slash
+    pub fn slash_search_text(&self) -> String {
+        let input: String = self.typed_input.iter().collect();
+        if let Some(stripped) = input.strip_prefix('/') {
+            stripped.trim().to_string()
+        } else {
+            String::new()
+        }
+    }
+
+    /// Matching palette commands based on active category and query
+    pub fn matching_palette_commands(&self) -> Vec<usize> {
+        let categories = CommandCategory::all();
+        let current_cat = categories[self.slash_category_idx % categories.len()];
+        let query = self.slash_search_text().to_lowercase();
+
+        let mut matches = Vec::new();
+        for (i, cmd) in PALETTE_COMMANDS.iter().enumerate() {
+            if current_cat != CommandCategory::All && cmd.category != current_cat {
+                continue;
+            }
+            if query.is_empty() {
+                matches.push(i);
+            } else {
+                let name = cmd.slash_name.trim_start_matches('/').to_lowercase();
+                let title = cmd.title.to_lowercase();
+                let desc = cmd.description.to_lowercase();
+                if name.starts_with(&query)
+                    || title.starts_with(&query)
+                    || name.contains(&query)
+                    || title.contains(&query)
+                    || desc.contains(&query)
+                {
+                    matches.push(i);
+                }
+            }
+        }
+
+        // Sort by match relevance: exact match first, prefix next, then substring
+        if !query.is_empty() {
+            matches.sort_by_key(|&idx| {
+                let cmd = &PALETTE_COMMANDS[idx];
+                let name = cmd.slash_name.trim_start_matches('/').to_lowercase();
+                let title = cmd.title.to_lowercase();
+                if name == query {
+                    0
+                } else if name.starts_with(&query) {
+                    1
+                } else if title.starts_with(&query) {
+                    2
+                } else if name.contains(&query) {
+                    3
+                } else if title.contains(&query) {
+                    4
+                } else {
+                    5
+                }
+            });
+        }
+
+        matches
+    }
+
+    /// Returns the currently selected palette command
+    pub fn selected_palette_command(&self) -> Option<&'static PaletteCommand> {
+        let matches = self.matching_palette_commands();
+        if matches.is_empty() {
+            None
+        } else {
+            let idx = self.slash_selected_idx.min(matches.len().saturating_sub(1));
+            Some(&PALETTE_COMMANDS[matches[idx]])
+        }
+    }
+
+    /// Cycle category tabs in spotlight palette (Tab / BackTab)
+    pub fn cycle_slash_category(&mut self, forward: bool) {
+        let total = CommandCategory::all().len();
+        if total == 0 {
+            return;
+        }
+        if forward {
+            self.slash_category_idx = (self.slash_category_idx + 1) % total;
+        } else if self.slash_category_idx == 0 {
+            self.slash_category_idx = total.saturating_sub(1);
+        } else {
+            self.slash_category_idx = self.slash_category_idx.saturating_sub(1);
+        }
+        self.slash_selected_idx = 0;
     }
 }
 

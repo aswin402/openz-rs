@@ -261,3 +261,82 @@ fn test_update_approx_tokens() {
     assert_eq!(app.approx_tokens, 2);
 }
 
+#[test]
+fn test_has_active_slash_query_and_search_text() {
+    let mut app = RatatuiApp::new(
+        "test-model".into(),
+        "test-provider".into(),
+        "cli:test".into(),
+    );
+    assert!(!app.has_active_slash_query());
+
+    // Normal text
+    app.typed_input = "hello world".chars().collect();
+    assert!(!app.has_active_slash_query());
+
+    // Single slash
+    app.typed_input = "/".chars().collect();
+    assert!(app.has_active_slash_query());
+    assert_eq!(app.slash_search_text(), "");
+
+    // Slash with search query
+    app.typed_input = "/model".chars().collect();
+    assert!(app.has_active_slash_query());
+    assert_eq!(app.slash_search_text(), "model");
+
+    // Command with space (arguments entered) is no longer a palette query
+    app.typed_input = "/model gpt-4o".chars().collect();
+    assert!(!app.has_active_slash_query());
+}
+
+#[test]
+fn test_matching_palette_commands_and_selection() {
+    let mut app = RatatuiApp::new(
+        "test-model".into(),
+        "test-provider".into(),
+        "cli:test".into(),
+    );
+    app.typed_input = "/".chars().collect();
+
+    let all_matches = app.matching_palette_commands();
+    assert!(!all_matches.is_empty());
+    assert_eq!(all_matches.len(), PALETTE_COMMANDS.len());
+
+    // Selected palette command defaults to 0
+    let selected = app.selected_palette_command().unwrap();
+    assert_eq!(selected.slash_name, PALETTE_COMMANDS[0].slash_name);
+
+    // Filter by query "help"
+    app.typed_input = "/help".chars().collect();
+    let help_matches = app.matching_palette_commands();
+    assert!(!help_matches.is_empty());
+    assert!(help_matches.iter().any(|&idx| PALETTE_COMMANDS[idx].slash_name == "/help"));
+}
+
+#[test]
+fn test_cycle_slash_category() {
+    let mut app = RatatuiApp::new(
+        "test-model".into(),
+        "test-provider".into(),
+        "cli:test".into(),
+    );
+    assert_eq!(app.slash_category_idx, 0); // CommandCategory::All
+
+    // Cycle forward: All -> System -> Agent -> Tools -> All
+    app.cycle_slash_category(true);
+    assert_eq!(app.slash_category_idx, 1);
+    app.cycle_slash_category(true);
+    assert_eq!(app.slash_category_idx, 2);
+    app.cycle_slash_category(true);
+    assert_eq!(app.slash_category_idx, 3);
+    app.cycle_slash_category(true);
+    assert_eq!(app.slash_category_idx, 0);
+
+    // Cycle backward: All -> Tools -> Agent -> System -> All
+    app.cycle_slash_category(false);
+    assert_eq!(app.slash_category_idx, 3);
+    app.cycle_slash_category(false);
+    assert_eq!(app.slash_category_idx, 2);
+}
+
+
