@@ -1,11 +1,14 @@
+pub mod animation;
 pub mod app;
 pub mod commands;
+pub mod diff_viewer;
 pub mod markdown;
 pub mod modals;
 pub mod session;
 pub mod theme;
 pub mod timeline;
 pub mod ui;
+pub mod welcome;
 
 pub use session::*;
 
@@ -28,6 +31,7 @@ use std::time::{Duration, Instant};
 pub enum TurnEvent {
     SyncSession(Vec<ChatMessage>),
     SingleMessage(ChatMessage),
+    Activity(animation::AgentActivity),
     Error(String),
 }
 
@@ -397,17 +401,30 @@ pub async fn handle_ratatui_tui() -> Result<()> {
 
         // Drain any incoming background responses from AgentLoop
         while let Ok(event) = turn_rx.try_recv() {
-            app.is_thinking = false;
-            app.work_start = None;
-            current_turn_handle = None;
             match event {
+                TurnEvent::Activity(act) => {
+                    app.set_activity(act);
+                    continue;
+                }
                 TurnEvent::SyncSession(msgs) => {
+                    app.is_thinking = false;
+                    app.work_start = None;
+                    app.clear_activity();
+                    current_turn_handle = None;
                     app.apply_sync_session(msgs);
                 }
                 TurnEvent::SingleMessage(msg) => {
+                    app.is_thinking = false;
+                    app.work_start = None;
+                    app.clear_activity();
+                    current_turn_handle = None;
                     app.messages.push(msg);
                 }
                 TurnEvent::Error(err) => {
+                    app.is_thinking = false;
+                    app.work_start = None;
+                    app.clear_activity();
+                    current_turn_handle = None;
                     app.messages
                         .push(ChatMessage::notice(format!("⚠ Error: {}", err)));
                 }
@@ -419,6 +436,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                 if let Some(next_prompt) = app.pop_next_prompt() {
                     app.is_thinking = true;
                     app.work_start = Some(Instant::now());
+                    app.set_activity(animation::AgentActivity::Thinking);
                     app.scroll_to_bottom();
                     let turn_session_key = session_key.read().await.clone();
                     current_turn_handle = Some(spawn_agent_turn(
@@ -954,6 +972,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     crate::shutdown::trigger_cli_cancel();
                                     app.is_thinking = false;
                                     app.work_start = None;
+                                    app.clear_activity();
                                     app.messages.push(ChatMessage::notice(
                                         "Turn interrupted by user.".to_string(),
                                     ));
@@ -1226,6 +1245,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         app.messages.push(ChatMessage::simple("user", input_str.clone()));
                                         app.is_thinking = true;
                                         app.work_start = Some(Instant::now());
+                                        app.set_activity(animation::AgentActivity::Thinking);
                                         app.scroll_to_bottom();
 
                                         let turn_session_key = session_key.read().await.clone();

@@ -339,4 +339,105 @@ fn test_cycle_slash_category() {
     assert_eq!(app.slash_category_idx, 2);
 }
 
+#[test]
+fn test_sanitize_thought_text() {
+    let raw = "<think>Let me break this down step by step.</think>";
+    let sanitized = sanitize_thought_text(raw);
+    assert_eq!(sanitized, "Let me break this down step by step.");
+
+    let mixed = "<thought>Thinking about auth</thought> and <antThinking>internal logic</antThinking>";
+    let sanitized_mixed = sanitize_thought_text(mixed);
+    assert_eq!(sanitized_mixed, "Thinking about auth and internal logic");
+}
+
+#[test]
+fn test_extract_thoughts_from_content() {
+    // 1. Single closed <think> tag with assistant message
+    let raw = "<think>Pondering life and code.</think>\nHere is the answer to your question.";
+    let (thought, content) = extract_thoughts_from_content(raw);
+    assert_eq!(thought.as_deref(), Some("Pondering life and code."));
+    assert_eq!(content, "Here is the answer to your question.");
+
+    // 2. Unclosed <think> tag (streaming in progress)
+    let raw_unclosed = "<think>Still reasoning through the architecture...";
+    let (thought_unclosed, content_unclosed) = extract_thoughts_from_content(raw_unclosed);
+    assert_eq!(
+        thought_unclosed.as_deref(),
+        Some("Still reasoning through the architecture...")
+    );
+    assert_eq!(content_unclosed, "");
+
+    // 3. Alternative <thought> tag
+    let raw_thought = "<thought>Verify file exists</thought>I will check the directory.";
+    let (thought_alt, content_alt) = extract_thoughts_from_content(raw_thought);
+    assert_eq!(thought_alt.as_deref(), Some("Verify file exists"));
+    assert_eq!(content_alt, "I will check the directory.");
+
+    // 4. Normal text without any tags
+    let raw_plain = "Standard response without thoughts.";
+    let (thought_none, content_plain) = extract_thoughts_from_content(raw_plain);
+    assert_eq!(thought_none, None);
+    assert_eq!(content_plain, "Standard response without thoughts.");
+}
+
+#[test]
+fn test_agent_activity_from_tool_call() {
+    use crate::channels::ratatui::animation::AgentActivity;
+
+    // Executing command
+    let activity = AgentActivity::from_tool_call(
+        "exec_command",
+        r#"{"command":"cargo test -p openz -j 1"}"#,
+    );
+    assert!(matches!(activity, AgentActivity::Debugging { .. }));
+
+    let activity = AgentActivity::from_tool_call("exec_command", r#"{"command":"echo hello"}"#);
+    assert!(matches!(activity, AgentActivity::ExecutingCommand { .. }));
+
+    // Internet research
+    let activity =
+        AgentActivity::from_tool_call("web_search", r#"{"query":"Rust Ratatui crate"}"#);
+    assert!(matches!(activity, AgentActivity::InternetResearch { .. }));
+
+    // Repo research
+    let activity = AgentActivity::from_tool_call("grep_search", r#"{"query":"AgentActivity"}"#);
+    assert!(matches!(activity, AgentActivity::RepoResearch { .. }));
+
+    // Editing file
+    let activity =
+        AgentActivity::from_tool_call("write_file", r#"{"path":"src/channels/ratatui/mod.rs"}"#);
+    assert!(matches!(activity, AgentActivity::EditingFile { .. }));
+
+    // Subagent
+    let activity =
+        AgentActivity::from_tool_call("delegate_task", r#"{"role":"code-reviewer"}"#);
+    assert!(matches!(activity, AgentActivity::SubagentWorking { .. }));
+}
+
+#[test]
+fn test_shimmer_spans_and_lerp_color() {
+    use crate::channels::ratatui::animation::{lerp_color, render_shimmer_spans};
+    use ratatui::style::Color;
+
+    let c1 = Color::Rgb(255, 0, 0);
+    let c2 = Color::Rgb(0, 0, 255);
+
+    // At t = 0.0 -> red
+    let c_start = lerp_color(c1, c2, 0.0);
+    assert_eq!(c_start, Color::Rgb(255, 0, 0));
+
+    // At t = 1.0 -> blue
+    let c_end = lerp_color(c1, c2, 1.0);
+    assert_eq!(c_end, Color::Rgb(0, 0, 255));
+
+    // At t = 0.5 -> intermediate
+    let c_mid = lerp_color(c1, c2, 0.5);
+    assert_eq!(c_mid, Color::Rgb(128, 0, 128));
+
+    // render_shimmer_spans count
+    let spans = render_shimmer_spans("OpenZ", c1, c2, 1000, 150.0, 0.45);
+    assert_eq!(spans.len(), 5);
+}
+
+
 

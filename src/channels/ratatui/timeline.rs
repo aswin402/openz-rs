@@ -1,6 +1,5 @@
 use super::app::RatatuiApp;
 use super::markdown::markdown_line_to_spans;
-use super::theme;
 use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
@@ -151,11 +150,20 @@ pub(crate) fn render_timeline(f: &mut Frame, app: &mut RatatuiApp, area: Rect) {
                 if let Some(ref reasoning) = msg.reasoning {
                     let reasoning_trimmed = reasoning.trim();
                     if !reasoning_trimmed.is_empty() {
+                        let max_t_width = (area.width.saturating_sub(6) as usize).max(20);
                         for r_line in reasoning_trimmed.lines() {
-                            lines.push(Line::from(vec![
-                                Span::styled("  L ", Style::default().fg(theme.muted)),
-                                Span::styled(r_line.to_string(), Style::default().fg(theme.muted)),
-                            ]));
+                            let chunks = split_line_into_chunks(r_line, max_t_width);
+                            for chunk in chunks {
+                                lines.push(Line::from(vec![
+                                    Span::styled("  │ ", Style::default().fg(theme.border)),
+                                    Span::styled(
+                                        chunk,
+                                        Style::default()
+                                            .fg(theme.muted)
+                                            .add_modifier(Modifier::ITALIC),
+                                    ),
+                                ]));
+                            }
                         }
                         lines.push(Line::from(String::new()));
                     }
@@ -396,37 +404,19 @@ pub(crate) fn render_timeline(f: &mut Frame, app: &mut RatatuiApp, area: Rect) {
 
     // ── Active Thinking Animation Indicator ──────────────────────────────────
     if app.is_thinking {
-        let frame_idx = app.spinner_idx % theme::SPINNER_FRAMES.len();
-        let spinner = theme::SPINNER_FRAMES[frame_idx];
-        let elapsed = app.work_start.map(|s| s.elapsed().as_secs()).unwrap_or(0);
-
-        // Animated dots for thinking pulse
-        let dots = match (app.spinner_idx / 3) % 4 {
-            0 => ".  ",
-            1 => ".. ",
-            2 => "...",
-            _ => "   ",
-        };
-
-        lines.push(Line::from(vec![
-            Span::styled("• ", Style::default().fg(theme.brand_accent)),
-            Span::styled(
-                format!("{} ", spinner),
-                Style::default()
-                    .fg(theme.brand_accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!("Thinking{} ", dots),
-                Style::default()
-                    .fg(theme.brand_white)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!("({}s • esc or ctrl+c to interrupt)", elapsed),
-                Style::default().fg(theme.muted),
-            ),
-        ]));
+        let elapsed_secs = app.work_start.map(|s| s.elapsed().as_secs_f64()).unwrap_or(0.0);
+        let activity = app
+            .current_activity
+            .as_ref()
+            .unwrap_or(&super::animation::AgentActivity::Thinking);
+        let live_line = super::animation::render_live_activity_line(
+            activity,
+            app.spinner_style,
+            app.elapsed_millis(),
+            elapsed_secs,
+            theme,
+        );
+        lines.push(live_line);
     }
 
     let paragraph = Paragraph::new(lines)
@@ -449,4 +439,30 @@ pub(crate) fn render_timeline(f: &mut Frame, app: &mut RatatuiApp, area: Rect) {
 
     let paragraph = paragraph.scroll((scroll_u16, 0));
     f.render_widget(paragraph, area);
+}
+
+fn split_line_into_chunks(line: &str, max_width: usize) -> Vec<String> {
+    if line.len() <= max_width {
+        return vec![line.to_string()];
+    }
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+    for word in line.split_whitespace() {
+        if current.is_empty() {
+            current.push_str(word);
+        } else if current.len() + 1 + word.len() <= max_width {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            chunks.push(current);
+            current = word.to_string();
+        }
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    if chunks.is_empty() {
+        chunks.push(line.to_string());
+    }
+    chunks
 }

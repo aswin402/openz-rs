@@ -21,6 +21,22 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &mut RatatuiApp) {
         .style(Style::default().bg(theme.bg_primary));
     f.render_widget(bg_block, f.area());
 
+    // If conversation is empty and agent is idle, render Zen Welcome Screen (minicode style)
+    if app.messages.is_empty() && !app.is_thinking {
+        super::welcome::render_welcome_screen(f, app, f.area());
+
+        // Floating Spotlight Slash Command Palette (if typing '/')
+        if app.has_active_slash_query() && !app.modal.is_active() {
+            render_slash_palette(f, app, f.area());
+        }
+
+        // Modal Dialogs (Overlay)
+        if app.modal.is_active() {
+            render_modal_overlay(f, app, f.area());
+        }
+        return;
+    }
+
     // Layout: Conversation Timeline (flex) -> Elevated Input Dock (3) -> Bottom Status Bar (1)
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -336,10 +352,23 @@ fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
         format!("{}", app.approx_tokens)
     };
 
+    let ratio = if limit_tokens > 0 {
+        (app.approx_tokens as f64) / (limit_tokens as f64)
+    } else {
+        0.0
+    };
+    let token_color = if ratio > 0.85 {
+        theme.destructive
+    } else if ratio > 0.60 {
+        theme.warning
+    } else {
+        theme.success
+    };
+
     footer_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
     footer_spans.push(Span::styled(
         format!("{}/{}", approx_tokens_str, limit_str),
-        Style::default().fg(theme.info),
+        Style::default().fg(token_color),
     ));
 
     // Queued prompts indicator
@@ -362,6 +391,17 @@ fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
             Style::default().fg(theme.info),
         ));
     }
+
+    // Right-aligned quick shortcut hints if terminal width allows
+    let right_hints = "[F1] Help · [Ctrl+L] Model · [Ctrl+H] History · [Ctrl+C] Exit";
+    let left_len: usize = footer_spans.iter().map(|s| s.width()).sum();
+    let available = area.width as usize;
+    if available > left_len + right_hints.len() + 4 {
+        let padding = available - left_len - right_hints.len() - 1;
+        footer_spans.push(Span::raw(" ".repeat(padding)));
+        footer_spans.push(Span::styled(right_hints, Style::default().fg(theme.muted)));
+    }
+
     let footer_line = Line::from(footer_spans);
     let p = Paragraph::new(footer_line).block(Block::default().borders(Borders::NONE));
     f.render_widget(p, area);

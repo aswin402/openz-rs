@@ -36,17 +36,147 @@ pub struct ChatMessage {
     pub ephemeral: bool,
 }
 
+pub const ALL_THOUGHT_TAGS: &[&str] = &[
+    "<think>",
+    "</think>",
+    "<thought>",
+    "</thought>",
+    "<thinking>",
+    "</thinking>",
+    "<reasoning>",
+    "</reasoning>",
+    "<antThinking>",
+    "</antThinking>",
+    "<Think>",
+    "</Think>",
+    "<Thought>",
+    "</Thought>",
+    "<Thinking>",
+    "</Thinking>",
+    "<Reasoning>",
+    "</Reasoning>",
+    "<THINK>",
+    "</THINK>",
+];
+
+pub const OPEN_THOUGHT_TAGS: &[&str] = &[
+    "<think>",
+    "<thought>",
+    "<thinking>",
+    "<reasoning>",
+    "<antThinking>",
+    "<Think>",
+    "<Thought>",
+    "<Thinking>",
+    "<Reasoning>",
+    "<THINK>",
+];
+
+pub const CLOSE_THOUGHT_TAGS: &[&str] = &[
+    "</think>",
+    "</thought>",
+    "</thinking>",
+    "</reasoning>",
+    "</antThinking>",
+    "</Think>",
+    "</Thought>",
+    "</Thinking>",
+    "</Reasoning>",
+    "</THINK>",
+];
+
+/// Strips all XML thinking tags
+pub fn sanitize_thought_text(raw: &str) -> String {
+    let mut s = raw.to_string();
+    for tag in ALL_THOUGHT_TAGS {
+        s = s.replace(tag, "");
+    }
+    s.trim().to_string()
+}
+
+/// Strips any stray XML thinking tags that might leak into assistant text
+pub fn sanitize_assistant_text(raw: &str) -> String {
+    let mut s = raw.to_string();
+    for tag in ALL_THOUGHT_TAGS {
+        s = s.replace(tag, "");
+    }
+    s
+}
+
+/// Extracts any thoughts enclosed in <think>...</think>, <thought>...</thought>, etc.
+/// Returns (Option<extracted_thought>, cleaned_content).
+pub fn extract_thoughts_from_content(raw: &str) -> (Option<String>, String) {
+    let mut thoughts = Vec::new();
+    let mut cleaned_content = String::new();
+    let mut remaining = raw;
+
+    while !remaining.is_empty() {
+        let earliest_open = OPEN_THOUGHT_TAGS
+            .iter()
+            .filter_map(|&tag| remaining.find(tag).map(|idx| (idx, tag.len())))
+            .min_by_key(|&(idx, _)| idx);
+
+        if let Some((start_idx, open_len)) = earliest_open {
+            cleaned_content.push_str(&remaining[..start_idx]);
+            let after_open = &remaining[start_idx + open_len..];
+
+            let earliest_close = CLOSE_THOUGHT_TAGS
+                .iter()
+                .filter_map(|&tag| after_open.find(tag).map(|idx| (idx, tag.len())))
+                .min_by_key(|&(idx, _)| idx);
+
+            if let Some((close_idx, close_len)) = earliest_close {
+                let thought_text = &after_open[..close_idx];
+                let sanitized = sanitize_thought_text(thought_text);
+                if !sanitized.is_empty() {
+                    thoughts.push(sanitized);
+                }
+                remaining = &after_open[close_idx + close_len..];
+                if remaining.starts_with("\r\n") {
+                    remaining = &remaining[2..];
+                } else if remaining.starts_with('\n') {
+                    remaining = &remaining[1..];
+                }
+            } else {
+                let sanitized = sanitize_thought_text(after_open);
+                if !sanitized.is_empty() {
+                    thoughts.push(sanitized);
+                }
+                remaining = "";
+            }
+        } else {
+            cleaned_content.push_str(remaining);
+            break;
+        }
+    }
+
+    let final_cleaned = sanitize_assistant_text(&cleaned_content);
+    let final_thought = if thoughts.is_empty() {
+        None
+    } else {
+        Some(thoughts.join("\n\n"))
+    };
+
+    (final_thought, final_cleaned)
+}
+
 impl ChatMessage {
-    /// Quick constructor — sets role + content, everything else defaults
+    /// Quick constructor — sets role + content, extracting embedded thoughts if assistant
     pub fn simple(role: &str, content: String) -> Self {
+        let (extracted_reasoning, cleaned_content) = if role == "assistant" {
+            extract_thoughts_from_content(&content)
+        } else {
+            (None, content)
+        };
+
         Self {
             role: role.to_string(),
-            content,
+            content: cleaned_content,
             is_tool: role == "tool",
             tool_name: None,
             tool_details: None,
             tool_summary: None,
-            reasoning: None,
+            reasoning: extracted_reasoning,
             thinking_time: None,
             tool_success: None,
             tool_duration_ms: None,
@@ -96,9 +226,16 @@ impl ChatMessage {
             .map(|s| s.to_string());
         let tool_success = msg.extra.get("tool_success").and_then(|v| v.as_bool());
 
+        let (extracted_thought, cleaned_content) = if msg.role == "assistant" {
+            extract_thoughts_from_content(&msg.content)
+        } else {
+            (None, msg.content.clone())
+        };
+        let reasoning = reasoning.or(extracted_thought);
+
         Self {
             role: msg.role.clone(),
-            content: msg.content.clone(),
+            content: cleaned_content,
             is_tool: msg.role == "tool",
             tool_name,
             tool_details,
@@ -621,6 +758,12 @@ pub struct RatatuiApp {
     pub slash_selected_idx: usize,
     /// Queue of user prompts submitted while agent is actively executing
     pub queued_prompts: std::collections::VecDeque<String>,
+    /// Current specific agent activity for live shimmering status
+    pub current_activity: Option<super::animation::AgentActivity>,
+    /// Selected spinner animation style
+    pub spinner_style: super::animation::SpinnerStyle,
+    /// Clock reference for smooth millisecond animations
+    pub start_time: Instant,
 }
 
 pub const SLASH_COMMANDS: &[(&str, &str)] = &[
@@ -690,7 +833,25 @@ impl RatatuiApp {
             slash_category_idx: 0,
             slash_selected_idx: 0,
             queued_prompts: std::collections::VecDeque::new(),
+            current_activity: None,
+            spinner_style: super::animation::SpinnerStyle::DualPillars,
+            start_time: Instant::now(),
         }
+    }
+
+    /// Milliseconds elapsed since the application started (for smooth animations)
+    pub fn elapsed_millis(&self) -> u64 {
+        self.start_time.elapsed().as_millis() as u64
+    }
+
+    /// Sets the current specific agent activity (e.g. EditingFile, WebResearch, etc.)
+    pub fn set_activity(&mut self, activity: super::animation::AgentActivity) {
+        self.current_activity = Some(activity);
+    }
+
+    /// Clears the active activity back to idle
+    pub fn clear_activity(&mut self) {
+        self.current_activity = None;
     }
 
     pub fn queue_prompt(&mut self, prompt: String) {
