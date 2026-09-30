@@ -1,4 +1,28 @@
-### v0.0.243 (Latest Release)
+### v0.0.244 (Latest Release)
+- **Ideas**:
+  - Input Dock & Activity Layout Parity with Minicode:
+    - **Live Thinking Indicator Pinned Above Input Dock**: Relocated the dynamic thinking, generating, and tool activity indicator line out of the scrolling conversation timeline in [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs) and placed it into a dedicated layout chunk immediately above the elevated input dock in [`src/channels/ratatui/ui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/ui.rs). When active (`is_thinking == true`), a 2-line activity chunk renders the animated spinner, shimmering gradient label, and elapsed timer, accompanied by a clean separation line before the input dock. When idle, the chunk collapses to 0 height, maximizing timeline viewport area.
+    - **Rounded Input Dock Card Aesthetics**: Updated `render_input_dock` and `render_welcome_screen` with `BorderType::Rounded`, matching Minicode's modern rounded card visual hierarchy.
+    - **1-Line Bottom Spacer**: Introduced a 1-line margin spacer (`Constraint::Length(1)`) between the bottom of the input dock and the bottom status bar, preventing UI crowding.
+    - **Horizontal Two-Column Status Bar**: Replaced the previous single-line combined status bar with a 2-column horizontal split (`Constraint::Min(20)` left, `Constraint::Length(25)` right): left column renders `provider:model | cwd · git:branch · ◇ MCP ... · [N queued] · ⚙ N srv`, and right column renders `approx_tokens / limit_tokens` color-coded and right-aligned (`Alignment::Right`), providing a balanced layout across varying terminal widths.
+- **Inspirations**:
+  - Minicode (`/home/aswin/programming/vscode/myProjects/ai_agent_tools/minicode`) 5-chunk vertical layout (`src/app/mod.rs`), `InputDock` rounded border styling (`src/ui/input.rs`), and two-column horizontal status bar (`src/ui/status.rs`).
+- **Sources & References**:
+  - [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs): Removed embedded thinking animation from timeline message flow so it does not scroll away.
+  - [`src/channels/ratatui/ui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/ui.rs): Updated `render_ratatui_ui` constraints (Timeline, Activity Bar, Input Dock, Spacer, Status Bar), added `BorderType::Rounded` to `render_input_dock`, and converted `render_status_bar` to a 2-column horizontal layout.
+  - [`src/channels/ratatui/welcome.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/welcome.rs): Added `BorderType::Rounded` to welcome screen input dock for visual consistency.
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Synchronous SemVer increment to `0.0.244`.
+- **Details & Metrics**:
+  - 36/36 Ratatui unit tests passing in 0.03s.
+  - 260 registered native tools invariant maintained (`test_native_tool_registration_names`).
+  - 0 clippy warnings (`cargo clippy -p openz -j 1 -- -D warnings`).
+- **Verification**:
+  - `cargo check -p openz -j 1`: PASS.
+  - `cargo test -p openz --lib channels::ratatui -j 1`: PASS (36/36).
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1`: PASS (1/1, 260 tools).
+  - `cargo clippy -p openz -j 1 -- -D warnings`: PASS (0 warnings).
+
+### v0.0.243
 - **Ideas**:
   - Unified CLI Invocations, Welcome Logo Parity & Memory-Safe Profiling:
     - **Single Command TUI Launch (`openz`)**: Streamlined the CLI entry point so running `openz` alone in a terminal directly launches the interactive Ratatui agent TUI. Replaced all legacy references to `openz agent` across documentation, system prompts, and channel error hints. Hidden the `agent` subcommand in Clap (`#[command(hide = true)]`) to declutter `--help` menus while preserving full backwards-compatibility.

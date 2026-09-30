@@ -144,6 +144,7 @@ pub fn render_welcome_screen(
 
     let input_block = Block::default()
         .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(Style::default().fg(theme.border))
         .style(Style::default().bg(theme.bg_input));
 

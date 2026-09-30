@@ -402,22 +402,6 @@ pub(crate) fn render_timeline(f: &mut Frame, app: &mut RatatuiApp, area: Rect) {
         }
     }
 
-    // ── Active Thinking Animation Indicator ──────────────────────────────────
-    if app.is_thinking {
-        let elapsed_secs = app.work_start.map(|s| s.elapsed().as_secs_f64()).unwrap_or(0.0);
-        let activity = app
-            .current_activity
-            .as_ref()
-            .unwrap_or(&super::animation::AgentActivity::Thinking);
-        let live_line = super::animation::render_live_activity_line(
-            activity,
-            app.spinner_style,
-            app.elapsed_millis(),
-            elapsed_secs,
-            theme,
-        );
-        lines.push(live_line);
-    }
 
     let paragraph = Paragraph::new(lines)
         .block(Block::default().borders(Borders::NONE))

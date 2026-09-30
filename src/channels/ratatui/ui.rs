@@ -6,19 +6,18 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph},
     Frame,
 };
 
 // ── Main Layout Renderer ────────────────────────────────────────────────────
 
 pub fn render_ratatui_ui(f: &mut Frame, app: &mut RatatuiApp) {
-    let theme = &app.theme;
-
     // Background fill
+    let bg_color = app.theme.bg_primary;
     let bg_block = Block::default()
         .borders(Borders::NONE)
-        .style(Style::default().bg(theme.bg_primary));
+        .style(Style::default().bg(bg_color));
     f.render_widget(bg_block, f.area());
 
     // If conversation is empty and agent is idle, render Zen Welcome Screen (minicode style)
@@ -37,31 +36,59 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &mut RatatuiApp) {
         return;
     }
 
-    // Layout: Conversation Timeline (flex) -> Elevated Input Dock (3) -> Bottom Status Bar (1)
+    // Layout: Conversation Timeline (flex) -> Live Activity (2 or 0) -> Elevated Input Dock (3) -> Spacer (1) -> Bottom Status Bar (1)
+    let activity_height = if app.is_thinking { 2 } else { 0 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(4),
-            Constraint::Length(3),
-            Constraint::Length(1),
+            Constraint::Min(4),                     // 0: Conversation Timeline
+            Constraint::Length(activity_height),    // 1: Live Activity Indicator (Thinking / Generating / Working)
+            Constraint::Length(3),                  // 2: Elevated Input Dock
+            Constraint::Length(1),                  // 3: Spacer below input dock
+            Constraint::Length(1),                  // 4: Minimal Bottom Status Line
         ])
         .split(f.area());
 
     // 1. Conversation Timeline
     render_timeline(f, app, chunks[0]);
 
-    // 2. Elevated Input Dock
-    render_input_dock(f, app, chunks[1]);
+    let theme = &app.theme;
 
-    // 3. Minimal Bottom Status Line
-    render_status_bar(f, app, chunks[2]);
+    // 2. Live Activity Indicator (pinned directly above input dock)
+    if app.is_thinking {
+        let elapsed_secs = app.work_start.map(|s| s.elapsed().as_secs_f64()).unwrap_or(0.0);
+        let activity = app
+            .current_activity
+            .as_ref()
+            .unwrap_or(&super::animation::AgentActivity::Thinking);
+        let live_line = super::animation::render_live_activity_line(
+            activity,
+            app.spinner_style,
+            app.elapsed_millis(),
+            elapsed_secs,
+            theme,
+        );
+        let mut padded_spans = vec![Span::raw(" ")];
+        padded_spans.extend(live_line.spans);
+        let activity_lines = vec![Line::from(padded_spans), Line::from(String::new())];
+        f.render_widget(
+            Paragraph::new(activity_lines).style(Style::default().bg(theme.bg_primary)),
+            chunks[1],
+        );
+    }
 
-    // 4. Floating Spotlight Slash Command Palette (if typing '/')
+    // 3. Elevated Input Dock
+    render_input_dock(f, app, chunks[2]);
+
+    // 4. Minimal Bottom Status Line
+    render_status_bar(f, app, chunks[4]);
+
+    // 5. Floating Spotlight Slash Command Palette (if typing '/')
     if app.has_active_slash_query() && !app.modal.is_active() {
         render_slash_palette(f, app, f.area());
     }
 
-    // 5. Modal Dialogs (Overlay)
+    // 6. Modal Dialogs (Overlay)
     if app.modal.is_active() {
         render_modal_overlay(f, app, f.area());
     }
@@ -74,6 +101,7 @@ fn render_input_dock(f: &mut Frame, app: &RatatuiApp, area: Rect) {
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.border))
         .style(Style::default().bg(theme.bg_input));
 
@@ -296,47 +324,74 @@ fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
     let (mcp_loaded, mcp_failed, _mcp_total) = crate::tools::mcp::get_mcp_stats();
     let mcp_done = crate::channels::cli::mcp::is_mcp_done();
 
-    let mut footer_spans = vec![
+    let provider_model = if app.model.starts_with(&app.provider) {
+        app.model.clone()
+    } else {
+        format!("{}:{}", app.provider, app.model)
+    };
+
+    let mut left_spans = vec![
         Span::styled(" ", Style::default()),
         Span::styled(
-            app.model.clone(),
+            provider_model,
             Style::default()
                 .fg(theme.warning)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" · ", Style::default().fg(theme.muted)),
+        Span::styled(" | ", Style::default().fg(theme.muted)),
         Span::styled(app.cwd_display.clone(), Style::default().fg(theme.info)),
     ];
 
     if let Some(branch) = RatatuiApp::get_git_branch(&app.workspace_root) {
-        footer_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
-        footer_spans.push(Span::styled(
+        left_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
+        left_spans.push(Span::styled(
             format!("git:{}", branch),
             Style::default().fg(theme.success),
         ));
     }
 
     // MCP status pill
-    footer_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
+    left_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
     if !mcp_done {
         let frame_idx = app.spinner_idx % theme::SPINNER_FRAMES.len();
-        footer_spans.push(Span::styled(
+        left_spans.push(Span::styled(
             format!("◇ MCP {} ", theme::SPINNER_FRAMES[frame_idx]),
             Style::default().fg(theme.warning),
         ));
     } else if mcp_failed == 0 {
-        footer_spans.push(Span::styled(
+        left_spans.push(Span::styled(
             format!("◇ MCP {}✓", mcp_loaded),
             Style::default().fg(theme.brand_accent),
         ));
     } else {
-        footer_spans.push(Span::styled(
+        left_spans.push(Span::styled(
             format!("◇ MCP {}✓ {}✗", mcp_loaded, mcp_failed),
             Style::default().fg(theme.destructive),
         ));
     }
 
-    // Token context & Dynamic Context Window
+    // Queued prompts indicator
+    if !app.queued_prompts.is_empty() {
+        left_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
+        left_spans.push(Span::styled(
+            format!("[{} queued]", app.queued_prompts.len()),
+            Style::default()
+                .fg(theme.brand_accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    // Background servers indicator
+    let bg_servers = crate::shutdown::list_registered_children();
+    if !bg_servers.is_empty() {
+        left_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
+        left_spans.push(Span::styled(
+            format!("⚙ {} srv", bg_servers.len()),
+            Style::default().fg(theme.info),
+        ));
+    }
+
+    // Token context & Dynamic Context Window (Right Side)
     let limit_tokens = crate::providers::DynamicContextRegistry::resolve_context_window(
         &app.model,
         &crate::config::schema::Config::default(),
@@ -365,34 +420,31 @@ fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
         theme.success
     };
 
-    footer_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
-    footer_spans.push(Span::styled(
-        format!("{}/{}", approx_tokens_str, limit_str),
-        Style::default().fg(token_color),
-    ));
-
-    // Queued prompts indicator
-    if !app.queued_prompts.is_empty() {
-        footer_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
-        footer_spans.push(Span::styled(
-            format!("[{} queued]", app.queued_prompts.len()),
+    let right_spans = vec![
+        Span::styled(
+            approx_tokens_str,
             Style::default()
-                .fg(theme.brand_accent)
+                .fg(token_color)
                 .add_modifier(Modifier::BOLD),
-        ));
-    }
+        ),
+        Span::styled(" / ", Style::default().fg(theme.muted)),
+        Span::styled(limit_str, Style::default().fg(theme.muted)),
+        Span::styled(" ", Style::default()),
+    ];
 
-    // Background servers indicator
-    let bg_servers = crate::shutdown::list_registered_children();
-    if !bg_servers.is_empty() {
-        footer_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
-        footer_spans.push(Span::styled(
-            format!("⚙ {} srv", bg_servers.len()),
-            Style::default().fg(theme.info),
-        ));
-    }
+    let status_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Min(20),
+            Constraint::Length(25),
+        ])
+        .split(area);
 
-    let footer_line = Line::from(footer_spans);
-    let p = Paragraph::new(footer_line).block(Block::default().borders(Borders::NONE));
-    f.render_widget(p, area);
+    let left_p = Paragraph::new(Line::from(left_spans)).block(Block::default().borders(Borders::NONE));
+    f.render_widget(left_p, status_chunks[0]);
+
+    let right_p = Paragraph::new(Line::from(right_spans))
+        .block(Block::default().borders(Borders::NONE))
+        .alignment(ratatui::layout::Alignment::Right);
+    f.render_widget(right_p, status_chunks[1]);
 }
