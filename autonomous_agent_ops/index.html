@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OpenZ — 24/7 Autonomous AI Agent Operations</title>
+  <style>
+    :root {
+      --bg: #090d16;
+      --card-bg: #0f172a;
+      --card-border: #1e293b;
+      --accent-cyan: #38bdf8;
+      --accent-indigo: #818cf8;
+      --accent-emerald: #34d399;
+      --accent-rose: #f472b6;
+      --accent-amber: #fbbf24;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-faint: #64748b;
+    }
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    body {
+      background: var(--bg);
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.6;
+      overflow-x: hidden;
+      padding-bottom: 60px;
+    }
+    a { color: var(--accent-cyan); text-decoration: none; }
+    header {
+      border-bottom: 1px solid var(--card-border);
+      padding: 18px 40px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: rgba(9, 13, 22, 0.85);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.5px;
+    }
+    .brand-badge {
+      font-size: 0.7rem;
+      background: rgba(56, 189, 248, 0.12);
+      color: var(--accent-cyan);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-weight: 600;
+    }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      padding: 6px 14px;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--accent-emerald);
+    }
+    .pulse-dot {
+      width: 8px;
+      height: 8px;
+      background: var(--accent-emerald);
+      border-radius: 50%;
+      box-shadow: 0 0 10px var(--accent-emerald);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.2); }
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 0 24px;
+    }
+    .hero {
+      text-align: center;
+      padding: 70px 0 50px;
+    }
+    .hero h1 {
+      font-size: 3rem;
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: -1px;
+      margin-bottom: 20px;
+      background: linear-gradient(135deg, #f8fafc 0%, #cbd5e1 50%, #38bdf8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .hero p {
+      font-size: 1.2rem;
+      color: var(--text-muted);
+      max-width: 760px;
+      margin: 0 auto 36px;
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px;
+      margin-bottom: 50px;
+    }
+    .kpi-card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 24px;
+      text-align: left;
+      transition: transform 0.2s, border-color 0.2s;
+    }
+    .kpi-card:hover {
+      transform: translateY(-2px);
+      border-color: #334155;
+    }
+    .kpi-value {
+      font-size: 2rem;
+      font-weight: 700;
+      color: var(--accent-cyan);
+      margin-bottom: 4px;
+    }
+    .kpi-label {
+      font-size: 0.85rem;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+    .section-title {
+      font-size: 1.6rem;
+      font-weight: 700;
+      margin: 50px 0 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .section-title::before {
+      content: "";
+      display: inline-block;
+      width: 4px;
+      height: 24px;
+      background: var(--accent-cyan);
+      border-radius: 2px;
+    }
+    .diag-container {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 24px;
+      margin-bottom: 40px;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+    }
+    .diag-container img, .diag-container svg {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 8px;
+    }
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 2fr 1fr;
+      gap: 20px;
+      margin-bottom: 40px;
+    }
+    @media (max-width: 900px) {
+      .dashboard-grid { grid-template-columns: 1fr; }
+      .hero h1 { font-size: 2.2rem; }
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 24px;
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 18px;
+      border-bottom: 1px solid #1e293b;
+      padding-bottom: 12px;
+    }
+    .card-title {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+    .metric-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+      font-size: 0.9rem;
+    }
+    .metric-row:last-child { border-bottom: none; }
+    .metric-name { color: var(--text-muted); }
+    .metric-val { font-family: monospace; font-weight: 600; color: var(--text-main); }
+    .badge-ok {
+      background: rgba(16, 185, 129, 0.15);
+      color: #34d399;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge-warn {
+      background: rgba(245, 158, 11, 0.15);
+      color: #fbbf24;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .log-box {
+      background: #050811;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 16px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.8rem;
+      color: #94a3b8;
+      max-height: 260px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+    .log-entry { margin-bottom: 6px; }
+    .log-ok { color: #34d399; }
+    .log-warn { color: #fbbf24; }
+    .log-info { color: #38bdf8; }
+    .tool-filter {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    .filter-btn {
+      background: #0f172a;
+      border: 1px solid #334155;
+      color: var(--text-muted);
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      cursor: pointer;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+    .filter-btn.active, .filter-btn:hover {
+      background: var(--accent-cyan);
+      color: #090d16;
+      border-color: var(--accent-cyan);
+      font-weight: 600;
+    }
+    .tool-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+    .tool-table th, .tool-table td {
+      padding: 10px 14px;
+      text-align: left;
+      border-bottom: 1px solid #1e293b;
+    }
+    .tool-table th {
+      color: var(--text-faint);
+      font-weight: 600;
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .tool-table tr:hover td {
+      background: rgba(255, 255, 255, 0.02);
+    }
+    .tool-tag {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      background: #1e293b;
+      color: #cbd5e1;
+    }
+    code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      background: #1e293b;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-size: 0.85rem;
+      color: #f1f5f9;
+    }
+    .code-block {
+      background: #050811;
+      border: 1px solid #1e293b;
+      border-radius: 8px;
+      padding: 16px;
+      font-family: monospace;
+      font-size: 0.85rem;
+      color: #cbd5e1;
+      overflow-x: auto;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="brand">
+      <span>OpenZ</span>
+      <span class="brand-badge">v0.0.247</span>
+      <span style="font-size: 0.85rem; color: var(--text-muted); font-weight: 400;">Autonomous 24/7 Agent Ops</span>
+    </div>
+    <div class="status-pill">
+      <span class="pulse-dot"></span>
+      <span>AUTONOMOUS ENGINE ACTIVE</span>
+    </div>
+  </header>
+
+  <div class="container">
+    <section class="hero">
+      <h1>True 24/7 Unattended AI Operations</h1>
+      <p>High-performance, async personal AI agent framework in Rust. Monolithic zero-IPC architecture compiling 260 native tools directly into a crash-resilient autonomous daemon.</p>
+    </section>
+
+    <!-- KPI Row -->
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-value">260</div>
+        <div class="kpi-label">Native In-Process Tools</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-value">&lt; 4ms</div>
+        <div class="kpi-label">Tool IPC Overhead (Zero Socket IPC)</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-value">120 Turns</div>
+        <div class="kpi-label">Automatic Headroom Compaction</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-value">WAL Safe</div>
+        <div class="kpi-label">Crash-Proof Session Recovery</div>
+      </div>
+    </div>
+
+    <!-- Visual Architecture Section -->
+    <div class="section-title">System Architecture &amp; Autonomous Pipeline</div>
+    <div class="diag-container">
+      <img src="assets/agent_architecture.svg" alt="OpenZ 24/7 Autonomous Agent Architecture">
+    </div>
+
+    <!-- Live Telemetry & Control Dashboard -->
+    <div class="section-title">Live Telemetry &amp; Operational Status</div>
+    <div class="dashboard-grid">
+      <!-- Left: Node Status & Heartbeat Monitor -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Chronos Heartbeat Telemetry (`heartbeat_audit.sh`)</div>
+          <span class="badge-ok">Cron: */5 * * * *</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">Daemon Status</span>
+          <span class="metric-val"><span class="badge-ok">HEALTHY (PID 45192)</span></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">System Load (1m, 5m avg)</span>
+          <span class="metric-val">0.68, 0.74 (8 CPU Cores)</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">Resident Memory (RSS)</span>
+          <span class="metric-val">84.2 MB / 4.0 GB Quota</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">Disk Footprint (~/.openz)</span>
+          <span class="metric-val"><span class="badge-warn">96% (21 GB free on /)</span></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">WAL Session Integrity</span>
+          <span class="metric-val">100% (0 corrupt files)</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">Active Curator State</span>
+          <span class="metric-val">Async background task completed</span>
+        </div>
+
+        <div style="margin-top: 18px;">
+          <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 8px; font-weight: 600;">LIVE HEARTBEAT LOG STREAM:</div>
+          <div class="log-box">
+<span class="log-info">2026-10-02 22:50:00</span> | status=OK | load=0.55,0.61 | disk=96% | mem_avail=16420MB | openz_pid=45192 | issues:none
+<span class="log-info">2026-10-02 22:52:00</span> | status=OK | load=0.62,0.65 | disk=96% | mem_avail=16390MB | openz_pid=45192 | issues:none
+<span class="log-ok">2026-10-02 22:54:01</span> | status=OK | load=0.68,0.74 | disk=96% | mem_avail=16350MB | openz_pid=45192 | issues:none
+<span class="log-ok">[CHRONOS]</span> Heartbeat audit verified successfully. All 260 native tools bound and ready.</div>
+        </div>
+      </div>
+
+      <!-- Right: Subsystem Health Matrix -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Subsystem Matrix</div>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">SearchXyz Web Engine</span>
+          <span class="badge-ok">In-Process Tantivy</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">OpenDoc Document Engine</span>
+          <span class="badge-ok">Calamine &amp; RDocx</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">OpenMedia Vector Subsystem</span>
+          <span class="badge-ok">resvg &amp; tiny_skia</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">Wavyte Video Pipeline</span>
+          <span class="badge-ok">Software CPU MP4</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">Graph Memory &amp; Vectors</span>
+          <span class="badge-ok">FastEmbed 384d</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">Seccomp Linux BPF Sandbox</span>
+          <span class="badge-ok">Strict (~110 Syscalls)</span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">Background Curator</span>
+          <span class="badge-ok">Skills Synthesis</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Interactive Tool Catalog -->
+    <div class="section-title">260 Native Tools Catalog</div>
+    <div class="card">
+      <div class="tool-filter">
+        <button class="filter-btn active" onclick="filterTools('all')">All Subsystems (260)</button>
+        <button class="filter-btn" onclick="filterTools('search')">SearchXyz (28)</button>
+        <button class="filter-btn" onclick="filterTools('opendoc')">OpenDoc (32)</button>
+        <button class="filter-btn" onclick="filterTools('openmedia')">OpenMedia (31)</button>
+        <button class="filter-btn" onclick="filterTools('wavyte')">Wavyte Video (14)</button>
+        <button class="filter-btn" onclick="filterTools('memory')">Memory &amp; Graph (42)</button>
+        <button class="filter-btn" onclick="filterTools('shell')">Shell &amp; Filesystem (24)</button>
+        <button class="filter-btn" onclick="filterTools('cron')">Chronos &amp; Scheduling (16)</button>
+      </div>
+
+      <table class="tool-table">
+        <thead>
+          <tr>
+            <th>Tool Identifier</th>
+            <th>Category</th>
+            <th>Safety / Sandbox</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody id="tool-tbody">
+          <tr data-cat="search">
+            <td><code>searchxyz_search_web</code></td>
+            <td><span class="tool-tag">SearchXyz</span></td>
+            <td><span class="badge-ok">Read-Only</span></td>
+            <td>In-process keyless DuckDuckGo web search engine with snippet extraction</td>
+          </tr>
+          <tr data-cat="search">
+            <td><code>searchxyz_index_content</code></td>
+            <td><span class="tool-tag">SearchXyz</span></td>
+            <td><span class="badge-ok">Safe</span></td>
+            <td>Ingests documents directly into local Tantivy full-text search index</td>
+          </tr>
+          <tr data-cat="search">
+            <td><code>searchxyz_query_graph</code></td>
+            <td><span class="tool-tag">SearchXyz</span></td>
+            <td><span class="badge-ok">Read-Only</span></td>
+            <td>Traverses entity knowledge graph edges with multi-depth neighbor search</td>
+          </tr>
+          <tr data-cat="opendoc">
+            <td><code>opendoc_create_docx</code></td>
+            <td><span class="tool-tag">OpenDoc</span></td>
+            <td><span class="badge-ok">Safe</span></td>
+            <td>Generates Microsoft Word (.docx) documents with headings, paragraphs, styling</td>
+          </tr>
+          <tr data-cat="opendoc">
+            <td><code>opendoc_create_xlsx</code></td>
+            <td><span class="tool-tag">OpenDoc</span></td>
+            <td><span class="badge-ok">Safe</span></td>
+            <td>Builds structured Excel spreadsheets with multi-sheet and table support</td>
+          </tr>
+          <tr data-cat="opendoc">
+            <td><code>opendoc_read_document_text</code></td>
+            <td><span class="tool-tag">OpenDoc</span></td>
+            <td><span class="badge-ok">Read-Only</span></td>
+            <td>Extracts plain text and preserves markdown table structures from office documents</td>
+          </tr>
+          <tr data-cat="openmedia">
+            <td><code>openmedia_create_svg</code></td>
+            <td><span class="tool-tag">OpenMedia</span></td>
+            <td><span class="badge-ok">Safe</span></td>
+            <td>Generates vector graphics with SVG elements, shapes, gradients, and typography</td>
+          </tr>
+          <tr data-cat="openmedia">
+            <td><code>openmedia_diagram_generate_mermaid</code></td>
+            <td><span class="tool-tag">OpenMedia</span></td>
+            <td><span class="badge-ok">Safe</span></td>
+            <td>Compiles Mermaid flowcharts, sequence diagrams, and class graphs to vector SVG</td>
+          </tr>
+          <tr data-cat="openmedia">
+            <td><code>openmedia_rasterize_svg</code></td>
+            <td><span class="tool-tag">OpenMedia</span></td>
+            <td><span class="badge-ok">Safe</span></td>
+            <td>Renders vector SVG to high-DPI raster PNG via resvg and tiny_skia</td>
+          </tr>
+          <tr data-cat="wavyte">
+            <td><code>generate_video</code></td>
+            <td><span class="tool-tag">Wavyte</span></td>
+            <td><span class="badge-ok">Safe</span></td>
+            <td>Renders programmatic MP4 videos with animated SVG motion paths and keyframes</td>
+          </tr>
+          <tr data-cat="memory">
+            <td><code>memory_graph_add_relation</code></td>
+            <td><span class="tool-tag">Memory</span></td>
+            <td><span class="badge-ok">Safe</span></td>
+            <td>Stores subject-predicate-object semantic relations in persistent SQLite graph</td>
+          </tr>
+          <tr data-cat="memory">
+            <td><code>headroom_retrieve_original</code></td>
+            <td><span class="tool-tag">Memory</span></td>
+            <td><span class="badge-warn">Gated</span></td>
+            <td>Retrieves original uncompressed tool output from CCR cache by content hash</td>
+          </tr>
+          <tr data-cat="shell">
+            <td><code>exec_command</code></td>
+            <td><span class="tool-tag">Shell</span></td>
+            <td><span class="badge-warn">Seccomp Sandbox</span></td>
+            <td>Executes subprocess commands sandboxed with Linux BPF filters &amp; RLIMIT limits</td>
+          </tr>
+          <tr data-cat="cron">
+            <td><code>schedule_job</code></td>
+            <td><span class="tool-tag">Chronos</span></td>
+            <td><span class="badge-ok">Safe</span></td>
+            <td>Registers recurring autonomous cron jobs with standard 5-part cron syntax</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Production Deployment Runbook -->
+    <div class="section-title">24/7 Production Deployment Runbook</div>
+    <div class="card">
+      <p style="color: var(--text-muted); margin-bottom: 12px;">Deploy OpenZ as an autonomous system service running continuously under systemd:</p>
+      <div class="code-block">
+# 1. Install OpenZ binary globally
+./localinstall.sh --balanced
+
+# 2. Configure systemd unit (/etc/systemd/system/openz.service)
+[Unit]
+Description=OpenZ 24/7 Autonomous AI Agent Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=aswin
+ExecStart=/home/aswin/.cargo/bin/openz gateway --port 8765 --host 127.0.0.1
+Restart=always
+RestartSec=5s
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
+
+# 3. Enable and start daemon
+sudo systemctl daemon-reload
+sudo systemctl enable --now openz.service
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function filterTools(category) {
+      const buttons = document.querySelectorAll('.filter-btn');
+      buttons.forEach(btn => btn.classList.remove('active'));
+      event.target.classList.add('active');
+
+      const rows = document.querySelectorAll('#tool-tbody tr');
+      rows.forEach(row => {
+        if (category === 'all' || row.getAttribute('data-cat') === category) {
+          row.style.display = '';
+        } else {
+          row.style.display = 'none';
+        }
+      });
+    }
+  </script>
+</body>
+</html>
