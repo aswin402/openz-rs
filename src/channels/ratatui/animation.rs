@@ -39,11 +39,11 @@ pub const PARTICLE_ORBIT_FRAMES: &[&str] = &["⠋", "⠙", "⠚", "⠞", "⠦", 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SpinnerStyle {
     #[default]
+    BrailleWave,
     DualPillars,
     Quadrants,
     PulseMatrix,
     Concentric,
-    BrailleWave,
     CornerAngles,
     ScannerBar,
     ParticleOrbit,
@@ -52,14 +52,15 @@ pub enum SpinnerStyle {
 impl SpinnerStyle {
     pub fn from_id(id: &str) -> Self {
         match id {
+            "braille_wave" => SpinnerStyle::BrailleWave,
+            "dual_pillars" => SpinnerStyle::DualPillars,
             "quadrants" => SpinnerStyle::Quadrants,
             "pulse_matrix" => SpinnerStyle::PulseMatrix,
             "concentric" => SpinnerStyle::Concentric,
-            "braille_wave" => SpinnerStyle::BrailleWave,
             "corner_angles" => SpinnerStyle::CornerAngles,
             "scanner_bar" => SpinnerStyle::ScannerBar,
             "particle_orbit" => SpinnerStyle::ParticleOrbit,
-            _ => SpinnerStyle::DualPillars,
+            _ => SpinnerStyle::BrailleWave,
         }
     }
 
@@ -83,12 +84,19 @@ pub enum AgentActivity {
     Thinking,
     Working,
     Responding,
+    Generating,
+    Planning,
+    Writing { target: String },
+    Analyzing { task: String },
     InternetResearch { query: String },
+    DeepResearch { query: String },
     RepoResearch { target: String },
     EditingFile { path: String },
     Debugging { step: String },
     ExecutingCommand { command: String },
     SubagentWorking { role: String },
+    DocumentProcessing { task: String },
+    MediaGenerating { task: String },
     CompactingContext,
 }
 
@@ -97,7 +105,13 @@ impl AgentActivity {
     pub fn from_tool_call(tool: &str, args_str: &str) -> Self {
         let tool_lower = tool.to_ascii_lowercase();
 
-        // 1. Internet / Web Research
+        // 1. Deep Research
+        if tool_lower.contains("deep_research") || tool_lower.contains("deep research") {
+            let query = Self::extract_arg_or_default(args_str, &["query", "topic", "prompt", "target"], "research topic");
+            return AgentActivity::DeepResearch { query };
+        }
+
+        // 2. Internet / Web Research
         if tool_lower == "search_web"
             || tool_lower == "web_fetch"
             || tool_lower == "fetch_or_browse"
@@ -112,25 +126,53 @@ impl AgentActivity {
             return AgentActivity::InternetResearch { query };
         }
 
-        // 2. Code Edits & File Writing
-        if tool_lower == "patch_file"
-            || tool_lower == "write_file"
+        // 3. Document Processing (DOCX, XLSX, PPTX, PDF)
+        if tool_lower.contains("opendoc") || tool_lower.contains("read_doc") || tool_lower.contains("doc_reader") {
+            let task = Self::extract_arg_or_default(args_str, &["file_path", "path", "title"], "document");
+            return AgentActivity::DocumentProcessing { task };
+        }
+
+        // 4. Media & Creative Generation (Video, SVG, Chart, Diagram, Image)
+        if tool_lower.contains("openmedia")
+            || tool_lower.contains("generate_video")
+            || tool_lower.contains("generate_image")
+            || tool_lower.contains("svg_animator")
+            || tool_lower.contains("html_video")
+            || tool_lower.contains("video")
+            || tool_lower.contains("image")
+        {
+            let task = Self::extract_arg_or_default(args_str, &["title", "output_path", "prompt", "diagram_type"], "media asset");
+            return AgentActivity::MediaGenerating { task };
+        }
+
+        // 5. File Writing (write_file, write_to_file, create_file)
+        if tool_lower == "write_file"
+            || tool_lower == "write_to_file"
             || tool_lower == "create_file"
+            || (tool_lower.contains("write") && !tool_lower.contains("db_write"))
+        {
+            let target =
+                Self::extract_arg_or_default(args_str, &["target_file", "path", "file_path", "target"], "file");
+            return AgentActivity::Writing { target };
+        }
+
+        // 6. Code Edits & File Patching
+        if tool_lower == "patch_file"
             || tool_lower == "replace_file_content"
+            || tool_lower == "multi_replace_file_content"
             || tool_lower == "edit_file"
             || tool_lower == "replace_lines"
             || tool_lower == "ast_replace_node"
             || tool_lower.contains("patch")
             || tool_lower.contains("edit")
-            || tool_lower.contains("write")
             || tool_lower.contains("replace")
         {
             let path =
-                Self::extract_arg_or_default(args_str, &["path", "file_path", "target"], "file");
+                Self::extract_arg_or_default(args_str, &["target_file", "path", "file_path", "target"], "file");
             return AgentActivity::EditingFile { path };
         }
 
-        // 3. Command Execution & Debugging / Verification
+        // 7. Command Execution & Debugging / Verification
         if tool_lower == "exec_cmd"
             || tool_lower == "sandbox_exec"
             || tool_lower == "run_command"
@@ -163,10 +205,20 @@ impl AgentActivity {
             }
         }
 
-        // 4. Subagents & Orchestrator
+        // 8. Planning & Structured Reasoning
+        if tool_lower.contains("sequentialthinking")
+            || tool_lower.contains("reasoning")
+            || tool_lower.contains("think")
+            || tool_lower.contains("plan")
+        {
+            return AgentActivity::Planning;
+        }
+
+        // 9. Subagents & Orchestrator
         if tool_lower.contains("subagent")
             || tool_lower.contains("orchestrat")
             || tool_lower.contains("delegate")
+            || tool_lower.contains("sop")
             || tool_lower.contains("swarm")
         {
             let role =
@@ -174,7 +226,7 @@ impl AgentActivity {
             return AgentActivity::SubagentWorking { role };
         }
 
-        // 5. Codebase & Repo Research
+        // 10. Codebase & Repo Research
         if tool_lower == "read_file"
             || tool_lower == "find_files"
             || tool_lower == "grep_search"
@@ -192,13 +244,13 @@ impl AgentActivity {
         {
             let target = Self::extract_arg_or_default(
                 args_str,
-                &["query", "path", "symbol", "name", "pattern"],
+                &["query", "path", "symbol", "name", "pattern", "target"],
                 "codebase",
             );
             return AgentActivity::RepoResearch { target };
         }
 
-        // 6. Context Compaction
+        // 11. Context Compaction
         if tool_lower.contains("compact") || tool_lower.contains("headroom") {
             return AgentActivity::CompactingContext;
         }
@@ -208,7 +260,13 @@ impl AgentActivity {
     }
 
     fn extract_arg_or_default(args_str: &str, keys: &[&str], default: &str) -> String {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(args_str) {
+        let trimmed = args_str.trim();
+        if trimmed.is_empty() {
+            return default.to_string();
+        }
+
+        // 1. Try JSON parsing
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
             for key in keys {
                 if let Some(val) = v.get(*key).and_then(|val| val.as_str()) {
                     let s = val.trim();
@@ -222,7 +280,139 @@ impl AgentActivity {
                 }
             }
         }
+
+        // 2. Try parsing key: "value" from formatted strings
+        for key in keys {
+            let pattern = format!("{}:", key);
+            if let Some(pos) = trimmed.find(&pattern) {
+                let rest = trimmed[pos + pattern.len()..].trim();
+                let extracted = if let Some(stripped) = rest.strip_prefix('"') {
+                    if let Some(end_quote) = stripped.find('"') {
+                        &stripped[..end_quote]
+                    } else {
+                        stripped
+                    }
+                } else {
+                    rest.split(',').next().unwrap_or(rest).trim()
+                };
+                let clean = extracted.trim();
+                if !clean.is_empty() {
+                    return if clean.len() > 36 {
+                        format!("{}…", &clean[..35])
+                    } else {
+                        clean.to_string()
+                    };
+                }
+            }
+        }
+
+        // 3. If it starts with quotes, extract quoted content
+        if let Some(stripped) = trimmed.strip_prefix('"') {
+            if let Some(end_quote) = stripped.find('"') {
+                let clean = &stripped[..end_quote];
+                if !clean.is_empty() {
+                    return if clean.len() > 36 {
+                        format!("{}…", &clean[..35])
+                    } else {
+                        clean.to_string()
+                    };
+                }
+            }
+        }
+
+        // 4. If arguments is just a simple non-empty string under 36 chars without commas/colons
+        if !trimmed.contains(':') && !trimmed.contains('{') && trimmed.len() <= 36 {
+            return trimmed.trim_matches('"').to_string();
+        }
+
         default.to_string()
+    }
+
+    /// Derives an initial context-aware activity from the user's prompt text
+    pub fn from_user_prompt(prompt: &str) -> Self {
+        let trimmed = prompt.trim();
+        let lower = trimmed.to_ascii_lowercase();
+
+        // 1. Research / Web queries
+        if lower.starts_with("search ")
+            || lower.starts_with("find ")
+            || lower.starts_with("look up ")
+            || lower.starts_with("what is ")
+            || lower.starts_with("who is ")
+            || lower.contains("deep research")
+            || lower.contains("research ")
+        {
+            let query = Self::extract_prompt_summary(trimmed);
+            if lower.contains("deep research") {
+                return AgentActivity::DeepResearch { query };
+            }
+            return AgentActivity::InternetResearch { query };
+        }
+
+        // 2. Writing / Creating code or files
+        if lower.starts_with("write ")
+            || lower.starts_with("create ")
+            || lower.starts_with("implement ")
+            || lower.starts_with("build ")
+            || lower.starts_with("code ")
+            || lower.starts_with("generate ")
+            || lower.starts_with("add ")
+        {
+            let target = Self::extract_prompt_summary(trimmed);
+            return AgentActivity::Writing { target };
+        }
+
+        // 3. Testing / Debugging / Checking
+        if lower.starts_with("test ")
+            || lower.starts_with("check ")
+            || lower.starts_with("debug ")
+            || lower.starts_with("fix ")
+            || lower.starts_with("verify ")
+            || lower.starts_with("run ")
+        {
+            let step = Self::extract_prompt_summary(trimmed);
+            return AgentActivity::Debugging { step };
+        }
+
+        // 4. Analysis / Review / Explanations
+        if lower.starts_with("analyze ")
+            || lower.starts_with("explain ")
+            || lower.starts_with("review ")
+            || lower.starts_with("why ")
+            || lower.starts_with("how ")
+            || lower.starts_with("audit ")
+        {
+            let task = Self::extract_prompt_summary(trimmed);
+            return AgentActivity::Analyzing { task };
+        }
+
+        // 5. Planning
+        if lower.starts_with("plan ")
+            || lower.starts_with("design ")
+            || lower.starts_with("outline ")
+            || lower.starts_with("architect ")
+        {
+            return AgentActivity::Planning;
+        }
+
+        // Default to Thinking
+        AgentActivity::Thinking
+    }
+
+    fn extract_prompt_summary(prompt: &str) -> String {
+        let first_line = prompt.lines().next().unwrap_or(prompt).trim();
+        let cleaned = first_line
+            .strip_prefix("please ")
+            .or_else(|| first_line.strip_prefix("Please "))
+            .or_else(|| first_line.strip_prefix("can you "))
+            .or_else(|| first_line.strip_prefix("Can you "))
+            .unwrap_or(first_line);
+
+        if cleaned.len() > 36 {
+            format!("{}…", &cleaned[..35])
+        } else {
+            cleaned.to_string()
+        }
     }
 }
 
@@ -348,7 +538,7 @@ pub fn render_spinner_spans(
             let idx = ((millis / 80) as usize) % BRAILLE_SPINNER_FRAMES.len();
             vec![Span::styled(
                 format!("{}  ", BRAILLE_SPINNER_FRAMES[idx]),
-                Style::default().fg(c1).add_modifier(Modifier::BOLD),
+                Style::default().fg(theme.brand_accent).add_modifier(Modifier::BOLD),
             )]
         }
         SpinnerStyle::CornerAngles => {
@@ -388,42 +578,67 @@ pub fn render_live_activity_line(
         AgentActivity::Thinking => (
             "Thinking...".to_string(),
             theme.brand_accent,
-            theme.highlight,
+            theme.brand_white,
         ),
-        AgentActivity::Working => ("Working...".to_string(), theme.brand_accent, theme.info),
-        AgentActivity::Responding => ("Generating response...".to_string(), theme.info, theme.brand_accent),
+        AgentActivity::Working => ("Working...".to_string(), theme.brand_accent, theme.brand_white),
+        AgentActivity::Responding => ("Generating response...".to_string(), theme.info, theme.brand_white),
+        AgentActivity::Generating => ("Generating response...".to_string(), theme.info, theme.brand_white),
+        AgentActivity::Planning => ("Planning next steps...".to_string(), theme.highlight, theme.brand_white),
+        AgentActivity::Writing { target } => (
+            format!("Writing {}...", target),
+            theme.success,
+            theme.brand_white,
+        ),
+        AgentActivity::Analyzing { task } => (
+            format!("Analyzing {}...", task),
+            theme.warning,
+            theme.brand_white,
+        ),
         AgentActivity::InternetResearch { query } => {
-            (format!("Searching web: \"{}\"...", query), theme.info, theme.success)
+            (format!("Searching web: \"{}\"...", query), theme.info, theme.brand_white)
+        }
+        AgentActivity::DeepResearch { query } => {
+            (format!("Deep research: \"{}\"...", query), theme.info, theme.brand_white)
         }
         AgentActivity::RepoResearch { target } => (
             format!("Searching codebase: {}...", target),
             theme.info,
-            theme.brand_accent,
+            theme.brand_white,
         ),
         AgentActivity::EditingFile { path } => (
             format!("Editing {}...", path),
             theme.info,
-            theme.brand_accent,
+            theme.brand_white,
         ),
         AgentActivity::Debugging { step } => (
             format!("Running check: {}...", step),
             theme.warning,
-            theme.brand_accent,
+            theme.brand_white,
         ),
         AgentActivity::ExecutingCommand { command } => (
             format!("Executing: {}...", command),
             theme.info,
-            theme.brand_accent,
+            theme.brand_white,
         ),
         AgentActivity::SubagentWorking { role } => (
             format!("Subagent active: {}...", role),
-            theme.highlight,
             theme.brand_accent,
+            theme.brand_white,
+        ),
+        AgentActivity::DocumentProcessing { task } => (
+            format!("Processing document: {}...", task),
+            theme.warning,
+            theme.brand_white,
+        ),
+        AgentActivity::MediaGenerating { task } => (
+            format!("Generating media: {}...", task),
+            theme.highlight,
+            theme.brand_white,
         ),
         AgentActivity::CompactingContext => (
             "Compacting memory...".to_string(),
             theme.muted,
-            theme.text_primary,
+            theme.brand_white,
         ),
     };
 

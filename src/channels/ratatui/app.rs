@@ -372,6 +372,22 @@ impl ChatMessage {
             ephemeral: false,
         }
     }
+
+    pub fn thought(reasoning: String, thinking_time: Option<f64>) -> Self {
+        Self {
+            role: "assistant".to_string(),
+            content: String::new(),
+            is_tool: false,
+            tool_name: None,
+            tool_details: None,
+            tool_summary: None,
+            reasoning: Some(reasoning),
+            thinking_time,
+            tool_success: None,
+            tool_duration_ms: None,
+            ephemeral: false,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -834,7 +850,7 @@ impl RatatuiApp {
             slash_selected_idx: 0,
             queued_prompts: std::collections::VecDeque::new(),
             current_activity: None,
-            spinner_style: super::animation::SpinnerStyle::DualPillars,
+            spinner_style: super::animation::SpinnerStyle::BrailleWave,
             start_time: Instant::now(),
         }
     }
@@ -852,6 +868,96 @@ impl RatatuiApp {
     /// Clears the active activity back to idle
     pub fn clear_activity(&mut self) {
         self.current_activity = None;
+    }
+
+    /// Handles live start of a tool call
+    pub fn handle_tool_start(&mut self, name: String, details: String) {
+        let activity = super::animation::AgentActivity::from_tool_call(&name, &details);
+        self.set_activity(activity);
+        self.messages.push(ChatMessage::tool_start(name, details));
+        self.scroll_to_bottom();
+    }
+
+    /// Handles live completion of a tool call
+    pub fn handle_tool_end(
+        &mut self,
+        name: &str,
+        output: String,
+        summary: Option<String>,
+        success: bool,
+        duration_ms: Option<u64>,
+    ) {
+        let found = self.messages.iter_mut().rev().find(|m| {
+            m.is_tool
+                && m.tool_name.as_deref() == Some(name)
+                && m.tool_success.is_none()
+        });
+
+        if let Some(msg) = found {
+            msg.content = output;
+            msg.tool_summary = summary;
+            msg.tool_success = Some(success);
+            msg.tool_duration_ms = duration_ms;
+        } else {
+            self.messages.push(ChatMessage {
+                role: "tool".to_string(),
+                content: output,
+                is_tool: true,
+                tool_name: Some(name.to_string()),
+                tool_details: None,
+                tool_summary: summary,
+                reasoning: None,
+                thinking_time: None,
+                tool_success: Some(success),
+                tool_duration_ms: duration_ms,
+                ephemeral: false,
+            });
+        }
+
+        let next_activity = {
+            let n = name.to_ascii_lowercase();
+            if n.contains("check")
+                || n.contains("test")
+                || n.contains("clippy")
+                || n.contains("lint")
+                || n.contains("exec")
+                || n.contains("cmd")
+            {
+                super::animation::AgentActivity::Analyzing {
+                    task: "execution results".to_string(),
+                }
+            } else if n.contains("search")
+                || n.contains("web")
+                || n.contains("fetch")
+                || n.contains("crawl")
+                || n.contains("research")
+            {
+                super::animation::AgentActivity::Analyzing {
+                    task: "research findings".to_string(),
+                }
+            } else if n.contains("read")
+                || n.contains("doc")
+                || n.contains("pdf")
+                || n.contains("xlsx")
+            {
+                super::animation::AgentActivity::Analyzing {
+                    task: "document data".to_string(),
+                }
+            } else if n.contains("write")
+                || n.contains("patch")
+                || n.contains("edit")
+                || n.contains("create")
+            {
+                super::animation::AgentActivity::Analyzing {
+                    task: "code changes".to_string(),
+                }
+            } else {
+                super::animation::AgentActivity::Working
+            }
+        };
+        self.set_activity(next_activity);
+        self.update_approx_tokens();
+        self.scroll_to_bottom();
     }
 
     pub fn queue_prompt(&mut self, prompt: String) {

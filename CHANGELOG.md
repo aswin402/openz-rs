@@ -1,4 +1,91 @@
-### v0.0.244 (Latest Release)
+### v0.0.247 (Latest Release)
+- **Ideas**:
+  - Dynamic Context-Aware Task Activities & Rotating Braille Timeline Spinner:
+    - **Context-Aware Dynamic Task Activities**: Replaced the static, monolithic `"Thinking..."` indicator with a rich, contextual activity system across the entire agent lifecycle. Extended `AgentActivity` with 17 specialized variants including `Generating`, `Planning`, `Writing { target }`, `Analyzing { task }`, `DeepResearch { query }`, `DocumentProcessing { task }`, and `MediaGenerating { task }`.
+    - **User Intent Prompt Classifier**: Implemented `AgentActivity::from_user_prompt` in [`src/channels/ratatui/animation.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/animation.rs) to immediately classify incoming user prompts and queued prompts into active states (`Writing`, `DeepResearch`, `InternetResearch`, `Debugging`, `Analyzing`, `Planning`) the instant Enter is pressed, completely eliminating premature generic thinking screens.
+    - **Tool-Aware Live Activity Dock**: Upgraded `AgentActivity::from_tool_call` to parse both formatted key-value arguments and raw JSON payloads, cleanly distinguishing between creating files (`Writing`), patching existing files (`Editing`), running verification/lint checks (`Debugging`), executing shell commands (`ExecutingCommand`), running vector/document processing (`DocumentProcessing`), generating graphics/video (`MediaGenerating`), and delegating to subagents (`SubagentWorking`).
+    - **Post-Tool Execution Analysis Transitions**: Enhanced `handle_tool_end` in [`src/channels/ratatui/app.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/app.rs) to transition the dock to context-aware `Analyzing { task }` states (`execution results`, `research findings`, `document data`, `code changes`) instead of blindly resetting to static `Thinking...`.
+    - **Live Streaming Response Dock Transition**: Wired `TurnEvent::Activity(AgentActivity::Generating)` in [`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs) to fire on the initial content stream chunk, seamlessly transitioning the dock into `Generating response...` with shimmering text.
+    - **Smooth Rotating Braille Spinner & Contextual Verbs in Timeline**: Fixed the frozen `└─ ⠋ running...` timeline outcome indicator in [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs). Replaced the static braille character with time-indexed rotation `super::theme::SPINNER_FRAMES[((app.elapsed_millis() / 80) as usize) % 10]` and added contextual action verbs (`deep researching...`, `researching...`, `writing...`, `editing...`, `rendering...`, `processing...`, `checking...`, `delegating...`, `running...`).
+- **Inspirations**:
+  - OpenCode agent and Pi Agent live activity transitions; modern interactive terminal progress choreographies.
+- **Sources & References**:
+  - [`src/channels/ratatui/animation.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/animation.rs): Added `from_user_prompt`, `extract_prompt_summary`, extended `AgentActivity` variants and shimmer formatting.
+  - [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs): Replaced frozen `⠋` with time-based rotating braille spinner and contextual tool verbs.
+  - [`src/channels/ratatui/app.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/app.rs): Updated `handle_tool_end` to transition to contextual `Analyzing` states.
+  - [`src/channels/ratatui/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/mod.rs): Dispatched initial activity from user prompt on enter and queued prompts.
+  - [`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs): Dispatched `Generating` and `Planning` events during streaming.
+  - [`src/channels/ratatui/app_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/app_tests.rs): Added unit tests for prompt classification, tool classification, shimmer formatting, and rotating timeline spinner.
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Synchronous SemVer increment to `0.0.247`.
+- **Details & Metrics**:
+  - 47/47 Ratatui unit tests passing in 0.03s.
+  - 260 registered native tools invariant maintained (`test_native_tool_registration_names`).
+  - 0 clippy warnings on library codebase (`cargo clippy -p openz -j 1 --lib`).
+- **Verification**:
+  - `cargo check -p openz -j 1`: PASS.
+  - `cargo test -p openz --lib channels::ratatui -j 1`: PASS (47/47).
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1`: PASS (1/1, 260 tools).
+  - `cargo clippy -p openz -j 1 --lib`: PASS (0 warnings).
+
+### v0.0.246
+- **Ideas**:
+  - Permission Asking Modal Multi-Line Reason Wrapping & Minimal MCP Indicator:
+    - **Security Approval Modal 2-Line Reason Display**: Updated `ModalState::SecurityApproval` in [`src/channels/ratatui/modals.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/modals.rs) to wrap the reason text across up to 2 lines instead of cutting it off on a single row. Added `format_security_reason_lines` helper: strips raw JSON key prefixes (`resource_policy_reason:`) and trailing argument dumps (`, arguments:`), wraps words against available inner modal width, renders single-line reasons cleanly on 1 line, displays two-line reasons in full across 2 lines without truncation, and for reasons exceeding 2 lines, truncates the second line and appends `....`.
+    - **Expanded Modal Geometry**: Increased the security approval modal dimensions from 64x11 to 68x12 to comfortably accommodate 2 full lines of reason text without crowding the option items or navigation hint.
+    - **Minimalist MCP Status Indicator**: Redesigned the MCP indicator in the bottom status bar ([`src/channels/ratatui/ui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/ui.rs)) to remove the geometric diamond glyph `◇` and eliminate awkward `0✓` checks when 0 servers are loaded. When 0 MCP servers are configured (the standard out-of-the-box native state), it renders as subtle, muted `mcp 0`. When MCP servers are active, it renders as `mcp {count}` with brand accent. When errors occur, it renders as `mcp {loaded} ({failed}✗)` in red. Mirrored the clean minimal format in [`src/channels/cli/render.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/render.rs) for unified CLI aesthetics.
+- **Inspirations**:
+  - Minicode and Opencode minimal status bar conventions; clean modern dialog card layouts.
+- **Sources & References**:
+  - [`src/channels/ratatui/modals.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/modals.rs): Implemented `format_security_reason_lines`, dynamic 2-line reason layout, and expanded modal bounding box.
+  - [`src/channels/ratatui/modals_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/modals_tests.rs): Added unit tests for single-line, 2 full lines, >2 lines ending in `....`, and prefix stripping.
+  - [`src/channels/ratatui/ui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/ui.rs): Redesigned MCP pill to minimal `mcp 0` without `◇` glyph or noisy `✓`.
+  - [`src/channels/cli/render.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/render.rs): Removed `◇ MCP` from legacy CLI render.
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Synchronous SemVer increment to `0.0.246`.
+- **Details & Metrics**:
+  - 43/43 Ratatui unit tests passing in 0.05s.
+  - 260 registered native tools invariant maintained (`test_native_tool_registration_names`).
+  - 0 clippy warnings on library codebase (`cargo clippy -p openz -j 1 --lib`).
+- **Verification**:
+  - `cargo check -p openz -j 1`: PASS.
+  - `cargo test -p openz --lib channels::ratatui -j 1`: PASS (43/43).
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1`: PASS (1/1, 260 tools).
+  - `cargo clippy -p openz -j 1 --lib`: PASS (0 warnings).
+
+### v0.0.245
+- **Ideas**:
+  - Live TUI Turn Streaming, Tool De-duplication, Error Highlighting & Clean Unicode Glyphs:
+    - **Real-Time Live TUI Streaming**: Connected the core agent execution loop to the interactive Ratatui TUI via `RATATUI_EVENT_CHANNEL`. As the agent loop progresses, `ToolStart` events instantly render in the timeline (`  └─ ⠋ running...`) and update the live activity dock above the input box. When tool calls finish, `ToolEnd` events update the message in-place with execution duration and cleaned summary. Intermediate thoughts and model reasoning stream directly to the timeline via `TurnEvent::SingleMessage(ChatMessage::thought)` without stopping the thinking dock animation, eliminating blind wait periods where the TUI only showed `Thinking...`.
+    - **Duplicate Tick & Cross De-duplication**: Fixed the root cause of duplicate outcome icons (`└─ ✓ ✓ completed`, `└─ ✗ ✕ Failed:`). Because `format_tool_outcome_summary` formats strings with ANSI color escape codes (`\x1b[32m...`), standard string trimming failed on the leading escape bytes. Added `clean_tool_outcome_summary` in [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs) to strip ANSI escapes, detect outcome status, and strip leading/trailing symbols so exactly one `✓` or `✗` is rendered.
+    - **Vivid Red Error Highlighting**: Updated tool error rendering in `timeline.rs` so that when a tool call fails or exits with an error code, the bullet `•`, the `"Failed "` prefix, and the failure target name are all rendered in vivid red (`theme.destructive`).
+    - **Clean Standard Glyphs in Tables and Markdown**: Replaced emoji glyphs (`❌`, `✅`, `✔`, `✖`) across Markdown parsing and table rendering in [`src/channels/ratatui/markdown.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/markdown.rs) with pure, single-column standard characters (`✗` and `✓`), eliminating terminal grid column corruption, overlap artifacts (`❌─`, `✅u`), and table border distortion.
+    - **Minimal Thinking Dock Indicator**: Removed the leading bullet `• ` from `SpinnerStyle::BrailleWave` in [`src/channels/ratatui/animation.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/animation.rs), producing a clean `⠋ Thinking... (Xs • esc to interrupt)` indicator.
+    - **Terminal Alternate Screen Ghosting Guard**: Configured `is_silent()` in [`src/agent/style/spinner.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/style/spinner.rs) and `stream_content_chunk` in [`src/agent/agent_loop/run/events.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/events.rs) to check `IS_RATATUI_ACTIVE`, completely preventing raw stdout writing from leaking characters onto the screen during scroll.
+- **Inspirations**:
+  - OpenCode agent and Pi Agent live tool rendering pipelines; Minicode clean box-drawing conventions.
+- **Sources & References**:
+  - [`src/channels/ratatui/animation.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/animation.rs): Removed leading bullet from `BrailleWave`.
+  - [`src/channels/ratatui/app.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/app.rs): Implemented `handle_tool_start`, `handle_tool_end`, and `ChatMessage::thought`.
+  - [`src/channels/ratatui/markdown.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/markdown.rs): Replaced emojis with `✓` and `✗`.
+  - [`src/channels/ratatui/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/mod.rs): Drained `RATATUI_EVENT_CHANNEL` in main event loop.
+  - [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs): Implemented `clean_tool_outcome_summary`, red error bullet, and red Failed header.
+  - [`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs): Dispatched live `ToolStart`, `ToolEnd`, and thought events.
+  - [`src/agent/agent_loop/run/events.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/events.rs): Guarded `stream_content_chunk` against `IS_RATATUI_ACTIVE`.
+  - [`src/agent/style/spinner.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/style/spinner.rs): Checked `IS_RATATUI_ACTIVE` in `is_silent()`.
+  - [`src/channels/ratatui/app_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/app_tests.rs): Added unit tests for tool lifecycle, thought constructor, and summary cleaner.
+  - [`src/channels/ratatui/markdown_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/markdown_tests.rs): Updated assertions for standard `✓`.
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Synchronous SemVer increment to `0.0.245`.
+- **Details & Metrics**:
+  - 39/39 Ratatui unit tests passing in 0.02s.
+  - 260 registered native tools invariant maintained (`test_native_tool_registration_names`).
+  - 0 clippy warnings on library codebase (`cargo clippy -p openz -j 1 --lib`).
+- **Verification**:
+  - `cargo check -p openz -j 1`: PASS.
+  - `cargo test -p openz --lib channels::ratatui -j 1`: PASS (39/39).
+  - `cargo test -p openz --lib test_native_tool_registration_names -j 1`: PASS (1/1, 260 tools).
+  - `cargo clippy -p openz -j 1 --lib`: PASS (0 warnings).
+  - `cargo build -p openz -j 2`: PASS.
+
+### v0.0.244
 - **Ideas**:
   - Input Dock & Activity Layout Parity with Minicode:
     - **Live Thinking Indicator Pinned Above Input Dock**: Relocated the dynamic thinking, generating, and tool activity indicator line out of the scrolling conversation timeline in [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs) and placed it into a dedicated layout chunk immediately above the elevated input dock in [`src/channels/ratatui/ui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/ui.rs). When active (`is_thinking == true`), a 2-line activity chunk renders the animated spinner, shimmering gradient label, and elapsed timer, accompanied by a clean separation line before the input dock. When idle, the chunk collapses to 0 height, maximizing timeline viewport area.

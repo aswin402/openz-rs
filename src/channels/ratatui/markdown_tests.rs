@@ -48,7 +48,7 @@ fn test_markdown_blockquotes_and_task_lists() {
     assert_eq!(spans_quote[0].content, "▎ ");
 
     let spans_done = markdown_line_to_spans("- [x] Completed task", &theme);
-    assert_eq!(spans_done[0].content, "✔ ");
+    assert_eq!(spans_done[0].content, "✓ ");
 
     let spans_todo = markdown_line_to_spans("- [ ] Pending task", &theme);
     assert_eq!(spans_todo[0].content, "☐ ");
@@ -79,7 +79,7 @@ fn test_markdown_table_detection_and_rendering() {
     assert!(divider_text.contains('┼') && divider_text.contains('─'));
 
     let row1_text: String = rendered[2].spans.iter().map(|s| s.content.as_ref()).collect();
-    assert!(row1_text.contains("Tables") && row1_text.contains('│') && row1_text.contains('✔'));
+    assert!(row1_text.contains("Tables") && row1_text.contains('│') && row1_text.contains('✓'));
 }
 
 #[test]

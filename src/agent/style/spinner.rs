@@ -17,6 +17,9 @@ tokio::task_local! {
 }
 
 pub fn is_silent() -> bool {
+    if crate::channels::ratatui::IS_RATATUI_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+        return true;
+    }
     IS_SILENT
         .try_with(|s| *s)
         .unwrap_or_else(|_| std::env::var("OPENZ_SILENT").is_ok())

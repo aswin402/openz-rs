@@ -66,6 +66,9 @@ pub(super) fn stream_content_chunk(
     streamer: &mut crate::channels::cli::render::StreamingMarkdownRenderer,
     content_streaming_started: &mut bool,
 ) {
+    if crate::channels::ratatui::IS_RATATUI_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     if text.is_empty() {
         return;
     }

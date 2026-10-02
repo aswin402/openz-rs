@@ -112,7 +112,9 @@ pub(crate) fn clean_cell_text(text: &str) -> String {
     while let Some(rest) = cleaned.strip_suffix('|') {
         cleaned = rest.trim();
     }
-    cleaned.to_string()
+    cleaned
+        .replace(['✅', '✔'], "✓")
+        .replace(['❌', '✖'], "✗")
 }
 
 pub(crate) fn wrap_cell_text(text: &str, max_width: usize) -> Vec<String> {
@@ -461,7 +463,7 @@ pub(crate) fn markdown_line_to_spans(line: &str, theme: &Theme) -> Vec<Span<'sta
     // Task lists: - [x] or - [ ]
     if let Some(rest) = trimmed.strip_prefix("- [x] ").or_else(|| trimmed.strip_prefix("* [x] ")) {
         let mut spans = vec![
-            Span::styled("✔ ", Style::default().fg(theme.success).add_modifier(Modifier::BOLD)),
+            Span::styled("✓ ", Style::default().fg(theme.success).add_modifier(Modifier::BOLD)),
         ];
         spans.extend(parse_inline_markdown(rest, theme));
         return spans;
@@ -620,7 +622,7 @@ fn push_text_with_icons(spans: &mut Vec<Span<'static>>, text: &str, theme: &Them
                     ));
                 }
                 spans.push(Span::styled(
-                    c.to_string(),
+                    "✓",
                     Style::default().fg(theme.success).add_modifier(Modifier::BOLD),
                 ));
             }
@@ -632,7 +634,7 @@ fn push_text_with_icons(spans: &mut Vec<Span<'static>>, text: &str, theme: &Them
                     ));
                 }
                 spans.push(Span::styled(
-                    c.to_string(),
+                    "✗",
                     Style::default().fg(theme.destructive).add_modifier(Modifier::BOLD),
                 ));
             }

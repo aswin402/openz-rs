@@ -31,8 +31,33 @@ use std::time::{Duration, Instant};
 pub enum TurnEvent {
     SyncSession(Vec<ChatMessage>),
     SingleMessage(ChatMessage),
+    ToolStart {
+        name: String,
+        details: String,
+    },
+    ToolEnd {
+        name: String,
+        output: String,
+        summary: Option<String>,
+        success: bool,
+        duration_ms: Option<u64>,
+    },
     Activity(animation::AgentActivity),
     Error(String),
+}
+
+pub static RATATUI_EVENT_CHANNEL: std::sync::LazyLock<(
+    tokio::sync::mpsc::UnboundedSender<TurnEvent>,
+    tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<TurnEvent>>,
+)> = std::sync::LazyLock::new(|| {
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    (tx, tokio::sync::Mutex::new(rx))
+});
+
+pub fn send_ratatui_turn_event(event: TurnEvent) {
+    if IS_RATATUI_ACTIVE.load(Ordering::Relaxed) {
+        let _ = RATATUI_EVENT_CHANNEL.0.send(event);
+    }
 }
 
 pub struct SecurityApprovalRequest {
@@ -121,7 +146,6 @@ struct RatatuiGuard;
 
 impl Drop for RatatuiGuard {
     fn drop(&mut self) {
-        let _ = stdout().execute(crossterm::event::DisableMouseCapture);
         let _ = stdout().execute(LeaveAlternateScreen);
         let _ = disable_raw_mode();
         let _ = stdout().execute(crossterm::cursor::Show);
@@ -314,7 +338,6 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     enable_raw_mode()?;
     let mut stdout = stdout();
     stdout.execute(EnterAlternateScreen)?;
-    stdout.execute(crossterm::event::EnableMouseCapture)?;
     stdout.execute(crossterm::cursor::Show)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -399,12 +422,33 @@ pub async fn handle_ratatui_tui() -> Result<()> {
             }
         }
 
-        // Drain any incoming background responses from AgentLoop
+        // Drain any incoming background responses from AgentLoop and live tools/thoughts
+        let mut turn_events = Vec::new();
         while let Ok(event) = turn_rx.try_recv() {
+            turn_events.push(event);
+        }
+        if let Ok(mut rx_lock) = RATATUI_EVENT_CHANNEL.1.try_lock() {
+            while let Ok(event) = rx_lock.try_recv() {
+                turn_events.push(event);
+            }
+        }
+
+        for event in turn_events {
             match event {
                 TurnEvent::Activity(act) => {
                     app.set_activity(act);
-                    continue;
+                }
+                TurnEvent::ToolStart { name, details } => {
+                    app.handle_tool_start(name, details);
+                }
+                TurnEvent::ToolEnd {
+                    name,
+                    output,
+                    summary,
+                    success,
+                    duration_ms,
+                } => {
+                    app.handle_tool_end(&name, output, summary, success, duration_ms);
                 }
                 TurnEvent::SyncSession(msgs) => {
                     app.is_thinking = false;
@@ -414,11 +458,19 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                     app.apply_sync_session(msgs);
                 }
                 TurnEvent::SingleMessage(msg) => {
-                    app.is_thinking = false;
-                    app.work_start = None;
-                    app.clear_activity();
-                    current_turn_handle = None;
-                    app.messages.push(msg);
+                    if msg.reasoning.is_some() && msg.content.is_empty() {
+                        // Live thought/reasoning message while the turn continues
+                        app.messages.push(msg);
+                        app.update_approx_tokens();
+                    } else {
+                        // Final assistant message
+                        app.is_thinking = false;
+                        app.work_start = None;
+                        app.clear_activity();
+                        current_turn_handle = None;
+                        app.messages.push(msg);
+                        app.update_approx_tokens();
+                    }
                 }
                 TurnEvent::Error(err) => {
                     app.is_thinking = false;
@@ -436,7 +488,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                 if let Some(next_prompt) = app.pop_next_prompt() {
                     app.is_thinking = true;
                     app.work_start = Some(Instant::now());
-                    app.set_activity(animation::AgentActivity::Thinking);
+                    app.set_activity(animation::AgentActivity::from_user_prompt(&next_prompt));
                     app.scroll_to_bottom();
                     let turn_session_key = session_key.read().await.clone();
                     current_turn_handle = Some(spawn_agent_turn(
@@ -1245,7 +1297,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         app.messages.push(ChatMessage::simple("user", input_str.clone()));
                                         app.is_thinking = true;
                                         app.work_start = Some(Instant::now());
-                                        app.set_activity(animation::AgentActivity::Thinking);
+                                        app.set_activity(animation::AgentActivity::from_user_prompt(&input_str));
                                         app.scroll_to_bottom();
 
                                         let turn_session_key = session_key.read().await.clone();

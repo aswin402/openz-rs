@@ -161,6 +161,15 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     && !full_reasoning.is_empty()
                     && should_show_tui_thoughts(display_mode)
                 {
+                    let elapsed = start_time.elapsed().as_secs_f64();
+                    crate::channels::ratatui::send_ratatui_turn_event(
+                        crate::channels::ratatui::TurnEvent::SingleMessage(
+                            crate::channels::ratatui::app::ChatMessage::thought(
+                                full_reasoning.to_string(),
+                                Some(elapsed),
+                            ),
+                        ),
+                    );
                     let depth = crate::tools::subagent::DELEGATION_DEPTH
                         .try_with(|d| *d)
                         .unwrap_or(0);
@@ -250,6 +259,13 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             let _ = std::io::stdout().flush();
                             in_reasoning_phase = false;
                         }
+                        if !content_streaming_started {
+                            crate::channels::ratatui::send_ratatui_turn_event(
+                                crate::channels::ratatui::TurnEvent::Activity(
+                                    crate::channels::ratatui::animation::AgentActivity::Generating,
+                                ),
+                            );
+                        }
                         full_content.push_str(&text);
                         stream_content_chunk(
                             &text,
@@ -272,6 +288,13 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             .push_chunk(crate::providers::ChatStreamChunk::Content(text));
                     }
                     crate::providers::ChatStreamChunk::Reasoning(text) => {
+                        if !in_reasoning_phase {
+                            crate::channels::ratatui::send_ratatui_turn_event(
+                                crate::channels::ratatui::TurnEvent::Activity(
+                                    crate::channels::ratatui::animation::AgentActivity::Planning,
+                                ),
+                            );
+                        }
                         full_reasoning.push_str(&text);
                         if let Some(chat_id) =
                             crate::channels::websocket::ws_chat_id(ctx.session_key)
@@ -537,6 +560,14 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                         String::new()
                     };
                     if !full_reasoning.is_empty() {
+                        crate::channels::ratatui::send_ratatui_turn_event(
+                            crate::channels::ratatui::TurnEvent::SingleMessage(
+                                crate::channels::ratatui::app::ChatMessage::thought(
+                                    full_reasoning.clone(),
+                                    Some(duration_secs as f64),
+                                ),
+                            ),
+                        );
                         let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                         crate::agent::style::print_tree_monologue(&leaf_prefix, &full_reasoning);
                         print!("\r\n");
@@ -645,6 +676,16 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     ),
                 );
             }
+
+            let clean_name = crate::agent::style::get_tool_clean_name(&call.name);
+            let details = crate::agent::style::clean_tool_args_msg(&call.name, &formatted_args);
+            crate::channels::ratatui::send_ratatui_turn_event(
+                crate::channels::ratatui::TurnEvent::ToolStart {
+                    name: clean_name.clone(),
+                    details: details.clone(),
+                },
+            );
+            let tool_start_instant = std::time::Instant::now();
 
             if !silent {
                 crate::agent::style::print_tree_tool_start(&call.name, &formatted_args);
@@ -956,6 +997,27 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     ),
                 );
             }
+
+            let tool_duration_ms = tool_start_instant.elapsed().as_millis() as u64;
+            let outcome_summary = crate::agent::style::format_tool_outcome_summary(
+                &call.name,
+                &call.arguments,
+                &result_val,
+            );
+            let tool_success = result_val.get("error").is_none()
+                && result_val.get("status_code").is_none_or(|c| c == 0)
+                && !outcome_summary.contains("Failed")
+                && !outcome_summary.contains('\u{2715}');
+
+            crate::channels::ratatui::send_ratatui_turn_event(
+                crate::channels::ratatui::TurnEvent::ToolEnd {
+                    name: clean_name,
+                    output: result_val.to_string(),
+                    summary: Some(outcome_summary),
+                    success: tool_success,
+                    duration_ms: Some(tool_duration_ms),
+                },
+            );
             if is_research_lookup_tool(&call.name) {
                 run.turn_source_ledger
                     .record_tool_result(&call.name, &call.arguments, &result_val);

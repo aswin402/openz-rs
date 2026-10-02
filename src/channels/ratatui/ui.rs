@@ -13,6 +13,9 @@ use ratatui::{
 // ── Main Layout Renderer ────────────────────────────────────────────────────
 
 pub fn render_ratatui_ui(f: &mut Frame, app: &mut RatatuiApp) {
+    // Blank entire canvas to prevent ghost/lingering cells during scrolling
+    f.render_widget(Clear, f.area());
+
     // Background fill
     let bg_color = app.theme.bg_primary;
     let bg_block = Block::default()
@@ -36,8 +39,8 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &mut RatatuiApp) {
         return;
     }
 
-    // Layout: Conversation Timeline (flex) -> Live Activity (2 or 0) -> Elevated Input Dock (3) -> Spacer (1) -> Bottom Status Bar (1)
-    let activity_height = if app.is_thinking { 2 } else { 0 };
+    // Layout: Conversation Timeline (flex) -> Live Activity (3 or 0) -> Elevated Input Dock (3) -> Spacer (1) -> Bottom Status Bar (1)
+    let activity_height = if app.is_thinking { 3 } else { 0 };
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -54,7 +57,7 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &mut RatatuiApp) {
 
     let theme = &app.theme;
 
-    // 2. Live Activity Indicator (pinned directly above input dock)
+    // 2. Live Activity Indicator (pinned directly above input dock with top and bottom spacing)
     if app.is_thinking {
         let elapsed_secs = app.work_start.map(|s| s.elapsed().as_secs_f64()).unwrap_or(0.0);
         let activity = app
@@ -70,7 +73,11 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &mut RatatuiApp) {
         );
         let mut padded_spans = vec![Span::raw(" ")];
         padded_spans.extend(live_line.spans);
-        let activity_lines = vec![Line::from(padded_spans), Line::from(String::new())];
+        let activity_lines = vec![
+            Line::from(String::new()), // Top spacing above thinking indicator
+            Line::from(padded_spans),
+            Line::from(String::new()), // Bottom spacing before input dock
+        ];
         f.render_widget(
             Paragraph::new(activity_lines).style(Style::default().bg(theme.bg_primary)),
             chunks[1],
@@ -350,22 +357,29 @@ fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
         ));
     }
 
-    // MCP status pill
+    // MCP status indicator (clean & minimal)
     left_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
     if !mcp_done {
         let frame_idx = app.spinner_idx % theme::SPINNER_FRAMES.len();
         left_spans.push(Span::styled(
-            format!("◇ MCP {} ", theme::SPINNER_FRAMES[frame_idx]),
+            format!("mcp {}", theme::SPINNER_FRAMES[frame_idx]),
             Style::default().fg(theme.warning),
         ));
     } else if mcp_failed == 0 {
-        left_spans.push(Span::styled(
-            format!("◇ MCP {}✓", mcp_loaded),
-            Style::default().fg(theme.brand_accent),
-        ));
+        if mcp_loaded == 0 {
+            left_spans.push(Span::styled(
+                "mcp 0",
+                Style::default().fg(theme.muted),
+            ));
+        } else {
+            left_spans.push(Span::styled(
+                format!("mcp {}", mcp_loaded),
+                Style::default().fg(theme.brand_accent),
+            ));
+        }
     } else {
         left_spans.push(Span::styled(
-            format!("◇ MCP {}✓ {}✗", mcp_loaded, mcp_failed),
+            format!("mcp {} ({}✗)", mcp_loaded, mcp_failed),
             Style::default().fg(theme.destructive),
         ));
     }

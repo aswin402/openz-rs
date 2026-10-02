@@ -306,54 +306,64 @@ pub(crate) fn render_modal_overlay(f: &mut Frame, app: &RatatuiApp, area: Rect) 
             selected_idx,
             ..
         } => {
-            let popup_area = centered_rect(70, 60, area);
+            let width = 68.min(area.width.saturating_sub(4)).max(48);
+            let height = 12.min(area.height.saturating_sub(2)).max(10);
+            let popup_area = centered_rect_exact(width, height, area);
             f.render_widget(Clear, popup_area);
 
             let block = Block::default()
-                .title(" 🔒 Security Shield: Tool Execution Request ")
-                .title_alignment(Alignment::Center)
+                .title(Line::from(vec![Span::styled(
+                    " 🛡 Tool Permission ",
+                    Style::default()
+                        .fg(theme.brand_accent)
+                        .add_modifier(Modifier::BOLD),
+                )]))
+                .title_alignment(Alignment::Left)
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme.warning).add_modifier(Modifier::BOLD))
+                .border_type(ratatui::widgets::BorderType::Rounded)
+                .border_style(Style::default().fg(theme.brand_accent))
                 .style(Style::default().bg(theme.bg_elevated));
 
             let inner = block.inner(popup_area);
             f.render_widget(block, popup_area);
 
+            let max_text_width = (inner.width as usize).saturating_sub(10);
+            let reason_lines = format_security_reason_lines(description, max_text_width, theme);
+            let reason_height = (reason_lines.len() as u16).max(1);
+
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Length(1), // Tool name
-                    Constraint::Min(4),    // Description box
-                    Constraint::Length(options.len() as u16 + 1), // Options
+                    Constraint::Length(1), // Tool line
+                    Constraint::Length(reason_height), // Reason lines (1 or 2 lines)
+                    Constraint::Length(1), // Divider
+                    Constraint::Length(options.len() as u16), // Options
+                    Constraint::Min(0),    // Spacer
                     Constraint::Length(1), // Hint line
                 ])
                 .split(inner);
 
             // Tool header
             let tool_line = Line::from(vec![
-                Span::styled(" Requested Tool: ", Style::default().fg(theme.muted)),
+                Span::styled(" Tool: ", Style::default().fg(theme.muted)),
                 Span::styled(
                     tool_name.as_str(),
-                    Style::default().fg(theme.warning).add_modifier(Modifier::BOLD),
+                    Style::default().fg(theme.brand_white).add_modifier(Modifier::BOLD),
                 ),
             ]);
             f.render_widget(Paragraph::new(tool_line), chunks[0]);
 
-            // Description block
-            let desc_block = Block::default()
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme.border))
-                .title(" Action Details ")
-                .style(Style::default().bg(theme.bg_input));
-            let desc_inner = desc_block.inner(chunks[1]);
-            f.render_widget(desc_block, chunks[1]);
+            // Formatted reason lines (at least 2 lines fully if needed, ending with .... if >2 lines)
+            f.render_widget(Paragraph::new(reason_lines), chunks[1]);
 
-            let desc_p = Paragraph::new(description.as_str())
-                .style(Style::default().fg(theme.info))
-                .wrap(ratatui::widgets::Wrap { trim: false });
-            f.render_widget(desc_p, desc_inner);
+            // Subtle divider
+            let div_line = Line::from(vec![Span::styled(
+                "─".repeat(inner.width as usize),
+                Style::default().fg(theme.border),
+            )]);
+            f.render_widget(Paragraph::new(div_line), chunks[2]);
 
-            // Options
+            // Options styled with OpenZ Aura theme
             let items: Vec<ListItem> = options
                 .iter()
                 .enumerate()
@@ -361,10 +371,10 @@ pub(crate) fn render_modal_overlay(f: &mut Frame, app: &RatatuiApp, area: Rect) 
                     let is_selected = i == *selected_idx;
                     let prefix = if is_selected { " › " } else { "   " };
                     let style = if is_selected {
-                        let fg = if i == 2 { theme.destructive } else { theme.success };
+                        let fg = if i == 2 { theme.destructive } else { theme.brand_accent };
                         Style::default()
-                            .fg(theme.bg_primary)
-                            .bg(fg)
+                            .fg(fg)
+                            .bg(theme.bg_input)
                             .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(theme.text_primary)
@@ -373,15 +383,15 @@ pub(crate) fn render_modal_overlay(f: &mut Frame, app: &RatatuiApp, area: Rect) 
                 })
                 .collect();
             let list = List::new(items);
-            f.render_widget(list, chunks[2]);
+            f.render_widget(list, chunks[3]);
 
             // Hint
             let hint = Line::from(vec![
-                Span::styled(" [↑/↓] Navigate  ", Style::default().fg(theme.muted)),
-                Span::styled("[Enter] Confirm  ", Style::default().fg(theme.brand_accent)),
-                Span::styled("[Esc] Deny", Style::default().fg(theme.destructive)),
+                Span::styled("↑/↓ Navigate · ", Style::default().fg(theme.muted)),
+                Span::styled("Enter Confirm · ", Style::default().fg(theme.brand_accent)),
+                Span::styled("Esc Deny", Style::default().fg(theme.destructive)),
             ]);
-            f.render_widget(Paragraph::new(hint).alignment(Alignment::Center), chunks[3]);
+            f.render_widget(Paragraph::new(hint).alignment(Alignment::Center), chunks[5]);
         }
     }
 }
@@ -741,6 +751,83 @@ pub fn compute_scroll_offset(selected_index: usize, max_visible: usize) -> usize
     } else {
         selected_index.saturating_sub(max_visible - 1)
     }
+}
+
+/// Formats the security approval reason into up to 2 wrapped lines.
+/// If the reason fits on 1 line, returns 1 line.
+/// If it fits on 2 lines, returns 2 full lines.
+/// If it exceeds 2 lines, returns 2 lines with the second line truncated and ending with `....`.
+pub fn format_security_reason_lines(
+    description: &str,
+    max_text_width: usize,
+    theme: &super::theme::Theme,
+) -> Vec<Line<'static>> {
+    let raw_desc = description.trim();
+    let concise_desc = if let Some(idx) = raw_desc.find(", arguments:") {
+        &raw_desc[..idx]
+    } else {
+        raw_desc
+    };
+    let concise_desc = if let Some(stripped) = concise_desc.strip_prefix("resource_policy_reason:") {
+        stripped.trim()
+    } else {
+        concise_desc
+    };
+    let clean_desc = concise_desc.trim().trim_matches('"').trim();
+    let flat_desc: String = clean_desc
+        .lines()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let safe_width = max_text_width.max(10);
+    let wrapped = crate::agent::style::wrap_line(&flat_desc, safe_width);
+
+    let mut lines = Vec::new();
+    if wrapped.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled(" Reason: ", Style::default().fg(theme.muted)),
+            Span::styled(
+                "Sensitive operation requires approval",
+                Style::default().fg(theme.warning),
+            ),
+        ]));
+    } else if wrapped.len() == 1 {
+        lines.push(Line::from(vec![
+            Span::styled(" Reason: ", Style::default().fg(theme.muted)),
+            Span::styled(wrapped[0].clone(), Style::default().fg(theme.warning)),
+        ]));
+    } else {
+        // Line 1: fully displayed
+        lines.push(Line::from(vec![
+            Span::styled(" Reason: ", Style::default().fg(theme.muted)),
+            Span::styled(wrapped[0].clone(), Style::default().fg(theme.warning)),
+        ]));
+
+        // Line 2: fully displayed if exactly 2 lines, or truncated with "...." if > 2 lines
+        let line2_text = if wrapped.len() == 2 {
+            wrapped[1].clone()
+        } else {
+            let mut l2 = wrapped[1].clone();
+            if l2.chars().count() + 4 > safe_width {
+                let take_count = safe_width.saturating_sub(4);
+                l2 = l2
+                    .chars()
+                    .take(take_count)
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string();
+            }
+            format!("{}....", l2)
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled("         ", Style::default().fg(theme.muted)),
+            Span::styled(line2_text, Style::default().fg(theme.warning)),
+        ]));
+    }
+    lines
 }
 
 #[cfg(test)]

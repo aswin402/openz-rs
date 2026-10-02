@@ -118,3 +118,47 @@ fn test_command_catalog_modal_lifecycle() {
     }
 }
 
+#[test]
+fn test_format_security_reason_lines_single_line() {
+    let theme = crate::channels::ratatui::theme::Theme::aura_dark();
+    let lines = format_security_reason_lines("Run cargo check on openz", 50, &theme);
+    assert_eq!(lines.len(), 1);
+    let line_str = lines[0].spans.iter().map(|s| s.content.as_ref()).collect::<String>();
+    assert!(line_str.contains("Reason:"));
+    assert!(line_str.contains("Run cargo check on openz"));
+}
+
+#[test]
+fn test_format_security_reason_lines_two_lines_full() {
+    let theme = crate::channels::ratatui::theme::Theme::aura_dark();
+    let desc = "Executes command with sandboxed environment";
+    let lines = format_security_reason_lines(desc, 25, &theme);
+    assert_eq!(lines.len(), 2);
+    let line1_str = lines[0].spans.iter().map(|s| s.content.as_ref()).collect::<String>();
+    let line2_str = lines[1].spans.iter().map(|s| s.content.as_ref()).collect::<String>();
+    assert!(line1_str.contains("Reason:"));
+    assert!(!line2_str.contains("...."));
+}
+
+#[test]
+fn test_format_security_reason_lines_three_plus_lines_truncated_with_dots() {
+    let theme = crate::channels::ratatui::theme::Theme::aura_dark();
+    let desc = "High risk security tool execution requested by model which alters files and requires manual confirmation from user";
+    let lines = format_security_reason_lines(desc, 20, &theme);
+    assert_eq!(lines.len(), 2);
+    let line2_str = lines[1].spans.iter().map(|s| s.content.as_ref()).collect::<String>();
+    assert!(line2_str.ends_with("...."));
+}
+
+#[test]
+fn test_format_security_reason_lines_strips_resource_policy_prefix() {
+    let theme = crate::channels::ratatui::theme::Theme::aura_dark();
+    let desc = "resource_policy_reason: \"Disk quota threshold reached: 500MB free\", arguments: {\"CommandLine\":\"cargo clean\"}";
+    let lines = format_security_reason_lines(desc, 60, &theme);
+    assert_eq!(lines.len(), 1);
+    let line_str = lines[0].spans.iter().map(|s| s.content.as_ref()).collect::<String>();
+    assert!(!line_str.contains("resource_policy_reason:"));
+    assert!(!line_str.contains("arguments:"));
+    assert!(line_str.contains("Disk quota threshold reached: 500MB free"));
+}
+

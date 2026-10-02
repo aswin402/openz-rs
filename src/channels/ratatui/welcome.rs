@@ -7,12 +7,12 @@ use ratatui::Frame;
 
 /// Authentic OpenZ ASCII banner lines: "OPEN" (white), "Z" (brand orange).
 pub const BANNER_PARTS: &[(&str, &str)] = &[
-    ("     ██████╗ ██████╗ ███████╗███╗   ██╗", "███████╗"),
-    ("    ██╔═══██╗██╔══██╗██╔════╝████╗  ██║", "╚══███╔╝"),
-    ("    ██║   ██║██████╔╝█████╗  ██╔██╗ ██║", "  ███╔╝ "),
-    ("    ██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║", " ███╔╝  "),
-    ("    ╚██████╔╝██║     ███████╗██║ ╚████║", "███████╗"),
-    ("     ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝", "╚══════╝"),
+    (" ██████╗ ██████╗ ███████╗███╗   ██╗", "███████╗"),
+    ("██╔═══██╗██╔══██╗██╔════╝████╗  ██║", "╚══███╔╝"),
+    ("██║   ██║██████╔╝█████╗  ██╔██╗ ██║", "  ███╔╝ "),
+    ("██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║", " ███╔╝  "),
+    ("╚██████╔╝██║     ███████╗██║ ╚████║", "███████╗"),
+    (" ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝", "╚══════╝"),
 ];
 
 /// Renders the Zen Welcome Screen when the conversation timeline is empty.
@@ -35,14 +35,14 @@ pub fn render_welcome_screen(
     }
 
     let show_full_banner = area.width >= 50 && area.height >= 16;
-    let logo_height = if show_full_banner { 9 } else { 3 };
+    let logo_height = if show_full_banner { 8 } else { 2 };
 
     // Vertical layout hierarchy: Centered Banner/Details -> Centered Input Dock -> Bottom Bar
     let vert_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(1),              // 0: Top spacer
-            Constraint::Length(logo_height), // 1: Brand logo banner + version & details
+            Constraint::Length(logo_height), // 1: Brand logo banner + version
             Constraint::Length(1),           // 2: Spacer
             Constraint::Length(3),           // 3: Centered Dynamic Input Dock
             Constraint::Min(1),              // 4: Bottom spacer
@@ -50,7 +50,7 @@ pub fn render_welcome_screen(
         ])
         .split(area);
 
-    // ── 1. Brand Logo & Details Lockup ──────────────────────────────────────
+    // ── 1. Brand Logo & Version Lockup ──────────────────────────────────────
     let mut logo_lines = Vec::new();
 
     if show_full_banner {
@@ -74,56 +74,25 @@ pub fn render_welcome_screen(
         // Blank line spacer
         logo_lines.push(Line::from(String::new()));
 
-        // Version & Model details line
+        // Version line only directly after logo
         logo_lines.push(Line::from(vec![
             Span::styled(
-                format!("openz v{}", env!("CARGO_PKG_VERSION")),
-                Style::default()
-                    .fg(theme.brand_accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(" · ", Style::default().fg(theme.muted)),
-            Span::styled(
-                format!("{} | {}", app.provider, app.model),
-                Style::default().fg(theme.warning),
+                format!("v{}", env!("CARGO_PKG_VERSION")),
+                Style::default().fg(theme.muted),
             ),
         ]));
-
-        // Workspace and Git branch line
-        let mut detail_spans = vec![
-            Span::styled(app.cwd_display.clone(), Style::default().fg(theme.info)),
-        ];
-        if let Some(branch) = RatatuiApp::get_git_branch(&app.workspace_root) {
-            detail_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
-            detail_spans.push(Span::styled(
-                format!("git:{}", branch),
-                Style::default().fg(theme.success),
-            ));
-        }
-        logo_lines.push(Line::from(detail_spans));
     } else {
         logo_lines.push(Line::from(vec![
             Span::styled(
-                "OpenZ 🦊 ",
+                "OpenZ ",
                 Style::default()
                     .fg(theme.brand_accent)
                     .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 format!("v{}", env!("CARGO_PKG_VERSION")),
-                Style::default()
-                    .fg(theme.brand_white)
-                    .add_modifier(Modifier::BOLD),
+                Style::default().fg(theme.muted),
             ),
-        ]));
-        logo_lines.push(Line::from(vec![
-            Span::styled(
-                format!("{} | {}", app.provider, app.model),
-                Style::default().fg(theme.warning),
-            ),
-        ]));
-        logo_lines.push(Line::from(vec![
-            Span::styled(app.cwd_display.clone(), Style::default().fg(theme.info)),
         ]));
     }
 
@@ -226,7 +195,8 @@ pub fn render_welcome_screen(
         ));
     }
 
-    let provider_model = format!("{}:{}", app.provider, app.model);
+    let provider_model = format!("{} | {}", app.provider, app.model);
+    let right_width = (provider_model.len() + 2).max(25) as u16;
     let right_spans = vec![
         Span::styled(
             provider_model,
@@ -239,7 +209,7 @@ pub fn render_welcome_screen(
 
     let bottom_layout = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Min(20), Constraint::Length(35)])
+        .constraints([Constraint::Min(20), Constraint::Length(right_width)])
         .split(vert_chunks[5]);
 
     frame.render_widget(Paragraph::new(Line::from(left_spans)), bottom_layout[0]);

@@ -403,15 +403,35 @@ fn test_agent_activity_from_tool_call() {
     let activity = AgentActivity::from_tool_call("grep_search", r#"{"query":"AgentActivity"}"#);
     assert!(matches!(activity, AgentActivity::RepoResearch { .. }));
 
-    // Editing file
+    // Writing file
     let activity =
         AgentActivity::from_tool_call("write_file", r#"{"path":"src/channels/ratatui/mod.rs"}"#);
+    assert!(matches!(activity, AgentActivity::Writing { .. }));
+
+    // Editing file
+    let activity =
+        AgentActivity::from_tool_call("patch_file", r#"{"path":"src/channels/ratatui/mod.rs"}"#);
     assert!(matches!(activity, AgentActivity::EditingFile { .. }));
 
     // Subagent
     let activity =
         AgentActivity::from_tool_call("delegate_task", r#"{"role":"code-reviewer"}"#);
     assert!(matches!(activity, AgentActivity::SubagentWorking { .. }));
+
+    // Media
+    let activity =
+        AgentActivity::from_tool_call("openmedia_create_chart", "title: \"Benchmark\"");
+    assert!(matches!(activity, AgentActivity::MediaGenerating { .. }));
+
+    // Document
+    let activity =
+        AgentActivity::from_tool_call("opendoc_create_docx", "path: \"report.docx\"");
+    assert!(matches!(activity, AgentActivity::DocumentProcessing { .. }));
+
+    // Planning
+    let activity =
+        AgentActivity::from_tool_call("sequentialthinking", "thought: \"Step 1\"");
+    assert_eq!(activity, AgentActivity::Planning);
 }
 
 #[test]
@@ -437,6 +457,206 @@ fn test_shimmer_spans_and_lerp_color() {
     // render_shimmer_spans count
     let spans = render_shimmer_spans("OpenZ", c1, c2, 1000, 150.0, 0.45);
     assert_eq!(spans.len(), 5);
+}
+
+#[test]
+fn test_handle_tool_start_and_end() {
+    let mut app = RatatuiApp::new("test-model".into(), "test-prov".into(), "test-sess".into());
+    assert_eq!(app.messages.len(), 0);
+
+    // 1. Tool start
+    app.handle_tool_start("exec_command".into(), "cargo check -p openz".into());
+    assert_eq!(app.messages.len(), 1);
+    let msg = &app.messages[0];
+    assert!(msg.is_tool);
+    assert_eq!(msg.tool_name.as_deref(), Some("exec_command"));
+    assert_eq!(msg.tool_details.as_deref(), Some("cargo check -p openz"));
+    assert_eq!(msg.tool_success, None);
+
+    // 2. Tool end
+    app.handle_tool_end(
+        "exec_command",
+        "Finished dev profile".into(),
+        Some("\u{1b}[32m✓ completed\u{1b}[0m".into()),
+        true,
+        Some(420),
+    );
+    assert_eq!(app.messages.len(), 1);
+    let msg = &app.messages[0];
+    assert_eq!(msg.tool_success, Some(true));
+    assert_eq!(msg.content, "Finished dev profile");
+    assert_eq!(msg.tool_duration_ms, Some(420));
+    assert!(msg.tool_summary.is_some());
+}
+
+#[test]
+fn test_clean_tool_outcome_summary_handles_ansi_and_symbols() {
+    use crate::channels::ratatui::timeline::clean_tool_outcome_summary;
+
+    // Test ANSI-wrapped completed
+    let (is_succ, text) = clean_tool_outcome_summary("\u{1b}[32m✓ completed\u{1b}[0m", None);
+    assert!(is_succ);
+    assert_eq!(text, "completed");
+
+    // Test double-tick completed
+    let (is_succ, text) = clean_tool_outcome_summary("✓ completed ✓", None);
+    assert!(is_succ);
+    assert_eq!(text, "completed");
+
+    // Test ANSI-wrapped Failed
+    let (is_succ, text) = clean_tool_outcome_summary("\u{1b}[31m✕ Failed: command exited with code 1\u{1b}[0m", None);
+    assert!(!is_succ);
+    assert_eq!(text, "command exited with code 1");
+
+    // Test diff summary
+    let (is_succ, text) = clean_tool_outcome_summary("updated 12 lines (38ms)", Some(true));
+    assert!(is_succ);
+    assert_eq!(text, "updated 12 lines (38ms)");
+}
+
+#[test]
+fn test_chat_message_thought_constructor() {
+    let thought = ChatMessage::thought("Planning the architecture".into(), Some(1.5));
+    assert_eq!(thought.role, "assistant");
+    assert_eq!(thought.reasoning.as_deref(), Some("Planning the architecture"));
+    assert_eq!(thought.thinking_time, Some(1.5));
+    assert!(!thought.is_tool);
+    assert!(thought.content.is_empty());
+}
+
+#[test]
+fn test_agent_activity_from_user_prompt() {
+    use crate::channels::ratatui::animation::AgentActivity;
+
+    // Search query
+    let act = AgentActivity::from_user_prompt("search for ratatui documentation");
+    assert!(matches!(act, AgentActivity::InternetResearch { .. }));
+
+    // Deep research query
+    let act = AgentActivity::from_user_prompt("please do a deep research on quantum computing");
+    assert!(matches!(act, AgentActivity::DeepResearch { .. }));
+
+    // Writing / Creating
+    let act = AgentActivity::from_user_prompt("write a python script to calculate mean");
+    assert!(matches!(act, AgentActivity::Writing { .. }));
+
+    // Debugging / Checking
+    let act = AgentActivity::from_user_prompt("test openz package with cargo");
+    assert!(matches!(act, AgentActivity::Debugging { .. }));
+
+    // Analyzing
+    let act = AgentActivity::from_user_prompt("explain how ratatui render pipeline works");
+    assert!(matches!(act, AgentActivity::Analyzing { .. }));
+
+    // Planning
+    let act = AgentActivity::from_user_prompt("plan the migration to v2");
+    assert_eq!(act, AgentActivity::Planning);
+
+    // Default thinking
+    let act = AgentActivity::from_user_prompt("hello there");
+    assert_eq!(act, AgentActivity::Thinking);
+}
+
+#[test]
+fn test_render_live_activity_line_formats_all_variants() {
+    use crate::channels::ratatui::animation::{render_live_activity_line, AgentActivity, SpinnerStyle};
+    use crate::channels::ratatui::theme::Theme;
+
+    let theme = Theme::aura_dark();
+    let activities = vec![
+        AgentActivity::Thinking,
+        AgentActivity::Working,
+        AgentActivity::Responding,
+        AgentActivity::Generating,
+        AgentActivity::Planning,
+        AgentActivity::Writing { target: "src/lib.rs".to_string() },
+        AgentActivity::Analyzing { task: "benchmark results".to_string() },
+        AgentActivity::InternetResearch { query: "Rust tokio".to_string() },
+        AgentActivity::DeepResearch { query: "AI architectures".to_string() },
+        AgentActivity::RepoResearch { target: "AgentLoop".to_string() },
+        AgentActivity::EditingFile { path: "src/main.rs".to_string() },
+        AgentActivity::Debugging { step: "cargo clippy".to_string() },
+        AgentActivity::ExecutingCommand { command: "ls -la".to_string() },
+        AgentActivity::SubagentWorking { role: "Researcher".to_string() },
+        AgentActivity::DocumentProcessing { task: "data.xlsx".to_string() },
+        AgentActivity::MediaGenerating { task: "flow.svg".to_string() },
+        AgentActivity::CompactingContext,
+    ];
+
+    for act in activities {
+        let line = render_live_activity_line(&act, SpinnerStyle::BrailleWave, 500, 2.3, &theme);
+        assert!(!line.spans.is_empty());
+        let full_text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(full_text.contains("2.3s"));
+    }
+}
+
+#[test]
+fn test_handle_tool_end_transitions_to_analyzing() {
+    use crate::channels::ratatui::animation::AgentActivity;
+
+    let mut app = RatatuiApp::new(
+        "test-model".into(),
+        "test-provider".into(),
+        "cli:test".into(),
+    );
+
+    app.handle_tool_start("exec_command".into(), "cargo check -p openz".into());
+    assert_eq!(
+        app.current_activity,
+        Some(AgentActivity::Debugging {
+            step: "cargo check -p openz".to_string(),
+        })
+    );
+
+    app.handle_tool_end(
+        "exec_command",
+        "Finished dev profile".into(),
+        Some("✓ completed".into()),
+        true,
+        Some(420),
+    );
+
+    assert_eq!(
+        app.current_activity,
+        Some(AgentActivity::Analyzing {
+            task: "execution results".to_string(),
+        })
+    );
+}
+
+#[test]
+fn test_render_timeline_running_tool_displays_animated_spinner_and_verb() {
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+    use crate::channels::ratatui::timeline::render_timeline;
+
+    let backend = TestBackend::new(100, 30);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    let mut app = RatatuiApp::new(
+        "test-model".into(),
+        "test-provider".into(),
+        "cli:test".into(),
+    );
+
+    app.handle_tool_start("search_web".into(), "Rust async".into());
+    // Running tool: tool_success is None
+
+    terminal.draw(|f| {
+        render_timeline(f, &mut app, f.area());
+    }).unwrap();
+
+    let buffer = terminal.backend().buffer().clone();
+    let content: String = (0..buffer.area.height)
+        .map(|y| {
+            (0..buffer.area.width)
+                .map(|x| buffer[(x, y)].symbol())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(content.contains("researching..."), "Expected buffer to contain contextual verb 'researching...', got: {}", content);
 }
 
 

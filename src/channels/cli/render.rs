@@ -937,10 +937,10 @@ pub fn render_box(
         let processed = mcp_loaded + mcp_failed;
         if total > 0 {
             (
-                format!(" ◇ MCP {}/{} {}  │ ", processed, total, frame),
+                format!(" mcp {}/{} {}  │ ", processed, total, frame),
                 format!(
-                    " {}◇ MCP {}{}/{} {}{}  {}│{} ",
-                    RED_ORANGE,
+                    " {}mcp {}{}/{} {}{}  {}│{} ",
+                    AURA_SLATE,
                     AURA_GOLD,
                     processed,
                     total,
@@ -952,40 +952,47 @@ pub fn render_box(
             )
         } else {
             (
-                format!(" ◇ MCP {}  │ ", frame),
+                format!(" mcp {}  │ ", frame),
                 format!(
-                    " {}◇ MCP {}{}  {}│{} ",
-                    RED_ORANGE, frame, COLOR_RESET, AURA_SLATE, COLOR_RESET
+                    " {}mcp {}{}  {}│{} ",
+                    AURA_SLATE, frame, COLOR_RESET, AURA_SLATE, COLOR_RESET
                 ),
             )
         }
     } else if mcp_failed == 0 {
-        (
-            format!(" ◇ MCP {}✓  │ ", mcp_loaded),
-            format!(
-                " {}◇ MCP {}{}{}✓{}  {}│{} ",
-                RED_ORANGE,
-                AURA_GREEN,
-                mcp_loaded,
-                AURA_GREEN,
-                COLOR_RESET,
-                AURA_SLATE,
-                COLOR_RESET
-            ),
-        )
+        if mcp_loaded == 0 {
+            (
+                " mcp 0  │ ".to_string(),
+                format!(
+                    " {}mcp 0{}  {}│{} ",
+                    AURA_SLATE, COLOR_RESET, AURA_SLATE, COLOR_RESET
+                ),
+            )
+        } else {
+            (
+                format!(" mcp {}  │ ", mcp_loaded),
+                format!(
+                    " {}mcp {}{}{}  {}│{} ",
+                    AURA_SLATE,
+                    AURA_GREEN,
+                    mcp_loaded,
+                    COLOR_RESET,
+                    AURA_SLATE,
+                    COLOR_RESET
+                ),
+            )
+        }
     } else {
         (
-            format!(" ◇ MCP {}✓ {}✗  │ ", mcp_loaded, mcp_failed),
+            format!(" mcp {} ({}✗)  │ ", mcp_loaded, mcp_failed),
             format!(
-                " {}◇ MCP {}{}{}✓{} {}{}{}✗{}  {}│{} ",
-                RED_ORANGE,
+                " {}mcp {}{}{} ({}{}{}✗)  {}│{} ",
+                AURA_SLATE,
                 AURA_GREEN,
                 mcp_loaded,
-                AURA_GREEN,
                 COLOR_RESET,
                 AURA_ROSE,
                 mcp_failed,
-                AURA_ROSE,
                 COLOR_RESET,
                 AURA_SLATE,
                 COLOR_RESET
