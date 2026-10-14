@@ -70,167 +70,254 @@ pub enum ContentPart {
     },
 }
 
+const MAX_MULTIMODAL_IMAGE_BYTES: usize = 20 * 1024 * 1024;
+
+const IMAGE_MAGIC_SIGNATURES: &[(&[u8], &str)] = &[
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+];
+
+fn detect_image_mime(bytes: &[u8]) -> Option<&'static str> {
+    let prefix_match = IMAGE_MAGIC_SIGNATURES
+        .iter()
+        .find(|(sig, _)| bytes.starts_with(sig))
+        .map(|(_, mime)| *mime);
+
+    let webp_match = (bytes.len() >= 12
+        && bytes.starts_with(b"RIFF")
+        && &bytes[8..12] == b"WEBP")
+        .then_some("image/webp");
+
+    prefix_match.or(webp_match)
+}
+
+fn find_next_markdown_image(text: &str) -> Option<(usize, usize, &str)> {
+    let mut search_offset = 0;
+    while let Some(rel_start) = text[search_offset..].find("![") {
+        let start = search_offset + rel_start;
+        let after_bang = start + 2;
+        let candidate = text[after_bang..].find("](").and_then(|rel_mid| {
+            let alt_slice = &text[after_bang..after_bang + rel_mid];
+            let target_start = after_bang + rel_mid + 2;
+            (!alt_slice.contains('\n'))
+                .then(|| text[target_start..].find(')'))
+                .flatten()
+                .and_then(|rel_end| {
+                    let target = &text[target_start..target_start + rel_end];
+                    (!target.is_empty() && !target.contains('\n'))
+                        .then_some((start, target_start + rel_end + 1, target.trim()))
+                })
+        });
+        match candidate {
+            Some(found) => return Some(found),
+            None => search_offset = after_bang,
+        }
+    }
+    None
+}
+
+async fn fetch_remote_image(url_str: &str) -> Option<(String, Vec<u8>)> {
+    let parsed_url = reqwest::Url::parse(url_str).ok()?;
+    let url_for_validation = parsed_url.clone();
+    tokio::task::spawn_blocking(move || crate::tools::web::validate_url_sync(&url_for_validation))
+        .await
+        .ok()?
+        .ok()?;
+
+    let resp = get_http_client().get(parsed_url).send().await.ok()?;
+    let content_len_ok = resp
+        .headers()
+        .get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| s.parse::<usize>().ok())
+        .is_none_or(|len| len <= MAX_MULTIMODAL_IMAGE_BYTES);
+    content_len_ok.then_some(())?;
+
+    let header_mime = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|ct| ct.split(';').next())
+        .map(str::trim)
+        .filter(|ct| ct.starts_with("image/"))
+        .map(str::to_string);
+
+    let bytes = resp.bytes().await.ok()?;
+    (bytes.len() <= MAX_MULTIMODAL_IMAGE_BYTES).then_some(())?;
+    let data = bytes.to_vec();
+    let mime = detect_image_mime(&data)
+        .map(str::to_string)
+        .or(header_mime)?;
+    Some((mime, data))
+}
+
+fn load_local_image(raw_target: &str) -> Option<(String, Vec<u8>)> {
+    let clean_path = raw_target.trim_start_matches("file://");
+    let resolved_path = crate::config::loader::resolve_path(clean_path);
+    crate::config::loader::verify_safe_path(&resolved_path).ok()?;
+    (resolved_path.exists() && resolved_path.is_file()).then_some(())?;
+    let metadata = std::fs::metadata(&resolved_path).ok()?;
+    (metadata.len() <= MAX_MULTIMODAL_IMAGE_BYTES as u64).then_some(())?;
+    let data = std::fs::read(&resolved_path).ok()?;
+    (data.len() <= MAX_MULTIMODAL_IMAGE_BYTES).then_some(())?;
+    let mime = detect_image_mime(&data)?.to_string();
+    Some((mime, data))
+}
+
 pub async fn parse_multimodal_content(text: &str) -> Vec<ContentPart> {
-    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re = RE.get_or_init(|| {
-        regex::Regex::new(r"!\[.*?\]\((.*?)\)")
-            .expect("static multimodal image markdown regex must compile")
-    });
     let mut parts = Vec::new();
-    let mut last_index = 0;
+    let mut cursor = 0;
 
-    for cap in re.captures_iter(text) {
-        let Some(mat) = cap.get(0) else {
-            continue;
-        };
-        let Some(path_match) = cap.get(1) else {
-            continue;
-        };
-        let path_or_url = path_match.as_str();
-
-        // Push text preceding the match
-        let before = &text[last_index..mat.start()];
-        if !before.is_empty() {
-            parts.push(ContentPart::Text(before.to_string()));
+    while let Some((rel_start, rel_end, path_or_url)) = find_next_markdown_image(&text[cursor..]) {
+        let match_start = cursor + rel_start;
+        let match_end = cursor + rel_end;
+        let before = &text[cursor..match_start];
+        match before.is_empty() {
+            true => {}
+            false => parts.push(ContentPart::Text(before.to_string())),
         }
 
-        let mut image_data = None;
-        let mut resolved_mime_type = "image/png".to_string();
+        let is_remote =
+            path_or_url.starts_with("http://") || path_or_url.starts_with("https://");
+        let resolved = match is_remote {
+            true => fetch_remote_image(path_or_url).await,
+            false => load_local_image(path_or_url),
+        };
 
-        if path_or_url.starts_with("http://") || path_or_url.starts_with("https://") {
-            // Fetch remote image asynchronously
-            let client = get_http_client();
-
-            if let Ok(resp) = client.get(path_or_url).send().await {
-                let mut size_ok = true;
-                if let Some(len_header) = resp.headers().get(reqwest::header::CONTENT_LENGTH) {
-                    if let Ok(len_str) = len_header.to_str() {
-                        if let Ok(len) = len_str.parse::<u64>() {
-                            if len > 20 * 1024 * 1024 {
-                                size_ok = false;
-                            }
-                        }
-                    }
-                }
-
-                if size_ok {
-                    if let Some(content_type) = resp
-                        .headers()
-                        .get(reqwest::header::CONTENT_TYPE)
-                        .and_then(|h| h.to_str().ok().map(|s| s.to_string()))
-                    {
-                        if content_type.starts_with("image/") {
-                            resolved_mime_type = content_type;
-                        }
-                    }
-                    if let Ok(bytes) = resp.bytes().await {
-                        if bytes.len() <= 20 * 1024 * 1024 {
-                            image_data = Some(bytes.to_vec());
-                        }
-                    }
-                }
+        match resolved {
+            Some((mime_type, data)) => {
+                use base64::{engine::general_purpose, Engine as _};
+                let base64_data = general_purpose::STANDARD.encode(data);
+                parts.push(ContentPart::Image {
+                    mime_type,
+                    base64_data,
+                });
             }
-        } else {
-            // Read local image
-            let clean_path = path_or_url.trim_start_matches("file://");
-            let path = std::path::Path::new(clean_path);
-
-            if path.exists() && path.is_file() {
-                if let Ok(metadata) = std::fs::metadata(path) {
-                    if metadata.len() <= 20 * 1024 * 1024 {
-                        if let Ok(data) = std::fs::read(path) {
-                            resolved_mime_type =
-                                match path.extension().and_then(|ext| ext.to_str()) {
-                                    Some("png") => "image/png",
-                                    Some("jpg") | Some("jpeg") => "image/jpeg",
-                                    Some("webp") => "image/webp",
-                                    Some("gif") => "image/gif",
-                                    _ => "image/png", // default fallback
-                                }
-                                .to_string();
-                            image_data = Some(data);
-                        }
-                    }
-                }
+            None => {
+                parts.push(ContentPart::Text(text[match_start..match_end].to_string()));
             }
         }
 
-        if let Some(data) = image_data {
-            use base64::{engine::general_purpose, Engine as _};
-            let base64_data = general_purpose::STANDARD.encode(data);
-            parts.push(ContentPart::Image {
-                mime_type: resolved_mime_type,
-                base64_data,
-            });
-        } else {
-            parts.push(ContentPart::Text(mat.as_str().to_string()));
-        }
-
-        last_index = mat.end();
+        cursor = match_end;
     }
 
-    let remaining = &text[last_index..];
-    if !remaining.is_empty() {
-        parts.push(ContentPart::Text(remaining.to_string()));
+    let remaining = &text[cursor..];
+    match remaining.is_empty() {
+        true => {}
+        false => parts.push(ContentPart::Text(remaining.to_string())),
     }
 
-    if parts.is_empty() && !text.is_empty() {
-        parts.push(ContentPart::Text(text.to_string()));
+    match parts.is_empty() && !text.is_empty() {
+        true => parts.push(ContentPart::Text(text.to_string())),
+        false => {}
     }
 
     parts
 }
 
+pub fn sanitize_tool_messages(messages: &[Message]) -> Vec<Message> {
+    messages
+        .iter()
+        .fold(Vec::with_capacity(messages.len()), |mut sanitized, msg| {
+            match msg.role.as_str() {
+                "tool" => match msg.extra.get("tool_call_id").and_then(|v| v.as_str()) {
+                    None => {
+                        tracing::warn!("Discarded tool message missing tool_call_id");
+                    }
+                    Some(id) => {
+                        let matched_tool_name = sanitized
+                            .iter()
+                            .rev()
+                            .filter(|prev| prev.role == "assistant")
+                            .find_map(|prev| {
+                                prev.extra
+                                    .get("tool_calls")
+                                    .and_then(|v| v.as_array())
+                                    .and_then(|calls| {
+                                        calls
+                                            .iter()
+                                            .find(|call| {
+                                                call.get("id").and_then(|v| v.as_str())
+                                                    == Some(id)
+                                            })
+                                            .map(|call| {
+                                                call.get("function")
+                                                    .and_then(|f| f.get("name"))
+                                                    .and_then(|v| v.as_str())
+                                                    .map(str::to_string)
+                                            })
+                                    })
+                            });
+                        match matched_tool_name {
+                            Some(tool_name) => {
+                                let mut sanitized_msg = msg.clone();
+                                let needs_name = sanitized_msg
+                                    .extra
+                                    .get("name")
+                                    .and_then(|v| v.as_str())
+                                    .is_none_or(|name| name.trim().is_empty());
+                                match needs_name {
+                                    true => {
+                                        let resolved_name =
+                                            tool_name.unwrap_or_else(|| "tool".to_string());
+                                        sanitized_msg.extra.insert(
+                                            "name".to_string(),
+                                            serde_json::Value::String(resolved_name),
+                                        );
+                                    }
+                                    false => {}
+                                }
+                                sanitized.push(sanitized_msg);
+                            }
+                            None => {
+                                tracing::warn!(
+                                    "Discarded orphaned tool message with tool_call_id: {}",
+                                    id
+                                );
+                            }
+                        }
+                    }
+                },
+                _ => sanitized.push(msg.clone()),
+            }
+            sanitized
+        })
+}
+
+const VISION_EXACT_MODELS: &[&str] = &["mivi"];
+const VISION_PREFIX_MODELS: &[&str] = &["mivi/", "o3"];
+const VISION_SUBSTRING_MODELS: &[&str] = &[
+    "gpt-4o",
+    "gpt-4-turbo",
+    "gpt-4-vision-preview",
+    "claude-3",
+    "claude-4",
+    "gemini",
+    "paligemma",
+    "gemma-4",
+    "omni",
+    "pixtral",
+    "qvq",
+    "qwen-vl",
+    "deepseek-vl",
+];
+const VISION_TOKEN_KEYWORDS: &[&str] = &["vision", "vl", "vlm", "multimodal"];
+
 pub fn model_supports_vision(model: &str) -> bool {
     let m = model.to_lowercase();
-
-    if m == "mivi" || m.starts_with("mivi/") {
-        return true;
-    }
-
-    if m.contains("gpt-4o")
-        || m.starts_with("o3")
-        || m.contains("gpt-4-turbo")
-        || m.contains("gpt-4-vision-preview")
-    {
-        return true;
-    }
-    if m.starts_with("o1") && !m.contains("mini") && !m.contains("preview") {
-        return true;
-    }
-    if m.contains("claude-3") || m.contains("claude-4") {
-        return true;
-    }
-    if m.contains("gemini") {
-        return true;
-    }
-    if m.contains("paligemma") {
-        return true;
-    }
-    if m.contains("gemma-4") {
-        return true;
-    }
-    if m.contains("omni") {
-        return true;
-    }
-    if m.contains("pixtral") {
-        return true;
-    }
-    if m.contains("qvq") || m.contains("qwen-vl") || m.contains("deepseek-vl") {
-        return true;
-    }
-
-    // Check if the model name has a distinct vision/multimodal word separated by -, _, or /
-    // This avoids false positives like "supervision"
-    let has_vision_word = m
+    let exact_match = VISION_EXACT_MODELS.contains(&m.as_str());
+    let prefix_match = VISION_PREFIX_MODELS.iter().any(|p| m.starts_with(p));
+    let o1_full_match = m.starts_with("o1") && !m.contains("mini") && !m.contains("preview");
+    let substring_match = VISION_SUBSTRING_MODELS.iter().any(|s| m.contains(s));
+    let token_match = m
         .split(['/', '-', '_', ':'])
-        .any(|word| word == "vision" || word == "vl" || word == "vlm" || word == "multimodal");
-    if has_vision_word {
-        return true;
-    }
+        .any(|word| VISION_TOKEN_KEYWORDS.contains(&word));
 
-    false
+    exact_match || prefix_match || o1_full_match || substring_match || token_match
 }
+
 
 #[async_trait::async_trait]
 pub trait LLMProvider: Send + Sync {

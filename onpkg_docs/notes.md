@@ -24,6 +24,6 @@ Use the `index_notes` tool to parse and index local documents:
 
 ## 2. Block-Level Indexing Rules
 1. **Header Segmentation**: The parser automatically splits markdown documents into sections based on headers (`#`, `##`, `###`).
-2. **descriptive Names**: Each section is stored with a header path in the format `[Note Segment] File.md > HeaderName: Content...` to preserve surrounding context.
-3. **Embeddings**: Computes AllMiniLML6V2 vector embeddings and appends entries to `~/.openz/shared_memory.json` under the tag `notes`.
+2. **Descriptive Names**: Each section is stored with a header path in the format `[Note Segment] File.md > HeaderName: Content...` to preserve surrounding context.
+3. **Embeddings**: Computes `AllMiniLML6V2` vector embeddings and stores entries in the SQLite `shared_memory` table inside `~/.openz/memory.db` under the tag `notes`.
 4. **Retrieval**: Once indexed, you can search these note segments using the standard `recall_memory` tool with a semantic query.

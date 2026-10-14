@@ -108,167 +108,104 @@ impl OpenAIProvider {
         // Groq, etc.) don't accept that field, so we fall back to <think> tags for them.
         let is_deepseek = api_base.contains("deepseek.com") || model.starts_with("deepseek");
 
-        let mut sanitized_messages: Vec<Message> = Vec::new();
-        for msg in messages {
-            if msg.role == "tool" {
-                let tool_call_id = msg.extra.get("tool_call_id").and_then(|v| v.as_str());
-                if let Some(id) = tool_call_id {
-                    let mut found = false;
-                    let mut tool_name = None;
-                    for prev in sanitized_messages.iter().rev() {
-                        if prev.role == "assistant" {
-                            if let Some(calls) =
-                                prev.extra.get("tool_calls").and_then(|v| v.as_array())
-                            {
-                                for call in calls {
-                                    if call.get("id").and_then(|v| v.as_str()) == Some(id) {
-                                        found = true;
-                                        tool_name = call
-                                            .get("function")
-                                            .and_then(|f| f.get("name"))
-                                            .and_then(|v| v.as_str())
-                                            .map(|s| s.to_string());
-                                        break;
-                                    }
-                                }
-                            }
-                            if found {
-                                break;
-                            }
-                        }
-                    }
-                    if found {
-                        let mut sanitized_msg = msg.clone();
-                        let current_name = sanitized_msg.extra.get("name").and_then(|v| v.as_str());
-                        if current_name.is_none_or(|name| name.trim().is_empty()) {
-                            if let Some(name_str) = tool_name {
-                                sanitized_msg.extra.insert(
-                                    "name".to_string(),
-                                    serde_json::Value::String(name_str),
-                                );
-                            } else {
-                                sanitized_msg.extra.insert(
-                                    "name".to_string(),
-                                    serde_json::Value::String("tool".to_string()),
-                                );
-                            }
-                        }
-                        sanitized_messages.push(sanitized_msg);
-                    } else {
-                        tracing::warn!("Discarded orphaned tool message with tool_call_id: {}", id);
-                    }
-                } else {
-                    tracing::warn!("Discarded tool message missing tool_call_id");
-                }
-            } else {
-                sanitized_messages.push(msg.clone());
-            }
-        }
+        let sanitized_messages = crate::providers::sanitize_tool_messages(messages);
 
-        if !system_prompt.is_empty() {
-            api_messages.push(OpenAIMessage {
+        match system_prompt.is_empty() {
+            true => {}
+            false => api_messages.push(OpenAIMessage {
                 role: "system".to_string(),
                 content: serde_json::Value::String(system_prompt.to_string()),
                 name: None,
                 tool_calls: None,
                 tool_call_id: None,
                 reasoning_content: None,
-            });
+            }),
         }
 
+        let supports_vision = crate::providers::model_supports_vision(model);
+
         for msg in sanitized_messages {
-            let mut tool_call_id = None;
-            let mut name = None;
             let role = msg.role.clone();
+            let tool_call_id = (role == "tool")
+                .then(|| {
+                    msg.extra
+                        .get("tool_call_id")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                })
+                .flatten();
 
-            if role == "tool" {
-                tool_call_id = msg
-                    .extra
-                    .get("tool_call_id")
-                    .and_then(|v| v.as_str().map(|s| s.to_string()));
-            }
-
-            if let Some(n) = msg.extra.get("name").and_then(|v| v.as_str()) {
-                name = Some(n.to_string());
-            }
+            let name = msg
+                .extra
+                .get("name")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
 
             // Handle reasoning_content for assistant messages.
             // DeepSeek requires it as a dedicated top-level field; other providers
             // (OpenRouter, Groq, etc.) get it embedded as <think> tags in content.
-            let reasoning_field: Option<String>;
-            let mut text_content = msg.content.clone();
-            if role == "assistant" {
-                if let Some(reasoning) = msg.extra.get("reasoning_content").and_then(|v| v.as_str())
-                {
-                    if !reasoning.is_empty() {
-                        if is_deepseek {
-                            // Pass as a separate field — DeepSeek API requirement
-                            reasoning_field = Some(reasoning.to_string());
-                        } else {
-                            // Embed in content for other OpenAI-compatible providers
-                            text_content =
-                                format!("<think>\n{}\n</think>\n\n{}", reasoning, text_content);
-                            reasoning_field = None;
-                        }
-                    } else {
-                        reasoning_field = None;
-                    }
-                } else {
-                    reasoning_field = None;
-                }
-            } else {
-                reasoning_field = None;
-            }
+            let non_empty_reasoning = (role == "assistant")
+                .then(|| msg.extra.get("reasoning_content").and_then(|v| v.as_str()))
+                .flatten()
+                .filter(|r| !r.is_empty());
 
-            let parts = crate::providers::parse_multimodal_content(&text_content).await;
+            let (reasoning_field, text_content) = match (non_empty_reasoning, is_deepseek) {
+                (Some(reasoning), true) => (Some(reasoning.to_string()), msg.content.clone()),
+                (Some(reasoning), false) => (
+                    None,
+                    format!("<think>\n{}\n</think>\n\n{}", reasoning, msg.content),
+                ),
+                (None, _) => (None, msg.content.clone()),
+            };
+
+            let parts = match (role.as_str(), supports_vision) {
+                ("user", true) => crate::providers::parse_multimodal_content(&text_content).await,
+                _ => Vec::new(),
+            };
             let has_images = parts
                 .iter()
                 .any(|p| matches!(p, crate::providers::ContentPart::Image { .. }));
-            let supports_vision = crate::providers::model_supports_vision(model);
 
-            let content_value = if !supports_vision || !has_images {
-                serde_json::Value::String(text_content.clone())
-            } else if parts.len() == 1 {
-                match &parts[0] {
-                    crate::providers::ContentPart::Text(t) => serde_json::Value::String(t.clone()),
-                    crate::providers::ContentPart::Image {
+            let content_value = match (supports_vision && has_images, parts.as_slice()) {
+                (false, _) => serde_json::Value::String(text_content.clone()),
+                (true, [crate::providers::ContentPart::Text(t)]) => {
+                    serde_json::Value::String(t.clone())
+                }
+                (
+                    true,
+                    [crate::providers::ContentPart::Image {
                         mime_type,
                         base64_data,
-                    } => {
-                        serde_json::json!([
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": format!("data:{};base64,{}", mime_type, base64_data)
-                                }
-                            }
-                        ])
+                    }],
+                ) => serde_json::json!([
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": format!("data:{};base64,{}", mime_type, base64_data)
+                        }
                     }
-                }
-            } else {
-                let mut arr = Vec::new();
-                for part in parts {
-                    match part {
-                        crate::providers::ContentPart::Text(t) => {
-                            arr.push(serde_json::json!({
+                ]),
+                (true, many) => {
+                    let arr: Vec<serde_json::Value> = many
+                        .iter()
+                        .map(|part| match part {
+                            crate::providers::ContentPart::Text(t) => serde_json::json!({
                                 "type": "text",
                                 "text": t
-                            }));
-                        }
-                        crate::providers::ContentPart::Image {
-                            mime_type,
-                            base64_data,
-                        } => {
-                            arr.push(serde_json::json!({
+                            }),
+                            crate::providers::ContentPart::Image {
+                                mime_type,
+                                base64_data,
+                            } => serde_json::json!({
                                 "type": "image_url",
                                 "image_url": {
                                     "url": format!("data:{};base64,{}", mime_type, base64_data)
                                 }
-                            }));
-                        }
-                    }
+                            }),
+                        })
+                        .collect();
+                    serde_json::Value::Array(arr)
                 }
-                serde_json::Value::Array(arr)
             };
 
             api_messages.push(OpenAIMessage {
@@ -470,95 +407,44 @@ impl LLMProvider for OpenAIProvider {
         use futures_util::StreamExt;
 
         let stream = futures_util::stream::unfold(
-            (byte_stream, String::new(), false),
-            |(mut stream, mut buffer, mut done)| async move {
-                if done {
-                    return None;
-                }
+            (
+                byte_stream,
+                String::new(),
+                std::collections::VecDeque::<crate::providers::ChatStreamChunk>::new(),
+                false,
+            ),
+            |(mut stream, mut buffer, mut pending, mut done)| async move {
                 loop {
-                    if let Some(pos) = buffer.find('\n') {
+                    if let Some(chunk) = pending.pop_front() {
+                        return Some((Ok(chunk), (stream, buffer, pending, done)));
+                    }
+                    if done {
+                        return None;
+                    }
+
+                    while let Some(pos) = buffer.find('\n') {
                         let line = buffer[..pos].trim().to_string();
                         buffer = buffer[pos + 1..].to_string();
-                        if let Some(stripped) = line.strip_prefix("data: ") {
-                            let data = stripped.trim();
-                            if data == "[DONE]" {
-                                done = true;
-                                return Some((
-                                    Ok(crate::providers::ChatStreamChunk::Done {
-                                        finish_reason: None,
-                                    }),
-                                    (stream, buffer, done),
-                                ));
+                        if let Some(stripped) = line.strip_prefix("data:") {
+                            let (chunks, is_done) = parse_sse_data_chunks(stripped);
+                            for c in chunks {
+                                pending.push_back(c);
                             }
-                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
-                                if let Some(choices) = val.get("choices").and_then(|v| v.as_array())
-                                {
-                                    if let Some(choice) = choices.first() {
-                                        // 1. Check for content
-                                        if let Some(content) = choice
-                                            .pointer("/delta/content")
-                                            .and_then(|v| v.as_str())
-                                        {
-                                            if !content.is_empty() {
-                                                return Some((
-                                                    Ok(crate::providers::ChatStreamChunk::Content(
-                                                        content.to_string(),
-                                                    )),
-                                                    (stream, buffer, done),
-                                                ));
-                                            }
-                                        }
-                                        // 2. Check for reasoning_content
-                                        if let Some(reasoning) = choice
-                                            .pointer("/delta/reasoning_content")
-                                            .and_then(|v| v.as_str())
-                                        {
-                                            if !reasoning.is_empty() {
-                                                return Some((Ok(crate::providers::ChatStreamChunk::Reasoning(reasoning.to_string())), (stream, buffer, done)));
-                                            }
-                                        }
-                                        // 3. Check for tool_calls
-                                        if let Some(tool_calls) = choice
-                                            .pointer("/delta/tool_calls")
-                                            .and_then(|v| v.as_array())
-                                        {
-                                            if let Some(tc) = tool_calls.first() {
-                                                let index = tc
-                                                    .get("index")
-                                                    .and_then(|v| v.as_u64())
-                                                    .unwrap_or(0)
-                                                    as usize;
-                                                let id = tc
-                                                    .get("id")
-                                                    .and_then(|v| v.as_str())
-                                                    .map(|s| s.to_string());
-                                                let name = tc
-                                                    .pointer("/function/name")
-                                                    .and_then(|v| v.as_str())
-                                                    .map(|s| s.to_string());
-                                                let arguments = tc
-                                                    .pointer("/function/arguments")
-                                                    .and_then(|v| v.as_str())
-                                                    .map(|s| s.to_string());
-                                                return Some((Ok(crate::providers::ChatStreamChunk::ToolCall { index, id, name, arguments }), (stream, buffer, done)));
-                                            }
-                                        }
-                                        // 4. Check for finish_reason
-                                        if let Some(finish_reason) =
-                                            choice.get("finish_reason").and_then(|v| v.as_str())
-                                        {
-                                            done = true;
-                                            return Some((
-                                                Ok(crate::providers::ChatStreamChunk::Done {
-                                                    finish_reason: Some(finish_reason.to_string()),
-                                                }),
-                                                (stream, buffer, done),
-                                            ));
-                                        }
-                                    }
-                                }
+                            if is_done {
+                                done = true;
+                                break;
+                            }
+                            if !pending.is_empty() {
+                                break;
                             }
                         }
+                    }
+
+                    if let Some(chunk) = pending.pop_front() {
+                        return Some((Ok(chunk), (stream, buffer, pending, done)));
+                    }
+                    if done {
+                        return None;
                     }
 
                     match stream.next().await {
@@ -569,67 +455,35 @@ impl LLMProvider for OpenAIProvider {
                             done = true;
                             return Some((
                                 Err(anyhow::anyhow!("Stream error: {e}")),
-                                (stream, buffer, done),
+                                (stream, buffer, pending, done),
                             ));
                         }
                         None => {
-                            if buffer.is_empty() {
-                                done = true;
-                                return Some((
-                                    Ok(crate::providers::ChatStreamChunk::Done {
-                                        finish_reason: None,
-                                    }),
-                                    (stream, buffer, done),
-                                ));
-                            } else {
-                                let line = buffer.trim().to_string();
-                                buffer.clear();
-                                if let Some(stripped) = line.strip_prefix("data: ") {
-                                    let data = stripped.trim();
-                                    if data == "[DONE]" {
-                                        done = true;
-                                        return Some((
-                                            Ok(crate::providers::ChatStreamChunk::Done {
-                                                finish_reason: None,
-                                            }),
-                                            (stream, buffer, done),
-                                        ));
-                                    }
-                                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(data)
-                                    {
-                                        if let Some(choice) = val
-                                            .get("choices")
-                                            .and_then(|v| v.as_array())
-                                            .and_then(|a| a.first())
-                                        {
-                                            if let Some(content) = choice
-                                                .pointer("/delta/content")
-                                                .and_then(|v| v.as_str())
-                                            {
-                                                return Some((
-                                                    Ok(crate::providers::ChatStreamChunk::Content(
-                                                        content.to_string(),
-                                                    )),
-                                                    (stream, buffer, true),
-                                                ));
-                                            }
-                                            if let Some(reasoning) = choice
-                                                .pointer("/delta/reasoning_content")
-                                                .and_then(|v| v.as_str())
-                                            {
-                                                return Some((Ok(crate::providers::ChatStreamChunk::Reasoning(reasoning.to_string())), (stream, buffer, true)));
-                                            }
+                            if !buffer.trim().is_empty() {
+                                let remaining = std::mem::take(&mut buffer);
+                                for raw_line in remaining.lines() {
+                                    let line = raw_line.trim();
+                                    if let Some(stripped) = line.strip_prefix("data:") {
+                                        let (chunks, _) = parse_sse_data_chunks(stripped);
+                                        for c in chunks {
+                                            pending.push_back(c);
                                         }
                                     }
                                 }
-                                done = true;
-                                return Some((
-                                    Ok(crate::providers::ChatStreamChunk::Done {
-                                        finish_reason: None,
-                                    }),
-                                    (stream, buffer, done),
-                                ));
                             }
+                            let has_done = pending.iter().any(|c| {
+                                matches!(c, crate::providers::ChatStreamChunk::Done { .. })
+                            });
+                            if !has_done {
+                                pending.push_back(crate::providers::ChatStreamChunk::Done {
+                                    finish_reason: None,
+                                });
+                            }
+                            done = true;
+                            if let Some(chunk) = pending.pop_front() {
+                                return Some((Ok(chunk), (stream, buffer, pending, done)));
+                            }
+                            return None;
                         }
                     }
                 }
@@ -639,6 +493,92 @@ impl LLMProvider for OpenAIProvider {
         let filtered = filter_think_stream(Box::pin(stream));
         Ok(Box::pin(filtered))
     }
+}
+
+pub(crate) fn parse_sse_data_chunks(
+    data: &str,
+) -> (Vec<crate::providers::ChatStreamChunk>, bool) {
+    let data = data.trim();
+    if data == "[DONE]" {
+        return (
+            vec![crate::providers::ChatStreamChunk::Done {
+                finish_reason: None,
+            }],
+            true,
+        );
+    }
+
+    let mut chunks = Vec::new();
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(data) {
+        if let Some(choices) = val.get("choices").and_then(|v| v.as_array()) {
+            if let Some(choice) = choices.first() {
+                if let Some(reasoning) = choice
+                    .pointer("/delta/reasoning_content")
+                    .or_else(|| choice.pointer("/delta/reasoning"))
+                    .and_then(|v| v.as_str())
+                {
+                    if !reasoning.is_empty() {
+                        chunks.push(crate::providers::ChatStreamChunk::Reasoning(
+                            reasoning.to_string(),
+                        ));
+                    }
+                }
+                if let Some(content) = choice.pointer("/delta/content").and_then(|v| v.as_str()) {
+                    if !content.is_empty() {
+                        chunks.push(crate::providers::ChatStreamChunk::Content(
+                            content.to_string(),
+                        ));
+                    }
+                }
+                if let Some(tool_calls) = choice
+                    .pointer("/delta/tool_calls")
+                    .and_then(|v| v.as_array())
+                {
+                    for (pos, tc) in tool_calls.iter().enumerate() {
+                        let index = tc
+                            .get("index")
+                            .and_then(|v| v.as_u64())
+                            .map(|v| v as usize)
+                            .unwrap_or(pos);
+                        let id = tc
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string());
+                        let name = tc
+                            .pointer("/function/name")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string());
+                        let arguments = tc
+                            .pointer("/function/arguments")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string());
+                        if id.is_some() || name.is_some() || arguments.is_some() {
+                            chunks.push(crate::providers::ChatStreamChunk::ToolCall {
+                                index,
+                                id,
+                                name,
+                                arguments,
+                            });
+                        }
+                    }
+                }
+                if let Some(finish_reason) = choice
+                    .get("finish_reason")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                {
+                    chunks.push(crate::providers::ChatStreamChunk::Done {
+                        finish_reason: Some(finish_reason.to_string()),
+                    });
+                }
+            }
+        }
+    }
+
+    (chunks, false)
 }
 
 pub fn split_think_blocks(content: &str) -> (Option<String>, Option<String>) {
@@ -936,31 +876,37 @@ pub fn merge_reasoning(existing: Option<String>, extracted: Option<String>) -> O
 pub fn parse_fallback_tool_calls(content: &str) -> Vec<ToolCallRequest> {
     let mut tool_calls = Vec::new();
 
-    // Look for ```json ... ``` blocks
-    let start_tag = "```json";
-    let end_tag = "```";
+    // 1. Check delimited blocks: [TOOL_CALL]...[/TOOL_CALL], <tool_call>...</tool_call>, ```json...```, ```tool_call...```
+    let block_delimiters = [
+        ("[TOOL_CALL]", "[/TOOL_CALL]"),
+        ("<tool_call>", "</tool_call>"),
+        ("```json", "```"),
+        ("```tool_call", "```"),
+    ];
 
-    let mut search_str = content;
-    while let Some(start_idx) = search_str.find(start_tag) {
-        let after_start = &search_str[start_idx + start_tag.len()..];
-        if let Some(end_idx) = after_start.find(end_tag) {
-            let json_str = after_start[..end_idx].trim();
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(json_str) {
-                if let Some(tc) = extract_tool_call(&val) {
-                    tool_calls.push(tc);
+    for (start_tag, end_tag) in block_delimiters {
+        let mut search_str = content;
+        while let Some(start_idx) = search_str.find(start_tag) {
+            let after_start = &search_str[start_idx + start_tag.len()..];
+            if let Some(end_idx) = after_start.find(end_tag) {
+                let raw_inner = after_start[..end_idx].trim();
+                if let Some(val) = parse_lenient_tool_json(raw_inner) {
+                    if let Some(tc) = extract_tool_call(&val) {
+                        tool_calls.push(tc);
+                    }
                 }
+                search_str = &after_start[end_idx + end_tag.len()..];
+            } else {
+                break;
             }
-            search_str = &after_start[end_idx + end_tag.len()..];
-        } else {
-            break;
         }
     }
 
-    // If no markdown JSON blocks found, maybe the whole content is raw JSON?
+    // 2. If no delimited blocks found, check if the trimmed content (or balanced JSON object) is a raw tool call
     if tool_calls.is_empty() {
         let trimmed = content.trim();
         if trimmed.starts_with('{') && trimmed.ends_with('}') {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+            if let Some(val) = parse_lenient_tool_json(trimmed) {
                 if let Some(tc) = extract_tool_call(&val) {
                     tool_calls.push(tc);
                 }
@@ -971,26 +917,161 @@ pub fn parse_fallback_tool_calls(content: &str) -> Vec<ToolCallRequest> {
     tool_calls
 }
 
+fn parse_lenient_tool_json(raw: &str) -> Option<serde_json::Value> {
+    let trimmed = raw.trim();
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        return Some(val);
+    }
+    let normalized = normalize_arrow_map_syntax(trimmed);
+    serde_json::from_str::<serde_json::Value>(&normalized).ok()
+}
+
+/// Converts Ruby/MiniMax-style `{tool => "list_jobs", args => {}}` syntax into valid JSON `{"tool": "list_jobs", "args": {}}`.
+fn normalize_arrow_map_syntax(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() + 16);
+    let chars: Vec<char> = input.chars().collect();
+    let mut i = 0;
+    let mut in_double = false;
+    let mut in_single = false;
+
+    while i < chars.len() {
+        let c = chars[i];
+        if in_double {
+            out.push(c);
+            if c == '\\' && i + 1 < chars.len() {
+                i += 1;
+                out.push(chars[i]);
+            } else if c == '"' {
+                in_double = false;
+            }
+            i += 1;
+            continue;
+        }
+        if in_single {
+            if c == '\\' && i + 1 < chars.len() {
+                i += 1;
+                let escaped = chars[i];
+                if escaped == '"' {
+                    out.push('\\');
+                }
+                out.push(escaped);
+            } else if c == '\'' {
+                out.push('"');
+                in_single = false;
+            } else if c == '"' {
+                out.push('\\');
+                out.push('"');
+            } else {
+                out.push(c);
+            }
+            i += 1;
+            continue;
+        }
+
+        if c == '"' {
+            in_double = true;
+            out.push(c);
+            i += 1;
+            continue;
+        }
+        if c == '\'' {
+            in_single = true;
+            out.push('"');
+            i += 1;
+            continue;
+        }
+
+        if c == '=' && i + 1 < chars.len() && chars[i + 1] == '>' {
+            out.push(':');
+            i += 2;
+            continue;
+        }
+
+        if c.is_ascii_alphabetic() || c == '_' {
+            let start = i;
+            while i < chars.len()
+                && (chars[i].is_ascii_alphanumeric() || chars[i] == '_' || chars[i] == '-')
+            {
+                i += 1;
+            }
+            let ident: String = chars[start..i].iter().collect();
+            let mut lookahead = i;
+            while lookahead < chars.len() && chars[lookahead].is_whitespace() {
+                lookahead += 1;
+            }
+            if lookahead + 1 < chars.len()
+                && chars[lookahead] == '='
+                && chars[lookahead + 1] == '>'
+            {
+                out.push('"');
+                out.push_str(&ident);
+                out.push_str("\":");
+                i = lookahead + 2;
+                continue;
+            } else if lookahead < chars.len() && chars[lookahead] == ':' {
+                out.push('"');
+                out.push_str(&ident);
+                out.push_str("\":");
+                i = lookahead + 1;
+                continue;
+            } else {
+                out.push_str(&ident);
+                continue;
+            }
+        }
+
+        out.push(c);
+        i += 1;
+    }
+
+    out
+}
+
 fn extract_tool_call(val: &serde_json::Value) -> Option<ToolCallRequest> {
     let name = val
         .get("name")
         .and_then(|v| v.as_str())
-        .or_else(|| val.get("function").and_then(|v| v.as_str()));
+        .or_else(|| val.get("tool").and_then(|v| v.as_str()))
+        .or_else(|| val.get("tool_name").and_then(|v| v.as_str()))
+        .or_else(|| val.get("function").and_then(|v| v.as_str()))
+        .or_else(|| {
+            val.get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|v| v.as_str())
+        });
 
     if let Some(name_str) = name {
+        let name_trimmed = name_str.trim();
+        if name_trimmed.is_empty() {
+            return None;
+        }
         let uuid = uuid::Uuid::new_v4().to_string();
-        let args = if let Some(args_val) = val.get("arguments").or_else(|| val.get("parameters")) {
-            args_val.clone()
+        let raw_args = val
+            .get("arguments")
+            .or_else(|| val.get("parameters"))
+            .or_else(|| val.get("args"))
+            .or_else(|| val.get("input"))
+            .or_else(|| val.get("function").and_then(|f| f.get("arguments")));
+
+        let args = if let Some(args_val) = raw_args {
+            if let Some(args_str) = args_val.as_str() {
+                parse_lenient_tool_json(args_str)
+                    .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()))
+            } else {
+                args_val.clone()
+            }
         } else {
             // Treat the entire object as arguments, excluding metadata keys
             let mut map = val.as_object().cloned().unwrap_or_default();
             map.remove("name");
+            map.remove("tool");
+            map.remove("tool_name");
             map.remove("function");
             serde_json::Value::Object(map)
         };
         Some(ToolCallRequest {
             id: format!("call_{}", uuid),
-            name: name_str.to_string(),
+            name: name_trimmed.to_string(),
             arguments: args,
         })
     } else {

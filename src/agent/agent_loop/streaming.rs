@@ -34,10 +34,10 @@ impl StreamingAssembly {
                 arguments,
             } => {
                 let entry = self.partial_tool_calls.entry(index).or_default();
-                if let Some(id) = id {
+                if let Some(id) = id.filter(|s| !s.is_empty()) {
                     entry.id = id;
                 }
-                if let Some(name) = name {
+                if let Some(name) = name.filter(|s| !s.is_empty()) {
                     entry.name = name;
                 }
                 if let Some(arguments) = arguments {
@@ -59,26 +59,49 @@ impl StreamingAssembly {
         let mut tool_calls = Vec::new();
         for key in keys {
             if let Some(partial) = self.partial_tool_calls.get(&key) {
-                let arguments = serde_json::from_str(&partial.arguments).unwrap_or_else(|err| {
-                    let repaired = partial.arguments.replace('\n', "\\n").replace('\r', "\\r");
-                    serde_json::from_str(&repaired)
-                        .unwrap_or_else(|_| serde_json::json!({ "parse_error": err.to_string() }))
-                });
+                if partial.name.trim().is_empty() {
+                    continue;
+                }
+                let arguments = if partial.arguments.trim().is_empty() {
+                    serde_json::json!({})
+                } else {
+                    serde_json::from_str(&partial.arguments).unwrap_or_else(|err| {
+                        let repaired = partial.arguments.replace('\n', "\\n").replace('\r', "\\r");
+                        serde_json::from_str(&repaired)
+                            .unwrap_or_else(|_| serde_json::json!({ "parse_error": err.to_string() }))
+                    })
+                };
 
                 tool_calls.push(ToolCallRequest {
-                    id: partial.id.clone(),
+                    id: if partial.id.is_empty() {
+                        format!("call_{}", key)
+                    } else {
+                        partial.id.clone()
+                    },
                     name: partial.name.clone(),
                     arguments,
                 });
             }
         }
 
+        let mut content = if self.content.is_empty() {
+            None
+        } else {
+            Some(self.content)
+        };
+
+        if tool_calls.is_empty() {
+            if let Some(ref text) = content {
+                let parsed = crate::providers::openai::parse_fallback_tool_calls(text);
+                if !parsed.is_empty() {
+                    tool_calls = parsed;
+                    content = None;
+                }
+            }
+        }
+
         LLMResponse {
-            content: if self.content.is_empty() {
-                None
-            } else {
-                Some(self.content)
-            },
+            content,
             tool_calls,
             finish_reason: self.finish_reason,
             reasoning_content: if self.reasoning.is_empty() {

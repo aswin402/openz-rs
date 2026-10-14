@@ -172,7 +172,7 @@ impl crate::providers::LLMProvider for MockProvider {
         // Use fetch_update for atomic compare-and-swap to avoid race conditions.
         let prev = self
             .inject_errors
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
                 if current > 0 {
                     Some(current - 1)
                 } else {
@@ -192,6 +192,63 @@ impl crate::providers::LLMProvider for MockProvider {
             .clone();
 
         Ok(response.into())
+    }
+}
+
+/// A mock provider that notifies via `started_tx` and blocks until `release_rx` fires.
+/// Used to test cancellation and timeout behavior without flakiness.
+pub struct BlockingMockProvider {
+    pub started_tx: tokio::sync::watch::Sender<bool>,
+    pub release_rx: tokio::sync::watch::Receiver<bool>,
+}
+
+#[async_trait::async_trait]
+impl crate::providers::LLMProvider for BlockingMockProvider {
+    async fn chat(
+        &self,
+        _system_prompt: &str,
+        _messages: &[crate::session::Message],
+        _tools: &[serde_json::Value],
+        _settings: &crate::providers::GenerationSettings,
+    ) -> anyhow::Result<crate::providers::LLMResponse> {
+        let _ = self.started_tx.send(true);
+        let mut release_rx = self.release_rx.clone();
+        while !*release_rx.borrow() {
+            if release_rx.changed().await.is_err() {
+                break;
+            }
+        }
+        Ok(crate::providers::LLMResponse {
+            content: Some("should not complete after cancellation".to_string()),
+            tool_calls: Vec::new(),
+            finish_reason: "stop".to_string(),
+            reasoning_content: None,
+        })
+    }
+}
+
+/// A mock provider that increments an atomic counter and returns iterative draft versions.
+/// Used to test evaluator/optimizer loops and subagent retry loops.
+pub struct LoopMockProvider {
+    pub call_count: Arc<AtomicUsize>,
+}
+
+#[async_trait::async_trait]
+impl crate::providers::LLMProvider for LoopMockProvider {
+    async fn chat(
+        &self,
+        _system_prompt: &str,
+        _messages: &[crate::session::Message],
+        _tools: &[serde_json::Value],
+        _settings: &crate::providers::GenerationSettings,
+    ) -> anyhow::Result<crate::providers::LLMResponse> {
+        let count = self.call_count.fetch_add(1, Ordering::SeqCst);
+        Ok(crate::providers::LLMResponse {
+            content: Some(format!("Draft version {}", count)),
+            tool_calls: Vec::new(),
+            finish_reason: "stop".to_string(),
+            reasoning_content: None,
+        })
     }
 }
 

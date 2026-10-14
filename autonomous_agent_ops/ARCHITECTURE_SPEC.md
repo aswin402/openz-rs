@@ -76,7 +76,7 @@ $$\text{Restore} \longrightarrow \text{Compact} \longrightarrow \text{Command} \
   1. Base Persona & Caveman terseness directive (default active).
   2. Durable User Preferences (`~/.openz/USER.md`).
   3. Knowledge Graph Memory excerpts from SQLite / Tantivy inverted index.
-  4. Active Skill Manifests from `~/.openz/skills/*.md`.
+  4. Active Skill Manifests from SQLite (`~/.openz/memory.db`, with automatic migration from `~/.openz/skills/*.md`).
   5. Global Activity Trace log (`~/.openz/activity.json`).
 
 ### Stage 4: Act & Execute (Native Tool Pipeline)
@@ -89,8 +89,8 @@ $$\text{Restore} \longrightarrow \text{Compact} \longrightarrow \text{Command} \
 - Writes turn results to disk with atomic file renaming.
 - Spawns an asynchronous background task (`tokio::spawn`) running the **Curator**:
   - Analyzes the turn for new recurring patterns or explicit user instructions.
-  - Automatically synthesizes reusable skills into `~/.openz/skills/<skill_name>.md`.
-  - Updates durable user facts in `~/.openz/USER.md`.
+  - Automatically synthesizes reusable skills into SQLite (`~/.openz/memory.db`).
+  - Updates durable user facts in `~/.openz/USER.md` and SQLite memory.
 
 ---
 
@@ -142,7 +142,7 @@ Sessions are appended atomically. If power fails or the process is killed mid-tu
 ## 5. 24/7 Production Deployment Guide
 
 ### Systemd Service Configuration
-To run OpenZ as an autonomous system daemon:
+To run OpenZ as an autonomous system daemon (with WebSocket host and port configured under `channels.websocket` in `~/.openz/config.json`):
 
 ```ini
 [Unit]
@@ -156,7 +156,7 @@ User=aswin
 WorkingDirectory=/home/aswin
 Environment="HOME=/home/aswin"
 Environment="PATH=/home/aswin/.cargo/bin:/usr/local/bin:/usr/bin:/bin"
-ExecStart=/home/aswin/.cargo/bin/openz gateway --port 8765 --host 127.0.0.1
+ExecStart=/home/aswin/.cargo/bin/openz gateway
 Restart=always
 RestartSec=5s
 LimitNOFILE=65535

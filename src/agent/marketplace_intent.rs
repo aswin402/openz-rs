@@ -8,7 +8,7 @@ pub enum MarketplaceIntent {
 
 pub fn classify_marketplace_intent(text: &str) -> MarketplaceIntent {
     let lower = text.to_lowercase();
-    if !mentions_ai_agent(&lower) {
+    if !mentions_ai_agent(&lower) || is_engineering_or_explanatory_prompt(&lower) {
         return MarketplaceIntent::NotMarketplace;
     }
 
@@ -66,6 +66,30 @@ pub fn classify_marketplace_intent(text: &str) -> MarketplaceIntent {
     } else {
         MarketplaceIntent::NotMarketplace
     }
+}
+
+fn is_engineering_or_explanatory_prompt(lower: &str) -> bool {
+    contains_any(
+        lower,
+        &[
+            "write ",
+            "build ",
+            "create ",
+            "design ",
+            "implement ",
+            "code ",
+            "define ",
+            "definition",
+            "explain ",
+            "architecture",
+            "schema",
+            "landing page",
+            "html",
+            "css",
+            "database",
+            "api",
+        ],
+    )
 }
 
 pub fn clarification_question_for_marketplace_intent(text: &str) -> Option<&'static str> {

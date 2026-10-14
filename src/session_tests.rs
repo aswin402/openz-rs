@@ -44,6 +44,36 @@ mod hash_tests {
 
         assert!(session.verify_hash_chain().is_ok());
     }
+
+    #[test]
+    fn tampered_session_load_preserves_tampering_evidence_for_audit() -> anyhow::Result<()> {
+        let dir =
+            std::env::temp_dir().join(format!("openz_session_tamper_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir)?;
+        let manager = SessionManager::new(dir.clone());
+
+        let mut session = Session::new("audit_test");
+        session.add_message("user", "transfer $10 to Alice");
+        session.add_message("assistant", "Confirmed transfer of $10 to Alice.");
+        manager.save(&mut session)?;
+
+        // Tamper with message content on disk without updating hashes
+        let path = dir.join("audit_test.json");
+        let raw = fs::read_to_string(&path)?;
+        let tampered_raw = raw.replace("transfer $10 to Alice", "transfer $10000 to Eve");
+        fs::write(&path, tampered_raw)?;
+
+        // Loading the session must NOT overwrite the tampered hash chain
+        let loaded = manager.load("audit_test")?;
+        assert!(loaded.verify_hash_chain().is_err());
+        assert_eq!(
+            loaded.metadata.get("integrity_compromised"),
+            Some(&serde_json::Value::Bool(true))
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
 }
 
 #[cfg(test)]

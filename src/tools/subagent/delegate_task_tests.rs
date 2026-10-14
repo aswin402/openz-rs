@@ -4,62 +4,8 @@ use crate::session::SessionManager;
 use anyhow::Result;
 use std::sync::Arc;
 
+use crate::providers::mock::{BlockingMockProvider, LoopMockProvider};
 use crate::tools::subagent::cancel_test_guard;
-
-struct BlockingMockProvider {
-    started_tx: tokio::sync::watch::Sender<bool>,
-    release_rx: tokio::sync::watch::Receiver<bool>,
-}
-
-#[async_trait::async_trait]
-impl crate::providers::LLMProvider for BlockingMockProvider {
-    async fn chat(
-        &self,
-        _system_prompt: &str,
-        _messages: &[crate::session::Message],
-        _tools: &[serde_json::Value],
-        _settings: &crate::providers::GenerationSettings,
-    ) -> Result<crate::providers::LLMResponse> {
-        let _ = self.started_tx.send(true);
-        let mut release_rx = self.release_rx.clone();
-        while !*release_rx.borrow() {
-            if release_rx.changed().await.is_err() {
-                break;
-            }
-        }
-        Ok(crate::providers::LLMResponse {
-            content: Some("should not complete after cancellation".to_string()),
-            tool_calls: Vec::new(),
-            finish_reason: "stop".to_string(),
-            reasoning_content: None,
-        })
-    }
-}
-
-struct LoopMockProvider {
-    call_count: Arc<std::sync::atomic::AtomicUsize>,
-}
-
-#[async_trait::async_trait]
-impl crate::providers::LLMProvider for LoopMockProvider {
-    async fn chat(
-        &self,
-        _system_prompt: &str,
-        _messages: &[crate::session::Message],
-        _tools: &[serde_json::Value],
-        _settings: &crate::providers::GenerationSettings,
-    ) -> Result<crate::providers::LLMResponse> {
-        let count = self
-            .call_count
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        Ok(crate::providers::LLMResponse {
-            content: Some(format!("Draft version {}", count)),
-            tool_calls: Vec::new(),
-            finish_reason: "stop".to_string(),
-            reasoning_content: None,
-        })
-    }
-}
 
 #[test]
 fn delegate_task_models_to_try_uses_override_fallbacks_then_default() {

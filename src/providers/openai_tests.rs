@@ -161,3 +161,92 @@ fn test_think_stream_filter_non_think_content_passes_through() {
         other => panic!("Expected content, got {:?}", other),
     }
 }
+
+#[test]
+fn test_parse_fallback_tool_calls_supports_minimax_arrow_and_xml_tags() {
+    let minimax_text =
+        "[TOOL_CALL]\n{tool => \"list_jobs\", args => {}}\n[/TOOL_CALL]";
+    let calls = parse_fallback_tool_calls(minimax_text);
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name, "list_jobs");
+    assert_eq!(calls[0].arguments, serde_json::json!({}));
+
+    let minimax_with_params =
+        "[TOOL_CALL]\n{tool => \"read_file\", args => {path => \"src/main.rs\"}}\n[/TOOL_CALL]";
+    let calls2 = parse_fallback_tool_calls(minimax_with_params);
+    assert_eq!(calls2.len(), 1);
+    assert_eq!(calls2[0].name, "read_file");
+    assert_eq!(calls2[0].arguments, serde_json::json!({"path": "src/main.rs"}));
+
+    let xml_text = "<tool_call>\n{\"tool\": \"schedule_job\", \"input\": {\"name\": \"ping\", \"schedule\": \"10m\"}}\n</tool_call>";
+    let calls3 = parse_fallback_tool_calls(xml_text);
+    assert_eq!(calls3.len(), 1);
+    assert_eq!(calls3[0].name, "schedule_job");
+    assert_eq!(
+        calls3[0].arguments,
+        serde_json::json!({"name": "ping", "schedule": "10m"})
+    );
+}
+
+#[test]
+fn test_parse_sse_data_chunks_preserves_reasoning_content_and_tool_calls_in_same_frame() {
+    let sse_json = r#"{
+        "choices": [{
+            "delta": {
+                "reasoning_content": "Let me execute the command.",
+                "content": "\n",
+                "tool_calls": [
+                    {
+                        "index": 0,
+                        "id": "call_rm_1",
+                        "type": "function",
+                        "function": {
+                            "name": "exec_command",
+                            "arguments": "{\"command\":\"rm -f /tmp/openz_test_delete.txt\"}"
+                        }
+                    },
+                    {
+                        "index": 1,
+                        "id": "call_jobs_2",
+                        "type": "function",
+                        "function": {
+                            "name": "list_jobs",
+                            "arguments": ""
+                        }
+                    }
+                ]
+            },
+            "finish_reason": "tool_calls"
+        }]
+    }"#;
+
+    let (chunks, is_done) = parse_sse_data_chunks(sse_json);
+    assert!(!is_done);
+    assert_eq!(chunks.len(), 5);
+    assert!(matches!(&chunks[0], ChatStreamChunk::Reasoning(r) if r == "Let me execute the command."));
+    assert!(matches!(&chunks[1], ChatStreamChunk::Content(c) if c == "\n"));
+    assert!(matches!(
+        &chunks[2],
+        ChatStreamChunk::ToolCall {
+            index: 0,
+            id: Some(id),
+            name: Some(name),
+            arguments: Some(args),
+        } if id == "call_rm_1" && name == "exec_command" && args.contains("openz_test_delete.txt")
+    ));
+    assert!(matches!(
+        &chunks[3],
+        ChatStreamChunk::ToolCall {
+            index: 1,
+            id: Some(id),
+            name: Some(name),
+            arguments: None,
+        } if id == "call_jobs_2" && name == "list_jobs"
+    ));
+    assert!(matches!(
+        &chunks[4],
+        ChatStreamChunk::Done {
+            finish_reason: Some(reason)
+        } if reason == "tool_calls"
+    ));
+}

@@ -117,14 +117,19 @@ OpenZ features three configurable security levels defined in the user's `config.
 
 | Mode | Behavior | Intercepted Actions |
 |---|---|---|
-| **`strict`** | Maximum safety. Checks every potentially risky action. | Blocks all destructive shell tools (`rm`, `rmdir`, `clean` builds), process controls (`kill`, `pkill`), and any network file fetches (`curl`, `wget`, `rsync`). |
-| **`normal`** (Default) | Balanced convenience. Allows minor clean operations, kills, and basic web fetches. | Intercepts dangerous piped curl-to-shell executions (e.g., `curl ... \| bash`), system commands (`sudo`, `reboot`), raw disk manipulations (`dd`, `format`), and out-of-workspace writes. |
-| **`loose`** | Maximum automation. Only intercepts severe control calls. | Trust-by-default. Only blocks root privilege escalation (`sudo`/`su`) and host power status (`reboot`/`shutdown`). |
+| **`strict`** | Maximum safety. Checks every potentially risky action. | Prompts on all destructive shell tools (`rm`, `rmdir`, `clean` builds), process controls (`kill`, `pkill`), and any network file fetches (`curl`, `wget`, `rsync`). |
+| **`normal`** (Default) | Balanced convenience. Allows minor clean operations, kills, and basic web fetches. | Hard-blocks dangerous piped fetch-to-interpreter executions (`curl`/`wget` piped to `sh`, `bash`, `zsh`, `dash`, `ksh`, `fish`, `python`, `python3`, `perl`, `ruby`, `node`, `php`), recursive root/system deletions, and disk formatting. Prompts for `rm`/`rmdir`/`unlink` (including via `xargs`), `sudo`/`su`/`chmod`/`chown`, `dd`, and out-of-workspace writes. |
+| **`loose`** | Maximum automation. Only intercepts severe control calls. | Trust-by-default for workspace operations. Still hard-blocks `is_forbidden` commands and prompts on privilege escalation (`sudo`/`su`) and host power status (`reboot`/`shutdown`). |
+
+All modes inspect every newline- or operator-separated sub-command (`\n`, `\r`, `;`, `|`, `||`, `&&`, `&`) as well as nested command substitutions (`$(...)`, `<(...)`, `>(...)`, and backticks `` `...` ``) and interpreter inline scripts (`sh -c`, `python3 -c`, `node -e`, etc.) using a deterministic quote-state DFA lexer.
 
 ---
 
 ## 🔗 Cryptographic Merkle Hash-Chain Verification
 
 To guarantee audit trail integrity, OpenZ structures conversation logs in a sequential cryptographic Merkle Hash-Chain ledger:
-* **Hash Logic**: Each interaction (message) contains a SHA-256 hash computed from its role, content string, timestamp, and the hash of the preceding message in the sequence.
-* **Integrity Validation**: When restoring a session from `~/.openz/sessions/<id>.json`, the session deserializer verifies the entire chain. If any message content, author role, or timestamp has been altered, the integrity check fails, stopping the agent startup.
+* **Hash Logic**: Each interaction (message) contains a SHA-256 hash computed from its role, content string, timestamp, sorted extra metadata fields (excluding `hash`), and the hash of the preceding message in the sequence.
+* **Integrity Validation (`ChainIntegrity`)**: When restoring a session from `~/.openz/sessions/<id>.json`, `Session::inspect_hash_chain()` folds over the message chain:
+  * **`Valid`**: Every message hash matches its calculated (or legacy) SHA-256 digest.
+  * **`UninitializedLegacy`**: Legacy sessions created prior to hash-chain support (missing `hash` fields with no mismatched digests) are automatically migrated and persisted.
+  * **`Tampered`**: If any existing message digest mismatches, OpenZ logs a warning, marks `session.metadata["integrity_compromised"] = true` (with `integrity_error`), and **preserves the tampered file on disk without re-signing**, ensuring `/audit` and `verify_hash_chain()` reliably report the tampering.

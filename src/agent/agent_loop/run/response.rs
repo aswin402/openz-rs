@@ -17,6 +17,7 @@ pub(super) async fn normalize_response(
     ctx: &mut TurnContext<'_>,
     mut resp: crate::providers::LLMResponse,
     config: &crate::config::schema::Config,
+    tools_openai: &[serde_json::Value],
     settings: &GenerationSettings,
     turn_cancel: &crate::tools::subagent::CancellationToken,
     start_time: std::time::Instant,
@@ -110,8 +111,23 @@ pub(super) async fn normalize_response(
         }
     }
 
-    // Some providers return reasoning_content without a user-facing answer.
-    // Ask once for a final answer instead of exposing internal reasoning as-is.
+    if resp.tool_calls.is_empty() && resp.content.is_none() {
+        if let Some(ref reasoning) = resp.reasoning_content {
+            if reasoning.contains("[TOOL_CALL]")
+                || reasoning.contains("<tool_call>")
+                || reasoning.contains("```tool_call")
+            {
+                let parsed = crate::providers::openai::parse_fallback_tool_calls(reasoning);
+                if !parsed.is_empty() {
+                    resp.tool_calls = parsed;
+                }
+            }
+        }
+    }
+
+    // Some providers return reasoning_content without a user-facing answer or tool call.
+    // Re-prompt once so the model can either execute the tool call it planned in reasoning
+    // or provide a final user-facing answer.
     if resp.content.is_none() && resp.reasoning_content.is_some() && resp.tool_calls.is_empty() {
         if !crate::agent::style::spinner::is_silent() {
             print!("\r\x1b[2K");
@@ -121,12 +137,18 @@ pub(super) async fn normalize_response(
         if config.agents.defaults.streaming {
             let original_reasoning = resp.reasoning_content.take();
             let mut recovery_messages = ctx.messages.clone();
-            let recovery_prompt = match original_reasoning.as_deref() {
-                Some(reasoning) if !reasoning.trim().is_empty() => format!(
+            let has_tools = !tools_openai.is_empty();
+            let recovery_prompt = match (original_reasoning.as_deref(), has_tools) {
+                (Some(reasoning), true) if !reasoning.trim().is_empty() => format!(
+                    "Your previous streamed response contained reasoning only and stopped before executing a tool call or providing a final answer. Here is that reasoning:\n\n{}\n\nNow execute the required tool call(s) to fulfill the request, or if no tool is needed, provide only the final user-facing answer to my last message without reasoning labels.",
+                    reasoning.trim()
+                ),
+                (_, true) => "Your previous streamed response contained reasoning only. Now execute the required tool call(s) to fulfill the request, or provide only the final user-facing answer to my last message.".to_string(),
+                (Some(reasoning), false) if !reasoning.trim().is_empty() => format!(
                     "Your previous streamed response contained reasoning only and no user-facing answer. Here is that reasoning:\n\n{}\n\nNow provide only the final user-facing answer to my last message. Do not include analysis, reasoning labels, or tool calls.",
                     reasoning.trim()
                 ),
-                _ => "Your previous streamed response contained reasoning only and no user-facing answer. Provide only the final answer to my last message now. Do not include reasoning, analysis, or tool calls.".to_string(),
+                (_, false) => "Your previous streamed response contained reasoning only and no user-facing answer. Provide only the final answer to my last message now. Do not include reasoning, analysis, or tool calls.".to_string(),
             };
             recovery_messages.push(Message {
                 role: "user".to_string(),
@@ -141,7 +163,7 @@ pub(super) async fn normalize_response(
                     &mut ctx.active_provider,
                     &ctx.system_prompt,
                     &recovery_messages,
-                    &[],
+                    tools_openai,
                     settings,
                     &recovery_activity_msg,
                 )
@@ -154,6 +176,8 @@ pub(super) async fn normalize_response(
                     let mut recovery_content = String::new();
                     let mut recovery_reasoning = String::new();
                     let mut recovery_finish_reason = "stop".to_string();
+                    let mut recovery_assembly =
+                        crate::agent::agent_loop::streaming::StreamingAssembly::new();
 
                     let recovery_stream_idle_timeout = loop_ref.provider_attempt_timeout_duration();
                     loop {
@@ -225,46 +249,85 @@ pub(super) async fn normalize_response(
                                     &text,
                                 )
                                 .await;
+                                recovery_assembly.push_chunk(
+                                    crate::providers::ChatStreamChunk::Content(text),
+                                );
                             }
                             crate::providers::ChatStreamChunk::Reasoning(text) => {
                                 recovery_reasoning.push_str(&text);
+                                recovery_assembly.push_chunk(
+                                    crate::providers::ChatStreamChunk::Reasoning(text),
+                                );
                             }
-                            crate::providers::ChatStreamChunk::ToolCall { .. } => {}
+                            crate::providers::ChatStreamChunk::ToolCall {
+                                index,
+                                id,
+                                name,
+                                arguments,
+                            } => {
+                                recovery_assembly.push_chunk(
+                                    crate::providers::ChatStreamChunk::ToolCall {
+                                        index,
+                                        id,
+                                        name,
+                                        arguments,
+                                    },
+                                );
+                            }
                             crate::providers::ChatStreamChunk::Done { finish_reason } => {
-                                if let Some(reason) = finish_reason {
-                                    recovery_finish_reason = reason;
+                                if let Some(ref reason) = finish_reason {
+                                    recovery_finish_reason = reason.clone();
                                 }
+                                recovery_assembly.push_chunk(
+                                    crate::providers::ChatStreamChunk::Done { finish_reason },
+                                );
                             }
                         }
                     }
 
                     markdown_streamer.finish();
+                    let assembled_recovery = recovery_assembly.into_response();
 
-                    let recovery_reasoning_visible = recovery_reasoning.trim().to_string();
-                    let recovered_content = if !recovery_content.trim().is_empty() {
-                        Some(recovery_content)
-                    } else if !recovery_reasoning_visible.is_empty() {
-                        Some(recovery_reasoning_visible)
+                    if !assembled_recovery.tool_calls.is_empty() {
+                        resp.tool_calls = assembled_recovery.tool_calls;
+                        resp.content = None;
+                        resp.reasoning_content = crate::providers::openai::merge_reasoning(
+                            original_reasoning,
+                            if recovery_reasoning.trim().is_empty() {
+                                None
+                            } else {
+                                Some(recovery_reasoning)
+                            },
+                        );
+                        resp.finish_reason = "tool_calls".to_string();
+                        ctx.streamed = false;
                     } else {
-                        Some("I did not receive a final answer from the model for this turn.".to_string())
-                    };
-                    let recovery_reasoning_for_memory = if recovery_reasoning.trim().is_empty()
-                        || recovered_content
-                            .as_ref()
-                            .is_some_and(|content| content == recovery_reasoning.trim())
-                    {
-                        None
-                    } else {
-                        Some(recovery_reasoning)
-                    };
-                    resp.content = recovered_content;
-                    resp.reasoning_content = crate::providers::openai::merge_reasoning(
-                        original_reasoning,
-                        recovery_reasoning_for_memory,
-                    );
-                    resp.finish_reason = recovery_finish_reason;
-                    resp.tool_calls.clear();
-                    ctx.streamed = *content_streaming_started;
+                        let recovery_reasoning_visible = recovery_reasoning.trim().to_string();
+                        let recovered_content = if !recovery_content.trim().is_empty() {
+                            Some(recovery_content)
+                        } else if !recovery_reasoning_visible.is_empty() {
+                            Some(recovery_reasoning_visible)
+                        } else {
+                            Some("I did not receive a final answer from the model for this turn.".to_string())
+                        };
+                        let recovery_reasoning_for_memory = if recovery_reasoning.trim().is_empty()
+                            || recovered_content
+                                .as_ref()
+                                .is_some_and(|content| content == recovery_reasoning.trim())
+                        {
+                            None
+                        } else {
+                            Some(recovery_reasoning)
+                        };
+                        resp.content = recovered_content;
+                        resp.reasoning_content = crate::providers::openai::merge_reasoning(
+                            original_reasoning,
+                            recovery_reasoning_for_memory,
+                        );
+                        resp.finish_reason = recovery_finish_reason;
+                        resp.tool_calls.clear();
+                        ctx.streamed = *content_streaming_started;
+                    }
                 }
                 Err(e) => {
                     tracing::warn!(

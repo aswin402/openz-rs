@@ -6,6 +6,15 @@ fn local_operational_now_queries_are_not_live_research() {
     assert!(!has_live_research_intent(
         "Where is orchestrate_workflow implemented in this repo?"
     ));
+    assert!(!has_live_research_intent(
+        "Create a new file at /tmp/openz_test.txt and verify its contents"
+    ));
+    assert!(!has_live_research_intent(
+        "Use list_jobs to check all scheduled cron jobs in openz"
+    ));
+    assert!(!has_live_research_intent(
+        "Find all rust files in src/ and check the build"
+    ));
 }
 
 #[test]

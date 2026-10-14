@@ -67,11 +67,10 @@ graph TD
 OpenZ utilizes the native `scope_context` tool. When executing actions or edits in a given directory, the agent walks up the folder tree, reads any local `AGENTS.md` instruction files, and compiles them into a unified contextual instruction set. This avoids prompt drift and enforces directory-specific constraints.
 
 ### Zenflow Checkpointed Transactions
-Before performing files edits or system operations, the agent utilizes a transactional flow:
-1. Takes a fast snapshot/checkpoint of the workspace directory.
-2. Performs edits and runs compiling/testing loops (`cargo check`, `cargo test`).
-3. If errors arise, it attempts to self-heal by feeding errors back to the editing loop.
-4. If healing fails, it performs a clean rollback to the snapshot to prevent code corruption.
+When performing Rust edits via `zenflow_edit`, the tool executes a checkpointed verification flow:
+1. Saves a backup snapshot of the target file (`.zenflow_bak`) before applying the replacement.
+2. Runs low-resource compiler and lint checks (`cargo check -j 1 --color never` and `cargo clippy -j 1 --color never`).
+3. If compilation or lint checks fail, automatically restores the original file from `.zenflow_bak` and returns the compiler diagnostics so the agent loop can self-correct without leaving broken code on disk.
 
 ### Semantic Repo Indexing & Vector Search
 To find code dependencies instantly, OpenZ indexes structural codebase elements (structs, functions) using `ast_grep` and embeds them into a fast-vector store, allowing semantic lookup of relevant dependencies and code relationships.

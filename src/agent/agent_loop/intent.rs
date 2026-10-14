@@ -28,11 +28,25 @@ pub struct IntentDecision {
     pub reasons: Vec<&'static str>,
 }
 
+fn contains_phrase_bounded(text_lower: &str, phrase: &str) -> bool {
+    let bytes = text_lower.as_bytes();
+    let p_len = phrase.len();
+    for (idx, _) in text_lower.match_indices(phrase) {
+        let before_ok = idx == 0 || !bytes[idx - 1].is_ascii_alphanumeric();
+        let after_idx = idx + p_len;
+        let after_ok = after_idx >= bytes.len() || !bytes[after_idx].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn classify_turn_intent(user_content: &str) -> IntentDecision {
     let lower = user_content.to_lowercase();
     let mut reasons = Vec::new();
 
-    if is_local_repo_query(&lower) {
+    if is_local_repo_query(&lower) && !is_explicit_mutation_or_exec(&lower) {
         reasons.push("local_repo_query");
         return IntentDecision {
             intent: TurnIntent::LocalRepoRead,
@@ -119,20 +133,43 @@ fn is_local_repo_query(lower: &str) -> bool {
     .any(|needle| lower.contains(needle))
 }
 
+fn is_explicit_mutation_or_exec(lower: &str) -> bool {
+    [
+        "exec_command",
+        "write_file",
+        "patch_file",
+        "replace_lines",
+        "create a file",
+        "write a file",
+        "rm -",
+    ]
+    .iter()
+    .any(|needle| contains_phrase_bounded(lower, needle))
+}
+
 fn is_local_execution_query(lower: &str) -> bool {
     [
-        "cargo ",
-        "just ",
-        "test ",
-        "check ",
+        "cargo",
+        "just",
+        "test",
+        "check",
         "compile",
         "build",
         "run command",
+        "exec_command",
+        "write_file",
+        "patch_file",
+        "replace_lines",
+        "create a file",
+        "write a file",
+        "save to",
+        "rm -f",
+        "rm -rf",
         "terminal",
         "shell",
     ]
     .iter()
-    .any(|needle| lower.contains(needle))
+    .any(|needle| contains_phrase_bounded(lower, needle))
 }
 
 fn is_orchestration_query(lower: &str) -> bool {
@@ -153,6 +190,8 @@ fn is_cron_query(lower: &str) -> bool {
         "cron",
         "cornjob",
         "schedule_job",
+        "list_jobs",
+        "remove_job",
         "scheduled job",
         "job logs",
     ]

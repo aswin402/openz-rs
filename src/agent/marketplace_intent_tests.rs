@@ -68,3 +68,17 @@ fn unambiguous_sell_marketplace_request_does_not_clarify() {
             .is_none()
     );
 }
+
+#[test]
+fn engineering_and_architecture_prompts_do_not_short_circuit() {
+    assert_eq!(
+        classify_marketplace_intent(
+            "Write a 1-sentence technical definition of an AI agent marketplace architecture."
+        ),
+        MarketplaceIntent::NotMarketplace
+    );
+    assert!(clarification_question_for_marketplace_intent(
+        "Build a landing page for an AI agent marketplace"
+    )
+    .is_none());
+}

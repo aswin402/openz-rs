@@ -526,37 +526,88 @@ fn scan_and_index(
 }
 
 static FN_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*(public\s+|pub\s+)?(async\s+)?fn\s+([a-zA-Z_]\w*)")
-        .expect("valid fn_re regex")
+    Regex::new(
+        r"^\s*(?:public\s+|pub(?:\s*\([^)]*\))?\s+)?(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+([a-zA-Z_]\w*)",
+    )
+    .expect("valid fn_re regex")
 });
 static STRUCT_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*(public\s+|pub\s+)?struct\s+([a-zA-Z_]\w*)").expect("valid struct_re regex")
+    Regex::new(r"^\s*(?:public\s+|pub(?:\s*\([^)]*\))?\s+)?struct\s+([a-zA-Z_]\w*)")
+        .expect("valid struct_re regex")
 });
 static ENUM_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*(public\s+|pub\s+)?enum\s+([a-zA-Z_]\w*)").expect("valid enum_re regex")
+    Regex::new(r"^\s*(?:public\s+|pub(?:\s*\([^)]*\))?\s+)?enum\s+([a-zA-Z_]\w*)")
+        .expect("valid enum_re regex")
 });
 static IMPL_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*(public\s+|pub\s+)?impl(?:\s+([a-zA-Z_]\w*)\s+for)?\s+([a-zA-Z_]\w*)")
-        .expect("valid impl_re regex")
+    Regex::new(
+        r"^\s*(?:public\s+|pub(?:\s*\([^)]*\))?\s+)?(?:unsafe\s+)?impl(?:<[^>]*>)?(?:\s+([a-zA-Z_][\w:]*)(?:<[^>]*>)?\s+for)?\s+([a-zA-Z_]\w*)",
+    )
+    .expect("valid impl_re regex")
 });
 static DEF_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*def\s+([a-zA-Z_]\w*)").expect("valid def_re regex")
+    Regex::new(r"^\s*(?:async\s+)?def\s+([a-zA-Z_]\w*)").expect("valid def_re regex")
 });
 static CLASS_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*class\s+([a-zA-Z_]\w*)").expect("valid class_re regex")
+    Regex::new(r"^\s*(?:export\s+)?class\s+([a-zA-Z_]\w*)").expect("valid class_re regex")
 });
 static FUNC_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*func\s+([a-zA-Z_]\w*)").expect("valid func_re regex")
+    Regex::new(r"^\s*(?:export\s+)?(?:async\s+)?func(?:tion)?\s+([a-zA-Z_]\w*)")
+        .expect("valid func_re regex")
 });
 static TYPE_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*type\s+([a-zA-Z_]\w*)").expect("valid type_re regex")
+    Regex::new(r"^\s*(?:public\s+|pub(?:\s*\([^)]*\))?\s+|export\s+)?type\s+([a-zA-Z_]\w*)")
+        .expect("valid type_re regex")
 });
 static TRAIT_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*(public\s+|pub\s+)?trait\s+([a-zA-Z_]\w*)").expect("valid trait_re regex")
+    Regex::new(r"^\s*(?:public\s+|pub(?:\s*\([^)]*\))?\s+)?(?:unsafe\s+)?trait\s+([a-zA-Z_]\w*)")
+        .expect("valid trait_re regex")
 });
 static INTERFACE_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*interface\s+([a-zA-Z_]\w*)").expect("valid interface_re regex")
+    Regex::new(r"^\s*(?:export\s+)?interface\s+([a-zA-Z_]\w*)").expect("valid interface_re regex")
 });
+
+fn compute_block_end_line(lines: &[&str], start_idx: usize, is_indent_lang: bool) -> i64 {
+    if is_indent_lang {
+        let base_indent = lines[start_idx]
+            .chars()
+            .take_while(|c| c.is_whitespace())
+            .count();
+        let mut last_idx = start_idx;
+        for (offset, line) in lines[start_idx + 1..].iter().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let indent = line.chars().take_while(|c| c.is_whitespace()).count();
+            if indent <= base_indent {
+                break;
+            }
+            last_idx = start_idx + 1 + offset;
+        }
+        return (last_idx + 1) as i64;
+    }
+
+    let mut depth: i32 = 0;
+    let mut seen_open_brace = false;
+    for (offset, line) in lines[start_idx..].iter().enumerate() {
+        for ch in line.chars() {
+            if ch == '{' {
+                depth += 1;
+                seen_open_brace = true;
+            } else if ch == '}' {
+                depth -= 1;
+                if seen_open_brace && depth <= 0 {
+                    return (start_idx + offset + 1) as i64;
+                }
+            } else if !seen_open_brace && ch == ';' {
+                return (start_idx + offset + 1) as i64;
+            }
+        }
+    }
+
+    (lines.len() as i64).min((start_idx + 1) as i64 + 10)
+}
 
 fn index_file(
     path: &Path,
@@ -567,6 +618,10 @@ fn index_file(
 ) -> Result<()> {
     let content = std::fs::read_to_string(path)?;
     let relative_path = path.to_string_lossy().to_string();
+    let is_indent_lang = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| ext == "py" || ext == "rb");
     let lines: Vec<&str> = content.lines().collect();
     let mut elements: Vec<(String, String, String, String, i64, i64)> = Vec::new(); // id, type, name, signature, start, end
 
@@ -579,7 +634,7 @@ fn index_file(
 
         if let Some(caps) = FN_RE.captures(trimmed) {
             element_type = Some("Function");
-            name = caps.get(3).or(caps.get(2)).map(|m| m.as_str().to_string());
+            name = caps.get(1).map(|m| m.as_str().to_string());
             signature = caps
                 .get(0)
                 .map(|m| m.as_str().to_string() + "(...)")
@@ -600,21 +655,21 @@ fn index_file(
                 .unwrap_or_default();
         } else if let Some(caps) = STRUCT_RE.captures(trimmed) {
             element_type = Some("Struct");
-            name = caps.get(2).map(|m| m.as_str().to_string());
+            name = caps.get(1).map(|m| m.as_str().to_string());
             signature = caps
                 .get(0)
                 .map(|m| m.as_str().to_string())
                 .unwrap_or_default();
         } else if let Some(caps) = ENUM_RE.captures(trimmed) {
             element_type = Some("Enum");
-            name = caps.get(2).map(|m| m.as_str().to_string());
+            name = caps.get(1).map(|m| m.as_str().to_string());
             signature = caps
                 .get(0)
                 .map(|m| m.as_str().to_string())
                 .unwrap_or_default();
         } else if let Some(caps) = IMPL_RE.captures(trimmed) {
             element_type = Some("ImplBlock");
-            name = caps.get(3).map(|m| format!("impl_{}", m.as_str()));
+            name = caps.get(2).map(|m| format!("impl_{}", m.as_str()));
             signature = caps
                 .get(0)
                 .map(|m| m.as_str().to_string())
@@ -628,7 +683,7 @@ fn index_file(
                 .unwrap_or_default();
         } else if let Some(caps) = TRAIT_RE.captures(trimmed) {
             element_type = Some("Trait");
-            name = caps.get(2).map(|m| m.as_str().to_string());
+            name = caps.get(1).map(|m| m.as_str().to_string());
             signature = caps
                 .get(0)
                 .map(|m| m.as_str().to_string())
@@ -651,7 +706,7 @@ fn index_file(
 
         if let (Some(el_type), Some(el_name)) = (element_type, name) {
             let el_id = format!("{}:{}:{}", relative_path, el_name, line_num);
-            let end_line = (lines.len() as i64).min(line_num + 10);
+            let end_line = compute_block_end_line(&lines, idx, is_indent_lang);
             conn.execute(
                 "INSERT OR IGNORE INTO code_elements (element_id, file_path, element_type, name, signature, ast_json, parent_id, start_line, end_line, user_id, session_id, agent_id) VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6, ?7, ?8, ?9, ?10)",
                 params![el_id, relative_path, el_type, el_name, signature, line_num, end_line, user_id, session_id, agent_id],

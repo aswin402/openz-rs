@@ -97,20 +97,48 @@ fn scrub_secret_text(text: &str) -> SecretScrubResult {
     }
 }
 
+fn write_scrubbed_file_atomically(path: &Path, scrubbed_text: &str) -> Result<()> {
+    let is_session_json = path.extension().and_then(|e| e.to_str()) == Some("json")
+        && path
+            .parent()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            == Some("sessions");
+
+    let payload = match is_session_json
+        .then(|| serde_json::from_str::<crate::session::Session>(scrubbed_text).ok())
+        .flatten()
+    {
+        Some(mut session) => {
+            session.populate_hashes();
+            serde_json::to_string_pretty(&session).unwrap_or_else(|_| scrubbed_text.to_string())
+        }
+        None => scrubbed_text.to_string(),
+    };
+
+    let tmp_path = path.with_extension("scrub.tmp");
+    std::fs::write(&tmp_path, &payload)?;
+    std::fs::rename(&tmp_path, path)?;
+    Ok(())
+}
+
 fn scrub_secret_file(path: &Path) -> Result<SecretScrubResult> {
     let original = match std::fs::read_to_string(path) {
         Ok(text) => text,
-        Err(err) if err.kind() == std::io::ErrorKind::InvalidData => {
-            return Ok(SecretScrubResult {
-                text: String::new(),
-                replacements: 0,
-            });
-        }
-        Err(err) => return Err(err.into()),
+        Err(err) => match err.kind() {
+            std::io::ErrorKind::InvalidData => {
+                return Ok(SecretScrubResult {
+                    text: String::new(),
+                    replacements: 0,
+                });
+            }
+            _ => return Err(err.into()),
+        },
     };
     let result = scrub_secret_text(&original);
-    if result.replacements > 0 && result.text != original {
-        std::fs::write(path, &result.text)?;
+    match result.replacements > 0 && result.text != original {
+        true => write_scrubbed_file_atomically(path, &result.text)?,
+        false => {}
     }
     Ok(result)
 }

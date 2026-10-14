@@ -55,13 +55,23 @@ pub fn pack_for_intent(intent: TurnIntent) -> &'static [ToolPack] {
     match intent {
         TurnIntent::DirectAnswer => &[ToolPack::Core],
         TurnIntent::LocalRepoRead => &[ToolPack::Core, ToolPack::RepoRead],
-        TurnIntent::LocalExecution => &[ToolPack::Core, ToolPack::RepoRead, ToolPack::LocalExec],
+        TurnIntent::LocalExecution => &[
+            ToolPack::Core,
+            ToolPack::RepoRead,
+            ToolPack::RepoWrite,
+            ToolPack::LocalExec,
+        ],
         TurnIntent::ExternalResearch => &[ToolPack::Core, ToolPack::WebResearch],
         TurnIntent::MemoryLookup => &[ToolPack::Core, ToolPack::Memory],
         TurnIntent::CronManagement => &[ToolPack::Core, ToolPack::Cron],
         TurnIntent::Orchestration => &[ToolPack::Core, ToolPack::Orchestrator, ToolPack::Subagent],
-        TurnIntent::MediaOrDocument => &[ToolPack::Core, ToolPack::Media, ToolPack::RepoRead],
-        TurnIntent::Unknown => &[ToolPack::Core, ToolPack::RepoRead],
+        TurnIntent::MediaOrDocument => &[
+            ToolPack::Core,
+            ToolPack::Media,
+            ToolPack::RepoRead,
+            ToolPack::RepoWrite,
+        ],
+        TurnIntent::Unknown => &[ToolPack::Core, ToolPack::RepoRead, ToolPack::RepoWrite],
     }
 }
 

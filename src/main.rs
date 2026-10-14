@@ -98,26 +98,30 @@ async fn async_main() -> anyhow::Result<()> {
     use tracing_subscriber::prelude::*;
 
     let args: Vec<String> = std::env::args().collect();
-    let is_tui = args.len() <= 1 || args.iter().any(|arg| arg == "agent");
-    let is_logs = args.iter().any(|arg| arg == "logs");
-    let is_gateway = args.iter().any(|arg| arg == "gateway");
+    let subcommand = args
+        .iter()
+        .skip(1)
+        .take_while(|arg| arg.as_str() != "--")
+        .find(|arg| !arg.starts_with('-'))
+        .map(String::as_str);
 
     let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
 
-    if is_logs {
-        // When viewing logs, don't write to the file (feedback loop) or stderr.
-        // Use a blackhole layer so the logs viewer doesn't pollute its own output.
-        tracing_subscriber::registry()
-            .with(env_filter)
-            .with(tracing_subscriber::fmt::layer().with_writer(std::io::sink))
-            .init();
-    } else {
-        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-        let _ = openz::logs::LOG_TX.set(tx);
-        tokio::spawn(openz::logs::init_db_writer(rx));
+    match subcommand {
+        Some("logs") => {
+            // When viewing logs, don't write to the file (feedback loop) or stderr.
+            // Use a blackhole layer so the logs viewer doesn't pollute its own output.
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(tracing_subscriber::fmt::layer().with_writer(std::io::sink))
+                .init();
+        }
+        None | Some("agent") => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let _ = openz::logs::LOG_TX.set(tx);
+            tokio::spawn(openz::logs::init_db_writer(rx));
 
-        if is_tui {
             let file_layer = tracing_subscriber::fmt::layer()
                 .with_writer(make_writer)
                 .with_ansi(false)
@@ -129,7 +133,34 @@ async fn async_main() -> anyhow::Result<()> {
                 .with(file_layer)
                 .with(openz::logs::SqliteLogLayer)
                 .init();
-        } else {
+        }
+        Some("gateway") => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let _ = openz::logs::LOG_TX.set(tx);
+            tokio::spawn(openz::logs::init_db_writer(rx));
+
+            let file_layer = tracing_subscriber::fmt::layer()
+                .with_writer(make_writer)
+                .with_ansi(false)
+                .with_target(true)
+                .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
+
+            let console_layer = tracing_subscriber::fmt::layer()
+                .event_format(GatewayFormatter)
+                .with_writer(std::io::stdout);
+
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(file_layer)
+                .with(console_layer)
+                .with(openz::logs::SqliteLogLayer)
+                .init();
+        }
+        Some(_) => {
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let _ = openz::logs::LOG_TX.set(tx);
+            tokio::spawn(openz::logs::init_db_writer(rx));
+
             let file_layer = tracing_subscriber::fmt::layer()
                 .with_writer(make_writer)
                 .with_ansi(false)
@@ -137,37 +168,20 @@ async fn async_main() -> anyhow::Result<()> {
                 .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
 
             let stderr_secrets = log_secrets.clone();
+            let stderr_layer = tracing_subscriber::fmt::layer()
+                .with_writer(move || {
+                    openz::logs::SecretScrubWriter::new(std::io::stderr(), stderr_secrets.clone())
+                })
+                .with_ansi(true)
+                .with_target(true)
+                .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
 
-            if is_gateway {
-                let console_layer = tracing_subscriber::fmt::layer()
-                    .event_format(GatewayFormatter)
-                    .with_writer(std::io::stdout);
-
-                tracing_subscriber::registry()
-                    .with(env_filter)
-                    .with(file_layer)
-                    .with(console_layer)
-                    .with(openz::logs::SqliteLogLayer)
-                    .init();
-            } else {
-                let stderr_layer = tracing_subscriber::fmt::layer()
-                    .with_writer(move || {
-                        openz::logs::SecretScrubWriter::new(
-                            std::io::stderr(),
-                            stderr_secrets.clone(),
-                        )
-                    })
-                    .with_ansi(true)
-                    .with_target(true)
-                    .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
-
-                tracing_subscriber::registry()
-                    .with(env_filter)
-                    .with(file_layer)
-                    .with(stderr_layer)
-                    .with(openz::logs::SqliteLogLayer)
-                    .init();
-            }
+            tracing_subscriber::registry()
+                .with(env_filter)
+                .with(file_layer)
+                .with(stderr_layer)
+                .with(openz::logs::SqliteLogLayer)
+                .init();
         }
     }
 

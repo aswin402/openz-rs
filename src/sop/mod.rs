@@ -197,8 +197,23 @@ pub fn save_definition(def: &SopDefinition) -> Result<()> {
     Ok(())
 }
 
+fn validated_instance_path(instance_id: &str) -> Result<PathBuf> {
+    let is_valid = (!instance_id.is_empty())
+        && instance_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    is_valid
+        .then(|| sop_instances_dir().join(format!("{}.json", instance_id)))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Invalid SOP instance ID '{}': path traversal or special characters are not permitted",
+                instance_id
+            )
+        })
+}
+
 pub fn load_instance(instance_id: &str) -> Result<SopInstance> {
-    let path = sop_instances_dir().join(format!("{}.json", instance_id));
+    let path = validated_instance_path(instance_id)?;
     let content = fs::read_to_string(&path)
         .with_context(|| format!("Failed to read SOP instance at {:?}", path))?;
     let inst: SopInstance = serde_json::from_str(&content)?;
@@ -207,7 +222,7 @@ pub fn load_instance(instance_id: &str) -> Result<SopInstance> {
 
 pub fn save_instance(inst: &SopInstance) -> Result<()> {
     initialize_sop_system()?;
-    let path = sop_instances_dir().join(format!("{}.json", inst.id));
+    let path = validated_instance_path(&inst.id)?;
     let content = serde_json::to_string_pretty(inst)?;
     fs::write(&path, content)?;
     Ok(())
@@ -215,22 +230,18 @@ pub fn save_instance(inst: &SopInstance) -> Result<()> {
 
 pub fn list_instances() -> Result<Vec<SopInstance>> {
     initialize_sop_system()?;
-    let mut instances = Vec::new();
-    let entries = fs::read_dir(sop_instances_dir())?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file() && path.extension().map(|e| e == "json").unwrap_or(false) {
-            if let Ok(content) = fs::read_to_string(&path) {
-                if let Ok(inst) = serde_json::from_str::<SopInstance>(&content) {
-                    instances.push(inst);
-                }
-            }
-        }
-    }
+    let mut instances: Vec<SopInstance> = fs::read_dir(sop_instances_dir())?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && path.extension().map(|e| e == "json").unwrap_or(false))
+        .filter_map(|path| fs::read_to_string(&path).ok())
+        .filter_map(|content| serde_json::from_str::<SopInstance>(&content).ok())
+        .collect();
     // Sort by started_at descending
     instances.sort_by(|a, b| b.started_at.cmp(&a.started_at));
     Ok(instances)
 }
+
 
 fn get_default_sop_definitions() -> Vec<SopDefinition> {
     vec![

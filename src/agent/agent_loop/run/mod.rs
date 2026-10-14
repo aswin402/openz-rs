@@ -388,11 +388,13 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             ctx.streamed = true;
 
             let mut assembled = streaming_assembly.into_response();
-            assembled.content = if full_content.is_empty() {
-                None
-            } else {
-                Some(full_content)
-            };
+            if assembled.tool_calls.is_empty() {
+                assembled.content = if full_content.is_empty() {
+                    None
+                } else {
+                    Some(full_content)
+                };
+            }
             assembled.reasoning_content = if full_reasoning.is_empty() {
                 None
             } else {
@@ -439,6 +441,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             ctx,
             resp,
             &config,
+            &tools_openai,
             &settings,
             &turn_cancel_clone,
             start_time,
@@ -634,7 +637,37 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 
         for call in resp.tool_calls {
             let call = auto_adjust_tool_call_for_user_intent(call, ctx.user_content);
-            let call = auto_scope_context_before_edit(call, &mut run.auto_scoped_edit_paths);
+            let orig_name = call.name.clone();
+            let scoped_candidate =
+                auto_scope_context_before_edit(call.clone(), &mut run.auto_scoped_edit_paths);
+            if orig_name != "scope_context" && scoped_candidate.name == "scope_context" {
+                let pre_scope_call = crate::providers::ToolCallRequest {
+                    id: format!("auto_scope_{}", call.id),
+                    name: scoped_candidate.name,
+                    arguments: scoped_candidate.arguments,
+                };
+                let pre_silent = crate::agent::style::spinner::is_silent();
+                let pre_cancel = turn_cancel.clone();
+                if let Some(scope_result) = execute_auto_tool_call(
+                    &loop_ref.tools,
+                    &pre_scope_call,
+                    &config,
+                    ctx.session_key,
+                    pre_silent,
+                    &pre_cancel,
+                    &mut ctx.turn_errors,
+                )
+                .await
+                {
+                    ctx.tools_used.push(pre_scope_call.name.clone());
+                    super::transcript::append_auto_tool_result(
+                        &mut tool_results,
+                        &mut assistant_tool_calls_json,
+                        &pre_scope_call,
+                        scope_result,
+                    );
+                }
+            }
             // Break early if already cancelled (e.g. previous tool in batch was cancelled)
             if turn_cancel.is_cancelled() {
                 break;

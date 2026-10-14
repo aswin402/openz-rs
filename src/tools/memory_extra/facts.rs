@@ -840,19 +840,105 @@ pub(crate) fn extract_facts(text: &str) -> Vec<ExtractedFact> {
     facts
 }
 
+static AND_SPLIT_RE: std::sync::LazyLock<regex::Regex> =
+    std::sync::LazyLock::new(|| regex::Regex::new(r"\s+and\s+").expect("valid AND_SPLIT_RE"));
+
+static BUILT_PRODUCT_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    let entity = entity_pattern();
+    regex::Regex::new(&format!(
+        r"^({entity})\s+(?:created?|built?|wrote?|made)\s+({entity})\s+(?:with|in|using)\s+({entity})$"
+    ))
+    .expect("valid BUILT_PRODUCT_RE")
+});
+
+static CARRIED_BUILD_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    let entity = entity_pattern();
+    regex::Regex::new(&format!(
+        r"^(?:built?|wrote?|made|implemented)\s+(?:it|that|this)\s+(?:with|in|using)\s+({entity})$"
+    ))
+    .expect("valid CARRIED_BUILD_RE")
+});
+
+static DIRECT_FACT_RES: std::sync::LazyLock<Vec<(regex::Regex, &'static str)>> =
+    std::sync::LazyLock::new(|| {
+        let entity = entity_pattern();
+        let specs = [
+            (
+                format!(r"^({entity})'?s\s+(?:favorite|preferred)\s+.+?\s+(?:is|are)\s+({entity})$"),
+                "prefers",
+            ),
+            (
+                format!(
+                    r"^({entity})\s+(?:is\s+|was\s+)?(?:built|written|implemented|made)\s+(?:with|in|using)\s+({entity})$"
+                ),
+                "built_with",
+            ),
+            (
+                format!(r"^({entity})\s+(?:lives?|resides?)\s+in\s+({entity})$"),
+                "lives_in",
+            ),
+            (
+                format!(r"^({entity})\s+(?:(?:is|are|was|were|am)\s+)?(?:uses?|using)\s+({entity})$"),
+                "uses",
+            ),
+            (
+                format!(r"^({entity})\s+(?:depends\s+on|requires?)\s+({entity})$"),
+                "depends_on",
+            ),
+            (
+                format!(r"^({entity})\s+(?:prefers?|likes?|favou?rs?)\s+({entity})$"),
+                "prefers",
+            ),
+            (
+                format!(r"^({entity})\s+(?:is\s+a|is\s+an|is\s+the)\s+({entity})$"),
+                "is_a",
+            ),
+            (
+                format!(
+                    r"^({entity})\s+(?:(?:is|are|was|were|am)\s+)?(?:works?|working)\s+(?:on|with|at|for)\s+({entity})$"
+                ),
+                "works_with",
+            ),
+            (
+                format!(r"^({entity})\s+(?:created?|built?|wrote?)\s+({entity})$"),
+                "created",
+            ),
+        ];
+        specs
+            .into_iter()
+            .filter_map(|(pat, rel)| regex::Regex::new(&pat).ok().map(|re| (re, rel)))
+            .collect()
+    });
+
+static CARRIED_FACT_RES: std::sync::LazyLock<Vec<(regex::Regex, &'static str)>> =
+    std::sync::LazyLock::new(|| {
+        let entity = entity_pattern();
+        let specs = [
+            (format!(r"^(?:uses?|using)\s+({entity})$"), "uses"),
+            (
+                format!(r"^(?:depends\s+on|requires?)\s+({entity})$"),
+                "depends_on",
+            ),
+            (
+                format!(r"^(?:prefers?|likes?|favou?rs?)\s+({entity})$"),
+                "prefers",
+            ),
+            (
+                format!(r"^(?:works?|working)\s+(?:on|with|at|for)\s+({entity})$"),
+                "works_with",
+            ),
+        ];
+        specs
+            .into_iter()
+            .filter_map(|(pat, rel)| regex::Regex::new(&pat).ok().map(|re| (re, rel)))
+            .collect()
+    });
+
 fn split_fact_clauses(sentence: &str) -> Vec<String> {
     let normalized = sentence.replace([';', ','], ".");
-    let Some(and_split) = regex::Regex::new(r"\s+and\s+").ok() else {
-        return normalized
-            .split('.')
-            .map(str::trim)
-            .filter(|part| !part.is_empty())
-            .map(ToString::to_string)
-            .collect();
-    };
     normalized
         .split('.')
-        .flat_map(|part| and_split.split(part))
+        .flat_map(|part| AND_SPLIT_RE.split(part))
         .map(str::trim)
         .filter(|part| !part.is_empty())
         .map(ToString::to_string)
@@ -868,45 +954,34 @@ fn extract_fact_clause_multi(
     carried_subject: Option<&str>,
     carried_object: Option<&str>,
 ) -> Vec<ExtractedFact> {
-    let entity = entity_pattern();
-    let built_product_pattern = format!(
-        r"^({entity})\s+(?:created?|built?|wrote?|made)\s+({entity})\s+(?:with|in|using)\s+({entity})$"
-    );
-    if let Ok(built_product_re) = regex::Regex::new(&built_product_pattern) {
-        if let Some(caps) = built_product_re.captures(clause) {
-            let Some(subject) = caps.get(1).map(|m| m.as_str()) else {
-                return Vec::new();
-            };
-            let Some(product) = caps.get(2).map(|m| m.as_str()) else {
-                return Vec::new();
-            };
-            let Some(tooling) = caps.get(3).map(|m| m.as_str()) else {
-                return Vec::new();
-            };
+    if let Some(caps) = BUILT_PRODUCT_RE.captures(clause) {
+        let Some(subject) = caps.get(1).map(|m| m.as_str()) else {
+            return Vec::new();
+        };
+        let Some(product) = caps.get(2).map(|m| m.as_str()) else {
+            return Vec::new();
+        };
+        let Some(tooling) = caps.get(3).map(|m| m.as_str()) else {
+            return Vec::new();
+        };
 
-            let mut facts = Vec::new();
-            if let Some(fact) = build_extracted_fact(subject, "created", product) {
-                facts.push(fact);
-            }
-            if let Some(fact) = build_extracted_fact(product, "built_with", tooling) {
-                facts.push(fact);
-            }
-            return facts;
+        let mut facts = Vec::new();
+        if let Some(fact) = build_extracted_fact(subject, "created", product) {
+            facts.push(fact);
         }
+        if let Some(fact) = build_extracted_fact(product, "built_with", tooling) {
+            facts.push(fact);
+        }
+        return facts;
     }
 
     if let Some(object) = carried_object {
-        let carried_build_pattern = format!(
-            r"^(?:built?|wrote?|made|implemented)\s+(?:it|that|this)\s+(?:with|in|using)\s+({entity})$"
-        );
-        if let Ok(carried_build_re) = regex::Regex::new(&carried_build_pattern) {
-            if let Some(caps) = carried_build_re.captures(clause) {
-                return caps
-                    .get(1)
-                    .and_then(|m| build_extracted_fact(object, "built_with", m.as_str()))
-                    .into_iter()
-                    .collect();
-            }
+        if let Some(caps) = CARRIED_BUILD_RE.captures(clause) {
+            return caps
+                .get(1)
+                .and_then(|m| build_extracted_fact(object, "built_with", m.as_str()))
+                .into_iter()
+                .collect();
         }
     }
 
@@ -916,80 +991,14 @@ fn extract_fact_clause_multi(
 }
 
 fn extract_fact_clause(clause: &str, carried_subject: Option<&str>) -> Option<ExtractedFact> {
-    let entity = entity_pattern();
-    let direct_patterns = [
-        (
-            format!(r"^({entity})'?s\s+(?:favorite|preferred)\s+.+?\s+(?:is|are)\s+({entity})$"),
-            "prefers",
-        ),
-        (
-            format!(
-                r"^({entity})\s+(?:is\s+|was\s+)?(?:built|written|implemented|made)\s+(?:with|in|using)\s+({entity})$"
-            ),
-            "built_with",
-        ),
-        (
-            format!(r"^({entity})\s+(?:lives?|resides?)\s+in\s+({entity})$"),
-            "lives_in",
-        ),
-        (
-            format!(r"^({entity})\s+(?:(?:is|are|was|were|am)\s+)?(?:uses?|using)\s+({entity})$"),
-            "uses",
-        ),
-        (
-            format!(r"^({entity})\s+(?:depends\s+on|requires?)\s+({entity})$"),
-            "depends_on",
-        ),
-        (
-            format!(r"^({entity})\s+(?:prefers?|likes?|favou?rs?)\s+({entity})$"),
-            "prefers",
-        ),
-        (
-            format!(r"^({entity})\s+(?:is\s+a|is\s+an|is\s+the)\s+({entity})$"),
-            "is_a",
-        ),
-        (
-            format!(
-                r"^({entity})\s+(?:(?:is|are|was|were|am)\s+)?(?:works?|working)\s+(?:on|with|at|for)\s+({entity})$"
-            ),
-            "works_with",
-        ),
-        (
-            format!(r"^({entity})\s+(?:created?|built?|wrote?)\s+({entity})$"),
-            "created",
-        ),
-    ];
-
-    for (pattern, relation) in direct_patterns {
-        let Ok(regex) = regex::Regex::new(&pattern) else {
-            continue;
-        };
+    for (regex, relation) in DIRECT_FACT_RES.iter() {
         if let Some(caps) = regex.captures(clause) {
             return build_extracted_fact(caps.get(1)?.as_str(), relation, caps.get(2)?.as_str());
         }
     }
 
     let subject = carried_subject?;
-    let carried_patterns = [
-        (format!(r"^(?:uses?|using)\s+({entity})$"), "uses"),
-        (
-            format!(r"^(?:depends\s+on|requires?)\s+({entity})$"),
-            "depends_on",
-        ),
-        (
-            format!(r"^(?:prefers?|likes?|favou?rs?)\s+({entity})$"),
-            "prefers",
-        ),
-        (
-            format!(r"^(?:works?|working)\s+(?:on|with|at|for)\s+({entity})$"),
-            "works_with",
-        ),
-    ];
-
-    for (pattern, relation) in carried_patterns {
-        let Ok(regex) = regex::Regex::new(&pattern) else {
-            continue;
-        };
+    for (regex, relation) in CARRIED_FACT_RES.iter() {
         if let Some(caps) = regex.captures(clause) {
             return build_extracted_fact(subject, relation, caps.get(1)?.as_str());
         }

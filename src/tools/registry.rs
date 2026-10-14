@@ -745,8 +745,22 @@ impl ToolRegistry {
             }
         }
 
+        let routing_cfg = self
+            .context
+            .as_ref()
+            .map(|(cfg, _, _)| cfg.agents.defaults.layered_tool_routing.clone())
+            .unwrap_or_default();
+        let max_visible = if routing_cfg.enabled {
+            routing_cfg.max_visible_tools
+        } else {
+            usize::MAX
+        };
         let intent = crate::agent::agent_loop::intent::classify_turn_intent(prompt);
-        let scope = crate::tools::scope::ToolScopeEngine::default().decide(&intent, 20);
+        let mut scope =
+            crate::tools::scope::ToolScopeEngine::default().decide(&intent, max_visible);
+        scope
+            .allowed_names
+            .extend(routing_cfg.always_visible_tools);
         let pending_scope = self
             .pending_scope
             .lock()
@@ -774,7 +788,8 @@ impl ToolRegistry {
             .map(|tool| {
                 let metadata = tool.metadata();
                 let bm25 = bm25_scores.get(tool.name()).copied().unwrap_or(0.0);
-                let in_scope = scope.allowed_names.contains(tool.name())
+                let in_scope = !routing_cfg.enabled
+                    || scope.allowed_names.contains(tool.name())
                     || crate::tools::scope::tool_matches_pack(tool.name(), &metadata, &scope.packs)
                     || bm25 > 2.0;
                 let base_score = routing::tool_selection_score_with_bm25(
@@ -832,7 +847,8 @@ impl ToolRegistry {
         let mut selected_count = 0usize;
         for entry in entries.iter_mut() {
             let bm25 = bm25_scores.get(&entry.name).copied().unwrap_or(0.0);
-            let in_scope = scope.allowed_names.contains(entry.name.as_str())
+            let in_scope = !routing_cfg.enabled
+                || scope.allowed_names.contains(entry.name.as_str())
                 || crate::tools::scope::tool_matches_pack(
                     &entry.name,
                     &entry.metadata,
@@ -906,8 +922,18 @@ impl ToolRegistry {
         let static_tools = self.read_tools();
         let static_names: HashSet<String> = static_tools.keys().cloned().collect();
         drop(static_tools);
+        let routing_cfg = self
+            .context
+            .as_ref()
+            .map(|(cfg, _, _)| cfg.agents.defaults.layered_tool_routing.clone())
+            .unwrap_or_default();
+        let max_visible = if routing_cfg.enabled {
+            routing_cfg.max_visible_tools
+        } else {
+            usize::MAX
+        };
         let intent = crate::agent::agent_loop::intent::classify_turn_intent(prompt);
-        let scope = crate::tools::scope::ToolScopeEngine::default().decide(&intent, 20);
+        let scope = crate::tools::scope::ToolScopeEngine::default().decide(&intent, max_visible);
         let pending_scope = self
             .pending_scope
             .lock()

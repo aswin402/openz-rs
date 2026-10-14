@@ -4,11 +4,14 @@ const CURRENT_OR_LATEST_TERMS: &[&str] = &[
     "latest",
     "current",
     "today",
-    "now",
-    "new",
+    "right now",
+    "as of now",
     "recent",
-    "version",
-    "release",
+    "latest version",
+    "current version",
+    "new version",
+    "new release",
+    "latest release",
     "news",
     "what's new",
     "whats new",
@@ -19,15 +22,14 @@ const REVALIDATION_TERMS: &[&str] = &[
     "recheck",
     "re-check",
     "refresh",
-    "verify",
-    "confirm",
     "double check",
     "check again",
     "look again",
     "go and check",
     "from web",
     "browse",
-    "live",
+    "live web",
+    "live data",
     "actual page",
     "real page",
 ];
@@ -36,21 +38,31 @@ const EXPLICIT_RESEARCH_TERMS: &[&str] = &[
     "research",
     "look up",
     "lookup",
-    "search",
-    "find",
+    "search the web",
+    "search online",
+    "web search",
+    "search for",
     "dig into",
     "investigate",
     "analyze this",
     "analyse this",
-    "read this",
-    "check this",
-    "check the",
-    "see this",
-    "see the",
-    "open this",
     "tell me about this",
     "deep dive",
 ];
+
+fn contains_phrase_bounded(text_lower: &str, phrase: &str) -> bool {
+    let bytes = text_lower.as_bytes();
+    let p_len = phrase.len();
+    for (idx, _) in text_lower.match_indices(phrase) {
+        let before_ok = idx == 0 || !bytes[idx - 1].is_ascii_alphanumeric();
+        let after_idx = idx + p_len;
+        let after_ok = after_idx >= bytes.len() || !bytes[after_idx].is_ascii_alphanumeric();
+        if before_ok && after_ok {
+            return true;
+        }
+    }
+    false
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResearchBudget {
@@ -184,17 +196,17 @@ pub fn value_contains_http_url(value: &serde_json::Value) -> bool {
 pub fn is_current_or_latest_query(text: &str) -> bool {
     let lower = text.to_lowercase();
     let current_year = chrono::Local::now().year().to_string();
-    lower.contains(&current_year)
+    contains_phrase_bounded(&lower, &current_year)
         || CURRENT_OR_LATEST_TERMS
             .iter()
-            .any(|needle| lower.contains(needle))
+            .any(|needle| contains_phrase_bounded(&lower, needle))
 }
 
 pub fn asks_to_revalidate_saved_research(text: &str) -> bool {
     let lower = text.to_lowercase();
     REVALIDATION_TERMS
         .iter()
-        .any(|needle| lower.contains(needle))
+        .any(|needle| contains_phrase_bounded(&lower, needle))
 }
 
 pub fn is_explicit_research_request(text: &str) -> bool {
@@ -202,7 +214,7 @@ pub fn is_explicit_research_request(text: &str) -> bool {
     text_has_http_url(text)
         || EXPLICIT_RESEARCH_TERMS
             .iter()
-            .any(|needle| lower.contains(needle))
+            .any(|needle| contains_phrase_bounded(&lower, needle))
 }
 
 fn is_local_operational_query(text: &str) -> bool {
@@ -221,6 +233,21 @@ fn is_local_operational_query(text: &str) -> bool {
         "in this repo",
         "this repo",
         "this codebase",
+        "write_file",
+        "read_file",
+        "patch_file",
+        "replace_lines",
+        "exec_command",
+        "list_jobs",
+        "schedule_job",
+        "remove_job",
+        "cargo check",
+        "cargo test",
+        "cargo build",
+        "src/",
+        "/tmp/",
+        "cron job",
+        "scheduled cron",
     ]
     .iter()
     .any(|needle| lower.contains(needle))

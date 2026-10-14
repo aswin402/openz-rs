@@ -403,6 +403,8 @@ fn model_name_suggests_strong(model: &str) -> bool {
         || m.contains("deepseek-v4")
         || m.contains("claude")
         || m.contains("gpt-4")
+        || m.contains("gpt-5")
+        || m.contains("minimax")
         || (m.contains("nemotron") && m.contains("ultra"))
 }
 
@@ -411,6 +413,10 @@ fn is_weak_or_risky_model(model: &str) -> bool {
         return false;
     }
     let m = model.to_lowercase();
+    let tokens: Vec<&str> = m
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .collect();
     [
         "1b",
         "2b",
@@ -432,7 +438,7 @@ fn is_weak_or_risky_model(model: &str) -> bool {
         "hy3",
     ]
     .iter()
-    .any(|needle| m.contains(needle))
+    .any(|needle| tokens.contains(needle))
 }
 
 fn weak_model_operating_rules(model: &str) -> String {

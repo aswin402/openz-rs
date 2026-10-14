@@ -55,6 +55,7 @@ done
 
 CARGO_FLAGS=""
 CARGO_PROFILE_FLAG=""
+export RUST_FONTCONFIG_DLOPEN="${RUST_FONTCONFIG_DLOPEN:-1}"
 
 if [ "$LOW_RESOURCE" = true ] && [ "$BALANCED_RESOURCE" = true ]; then
     echo "❌ Choose only one resource mode: --balanced or --low-resource."

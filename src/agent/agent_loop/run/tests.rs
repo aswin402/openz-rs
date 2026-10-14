@@ -103,6 +103,28 @@ fn second_edit_call_for_same_path_is_preserved() {
 }
 
 #[test]
+fn relative_and_absolute_edit_paths_share_canonical_scope_deduplication() {
+    let mut scoped = std::collections::HashSet::new();
+    let rel_call = crate::providers::ToolCallRequest {
+        id: "call_rel".to_string(),
+        name: "write_file".to_string(),
+        arguments: json!({ "path": "src/__openz_rel_test.rs", "content": "" }),
+    };
+    let first = auto_scope_context_before_edit(rel_call, &mut scoped);
+    assert_eq!(first.name, "scope_context");
+
+    let abs_src = std::fs::canonicalize("src").unwrap();
+    let abs_file = abs_src.join("__openz_abs_test.rs");
+    let abs_call = crate::providers::ToolCallRequest {
+        id: "call_abs".to_string(),
+        name: "write_file".to_string(),
+        arguments: json!({ "path": abs_file.to_string_lossy(), "content": "" }),
+    };
+    let second = auto_scope_context_before_edit(abs_call, &mut scoped);
+    assert_eq!(second.name, "write_file");
+}
+
+#[test]
 fn show_intent_and_generated_output_path_builds_auto_open_call() {
     let call = crate::providers::ToolCallRequest {
         id: "call_image".to_string(),

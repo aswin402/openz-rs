@@ -9,7 +9,7 @@ description: "Technical Implementation Plan — details system architecture, dat
 - **Tech Stack**: Rust 2021, Tokio, Clap, Ratatui/Crossterm-style terminal control, Axum, reqwest/rustls, rusqlite, Tonic, FastEmbed, OpenMedia, OpenDoc, SearchXyz, and MCP-compatible tooling.
 - **Entrypoint**: `src/main.rs` initializes environment/runtime and dispatches into `src/cli/mod.rs`.
 - **Agent Loop**: `src/agent/agent_loop/` owns turn restoration, compaction, prompt building, tool execution, persistence, response rendering, and background self-improvement.
-- **Tool Registry**: `src/cli/tool_registration/` owns native registration by responsibility. `src/tools/mod.rs` handles metadata, prompt-aware tool exposure, dynamic subagent tools, and routing.
+- **Tool Registry**: `src/cli/tools.rs` owns native tool registration and capability grouping. `src/tools/registry.rs` and `src/tools/mod.rs` handle metadata, prompt-aware tool exposure (`src/tools/scope_engine.rs`), dynamic subagent tools, and routing.
 - **Channels**: `src/channels/` implements TUI, WebSocket/WebUI, Telegram, Discord, WhatsApp, and Email adapters.
 
 ## 2. Data Flow & State Management

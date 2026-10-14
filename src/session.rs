@@ -141,44 +141,68 @@ impl Session {
         }
     }
 
-    pub fn verify_hash_chain(&self) -> Result<()> {
-        let mut prev_hash = String::new();
-        for (i, msg) in self.messages.iter().enumerate() {
-            let ts_ref = msg.timestamp.as_deref();
-            let calculated = Self::calculate_message_hash(
-                &msg.role,
-                &msg.content,
-                ts_ref,
-                &msg.extra,
-                &prev_hash,
-            );
-            match msg.get_hash() {
-                Some(stored) => {
-                    let legacy = legacy_message_hash(&msg.role, &msg.content, ts_ref, &prev_hash);
-                    if stored == calculated {
-                        prev_hash = calculated;
-                    } else if stored == legacy {
-                        prev_hash = stored.to_string();
-                    } else {
-                        anyhow::bail!(
-                            "Cryptographic verification failed: message at index {} has been tampered with. Stored: {}, Calculated: {}",
-                            i,
-                            stored,
-                            calculated
-                        );
+    pub fn inspect_hash_chain(&self) -> ChainIntegrity {
+        let step = self.messages.iter().enumerate().try_fold(
+            (String::new(), false),
+            |(prev_hash, saw_missing), (i, msg)| {
+                let ts_ref = msg.timestamp.as_deref();
+                let calculated = Self::calculate_message_hash(
+                    &msg.role,
+                    &msg.content,
+                    ts_ref,
+                    &msg.extra,
+                    &prev_hash,
+                );
+                match msg.get_hash() {
+                    Some(stored) => {
+                        let legacy =
+                            legacy_message_hash(&msg.role, &msg.content, ts_ref, &prev_hash);
+                        match (stored == calculated, stored == legacy) {
+                            (true, _) => Ok((calculated, saw_missing)),
+                            (false, true) => Ok((stored.to_string(), saw_missing)),
+                            (false, false) => Err(format!(
+                                "Cryptographic verification failed: message at index {} has been tampered with. Stored: {}, Calculated: {}",
+                                i, stored, calculated
+                            )),
+                        }
                     }
+                    None => Ok((calculated, true)),
                 }
-                None => {
-                    anyhow::bail!(
-                        "Cryptographic verification failed: message at index {} is missing its verification hash.",
-                        i
-                    );
-                }
-            }
+            },
+        );
+        match step {
+            Ok((_, false)) => ChainIntegrity::Valid,
+            Ok((_, true)) => ChainIntegrity::UninitializedLegacy,
+            Err(reason) => ChainIntegrity::Tampered(reason),
         }
-        Ok(())
+    }
+
+    pub fn verify_hash_chain(&self) -> Result<()> {
+        match self.inspect_hash_chain() {
+            ChainIntegrity::Valid => Ok(()),
+            ChainIntegrity::UninitializedLegacy => {
+                let missing_idx = self
+                    .messages
+                    .iter()
+                    .position(|m| m.get_hash().is_none())
+                    .unwrap_or(0);
+                anyhow::bail!(
+                    "Cryptographic verification failed: message at index {} is missing its verification hash.",
+                    missing_idx
+                )
+            }
+            ChainIntegrity::Tampered(err) => anyhow::bail!("{}", err),
+        }
     }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChainIntegrity {
+    Valid,
+    UninitializedLegacy,
+    Tampered(String),
+}
+
 
 
 fn remove_stale_lock_path(path: &Path) -> Result<()> {
@@ -357,24 +381,45 @@ impl SessionManager {
         }
     }
 
+    fn reconcile_loaded_integrity(key: &str, path: &Path, mut session: Session) -> Session {
+        match session.inspect_hash_chain() {
+            ChainIntegrity::Valid => session,
+            ChainIntegrity::UninitializedLegacy => {
+                tracing::info!(
+                    session_key = %key,
+                    "Migrating legacy session without message hashes to cryptographic hash chain."
+                );
+                session.populate_hashes();
+                let _ = serde_json::to_string_pretty(&session)
+                    .ok()
+                    .and_then(|pretty| std::fs::write(path, pretty).ok());
+                session
+            }
+            ChainIntegrity::Tampered(err) => {
+                tracing::warn!(
+                    session_key = %key,
+                    error = %err,
+                    "Session cryptographic hash chain verification failed; preserving tamper evidence for /audit."
+                );
+                session.metadata.insert(
+                    "integrity_compromised".to_string(),
+                    serde_json::Value::Bool(true),
+                );
+                session
+                    .metadata
+                    .insert("integrity_error".to_string(), serde_json::Value::String(err));
+                session
+            }
+        }
+    }
+
     pub fn load(&self, key: &str) -> Result<Session> {
         let path = self.file_path(key);
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read session file at {:?}", path))?;
-        let mut session: Session = serde_json::from_str(&content)
+        let session: Session = serde_json::from_str(&content)
             .with_context(|| format!("Failed to parse session file at {:?}", path))?;
-        if let Err(e) = session.verify_hash_chain() {
-            tracing::warn!(
-                "Session hash chain verification failed for key '{}': {}. Reconstructing.",
-                key,
-                e
-            );
-            session.populate_hashes();
-            if let Ok(pretty) = serde_json::to_string_pretty(&session) {
-                let _ = std::fs::write(&path, pretty);
-            }
-        }
-        Ok(session)
+        Ok(Self::reconcile_loaded_integrity(key, &path, session))
     }
 
     pub async fn load_async(&self, key: &str) -> Result<Session> {
@@ -383,20 +428,9 @@ impl SessionManager {
         tokio::task::spawn_blocking(move || {
             let content = std::fs::read_to_string(&path)
                 .with_context(|| format!("Failed to read session file at {:?}", path))?;
-            let mut session: Session = serde_json::from_str(&content)
+            let session: Session = serde_json::from_str(&content)
                 .with_context(|| format!("Failed to parse session file at {:?}", path))?;
-            if let Err(e) = session.verify_hash_chain() {
-                tracing::warn!(
-                    "Session hash chain verification failed for key '{}': {}. Reconstructing.",
-                    key_owned,
-                    e
-                );
-                session.populate_hashes();
-                if let Ok(pretty) = serde_json::to_string_pretty(&session) {
-                    let _ = std::fs::write(&path, pretty);
-                }
-            }
-            Ok(session)
+            Ok(Self::reconcile_loaded_integrity(&key_owned, &path, session))
         })
         .await?
     }

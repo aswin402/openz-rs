@@ -41,9 +41,22 @@ pub fn set_silent_mode(val: bool) {
 }
 
 pub async fn run_cli() -> Result<()> {
-    // Intercept version flags
-    for arg in std::env::args() {
-        if arg == "--version" || arg == "-V" {
+    // Intercept top-level version flags only before `--` and outside passthrough subcommands
+    let args_before_sep: Vec<String> = std::env::args()
+        .skip(1)
+        .take_while(|arg| arg != "--")
+        .collect();
+    let first_subcommand = args_before_sep
+        .iter()
+        .find(|arg| !arg.starts_with('-'))
+        .map(String::as_str);
+    let should_print_version = (!matches!(first_subcommand, Some("mcp-bridge" | "run")))
+        && args_before_sep
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "--version" | "-V"));
+
+    match should_print_version {
+        true => {
             let logo = format!(
                 r#"{white}     ██████╗ ██████╗ ███████╗███╗   ██╗{orange}███████╗
 {white}    ██╔═══██╗██╔══██╗██╔════╝████╗  ██║{orange}╚══███╔╝
@@ -61,6 +74,7 @@ pub async fn run_cli() -> Result<()> {
             print!("{}", logo);
             std::process::exit(0);
         }
+        false => {}
     }
 
     let args = CliArgs::parse();

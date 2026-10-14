@@ -106,8 +106,22 @@ pub(super) fn auto_scope_context_before_edit(
         return call;
     };
     let target_path = scope_context_target_for_edit_path(&edit_path);
+    let canonical_target = std::fs::canonicalize(&target_path)
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| {
+            crate::config::path_policy::canonicalize_with_missing_leaf(
+                &crate::config::loader::resolve_path(&target_path),
+            )
+            .to_string_lossy()
+            .to_string()
+        });
 
-    if !scoped_edit_paths.insert(target_path.clone()) {
+    let already_scoped = scoped_edit_paths.contains(&target_path)
+        || scoped_edit_paths.contains(&canonical_target);
+    scoped_edit_paths.insert(target_path.clone());
+    scoped_edit_paths.insert(canonical_target);
+
+    if already_scoped {
         return call;
     }
 

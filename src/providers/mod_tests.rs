@@ -61,3 +61,56 @@ async fn test_model_supports_vision() {
     assert!(!model_supports_vision("openrouter/free"));
     assert!(!model_supports_vision("my-supervision-model"));
 }
+
+#[tokio::test]
+async fn test_parse_multimodal_blocks_non_image_and_sensitive_paths() {
+    // Attempting to read a non-image file or sensitive path via markdown image syntax
+    // must fall back to literal text rather than base64-encoding the file contents.
+    let text = "Check this ![leak](/etc/passwd) and ![toml](Cargo.toml)";
+    let parts = parse_multimodal_content(text).await;
+    assert!(parts.iter().all(|p| matches!(p, ContentPart::Text(_))));
+}
+
+#[test]
+fn test_sanitize_tool_messages_discards_orphans_and_populates_name() {
+    let mut assistant = crate::session::Message {
+        role: "assistant".to_string(),
+        content: String::new(),
+        timestamp: None,
+        extra: serde_json::Map::new(),
+    };
+    assistant.extra.insert(
+        "tool_calls".to_string(),
+        serde_json::json!([{
+            "id": "call_valid",
+            "function": { "name": "read_file", "arguments": "{}" }
+        }]),
+    );
+
+    let mut valid_tool = crate::session::Message {
+        role: "tool".to_string(),
+        content: "ok".to_string(),
+        timestamp: None,
+        extra: serde_json::Map::new(),
+    };
+    valid_tool
+        .extra
+        .insert("tool_call_id".to_string(), serde_json::json!("call_valid"));
+
+    let mut orphan_tool = crate::session::Message {
+        role: "tool".to_string(),
+        content: "orphan".to_string(),
+        timestamp: None,
+        extra: serde_json::Map::new(),
+    };
+    orphan_tool
+        .extra
+        .insert("tool_call_id".to_string(), serde_json::json!("call_missing"));
+
+    let sanitized = sanitize_tool_messages(&[assistant, valid_tool, orphan_tool]);
+    assert_eq!(sanitized.len(), 2);
+    assert_eq!(
+        sanitized[1].extra.get("name").and_then(|v| v.as_str()),
+        Some("read_file")
+    );
+}

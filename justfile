@@ -14,41 +14,32 @@ compile package="openz":
 list-packages:
     @echo "Crates in this workspace:"
     @echo " - openz (root binary crate)"
-    @echo " - searchxyz"
-    @echo " - openmedia-core"
-    @echo " - openmedia-image"
-    @echo " - openmedia-video"
-    @echo " - openmedia-svg"
-    @echo " - openmedia-animate"
-    @echo " - openmedia-process"
-    @echo " - openmedia-improve"
-    @echo " - openmedia-mcp"
 
-# Run cargo check on a specific package (defaults to "openz") using at most 2 parallel jobs
+# Run cargo check on a specific package (defaults to "openz") using 1 job
 check package="openz":
-    cargo check -p {{package}} -j 2
+    cargo check -p {{package}} -j 1
 
-# Run cargo check on all workspace crates with capped concurrency (2 parallel jobs)
+# Run cargo check on all workspace crates with capped concurrency (1 job)
 check-all:
-    cargo check --workspace -j 2
+    cargo check --workspace -j 1
 
-# Run cargo test on a specific package (defaults to "openz") using at most 2 parallel jobs
+# Run cargo test on a specific package (defaults to "openz") using 1 job
 test package="openz":
-    cargo test -p {{package}} -j 2
+    cargo test -p {{package}} -j 1
 
-# Run cargo test on all workspace crates with capped concurrency (2 parallel jobs)
+# Run cargo test on all workspace crates with capped concurrency (1 job)
 test-all:
-    cargo test --workspace -j 2
+    cargo test --workspace -j 1
 
-# Run a specific test by name in a package/crate (uses 2 jobs)
+# Run a specific test by name in a package/crate (uses 1 job)
 # Usage: just test-one <test_name> [package_name]
 test-one name package="openz":
-    cargo test -p {{package}} {{name}} -j 2
+    cargo test -p {{package}} {{name}} -j 1
 
 # Run one library unit test only, avoiding binary/integration test target compilation
 # Usage: just test-lib-one <test_name> [package_name]
 test-lib-one name package="openz":
-    cargo test -p {{package}} --lib {{name}} -j 2
+    cargo test -p {{package}} --lib {{name}} -j 1
 
 # Run cargo clippy on a specific package (defaults to "openz") using at most 2 parallel jobs
 clippy package="openz":

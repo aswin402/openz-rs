@@ -284,45 +284,81 @@ fn quarantine_malformed_memory_db(path: &std::path::Path) {
     );
 }
 
+fn is_sqlite_corruption_error(err: &anyhow::Error) -> bool {
+    err.downcast_ref::<rusqlite::Error>()
+        .and_then(|sqlite_err| sqlite_err.sqlite_error_code())
+        .is_some_and(|code| {
+            matches!(
+                code,
+                rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
+            )
+        })
+}
+
 pub fn get_connection() -> Result<Connection> {
     let path = get_db_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+    match path.parent() {
+        Some(parent) => fs::create_dir_all(parent)?,
+        None => {}
     }
 
     let mut conn = Connection::open(&path)?;
-    if let Err(err) = crate::core::sqlite::apply_standard_pragmas(&conn) {
-        tracing::warn!(
-            database = %path.display(),
-            error = %err,
-            "OpenZ memory database failed during SQLite initialization."
-        );
-        drop(conn);
-        quarantine_malformed_memory_db(&path);
-        conn = Connection::open(&path)?;
-        crate::core::sqlite::apply_standard_pragmas(&conn)?;
+    match crate::core::sqlite::apply_standard_pragmas(&conn) {
+        Ok(()) => {}
+        Err(err) => match is_sqlite_corruption_error(&err) {
+            true => {
+                tracing::warn!(
+                    database = %path.display(),
+                    error = %err,
+                    "OpenZ memory database corrupt during SQLite initialization; quarantining."
+                );
+                drop(conn);
+                quarantine_malformed_memory_db(&path);
+                conn = Connection::open(&path)?;
+                crate::core::sqlite::apply_standard_pragmas(&conn)?;
+            }
+            false => return Err(err),
+        },
     }
-    let integrity = conn.query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0));
-    let integrity_failure = match integrity {
-        Ok(value) if value == "ok" => None,
-        Ok(value) => Some(value),
-        Err(err) => Some(err.to_string()),
-    };
-    if let Some(reason) = integrity_failure {
-        tracing::warn!(
-            database = %path.display(),
-            reason = %reason,
-            "OpenZ memory database integrity check failed."
-        );
-        drop(conn);
-        quarantine_malformed_memory_db(&path);
-        conn = Connection::open(&path)?;
-        crate::core::sqlite::apply_standard_pragmas(&conn)?;
+
+    static SKILLS_INIT_ONCE: std::sync::Once = std::sync::Once::new();
+    let mut needs_reopen = false;
+    SKILLS_INIT_ONCE.call_once(|| {
+        let check = conn.query_row("PRAGMA quick_check", [], |row| row.get::<_, String>(0));
+        let corrupt_reason = match check {
+            Ok(val) => (val != "ok").then_some(val),
+            Err(err) => matches!(
+                err.sqlite_error_code(),
+                Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase)
+            )
+            .then(|| err.to_string()),
+        };
+        match corrupt_reason {
+            Some(reason) => {
+                tracing::warn!(
+                    database = %path.display(),
+                    reason = %reason,
+                    "OpenZ memory database quick_check reported corruption."
+                );
+                needs_reopen = true;
+            }
+            None => {}
+        }
+    });
+
+    match needs_reopen {
+        true => {
+            drop(conn);
+            quarantine_malformed_memory_db(&path);
+            conn = Connection::open(&path)?;
+            crate::core::sqlite::apply_standard_pragmas(&conn)?;
+        }
+        false => {}
     }
 
     create_skills_schema(&conn)?;
-    static SKILLS_INIT_ONCE: std::sync::Once = std::sync::Once::new();
-    SKILLS_INIT_ONCE.call_once(|| {
+    static SKILLS_MIGRATE_ONCE: std::sync::Once = std::sync::Once::new();
+    SKILLS_MIGRATE_ONCE.call_once(|| {
         let _ = migrate_old_skills_to_db(&conn);
         let _ = initialize_default_subagent_skills(&conn);
     });

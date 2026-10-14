@@ -8,6 +8,47 @@ use std::sync::OnceLock;
 
 static TRUSTED_SESSION_TOOLS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
+const FORBIDDEN_DEVICE_BINS: &[&str] = &["dd", "mkfs", "fdisk", "format", "parted"];
+const SYSTEM_POWER_BINS: &[&str] = &["shutdown", "reboot", "poweroff", "halt"];
+const PRIVILEGE_BINS: &[&str] = &["sudo", "su", "chmod", "chown", "eval", "source"];
+const RAW_DELETE_BINS: &[&str] = &["rm", "rmdir", "unlink"];
+const NORMAL_DESTRUCTIVE_BINS: &[&str] = &[
+    "rm", "rmdir", "unlink", "dd", "mkfs", "fdisk", "format", "parted",
+];
+const STRICT_XARGS_TARGETS: &[&str] = &["rm", "kill", "chmod", "chown"];
+const STRICT_CLEAN_PHRASES: &[&str] = &[
+    "cargo clean",
+    "npm run clean",
+    "bun run clean",
+    "yarn clean",
+];
+const PROCESS_CONTROL_BINS: &[&str] = &["kill", "killall", "pkill"];
+const NETWORK_TRANSFER_BINS: &[&str] = &["curl", "wget", "scp", "rsync", "sftp", "nc", "netcat"];
+const SHELL_PIPE_TARGETS: &[&str] = &[
+    "sh", "bash", "zsh", "dash", "ksh", "fish", "python", "python3", "perl", "ruby", "node", "php",
+];
+const SHELL_WRAPPER_BINS: &[&str] = &["sh", "bash", "zsh", "dash", "ksh", "su", "sudo"];
+const SCRIPT_RUNNER_BINS: &[&str] = &["python", "python3", "perl", "ruby", "node"];
+const SEPARATOR_TOKENS: &[&str] = &["&&", "||", ";", "|", "&"];
+const REDIRECT_STOP_TOKENS: &[&str] = &[">", ">>", "<", "2>", "2>&1"];
+
+const DANGEROUS_DELETE_LITERALS: &[&str] = &[
+    "/", "/*", "~", "~/*", "$home", "$home/*", "${home}", "${home}/*", "/home", "/home/",
+];
+const SYSTEM_DANGEROUS_PREFIXES: &[&str] = &[
+    "/usr", "/etc", "/var", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/sys", "/proc", "/dev",
+    "/opt", "/root",
+];
+const WORKSPACE_PROTECTED_ENTRIES: &[&str] = &[".git", "Cargo.toml", "src", "build.rs"];
+const CREDENTIAL_ARG_KEYS: &[&str] = &["credential", "target", "github_token", "gitlab_token"];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum QuoteState {
+    Unquoted,
+    Single,
+    Double,
+}
+
 pub struct SecurityGuard;
 
 impl SecurityGuard {
@@ -17,377 +58,425 @@ impl SecurityGuard {
             .find_map(|key| arguments.get(*key).and_then(|value| value.as_str()))
     }
 
-    /// Helper to check if a command string contains a specific binary name as a whole word token.
+    fn is_left_boundary(byte: u8) -> bool {
+        (byte as char).is_whitespace()
+            || matches!(
+                byte,
+                b'/' | b';' | b'|' | b'&' | b'`' | b'$' | b'(' | b'\'' | b'"'
+            )
+    }
+
+    fn is_right_boundary(byte: u8) -> bool {
+        (byte as char).is_whitespace()
+            || matches!(
+                byte,
+                b';' | b'|' | b'&' | b'`' | b')' | b',' | b'.' | b'\'' | b'"'
+            )
+    }
+
+    /// Pure boundary-aware token matcher across all occurrences of `bin` in `cmd`.
     fn has_bin(cmd: &str, bin: &str) -> bool {
-        if let Some(idx) = cmd.find(bin) {
-            let before = if idx == 0 {
-                true
-            } else {
-                let prev = cmd.as_bytes()[idx - 1] as char;
-                prev.is_whitespace()
-                    || prev == '/'
-                    || prev == ';'
-                    || prev == '|'
-                    || prev == '&'
-                    || prev == '`'
-                    || prev == '$'
-                    || prev == '('
-                    || prev == '\''
-                    || prev == '"'
-            };
+        (!bin.is_empty())
+            && cmd.match_indices(bin).any(|(idx, _)| {
+                let before = idx
+                    .checked_sub(1)
+                    .and_then(|prev_idx| cmd.as_bytes().get(prev_idx).copied())
+                    .map(Self::is_left_boundary)
+                    .unwrap_or(true);
+                let after = cmd
+                    .as_bytes()
+                    .get(idx + bin.len())
+                    .copied()
+                    .map(Self::is_right_boundary)
+                    .unwrap_or(true);
+                before && after
+            })
+    }
 
-            let after_idx = idx + bin.len();
-            let after = if after_idx == cmd.len() {
-                true
-            } else {
-                let next = cmd.as_bytes()[after_idx] as char;
-                next.is_whitespace()
-                    || next == ';'
-                    || next == '|'
-                    || next == '&'
-                    || next == '`'
-                    || next == ')'
-                    || next == ','
-                    || next == '.'
-                    || next == '\''
-                    || next == '"'
-            };
+    fn has_any_bin(cmd: &str, bins: &[&str]) -> bool {
+        bins.iter().any(|bin| Self::has_bin(cmd, bin))
+    }
 
-            before && after
-        } else {
-            false
+    fn has_shell_substitution(cmd: &str) -> bool {
+        let bytes = cmd.as_bytes();
+        let mut state = QuoteState::Unquoted;
+        let mut idx = 0usize;
+        while idx < bytes.len() {
+            let b = bytes[idx];
+            let next = bytes.get(idx + 1).copied();
+            match (state, b, next) {
+                (QuoteState::Unquoted | QuoteState::Double, b'\\', Some(_)) => {
+                    idx += 2;
+                    continue;
+                }
+                (QuoteState::Unquoted, b'\'', _) => state = QuoteState::Single,
+                (QuoteState::Single, b'\'', _) => state = QuoteState::Unquoted,
+                (QuoteState::Unquoted, b'"', _) => state = QuoteState::Double,
+                (QuoteState::Double, b'"', _) => state = QuoteState::Unquoted,
+                (QuoteState::Unquoted | QuoteState::Double, b'`', _)
+                | (QuoteState::Unquoted | QuoteState::Double, b'$', Some(b'('))
+                | (QuoteState::Unquoted, b'<', Some(b'('))
+                | (QuoteState::Unquoted, b'>', Some(b'(')) => return true,
+                _ => {}
+            }
+            idx += 1;
         }
+        false
     }
 
     pub(crate) fn matches_whitelisted_prefix(cmd: &str, prefix: &str) -> bool {
         let cmd_trimmed = cmd.trim();
         let prefix_trimmed = prefix.trim();
-        if cmd_trimmed.starts_with(prefix_trimmed) {
-            let next_char = cmd_trimmed.as_bytes().get(prefix_trimmed.len());
-            match next_char {
+        (!prefix_trimmed.is_empty())
+            && (!Self::has_shell_substitution(cmd_trimmed))
+            && (!cmd_trimmed.contains('\n'))
+            && (!cmd_trimmed.contains('\r'))
+            && cmd_trimmed.starts_with(prefix_trimmed)
+            && match cmd_trimmed.as_bytes().get(prefix_trimmed.len()).copied() {
                 None => true,
-                Some(&c) => {
-                    (c as char).is_whitespace() || c == b';' || c == b'|' || c == b'&' || c == b'`'
+                Some(c) => {
+                    (c as char).is_whitespace() || matches!(c, b';' | b'|' | b'&')
                 }
             }
-        } else {
-            false
+    }
+
+    fn resolve_workspace() -> Option<std::path::PathBuf> {
+        crate::config::loader::ACTIVE_WORKSPACE
+            .try_with(|w| w.clone())
+            .ok()
+            .or_else(|| std::env::current_dir().ok())
+    }
+
+    fn resolve_against_workspace(path_str: &str) -> Option<std::path::PathBuf> {
+        let path = std::path::Path::new(path_str);
+        match path.is_absolute() {
+            true => Some(path.to_path_buf()),
+            false => Self::resolve_workspace().map(|ws| ws.join(path)),
         }
     }
 
     fn is_in_whitelisted_paths(path_str: &str, whitelisted: &[String]) -> bool {
-        let path = std::path::Path::new(path_str);
-        let abs_path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            let workspace = match crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
-                Ok(w) => w,
-                Err(_) => match std::env::current_dir() {
-                    Ok(cwd) => cwd,
-                    Err(_) => return false,
-                },
-            };
-            workspace.join(path)
-        };
-
-        let check_path = Self::canonicalize_path(&abs_path);
-
-        for wl_path_str in whitelisted {
-            let wl_path = std::path::Path::new(wl_path_str);
-            let wl_abs = if wl_path.is_absolute() {
-                wl_path.to_path_buf()
-            } else {
-                let workspace =
-                    match crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
-                        Ok(w) => w,
-                        Err(_) => match std::env::current_dir() {
-                            Ok(cwd) => cwd,
-                            Err(_) => continue,
-                        },
-                    };
-                workspace.join(wl_path)
-            };
-
-            if let Ok(wl_canon) = wl_abs.canonicalize() {
-                if check_path.starts_with(&wl_canon) {
-                    return true;
-                }
-            } else {
-                if check_path.starts_with(&wl_abs) {
-                    return true;
-                }
-            }
-        }
-        false
+        Self::resolve_against_workspace(path_str)
+            .map(|abs_path| {
+                let check_path = Self::canonicalize_path(&abs_path);
+                whitelisted.iter().any(|wl_path_str| {
+                    Self::resolve_against_workspace(wl_path_str)
+                        .map(|wl_abs| {
+                            let wl_target = wl_abs.canonicalize().unwrap_or(wl_abs);
+                            check_path.starts_with(&wl_target)
+                        })
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false)
     }
 
     pub(crate) fn is_safe_path(path_str: &str) -> bool {
-        if let Ok(config) = crate::config::loader::load_config() {
-            if Self::is_in_whitelisted_paths(path_str, &config.agents.defaults.whitelisted_paths) {
-                return true;
-            }
+        let whitelisted = crate::config::loader::load_config()
+            .map(|config| {
+                Self::is_in_whitelisted_paths(path_str, &config.agents.defaults.whitelisted_paths)
+            })
+            .unwrap_or(false);
+        whitelisted || {
+            let resolved = crate::config::loader::resolve_path(path_str);
+            crate::config::path_policy::PathPolicy::approval_target()
+                .validate(&resolved)
+                .is_ok()
         }
-        let resolved = crate::config::loader::resolve_path(path_str);
-        crate::config::path_policy::PathPolicy::approval_target()
-            .validate(&resolved)
-            .is_ok()
     }
 
     fn canonicalize_path(abs_path: &std::path::Path) -> std::path::PathBuf {
         crate::config::path_policy::canonicalize_with_missing_leaf(abs_path)
     }
 
-    fn is_dangerous_delete_path(path_str: &str) -> bool {
-        let path_lower = path_str.to_lowercase();
-        if path_lower == "/" || path_lower == "~" || path_lower == "$home" {
-            return true;
-        }
-
+    fn expand_delete_target_path(path_str: &str, path_lower: &str) -> Option<std::path::PathBuf> {
         let path = std::path::Path::new(path_str);
+        let home_suffix = path_lower
+            .strip_prefix("~/")
+            .map(|_| &path_str[2..])
+            .or_else(|| (path_lower == "~").then_some(""))
+            .or_else(|| path_lower.strip_prefix("$home/").map(|_| &path_str[6..]))
+            .or_else(|| (path_lower == "$home").then_some(""));
 
-        let abs_path = if path.is_absolute() {
-            path.to_path_buf()
-        } else if path_lower.starts_with("~/") || path_lower == "~" {
-            if let Some(home) = dirs::home_dir() {
-                let suffix = if path_str.len() > 2 {
-                    &path_str[2..]
-                } else {
-                    ""
-                };
-                home.join(suffix)
-            } else {
-                path.to_path_buf()
-            }
-        } else if path_lower.starts_with("$home/") || path_lower == "$home" {
-            if let Some(home) = dirs::home_dir() {
-                let suffix = if path_str.len() > 6 {
-                    &path_str[6..]
-                } else {
-                    ""
-                };
-                home.join(suffix)
-            } else {
-                path.to_path_buf()
-            }
-        } else {
-            let workspace = match crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
-                Ok(w) => w,
-                Err(_) => match std::env::current_dir() {
-                    Ok(cwd) => cwd,
-                    Err(_) => return false,
-                },
-            };
-            workspace.join(path)
-        };
-
-        let check_path = Self::canonicalize_path(&abs_path);
-        let path_str_canon = check_path.to_string_lossy();
-
-        // 1. Check system paths (dangerous roots)
-        let system_prefixes = [
-            "/usr", "/etc", "/var", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/sys", "/proc",
-            "/dev", "/opt", "/root",
-        ];
-        for sys_prefix in system_prefixes {
-            if path_str_canon == sys_prefix
-                || path_str_canon.starts_with(&format!("{}/", sys_prefix))
-            {
-                return true;
-            }
+        match (path.is_absolute(), home_suffix) {
+            (true, _) => Some(path.to_path_buf()),
+            (false, Some(suffix)) => Some(
+                dirs::home_dir()
+                    .map(|home| home.join(suffix))
+                    .unwrap_or_else(|| path.to_path_buf()),
+            ),
+            (false, None) => Self::resolve_workspace().map(|ws| ws.join(path)),
         }
+    }
 
-        // 2. Check if path is home directory or /home
-        if path_str_canon == "/home" || path_str_canon == "/home/" {
-            return true;
-        }
-        if let Some(home) = dirs::home_dir() {
-            if let Ok(home_canon) = home.canonicalize() {
-                if check_path == home_canon {
-                    return true;
-                }
-                // Check for dangerous hidden dot files/folders directly in home
-                if let Some(parent) = check_path.parent() {
-                    if parent == home_canon {
-                        if let Some(file_name) = check_path.file_name().and_then(|n| n.to_str()) {
-                            if file_name.starts_with('.') {
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
+    fn is_dangerous_delete_path(path_str: &str) -> bool {
+        let path_lower = path_str.trim().to_lowercase();
+        DANGEROUS_DELETE_LITERALS.contains(&path_lower.as_str())
+            || Self::expand_delete_target_path(path_str.trim(), &path_lower)
+                .map(|abs_path| {
+                    let check_path = Self::canonicalize_path(&abs_path);
+                    let path_str_canon = check_path.to_string_lossy();
 
-        // 3. Check workspace critical folders/files
-        let workspace = match crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
-            Ok(w) => w,
-            Err(_) => match std::env::current_dir() {
-                Ok(cwd) => cwd,
-                Err(_) => return false,
-            },
-        };
-        if let Ok(w_canon) = workspace.canonicalize() {
-            if check_path == w_canon {
-                return true;
-            }
+                    let hits_system = DANGEROUS_DELETE_LITERALS.contains(&path_str_canon.as_ref())
+                        || SYSTEM_DANGEROUS_PREFIXES.iter().any(|sys_prefix| {
+                            path_str_canon == *sys_prefix
+                                || path_str_canon.starts_with(&format!("{sys_prefix}/"))
+                        });
 
-            let git_dir = w_canon.join(".git");
-            let cargo_toml = w_canon.join("Cargo.toml");
-            let src_dir = w_canon.join("src");
-            let build_rs = w_canon.join("build.rs");
+                    let hits_home = dirs::home_dir()
+                        .and_then(|h| h.canonicalize().ok())
+                        .map(|home_canon| {
+                            check_path == home_canon
+                                || check_path
+                                    .parent()
+                                    .filter(|parent| *parent == home_canon)
+                                    .and_then(|_| check_path.file_name())
+                                    .and_then(|n| n.to_str())
+                                    .map(|name| name.starts_with('.'))
+                                    .unwrap_or(false)
+                        })
+                        .unwrap_or(false);
 
-            if check_path == git_dir
-                || path_str_canon.starts_with(&format!("{}/", git_dir.to_string_lossy()))
-            {
-                return true;
-            }
-            if check_path == cargo_toml {
-                return true;
-            }
-            if check_path == src_dir {
-                return true;
-            }
-            if check_path == build_rs {
-                return true;
-            }
-        }
+                    let hits_workspace = Self::resolve_workspace()
+                        .and_then(|ws| ws.canonicalize().ok())
+                        .map(|w_canon| {
+                            check_path == w_canon
+                                || WORKSPACE_PROTECTED_ENTRIES.iter().any(|entry| {
+                                    let protected = w_canon.join(entry);
+                                    check_path == protected
+                                        || path_str_canon
+                                            .starts_with(&format!("{}/", protected.to_string_lossy()))
+                                })
+                        })
+                        .unwrap_or(false);
 
-        false
+                    hits_system || hits_home || hits_workspace
+                })
+                .unwrap_or(false)
+    }
+
+    fn flush_token(args: &mut Vec<String>, current: &mut String) {
+        let _ = (!current.is_empty()).then(|| args.push(std::mem::take(current)));
     }
 
     fn parse_arguments(cmd: &str) -> Vec<String> {
         let mut args = Vec::new();
         let mut current = String::new();
-        let mut in_double_quote = false;
-        let mut in_single_quote = false;
+        let mut state = QuoteState::Unquoted;
         let mut chars = cmd.chars().peekable();
 
         while let Some(c) = chars.next() {
-            match c {
-                '"' if !in_single_quote => {
-                    in_double_quote = !in_double_quote;
+            match (state, c) {
+                (QuoteState::Unquoted, '"') => state = QuoteState::Double,
+                (QuoteState::Double, '"') => state = QuoteState::Unquoted,
+                (QuoteState::Unquoted, '\'') => state = QuoteState::Single,
+                (QuoteState::Single, '\'') => state = QuoteState::Unquoted,
+                (_, '\\') => {
+                    let _ = chars.next().map(|next_c| current.push(next_c));
                 }
-                '\'' if !in_double_quote => {
-                    in_single_quote = !in_single_quote;
+                (QuoteState::Unquoted, ';' | '\n' | '\r') => {
+                    Self::flush_token(&mut args, &mut current);
+                    args.push(";".to_string());
                 }
-                '\\' => {
-                    if let Some(next_c) = chars.next() {
-                        current.push(next_c);
+                (QuoteState::Unquoted, '|') => {
+                    Self::flush_token(&mut args, &mut current);
+                    let token = match chars.peek().copied() {
+                        Some('|') => {
+                            let _ = chars.next();
+                            "||"
+                        }
+                        _ => "|",
+                    };
+                    args.push(token.to_string());
+                }
+                (QuoteState::Unquoted, '&') => match (chars.peek().copied(), current.ends_with('>')) {
+                    (Some('&'), _) => {
+                        Self::flush_token(&mut args, &mut current);
+                        let _ = chars.next();
+                        args.push("&&".to_string());
                     }
-                }
-                _ if c.is_whitespace() && !in_double_quote && !in_single_quote => {
-                    if !current.is_empty() {
-                        args.push(current.clone());
-                        current.clear();
+                    (_, true) => current.push(c),
+                    (_, false) => {
+                        Self::flush_token(&mut args, &mut current);
+                        args.push("&".to_string());
                     }
-                }
-                _ => {
-                    current.push(c);
-                }
+                },
+                (QuoteState::Unquoted, ch) => match ch.is_whitespace() {
+                    true => Self::flush_token(&mut args, &mut current),
+                    false => current.push(ch),
+                },
+                (_, ch) => current.push(ch),
             }
         }
-        if !current.is_empty() {
-            args.push(current);
-        }
+        Self::flush_token(&mut args, &mut current);
         args
     }
 
     fn split_commands(args: &[String]) -> Vec<Vec<String>> {
-        let mut commands = Vec::new();
-        let mut current = Vec::new();
-        for arg in args {
-            if arg == "&&" || arg == "||" || arg == ";" || arg == "|" || arg == "&" {
-                if !current.is_empty() {
-                    commands.push(current.clone());
-                    current.clear();
+        args.split(|arg| SEPARATOR_TOKENS.contains(&arg.as_str()))
+            .filter(|slice| !slice.is_empty())
+            .map(|slice| slice.to_vec())
+            .collect()
+    }
+
+    fn extract_quoted_substrings(script: &str) -> Vec<String> {
+        let mut extracted = Vec::new();
+        let mut current = String::new();
+        let mut active_quote: Option<char> = None;
+        let mut chars = script.chars();
+
+        while let Some(c) = chars.next() {
+            match (active_quote, c, active_quote == Some(c)) {
+                (Some(_), '\\', _) => {
+                    let _ = chars.next().map(|next_c| current.push(next_c));
                 }
-            } else {
-                current.push(arg.clone());
+                (Some(_), _, true) => {
+                    let trimmed = current.trim();
+                    let _ = (!trimmed.is_empty()).then(|| extracted.push(trimmed.to_string()));
+                    current.clear();
+                    active_quote = None;
+                }
+                (Some(_), ch, false) => current.push(ch),
+                (None, '\'' | '"', _) => active_quote = Some(c),
+                (None, _, _) => {}
             }
         }
-        if !current.is_empty() {
-            commands.push(current);
+        extracted
+    }
+
+    fn extract_substitutions(cmd: &str) -> Vec<String> {
+        let mut extracted = Vec::new();
+        let mut chars = cmd.chars().peekable();
+        let mut state = QuoteState::Unquoted;
+
+        while let Some(c) = chars.next() {
+            match (state, c, chars.peek().copied()) {
+                (QuoteState::Unquoted | QuoteState::Double, '\\', Some(_)) => {
+                    let _ = chars.next();
+                }
+                (QuoteState::Unquoted, '\'', _) => state = QuoteState::Single,
+                (QuoteState::Single, '\'', _) => state = QuoteState::Unquoted,
+                (QuoteState::Unquoted, '"', _) => state = QuoteState::Double,
+                (QuoteState::Double, '"', _) => state = QuoteState::Unquoted,
+                (QuoteState::Unquoted | QuoteState::Double, '`', _) => {
+                    let mut inner = String::new();
+                    while let Some(nc) = chars.next() {
+                        match nc {
+                            '\\' => {
+                                let _ = chars.next().map(|esc| inner.push(esc));
+                            }
+                            '`' => break,
+                            other => inner.push(other),
+                        }
+                    }
+                    let trimmed = inner.trim();
+                    let _ = (!trimmed.is_empty()).then(|| extracted.push(trimmed.to_string()));
+                }
+                (QuoteState::Unquoted | QuoteState::Double, '$', Some('('))
+                | (QuoteState::Unquoted, '<' | '>', Some('(')) => {
+                    let _ = chars.next();
+                    let mut inner = String::new();
+                    let mut depth = 1usize;
+                    while let Some(nc) = chars.next() {
+                        match nc {
+                            '\\' => {
+                                let _ = chars.next().map(|esc| {
+                                    inner.push('\\');
+                                    inner.push(esc);
+                                });
+                            }
+                            '(' => {
+                                depth += 1;
+                                inner.push(nc);
+                            }
+                            ')' => {
+                                depth = depth.saturating_sub(1);
+                                match depth {
+                                    0 => break,
+                                    _ => inner.push(nc),
+                                }
+                            }
+                            other => inner.push(other),
+                        }
+                    }
+                    let trimmed = inner.trim();
+                    let _ = (!trimmed.is_empty()).then(|| extracted.push(trimmed.to_string()));
+                }
+                _ => {}
+            }
         }
-        commands
+        extracted
+    }
+
+    fn is_env_assignment(word: &str) -> bool {
+        word.contains('=')
+            && !word.starts_with('-')
+            && !word.starts_with('/')
+            && !word.starts_with('.')
+            && !word.starts_with('\\')
+    }
+
+    fn first_executable_index(command: &[String]) -> Option<usize> {
+        command
+            .iter()
+            .position(|word| !Self::is_env_assignment(word))
     }
 
     /// Recursively unwraps command strings wrapped in shell runners (sh -c, bash -c, eval, python -c, etc.)
-    /// returning all command strings (both outer wrapper and unwrapped inner payloads).
+    /// and command substitutions (`$()`, backticks), returning all outer and inner command strings.
     pub fn unwrap_command_payloads(cmd: &str) -> Vec<String> {
         let mut results = Vec::new();
-        let mut stack = vec![(cmd.to_string(), 0)];
+        let mut stack = vec![(cmd.to_string(), 0usize)];
 
         while let Some((current_cmd, depth)) = stack.pop() {
             let trimmed = current_cmd.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            if !results.iter().any(|r: &String| r == trimmed) {
-                results.push(trimmed.to_string());
-            }
+            let should_expand = (!trimmed.is_empty()) && {
+                let _ = (!results.iter().any(|r: &String| r == trimmed))
+                    .then(|| results.push(trimmed.to_string()));
+                depth < 5
+            };
 
-            if depth >= 5 {
-                continue;
-            }
-
-            let args = Self::parse_arguments(trimmed);
-            let commands = Self::split_commands(&args);
-
-            for command in commands {
-                if command.is_empty() {
-                    continue;
+            let _ = should_expand.then(|| {
+                for sub in Self::extract_substitutions(trimmed) {
+                    stack.push((sub, depth + 1));
                 }
 
-                let mut exec_idx = None;
-                for (i, word) in command.iter().enumerate() {
-                    let is_env = word.contains('=')
-                        && !word.starts_with('-')
-                        && !word.starts_with('/')
-                        && !word.starts_with('.')
-                        && !word.starts_with('\\');
-                    if !is_env {
-                        exec_idx = Some(i);
-                        break;
-                    }
-                }
+                let args = Self::parse_arguments(trimmed);
+                for command in Self::split_commands(&args) {
+                    let _ = Self::first_executable_index(&command).map(|idx| {
+                        let exec_name = command[idx].to_lowercase();
+                        let bin_name = exec_name.split('/').next_back().unwrap_or(&exec_name);
+                        let tail = &command[idx + 1..];
 
-                if let Some(idx) = exec_idx {
-                    let exec_name = command[idx].to_lowercase();
-                    let bin_name = exec_name.split('/').next_back().unwrap_or(&exec_name);
+                        let is_shell = SHELL_WRAPPER_BINS.contains(&bin_name);
+                        let is_eval = matches!(bin_name, "eval" | "exec");
+                        let is_script = SCRIPT_RUNNER_BINS.contains(&bin_name);
 
-                    if matches!(
-                        bin_name,
-                        "sh" | "bash" | "zsh" | "dash" | "ksh" | "su" | "sudo"
-                    ) {
-                        let mut i = idx + 1;
-                        while i < command.len() {
-                            let arg = &command[i];
-                            if (arg == "-c" || arg == "-lc" || arg == "--command")
-                                && i + 1 < command.len()
-                            {
-                                stack.push((command[i + 1].clone(), depth + 1));
-                                break;
-                            }
-                            i += 1;
-                        }
-                    } else if bin_name == "eval" || bin_name == "exec" {
-                        if idx + 1 < command.len() {
-                            let inner = command[idx + 1..].join(" ");
-                            stack.push((inner, depth + 1));
-                        }
-                    } else if matches!(bin_name, "python" | "python3" | "perl" | "ruby") {
-                        let mut i = idx + 1;
-                        while i < command.len() {
-                            let arg = &command[i];
-                            if (arg == "-c" || arg == "-e") && i + 1 < command.len() {
-                                stack.push((command[i + 1].clone(), depth + 1));
-                                break;
-                            }
-                            i += 1;
-                        }
-                    }
+                        let _ = is_shell.then(|| {
+                            let _ = tail
+                                .windows(2)
+                                .find(|pair| matches!(pair[0].as_str(), "-c" | "-lc" | "--command"))
+                                .map(|pair| stack.push((pair[1].clone(), depth + 1)));
+                        });
+
+                        let _ = (is_eval && !tail.is_empty())
+                            .then(|| stack.push((tail.join(" "), depth + 1)));
+
+                        let _ = is_script.then(|| {
+                            let _ = tail
+                                .windows(2)
+                                .find(|pair| matches!(pair[0].as_str(), "-c" | "-e"))
+                                .map(|pair| {
+                                    let script = &pair[1];
+                                    stack.push((script.clone(), depth + 1));
+                                    for literal in Self::extract_quoted_substrings(script) {
+                                        stack.push((literal, depth + 1));
+                                    }
+                                });
+                        });
+                    });
                 }
-            }
+            });
         }
 
         results
@@ -413,88 +502,97 @@ impl SecurityGuard {
         Self::is_sensitive_with_mode(tool_name, arguments, "strict")
     }
 
+    fn command_has_forbidden_delete(command: &[String]) -> bool {
+        Self::first_executable_index(command)
+            .map(|idx| {
+                let exec_lower = command[idx].to_lowercase();
+                let bin_name = exec_lower.split('/').next_back().unwrap_or(&exec_lower);
+                RAW_DELETE_BINS.contains(&bin_name) && {
+                    command[idx + 1..]
+                        .iter()
+                        .take_while(|arg| !REDIRECT_STOP_TOKENS.contains(&arg.as_str()))
+                        .scan(false, |check_all, arg| {
+                            match (*check_all, arg.as_str(), arg.starts_with('-')) {
+                                (false, "--", _) => {
+                                    *check_all = true;
+                                    Some(None)
+                                }
+                                (false, _, true) => Some(None),
+                                (_, target, _) => Some(Some(target)),
+                            }
+                        })
+                        .flatten()
+                        .any(Self::is_dangerous_delete_path)
+                }
+            })
+            .unwrap_or(false)
+    }
+
     /// Check if a command is strictly forbidden and should be rejected instantly without prompting.
     pub fn is_forbidden(tool_name: &str, arguments: &Value) -> bool {
         let canonical_name = crate::tools::canonical_tool_name(tool_name);
-        let tool_name = canonical_name.as_str();
-        if tool_name == "exec_command" {
-            if let Some(cmd) = Self::tool_command_arg(arguments) {
-                let payloads = Self::unwrap_command_payloads(cmd);
-                for payload in payloads {
+        match (canonical_name.as_str(), Self::tool_command_arg(arguments)) {
+            ("exec_command", Some(cmd)) => {
+                Self::unwrap_command_payloads(cmd).into_iter().any(|payload| {
                     let cmd_lower = payload.to_lowercase();
+                    Self::has_any_bin(&cmd_lower, FORBIDDEN_DEVICE_BINS)
+                        || Self::has_any_bin(&cmd_lower, SYSTEM_POWER_BINS)
+                        || Self::split_commands(&Self::parse_arguments(&payload))
+                            .iter()
+                            .any(|command| Self::command_has_forbidden_delete(command))
+                })
+            }
+            _ => false,
+        }
+    }
 
-                    let has_raw_rm_root = Self::has_bin(&cmd_lower, "rm")
-                        && (cmd_lower.contains(" /")
-                            || cmd_lower.contains("rm -rf /")
-                            || cmd_lower.contains("rm -rf ~")
-                            || cmd_lower.contains("rm -rf $home"));
-                    let has_destructive_device = Self::has_bin(&cmd_lower, "dd")
-                        || Self::has_bin(&cmd_lower, "mkfs")
-                        || Self::has_bin(&cmd_lower, "fdisk")
-                        || Self::has_bin(&cmd_lower, "format")
-                        || Self::has_bin(&cmd_lower, "parted");
-                    let has_system_kill = Self::has_bin(&cmd_lower, "shutdown")
-                        || Self::has_bin(&cmd_lower, "reboot")
-                        || Self::has_bin(&cmd_lower, "poweroff")
-                        || Self::has_bin(&cmd_lower, "halt");
+    fn is_whitelisted_command_line(cmd: &str) -> bool {
+        (!Self::has_shell_substitution(cmd))
+            && crate::config::loader::load_config()
+                .ok()
+                .map(|config| {
+                    let prefixes = &config.agents.defaults.whitelisted_command_prefixes;
+                    let sub_commands = Self::split_commands(&Self::parse_arguments(cmd));
+                    (!prefixes.is_empty())
+                        && (!sub_commands.is_empty())
+                        && sub_commands.iter().all(|sub| {
+                            let joined = sub.join(" ");
+                            prefixes
+                                .iter()
+                                .any(|prefix| Self::matches_whitelisted_prefix(&joined, prefix))
+                        })
+                })
+                .unwrap_or(false)
+    }
 
-                    if has_raw_rm_root || has_destructive_device || has_system_kill {
-                        return true;
-                    }
+    fn payload_is_sensitive(payload: &str, mode: &str) -> bool {
+        let cmd_lower = payload.to_lowercase();
+        let always_sensitive = Self::has_any_bin(&cmd_lower, PRIVILEGE_BINS)
+            || Self::has_any_bin(&cmd_lower, SYSTEM_POWER_BINS)
+            || cmd_lower
+                .split('|')
+                .skip(1)
+                .any(|part| Self::has_any_bin(part, SHELL_PIPE_TARGETS));
 
-                    let args = Self::parse_arguments(&payload);
-                    let commands = Self::split_commands(&args);
-                    for command in commands {
-                        let mut exec_idx = None;
-                        for (i, word) in command.iter().enumerate() {
-                            let is_env = word.contains('=')
-                                && !word.starts_with('-')
-                                && !word.starts_with('/')
-                                && !word.starts_with('.')
-                                && !word.starts_with('\\');
-                            if !is_env {
-                                exec_idx = Some(i);
-                                break;
-                            }
-                        }
-
-                        if let Some(idx) = exec_idx {
-                            let exec = &command[idx];
-                            let exec_lower = exec.to_lowercase();
-                            let is_rm = exec_lower == "rm" || exec_lower.ends_with("/rm");
-                            let is_rmdir = exec_lower == "rmdir" || exec_lower.ends_with("/rmdir");
-                            let is_unlink =
-                                exec_lower == "unlink" || exec_lower.ends_with("/unlink");
-
-                            if is_rm || is_rmdir || is_unlink {
-                                let mut check_all = false;
-                                for arg in &command[idx + 1..] {
-                                    if arg == "--" {
-                                        check_all = true;
-                                        continue;
-                                    }
-                                    if !check_all && arg.starts_with('-') {
-                                        continue;
-                                    }
-                                    if arg == ">"
-                                        || arg == ">>"
-                                        || arg == "<"
-                                        || arg == "2>"
-                                        || arg == "2>&1"
-                                    {
-                                        break;
-                                    }
-                                    if Self::is_dangerous_delete_path(arg) {
-                                        return true;
-                                    }
-                                }
-                            }
-                        }
-                    }
+        always_sensitive
+            || match mode {
+                "loose" => false,
+                "strict" => {
+                    Self::has_any_bin(&cmd_lower, NORMAL_DESTRUCTIVE_BINS)
+                        || (Self::has_bin(&cmd_lower, "xargs")
+                            && Self::has_any_bin(&cmd_lower, STRICT_XARGS_TARGETS))
+                        || STRICT_CLEAN_PHRASES
+                            .iter()
+                            .any(|phrase| cmd_lower.contains(phrase))
+                        || Self::has_any_bin(&cmd_lower, PROCESS_CONTROL_BINS)
+                        || Self::has_any_bin(&cmd_lower, NETWORK_TRANSFER_BINS)
+                }
+                _ => {
+                    Self::has_any_bin(&cmd_lower, NORMAL_DESTRUCTIVE_BINS)
+                        || (Self::has_bin(&cmd_lower, "xargs")
+                            && Self::has_any_bin(&cmd_lower, RAW_DELETE_BINS))
                 }
             }
-        }
-        false
     }
 
     /// Check if a tool call is sensitive and needs user approval, considering a specific security mode.
@@ -502,150 +600,37 @@ impl SecurityGuard {
         let canonical_name = crate::tools::canonical_tool_name(tool_name);
         let tool_name = canonical_name.as_str();
         let mode = security_mode.to_lowercase();
-        if tool_name == "exec_command" {
-            if let Some(cmd) = Self::tool_command_arg(arguments) {
-                if let Ok(config) = crate::config::loader::load_config() {
-                    for prefix in &config.agents.defaults.whitelisted_command_prefixes {
-                        if Self::matches_whitelisted_prefix(cmd, prefix) {
-                            return false;
-                        }
-                    }
-                }
 
-                let payloads = Self::unwrap_command_payloads(cmd);
-                for payload in &payloads {
-                    let cmd_lower = payload.to_lowercase();
-
-                    // Always block privilege escalation and system control regardless of mode
-                    let has_privilege = Self::has_bin(&cmd_lower, "sudo")
-                        || Self::has_bin(&cmd_lower, "su")
-                        || Self::has_bin(&cmd_lower, "chmod")
-                        || Self::has_bin(&cmd_lower, "chown")
-                        || Self::has_bin(&cmd_lower, "eval")
-                        || Self::has_bin(&cmd_lower, "source");
-                    let has_system = Self::has_bin(&cmd_lower, "shutdown")
-                        || Self::has_bin(&cmd_lower, "reboot")
-                        || Self::has_bin(&cmd_lower, "poweroff")
-                        || Self::has_bin(&cmd_lower, "halt");
-
-                    if has_privilege || has_system {
-                        return true;
-                    }
-
-                    // Always block piping network scripts to shell in ALL modes (curl ... | bash)
-                    let has_pipe_to_shell = {
-                        let mut parts = cmd_lower.split('|');
-                        parts.next(); // skip first command
-                        parts.any(|part| {
-                            Self::has_bin(part, "sh")
-                                || Self::has_bin(part, "bash")
-                                || Self::has_bin(part, "python")
-                                || Self::has_bin(part, "python3")
-                        })
-                    };
-
-                    if has_pipe_to_shell {
-                        return true;
-                    }
-
-                    // If loose mode, all other commands are allowed without warning
-                    if mode == "loose" {
-                        continue;
-                    }
-
-                    let is_strict = mode == "strict";
-
-                    // 1. Destructive Commands
-                    let has_destructive = if is_strict {
-                        Self::has_bin(&cmd_lower, "rm")
-                            || Self::has_bin(&cmd_lower, "rmdir")
-                            || Self::has_bin(&cmd_lower, "unlink")
-                            || Self::has_bin(&cmd_lower, "dd")
-                            || Self::has_bin(&cmd_lower, "mkfs")
-                            || Self::has_bin(&cmd_lower, "fdisk")
-                            || Self::has_bin(&cmd_lower, "parted")
-                            || Self::has_bin(&cmd_lower, "format")
-                            || (Self::has_bin(&cmd_lower, "xargs")
-                                && (Self::has_bin(&cmd_lower, "rm")
-                                    || Self::has_bin(&cmd_lower, "kill")
-                                    || Self::has_bin(&cmd_lower, "chmod")
-                                    || Self::has_bin(&cmd_lower, "chown")))
-                            || cmd_lower.contains("cargo clean")
-                            || cmd_lower.contains("npm run clean")
-                            || cmd_lower.contains("bun run clean")
-                            || cmd_lower.contains("yarn clean")
-                    } else {
-                        // Normal mode: ask permission for raw deletes (rm, rmdir, unlink)
-                        // and block raw dd/mkfs/fdisk/format
-                        Self::has_bin(&cmd_lower, "rm")
-                            || Self::has_bin(&cmd_lower, "rmdir")
-                            || Self::has_bin(&cmd_lower, "unlink")
-                            || Self::has_bin(&cmd_lower, "dd")
-                            || Self::has_bin(&cmd_lower, "mkfs")
-                            || Self::has_bin(&cmd_lower, "fdisk")
-                            || Self::has_bin(&cmd_lower, "format")
-                    };
-
-                    // 2. Process Control
-                    let has_process = if is_strict {
-                        Self::has_bin(&cmd_lower, "kill")
-                            || Self::has_bin(&cmd_lower, "killall")
-                            || Self::has_bin(&cmd_lower, "pkill")
-                    } else {
-                        false // Normal mode: allow kill/killall for process management
-                    };
-
-                    // 3. Network Script Executions / File Transfers
-                    let has_network = if is_strict {
-                        Self::has_bin(&cmd_lower, "curl")
-                            || Self::has_bin(&cmd_lower, "wget")
-                            || Self::has_bin(&cmd_lower, "scp")
-                            || Self::has_bin(&cmd_lower, "rsync")
-                            || Self::has_bin(&cmd_lower, "sftp")
-                            || Self::has_bin(&cmd_lower, "nc")
-                            || Self::has_bin(&cmd_lower, "netcat")
-                    } else {
-                        // Normal mode: block piping network scripts directly to shell (e.g. curl ... | bash)
-                        let mut parts = cmd_lower.split('|');
-                        parts.next(); // skip first command
-                        parts.any(|part| Self::has_bin(part, "sh") || Self::has_bin(part, "bash"))
-                    };
-
-                    if has_destructive || has_process || has_network {
-                        return true;
-                    }
-                }
+        match tool_name {
+            "exec_command" => Self::tool_command_arg(arguments)
+                .filter(|cmd| !Self::is_whitelisted_command_line(cmd))
+                .map(|cmd| {
+                    Self::unwrap_command_payloads(cmd)
+                        .iter()
+                        .any(|payload| Self::payload_is_sensitive(payload, &mode))
+                })
+                .unwrap_or(false),
+            "manage_config" => {
+                let action = arguments
+                    .get("action")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                let has_cred_action = action == "set_credential"
+                    || CREDENTIAL_ARG_KEYS
+                        .iter()
+                        .any(|key| arguments.get(*key).is_some())
+                    || Self::contains_secret_material(arguments);
+                has_cred_action
+                    || crate::tools::ToolMetadata::infer(tool_name).requires_risk_approval()
             }
-        } else if tool_name == "manage_config" {
-            let action = arguments
-                .get("action")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default();
-            let is_cred = action == "set_credential"
-                || arguments.get("credential").is_some()
-                || arguments.get("target").is_some()
-                || arguments.get("github_token").is_some()
-                || arguments.get("gitlab_token").is_some()
-                || Self::contains_secret_material(arguments);
-            if is_cred {
-                return true;
-            }
-        } else if Self::path_edit_label(tool_name).is_some() {
-            if let Some(path_str) = Self::tool_path_arg(arguments) {
-                if !Self::is_safe_path(path_str) {
-                    return true;
-                }
+            _ => {
+                let unsafe_path = Self::path_edit_label(tool_name)
+                    .and_then(|_| Self::tool_path_arg(arguments))
+                    .map(|path_str| !Self::is_safe_path(path_str))
+                    .unwrap_or(false);
+                unsafe_path || crate::tools::ToolMetadata::infer(tool_name).requires_risk_approval()
             }
         }
-
-        // exec_command remains argument-sensitive: its high-risk metadata is
-        // intentionally not a blanket approval in loose/normal modes because
-        // the command analysis above decides which commands need approval.
-        if tool_name == "exec_command" {
-            return false;
-        }
-
-        crate::tools::ToolMetadata::infer(tool_name).requires_risk_approval()
     }
 
     fn contains_secret_material(value: &Value) -> bool {

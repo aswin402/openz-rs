@@ -8,7 +8,7 @@ High-performance, async personal AI agent framework built in Rust. Rebranded fro
 
 | Command | Purpose |
 |---|---|
-| `just check openz` | Low-resource package check (`cargo check -p openz -j 2`) |
+| `just check openz` | Low-resource package check (`RUST_FONTCONFIG_DLOPEN=1 cargo check -p openz -j 1`) |
 | `just test-one <test_name> openz` | Run one focused test with capped parallelism |
 | `just test openz` | Run package tests with capped parallelism |
 | `just compile openz` | Compile one package with capped parallelism |
@@ -16,7 +16,7 @@ High-performance, async personal AI agent framework built in Rust. Rebranded fro
 | `cargo build --release` | Production build (release profile strips symbols and uses thin LTO; exact size depends on enabled heavy dependencies) |
 | `cargo build` | Debug build |
 | `cargo run -- <subcommand>` | Run from source |
-| `cargo test` | Run all unit tests (28 files with `#[cfg(test)]`) |
+| `cargo test` | Run all unit tests (29+ test modules with `#[cfg(test)]`) |
 | `cargo test <test_name>` | Run specific test |
 | `cargo check` | Fast type-check without codegen |
 | `cargo clippy` | Lint |
@@ -29,19 +29,24 @@ No Makefile; low-resource development commands live in `justfile`. No CI config 
 | Subcommand | Description |
 |---|---|
 | `onboard` | First-time LLM provider setup wizard |
-| `configure` | Full config UI: providers, gateway, Telegram, Discord, WhatsApp |
+| `configure` | Full config UI: providers, gateway, Telegram, Discord, WhatsApp, Email |
 | `(none)` / `agent` | Terminal TUI chat (running `openz` directly starts the TUI and background channels) |
-| `gateway` | WebSocket + WebUI server (port 8765 default) |
+| `run` | Headless/non-interactive prompt execution (`-p`, `--file`, `--continue`, `-y`, `--format text\|json\|stream-json`) |
+| `daemon` | Autonomous background daemon mode (`--interval-secs`) |
+| `gateway` | WebSocket + WebUI server (port 8765 default, configured in `~/.openz/config.json`) |
 | `telegram` | Telegram bot polling listener |
 | `discord` | Discord bot gateway listener |
 | `whatsapp` | WhatsApp API webhook receiver (Axum, port 8090) |
+| `email` | Email IMAP/SMTP polling channel |
 | `subagent` | TUI manager for subagent profiles |
+| `skills` | Manage procedural skills (`list \| inspect \| delete`) |
 | `sop list \| instances \| trigger \| resume` | SOP workflow engine |
 | `mcp-bridge --port <N> -- <cmd> [args...]` | gRPC-to-stdio MCP bridge |
 | `logs` | View real-time color-coded structured logs (supports `--path <file>`, `--tail <lines>`, `--session <prefix|auto>`, and `--level <level>` filters) |
 | `changelog` | View OpenZ hardware footprint specifications and version release history |
 | `streaming` | Toggle response streaming preference via a wizard |
 | `doctor` | Verify runtime databases live under `~/.openz`, relocate stray artifacts, archive stale graph branches, and report disk/cache pressure (no data is deleted) |
+| `tui` | Experimental multi-pane Ratatui TUI preview |
 
 ---
 
@@ -49,7 +54,7 @@ No Makefile; low-resource development commands live in `justfile`. No CI config 
 
 ```
 openz/
-├── Cargo.toml              # ~55 deps. workspace root
+├── Cargo.toml              # ~64 deps. workspace root
 ├── build.rs                # Compiles proto/mcp.proto via tonic-build
 ├── CHANGELOG.md            # OpenZ specs, features, versions, and architectures
 ├── onpkg.json              # ONPKG meta: scripts, agent instructions
@@ -60,11 +65,11 @@ openz/
 │   │   ├── args.rs         # Clap argument definitions
 │   │   ├── builder.rs      # AgentLoop/provider construction
 │   │   ├── tools.rs        # Native tool registration and capability grouping
-│   │   └── agent.rs        # Agent command/TUI orchestration
+│   │   └── agent.rs        # Agent session history and archive helpers
 │   ├── session.rs          # Session/Msg types, JSON persistence ~/.openz/sessions/
 │   │
 │   ├── config/
-│   │   ├── schema.rs       # Config struct, defaults (13 providers, 4 channels, MCP servers)
+│   │   ├── schema.rs       # Config struct, defaults (14 providers, 5 channels, MCP servers)
 │   │   └── loader.rs       # resolve_path(), load/save ~/.openz/config.json
 │   │
 │   ├── providers/
@@ -78,7 +83,7 @@ openz/
 │   │   │   ├── mod.rs      # Core TurnState state machine and turn context
 │   │   │   ├── run/        # Tool pipeline, events, artifacts, research, and responses
 │   │   │   └── *.rs         # Restore, compact, build, command, save, and support phases
-│   │   ├── skills.rs       # Load/save/delete skills from ~/.openz/skills/*.md
+│   │   ├── skills.rs       # Load/save/delete skills in SQLite ~/.openz/memory.db (migrates ~/.openz/skills/*.md)
 │   │   ├── activity.rs     # Global activity tracking (~/.openz/activity.json)
 │   │   ├── security.rs     # SecurityGuard: intercepts destructive/privileged/network commands
 │   │   ├── context_compactor.rs  # Tool output compression (Z-Context / Headroom port)

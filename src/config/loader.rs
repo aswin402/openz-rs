@@ -341,38 +341,40 @@ fn config_uses_legacy_aliases(raw: &serde_json::Value) -> bool {
         || object_has_any_key(skills, SKILLS_LEGACY_ALIASES)
 }
 
+const REMOVED_MCP_SERVERS: &[&str] = &[
+    "sequential-thinking",
+    "fetch",
+    "memory",
+    "headroom",
+    "headroom-mcp",
+    "context-bus",
+    "puppeteer",
+    "context7",
+    "office",
+    "spreadsheet",
+    "just",
+    "docs",
+    "github",
+    "database",
+    "browser",
+    "sediment",
+];
+
 pub fn migrate_config(config: &mut Config) -> bool {
-    let mut modified = false;
-    let remove_names = [
-        "sequential-thinking",
-        "fetch",
-        "memory",
-        "puppeteer",
-        "context7",
-        "office",
-        "spreadsheet",
-        "just",
-        "docs",
-        "github",
-        "database",
-        "browser",
-        "sediment",
-    ];
-    for name in &remove_names {
-        if config.mcp_servers.remove(*name).is_some() {
-            modified = true;
-        }
-    }
+    let removed_any = REMOVED_MCP_SERVERS
+        .iter()
+        .fold(false, |acc, name| config.mcp_servers.remove(*name).is_some() || acc);
 
     // v0.0.51 raised the default tool timeout from 120s to 300s. Existing
     // configs that still carry the historical default should inherit the new
     // safer default, while intentionally customized values must remain intact.
-    if config.agents.defaults.tool_timeout_secs == 120 {
-        config.agents.defaults.tool_timeout_secs = 300;
-        modified = true;
-    }
+    let timeout_migrated = (config.agents.defaults.tool_timeout_secs == 120)
+        .then(|| {
+            config.agents.defaults.tool_timeout_secs = 300;
+        })
+        .is_some();
 
-    modified
+    removed_any || timeout_migrated
 }
 
 struct ConfigCache {
@@ -391,35 +393,45 @@ fn lock_config_cache() -> std::sync::MutexGuard<'static, Option<ConfigCache>> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+fn read_file_mtime(path: &Path) -> std::time::SystemTime {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .unwrap_or_else(|_| std::time::SystemTime::now())
+}
+
+fn store_config_cache(path: PathBuf, config: Config, last_modified: std::time::SystemTime) -> Config {
+    let mut cache = lock_config_cache();
+    *cache = Some(ConfigCache {
+        config: config.clone(),
+        last_modified,
+        path,
+    });
+    config
+}
+
 pub fn load_config() -> Result<Config> {
     let path = config_path();
 
-    // Check modification time if file exists
-    let current_modified = if path.exists() {
-        fs::metadata(&path)
-            .and_then(|m| m.modified())
-            .unwrap_or_else(|_| std::time::SystemTime::now())
-    } else {
-        let default_config = Config::default();
-        let _ = save_config(&default_config);
-
-        let mut cache = lock_config_cache();
-        *cache = Some(ConfigCache {
-            config: default_config.clone(),
-            last_modified: std::time::SystemTime::now(),
-            path: path.clone(),
-        });
-        return Ok(default_config);
+    let current_modified = match path.exists() {
+        true => read_file_mtime(&path),
+        false => {
+            let default_config = Config::default();
+            let _ = save_config(&default_config);
+            let mtime = read_file_mtime(&path);
+            return Ok(store_config_cache(path, default_config, mtime));
+        }
     };
 
-    // Try to retrieve from cache
-    {
+    let cached = {
         let cache = lock_config_cache();
-        if let Some(ref c) = *cache {
-            if c.path == path && c.last_modified == current_modified {
-                return Ok(c.config.clone());
-            }
-        }
+        cache
+            .as_ref()
+            .filter(|c| c.path == path && c.last_modified == current_modified)
+            .map(|c| c.config.clone())
+    };
+    match cached {
+        Some(config) => return Ok(config),
+        None => {}
     }
 
     let content = fs::read_to_string(&path)
@@ -438,14 +450,8 @@ pub fn load_config() -> Result<Config> {
             );
             let default_config = Config::default();
             let _ = save_config(&default_config);
-
-            let mut cache = lock_config_cache();
-            *cache = Some(ConfigCache {
-                config: default_config.clone(),
-                last_modified: std::time::SystemTime::now(),
-                path: path.clone(),
-            });
-            return Ok(default_config);
+            let mtime = read_file_mtime(&path);
+            return Ok(store_config_cache(path, default_config, mtime));
         }
     };
 
@@ -454,27 +460,22 @@ pub fn load_config() -> Result<Config> {
         .with_context(|| format!("Failed to parse config file at {:?}", path))?;
 
     let migrated = migrate_config(&mut config) || legacy_aliases_used;
-    if migrated {
-        tracing::info!(
-            path = %path.display(),
-            legacy_aliases_used,
-            "Migrating OpenZ config to the canonical schema"
-        );
-        let _ = save_config(&config);
-    }
+    let final_modified = match migrated {
+        true => {
+            tracing::info!(
+                path = %path.display(),
+                legacy_aliases_used,
+                "Migrating OpenZ config to the canonical schema"
+            );
+            let _ = save_config(&config);
+            read_file_mtime(&path)
+        }
+        false => current_modified,
+    };
 
-    // Update cache
-    {
-        let mut cache = lock_config_cache();
-        *cache = Some(ConfigCache {
-            config: config.clone(),
-            last_modified: current_modified,
-            path: path.clone(),
-        });
-    }
-
-    Ok(config)
+    Ok(store_config_cache(path, config, final_modified))
 }
+
 
 pub fn read_config_from_path(path: &Path) -> Result<Config> {
     let content = fs::read_to_string(path)
