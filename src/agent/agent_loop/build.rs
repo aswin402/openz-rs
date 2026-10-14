@@ -198,98 +198,174 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     .await;
     let weak_model_rules = weak_model_operating_rules(&config.agents.defaults.model);
     let grounding_rules = crate::grounding::main_agent_grounding_rules();
-    let mut cross_session_memory =
+    let cross_session_memory =
         retrieve_cross_session_memories(ctx.user_content, &config.agents.defaults.bot_name).await;
 
-    // Calculate total character limit and base length
+    // Calculate total character limit and assemble KV-cache-friendly system prompt
     let budget_limit = crate::providers::DynamicContextRegistry::resolve_prompt_budget_chars(
         &config.agents.defaults.model,
         config,
     );
-
-    let header = format!(
-        "You are {}, a helpful assistant. Current date and time: {}. Keep replies clear, precise, and concise.",
-        config.agents.defaults.bot_name,
-        chrono::Utc::now().to_rfc3339()
-    );
-
-    let base_len = header.chars().count()
-        + persona_priority_part.chars().count()
-        + user_profile_part.chars().count()
-        + system_guidelines.chars().count()
-        + grounding_rules.chars().count()
-        + activity_part.chars().count()
-        + summary_part.chars().count()
-        + memory_part.chars().count()
-        + pinned_memory.chars().count()
-        + recent_session_part.chars().count()
-        + brief_context.chars().count()
-        + source_context.chars().count()
-        + workflow_context.chars().count()
-        + weak_model_rules.chars().count()
-        + vision_instruction.chars().count()
-        + caveman_rules.chars().count();
-
-    let total_len = base_len + skills_part.chars().count() + cross_session_memory.chars().count();
-
-    if total_len > budget_limit {
-        let budget = budget_limit.saturating_sub(base_len);
-        let half_budget = budget / 2;
-        let skills_len = skills_part.chars().count();
-        let cross_len = cross_session_memory.chars().count();
-
-        let (new_skills_budget, new_cross_budget) = if skills_len <= half_budget {
-            (skills_len, budget.saturating_sub(skills_len))
-        } else if cross_len <= half_budget {
-            (budget.saturating_sub(cross_len), cross_len)
-        } else {
-            (half_budget, budget.saturating_sub(half_budget))
-        };
-
-        fn safe_truncate(s: &str, max_chars: usize) -> String {
-            let char_count = s.chars().count();
-            if char_count <= max_chars {
-                s.to_string()
-            } else {
-                let suffix = "\n... [truncated]";
-                let suffix_len = suffix.chars().count();
-                if max_chars > suffix_len {
-                    let mut truncated: String = s.chars().take(max_chars - suffix_len).collect();
-                    truncated.push_str(suffix);
-                    truncated
-                } else {
-                    s.chars().take(max_chars).collect()
-                }
-            }
-        }
-
-        skills_part = safe_truncate(&skills_part, new_skills_budget);
-        cross_session_memory = safe_truncate(&cross_session_memory, new_cross_budget);
-    }
-
-    ctx.system_prompt = format!(
-        "{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}{}",
-        header,
-        persona_priority_part,
-        user_profile_part,
-        system_guidelines,
-        grounding_rules,
-        activity_part,
-        summary_part,
-        memory_part,
-        pinned_memory,
-        recent_session_part,
-        brief_context,
-        source_context,
-        workflow_context,
-        weak_model_rules,
-        cross_session_memory,
+    let now_rfc3339 = chrono::Utc::now().to_rfc3339();
+    let static_prefix = StaticPromptPrefix {
+        bot_name: &config.agents.defaults.bot_name,
+        user_profile_part: &user_profile_part,
+        system_guidelines: &system_guidelines,
+        grounding_rules: &grounding_rules,
+        weak_model_rules: &weak_model_rules,
         vision_instruction,
-        skills_part,
-        caveman_rules
-    );
+        caveman_rules,
+        pinned_memory: &pinned_memory,
+    };
+    let dynamic_suffix = DynamicPromptSuffix {
+        persona_priority_part: &persona_priority_part,
+        summary_part: &summary_part,
+        memory_part: &memory_part,
+        cross_session_memory: &cross_session_memory,
+        skills_part: &skills_part,
+        workflow_context: &workflow_context,
+        brief_context: &brief_context,
+        source_context: &source_context,
+        recent_session_part: &recent_session_part,
+        activity_part: &activity_part,
+        utc_timestamp_rfc3339: &now_rfc3339,
+    };
+
+    ctx.system_prompt =
+        assemble_kv_cached_system_prompt(&static_prefix, &dynamic_suffix, budget_limit);
     ctx.messages = ctx.session.messages.clone();
     Ok(TurnState::Run)
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct StaticPromptPrefix<'a> {
+    pub bot_name: &'a str,
+    pub user_profile_part: &'a str,
+    pub system_guidelines: &'a str,
+    pub grounding_rules: &'a str,
+    pub weak_model_rules: &'a str,
+    pub vision_instruction: &'a str,
+    pub caveman_rules: &'a str,
+    pub pinned_memory: &'a str,
+}
+
+impl StaticPromptPrefix<'_> {
+    pub(crate) fn render(&self) -> String {
+        format!(
+            "You are {}, a helpful assistant. Keep replies clear, precise, and concise.{}{}{}{}{}{}{}",
+            self.bot_name,
+            self.user_profile_part,
+            self.system_guidelines,
+            self.grounding_rules,
+            self.weak_model_rules,
+            self.vision_instruction,
+            self.caveman_rules,
+            self.pinned_memory,
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct DynamicPromptSuffix<'a> {
+    pub persona_priority_part: &'a str,
+    pub summary_part: &'a str,
+    pub memory_part: &'a str,
+    pub cross_session_memory: &'a str,
+    pub skills_part: &'a str,
+    pub workflow_context: &'a str,
+    pub brief_context: &'a str,
+    pub source_context: &'a str,
+    pub recent_session_part: &'a str,
+    pub activity_part: &'a str,
+    pub utc_timestamp_rfc3339: &'a str,
+}
+
+pub(crate) fn safe_truncate(s: &str, max_chars: usize) -> String {
+    const SUFFIX: &str = "\n... [truncated]";
+    let char_count = s.chars().count();
+    let suffix_len = SUFFIX.chars().count();
+    match (char_count <= max_chars, max_chars > suffix_len) {
+        (true, _) => s.to_string(),
+        (false, true) => {
+            let mut truncated: String = s
+                .chars()
+                .take(max_chars.saturating_sub(suffix_len))
+                .collect();
+            truncated.push_str(SUFFIX);
+            truncated
+        }
+        (false, false) => s.chars().take(max_chars).collect(),
+    }
+}
+
+pub(crate) fn allocate_dynamic_budgets(
+    budget: usize,
+    skills_len: usize,
+    cross_len: usize,
+) -> (usize, usize) {
+    let half_budget = budget / 2;
+    match (skills_len <= half_budget, cross_len <= half_budget) {
+        (true, _) => (skills_len, budget.saturating_sub(skills_len)),
+        (false, true) => (budget.saturating_sub(cross_len), cross_len),
+        (false, false) => (half_budget, budget.saturating_sub(half_budget)),
+    }
+}
+
+pub(crate) fn assemble_kv_cached_system_prompt(
+    prefix: &StaticPromptPrefix<'_>,
+    suffix: &DynamicPromptSuffix<'_>,
+    budget_limit: usize,
+) -> String {
+    let static_prefix = prefix.render();
+    let temporal_tail = format!(
+        "\n\n[Current Turn Timestamp]\nCurrent date and time: {}",
+        suffix.utc_timestamp_rfc3339
+    );
+    let fixed_dynamic_len = suffix.persona_priority_part.chars().count()
+        + suffix.summary_part.chars().count()
+        + suffix.memory_part.chars().count()
+        + suffix.workflow_context.chars().count()
+        + suffix.brief_context.chars().count()
+        + suffix.source_context.chars().count()
+        + suffix.recent_session_part.chars().count()
+        + suffix.activity_part.chars().count()
+        + temporal_tail.chars().count();
+    let base_len = static_prefix.chars().count() + fixed_dynamic_len;
+    let skills_len = suffix.skills_part.chars().count();
+    let cross_len = suffix.cross_session_memory.chars().count();
+    let total_len = base_len + skills_len + cross_len;
+
+    let (fitted_skills, fitted_cross) = match total_len > budget_limit {
+        false => (
+            suffix.skills_part.to_string(),
+            suffix.cross_session_memory.to_string(),
+        ),
+        true => {
+            let remaining_budget = budget_limit.saturating_sub(base_len);
+            let (skills_budget, cross_budget) =
+                allocate_dynamic_budgets(remaining_budget, skills_len, cross_len);
+            (
+                safe_truncate(suffix.skills_part, skills_budget),
+                safe_truncate(suffix.cross_session_memory, cross_budget),
+            )
+        }
+    };
+
+    format!(
+        "{}{}{}{}{}{}{}{}{}{}{}{}",
+        static_prefix,
+        suffix.persona_priority_part,
+        suffix.summary_part,
+        suffix.memory_part,
+        fitted_cross,
+        fitted_skills,
+        suffix.workflow_context,
+        suffix.brief_context,
+        suffix.source_context,
+        suffix.recent_session_part,
+        suffix.activity_part,
+        temporal_tail,
+    )
 }
 
 fn recent_session_context(messages: &[crate::session::Message], max_chars: usize) -> String {

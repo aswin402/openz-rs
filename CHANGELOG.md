@@ -1,5 +1,49 @@
-## [0.0.252] - 2026-10-14
-### v0.0.252 (Latest Release)
+## [0.0.253] - 2026-10-15
+### v0.0.253 (Latest Release)
+
+#### Added
+- **KV-Cache-Stable System Prompt Prefix Architecture ([`src/agent/agent_loop/build.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs))**: Added `StaticPromptPrefix`, `DynamicPromptSuffix`, `allocate_dynamic_budgets()`, `safe_truncate()`, and `assemble_kv_cached_system_prompt()` so static identity, user profile, system guidelines, grounding rules, weak-model rules, vision rules, caveman rules, and pinned memories form a byte-for-byte deterministic prefix from byte `0`, while turn-volatile context and `[Current Turn Timestamp]` are appended at the tail.
+- **`Hashline`-Preserving & String-Safe Lexical Context Compactor ([`src/agent/context_compactor.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/context_compactor.rs))**: Added `is_hashline_anchored_line()`, `has_hashline_anchors()`, `strip_code_comments_preserving_strings()`, and `strip_ansi_escapes()` so `read_file` outputs formatted with `Hashline` (`LINE:HASH|`) retain exact line hashes and comment tokens, and `//` / `/* */` sequences inside URLs (`https://...`) and double-quoted string literals are never corrupted during code compaction.
+- **Self-Healing Recovery Hints for `Hashline`, `patch_file`, and `tool_catalog` ([`src/agent/agent_loop/loop_control.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/loop_control.rs))**: Added `tool_not_found_hint()`, `filesystem_self_healing_hint()`, `shell_self_healing_hint()`, `openmedia_self_healing_hint()`, and `research_self_healing_hint()` to guide the agent to `read_file(include_hashes: true)`, `anchor_text`, `<<<<<<< SEARCH ... >>>>>>> REPLACE` blocks, `edits` arrays, and `tool_catalog` / `batch_execute` upon tool errors.
+- **Unit Tests for Prompt Prefix Caching, Lexical Compaction, and Recovery Hints**: Added `kv_cached_system_prompt_keeps_static_prefix_identical_across_turns_and_timestamps` and `kv_cached_system_prompt_budget_truncates_dynamic_sections_without_touching_static_prefix` in [`src/agent/agent_loop/build_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build_tests.rs); `test_compress_code_strips_comments_while_preserving_urls_and_string_literals`, `test_compress_code_preserves_hashline_anchored_output`, and `test_compress_logs_strips_ansi_and_folds_backtraces_and_caps_diagnostics` in [`src/agent/context_compactor.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/context_compactor.rs); and `hashline_mismatch_errors_recommend_include_hashes_and_anchor_text`, `patch_file_hunk_mismatch_recommends_search_replace_blocks_and_edits`, and `tool_not_found_error_recommends_tool_catalog_and_batch_execute` in [`src/agent/agent_loop/loop_control_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/loop_control_tests.rs).
+
+#### Changed
+- **Eliminated All Regular Expressions from Context Compactor ([`src/agent/context_compactor.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/context_compactor.rs))**: Removed `use regex::Regex;` and all 8 `OnceLock<Option<Regex>>` compilations (`re_block`, `re_line`, `re_lines`, `re_ansi`, `re_backtrace_line`, `re_rust_backtrace`, `re_cargo_warning`, `re_cargo_error`), replacing them with single-pass state machines (`CodeLexState`, `AnsiState`, `LogFilterState`) and slice/window combinators (`0` `if/else`, `0` `regex`).
+- **Declarative Self-Healing Hint Pipeline ([`src/agent/agent_loop/loop_control.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/loop_control.rs))**: Refactored `generate_self_healing_hint()` to a pure `Option::or_else` combinator pipeline with `0` `if/else` statements.
+
+#### Performance
+- **100% System Prompt KV-Cache Prefix Reuse Across Turns ([`src/agent/agent_loop/build.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs))**: Moving the per-second `chrono::Utc::now().to_rfc3339()` timestamp out of byte `0` (`header`) to the tail `[Current Turn Timestamp]` block and grouping all static instructions ahead of dynamic memories allows Anthropic, OpenAI, DeepSeek, and OpenRouter prompt caches to reuse the entire static system prompt prefix across every turn in a session.
+- **Zero-Regex Single-Pass Tool Output Compaction ([`src/agent/context_compactor.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/context_compactor.rs))**: Replaced multi-pass regex replacements over large code and log buffers with $O(N)$ character fold state machines.
+
+#### Documentation
+- **Synchronized Release Manifests**: Updated [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md), and [`CHANGELOG.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/CHANGELOG.md) to `0.0.253`.
+
+### Sources & Inspirations
+- **[Inspiration]**: Claude Code & Pi Agent (`badlogic/pi-mono`) system prompt KV-cache prefix separation (immutable static instructions at byte `0`, dynamic context and timestamps at the tail) — guided `StaticPromptPrefix` and `DynamicPromptSuffix` in [`src/agent/agent_loop/build.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs).
+- **[Inspiration]**: Oh My Pi (`omp` / `can1357/oh-my-pi`) `Hashline` anchor preservation and self-healing edit diagnostics — guided `has_hashline_anchors()` in [`src/agent/context_compactor.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/context_compactor.rs) and `filesystem_self_healing_hint()` in [`src/agent/agent_loop/loop_control.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/loop_control.rs).
+- **[Reference]**: ECMA-48 / ANSI X3.64 Control Sequence Introducer (`ESC [` ... `<final alphabetic byte>`) specification — guided `AnsiState` in [`src/agent/context_compactor.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/context_compactor.rs).
+
+- **Ideas**:
+  - KV-Cache-Stable System Prompt Prefix Ordering, Pure Lexical State-Machine Context Compaction (`Hashline`-preserving & string-safe), and Declarative Self-Healing Tool Error Recovery Hints.
+- **Inspirations**:
+  - Claude Code, Pi Agent, Oh My Pi (`omp`), and ECMA-48 CSI state machine specifications, implemented with pure combinators and state folds (`0` `if/else`, `0` `regex`).
+- **Sources & References**:
+  - [`src/agent/agent_loop/build.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs), [`src/agent/agent_loop/build_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build_tests.rs)
+  - [`src/agent/context_compactor.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/context_compactor.rs)
+  - [`src/agent/agent_loop/loop_control.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/loop_control.rs), [`src/agent/agent_loop/loop_control_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/loop_control_tests.rs)
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Synchronous SemVer increment to `0.0.253`.
+- **Details & Metrics**:
+  - Removed all 8 regular expressions and `use regex::Regex;` from `src/agent/context_compactor.rs`.
+  - Achieved `0` `if/else` statements and `0` `regex` across all added/modified lines in `build.rs`, `context_compactor.rs`, and `loop_control.rs`.
+  - Maintained the 260 registered native tools invariant (`test_native_tool_registration_names`).
+- **Verification**:
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 1 -- agent::context_compactor::tests`: PASS (6/6).
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 1 -- agent::agent_loop::build::tests`: PASS (22/22).
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 1 -- agent::agent_loop::loop_control::tests`: PASS (20/20).
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 1 -- test_native_tool_registration_names`: PASS (1/1).
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 1 -- release_version_surfaces_match_cargo_package_version`: PASS (1/1).
+
+### v0.0.252 — 2026-10-14
 
 #### Added
 - **Turn-Decaying Sticky Tool Working Set ([`src/tools/registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry.rs))**: Added `ToolRegistry::record_tool_used()`, `ToolRegistry::current_sticky_tools()`, and TTL decay inside `ToolRegistry::begin_turn()` (`STICKY_TOOL_TTL_TURNS = 2`, `MAX_STICKY_TOOLS = 8`) so non-core domain tools executed in Turn $N$ automatically stay mounted across follow-up turns without re-running `tool_search`.

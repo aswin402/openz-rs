@@ -394,3 +394,35 @@ fn exact_non_file_tool_calls_are_still_counted_as_duplicates() {
 
     assert_eq!(count_previous_tool_calls(&messages, "web_search", &args), 1);
 }
+
+#[test]
+fn hashline_mismatch_errors_recommend_include_hashes_and_anchor_text() {
+    let hint = generate_self_healing_hint(
+        "replace_lines",
+        "Hashline mismatch on line 42: expected 'a3f1', found '09bc'",
+    );
+    assert!(hint.contains("include_hashes: true"));
+    assert!(hint.contains("anchor_text"));
+}
+
+#[test]
+fn patch_file_hunk_mismatch_recommends_search_replace_blocks_and_edits() {
+    let hint = generate_self_healing_hint(
+        "patch_file",
+        "patch_file failed to match hunk at line 10",
+    );
+    assert!(hint.contains("<<<<<<< SEARCH"));
+    assert!(hint.contains("edits"));
+    assert!(hint.contains("include_hashes: true"));
+}
+
+#[test]
+fn tool_not_found_error_recommends_tool_catalog_and_batch_execute() {
+    let hint = generate_self_healing_hint(
+        "openmedia_audio_trim",
+        "Tool 'openmedia_audio_trim' not found",
+    );
+    assert!(hint.contains("tool_catalog"));
+    assert!(hint.contains("batch_execute"));
+}
+

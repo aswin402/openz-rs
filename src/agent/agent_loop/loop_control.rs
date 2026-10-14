@@ -283,100 +283,148 @@ pub(crate) fn count_previous_text_responses(messages: &[Message], next_content: 
 
 
 
-fn is_research_or_browser_tool(tool_lower: &str) -> bool {
-    tool_lower.contains("search")
-        || tool_lower.contains("research")
-        || tool_lower.contains("fetch")
-        || tool_lower.contains("crawl")
-        || tool_lower.contains("browser")
-        || tool_lower.contains("obscura")
-        || tool_lower.contains("firefox")
-        || tool_lower.contains("gsd")
+fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| haystack.contains(needle))
 }
+
+fn is_research_or_browser_tool(tool_lower: &str) -> bool {
+    contains_any(
+        tool_lower,
+        &[
+            "search", "research", "fetch", "crawl", "browser", "obscura", "firefox", "gsd",
+        ],
+    )
+}
+
+fn tool_not_found_hint(err_lower: &str) -> Option<&'static str> {
+    (err_lower.starts_with("tool '") && err_lower.ends_with("' not found")).then_some(
+        "Requested tool is not currently loaded or does not exist. Call 'tool_catalog' (alias 'tool_search') with `query: \"<keyword>\"` to discover matching tools and automatically promote them into the active sticky working set, or use `batch_execute` on 'tool_catalog' to execute deferred tools directly.",
+    )
+}
+
+fn filesystem_self_healing_hint(tool_lower: &str, err_lower: &str) -> Option<&'static str> {
+    contains_any(tool_lower, &["read", "write", "patch", "replace", "file"])
+        .then(|| {
+            contains_any(
+                err_lower,
+                &[
+                    "hashline mismatch",
+                    "expected_hash",
+                    "exceeds total lines",
+                    "cannot be greater than end_line",
+                ],
+            )
+            .then_some(
+                "Line numbers or content hash drifted since the file was last read. Call 'read_file' with `include_hashes: true` around the target lines to obtain fresh `LINE:HASH|` anchors, or pass `anchor_text` to 'replace_lines' for automatic drift relocation.",
+            )
+            .or_else(|| {
+                contains_any(
+                    err_lower,
+                    &[
+                        "failed to match hunk",
+                        "target substring not found",
+                        "no valid unified diff hunks",
+                    ],
+                )
+                .then_some(
+                    "Patch context or target block did not match current file contents. Read the surrounding lines with 'read_file' (`include_hashes: true`), then either pass a `<<<<<<< SEARCH ... ======= ... >>>>>>> REPLACE` block or `edits: [{\"target\": \"...\", \"replacement\": \"...\"}]` to 'patch_file', or use 'replace_lines' with `expected_hash`.",
+                )
+            })
+            .or_else(|| {
+                contains_any(err_lower, &["notfound", "no such file"]).then_some(
+                    "The target path does not exist. Ensure the file path is correct and absolute. You can use 'list_dir' or 'find_files' to check the folder contents.",
+                )
+            })
+            .or_else(|| {
+                contains_any(err_lower, &["permission", "denied"]).then_some(
+                    "Permission denied. The agent process does not have access to read/write this path. Ensure you are targeting files within the permitted workspace folder.",
+                )
+            })
+        })
+        .flatten()
+}
+
+fn shell_self_healing_hint(tool_lower: &str, err_lower: &str) -> Option<&'static str> {
+    contains_any(tool_lower, &["exec", "shell", "command"])
+        .then(|| {
+            contains_any(err_lower, &["permission", "denied"])
+                .then_some(
+                    "Execution permission denied. You may need to make the file executable via 'chmod +x <path>' or run the script using an explicit interpreter (e.g. 'bash <script_path>').",
+                )
+                .or_else(|| {
+                    contains_any(err_lower, &["not found", "127", "no such file"]).then_some(
+                        "Command or script executable not found. Verify the path or binary name is correct and check if the required tool is installed on the system.",
+                    )
+                })
+                .or_else(|| {
+                    contains_any(err_lower, &["seccomp", "sandbox", "operation not permitted"]).then_some(
+                        "Operation blocked by the seccomp BPF sandbox. Note that networking syscalls (e.g. curl, wget, git push), mount/umount, and other privileged actions are forbidden in the sandboxed environment. Please perform the action without network or sandbox-restricted system calls, or run locally via a different approved script if possible.",
+                    )
+                })
+        })
+        .flatten()
+}
+
+fn openmedia_self_healing_hint(tool_lower: &str) -> Option<&'static str> {
+    match tool_lower {
+        "openmedia_video_create" | "openmedia_video_preview" => Some(
+            "OpenMedia VideoScene schema: pass `scene` as a structured object or `scene_path` as a .json file. Top level requires width, height, fps, duration, background, scenes. Each scene requires id, start, end, elements. Text elements use type=text with content, position {x,y}, anchor, and style.font_family, style.font_size, style.font_weight (number), style.color, style.text_align. Valid transition types include crossfade, dissolve, blur, glitch, radial_wipe; do not use fade_in/fade_out as transitions or rect/circle as element types.",
+        ),
+        "openmedia_create_svg" => Some(
+            "OpenMedia SVG schema: pass width, height, and elements (or alias shapes). Valid element type values are rect, circle, line, and text. Text uses content (alias text is accepted by OpenZ), x, y, fill, font_size, font_family, font_weight, and text_anchor=middle for centered logos. Use line with stroke, stroke_width, and stroke_linecap for diagonals instead of unsupported path-like guesses. Optional output_path copies the generated SVG to your requested location.",
+        ),
+        _ => None,
+    }
+}
+
+fn research_self_healing_hint(tool_lower: &str, error_str: &str) -> Option<&'static str> {
+    is_research_or_browser_tool(tool_lower)
+        .then(|| {
+            let failure = super::research_policy::classify_research_failure(error_str);
+            match failure {
+                super::research_policy::ResearchFailureKind::Captcha => Some(
+                    "Research browser fallback hit an anti-bot or CAPTCHA page. Do not keep retrying the same browser path; switch to official URLs, cached sources, or return a partial answer with an unverified-source caveat.",
+                ),
+                super::research_policy::ResearchFailureKind::BrowserDependencyMissing => Some(
+                    "Research browser fallback cannot run because a browser dependency is missing. Use inspect_browsers to check Chrome CDP, gsd-browser, and geckodriver status before trying another browser tool.",
+                ),
+                super::research_policy::ResearchFailureKind::BrowserSessionLost => Some(
+                    "Research browser fallback lost its active browser session. Use inspect_browsers, restart the browser backend once if healthy, then stop retrying that backend if the same failure repeats.",
+                ),
+                super::research_policy::ResearchFailureKind::SearchExhausted => Some(
+                    "Search backends returned no usable results. Run searchxyz_doctor for backend health, then use configured fallback policy or answer from cached/official sources with a clear source caveat.",
+                ),
+                other => other.is_retryable().then_some(
+                    "Research lookup failed with a transient backend/network condition. Retry within the configured research budget; after budget exhaustion, return partial findings and cite which sources could not be verified.",
+                ),
+            }
+        })
+        .flatten()
+}
+
 pub(crate) fn generate_self_healing_hint(tool_name: &str, error_str: &str) -> String {
     let err_lower = error_str.to_lowercase();
     let tool_lower = tool_name.to_lowercase();
 
-    if tool_lower.contains("read")
-        || tool_lower.contains("write")
-        || tool_lower.contains("patch")
-        || tool_lower.contains("replace")
-        || tool_lower.contains("file")
-    {
-        if err_lower.contains("notfound") || err_lower.contains("no such file") {
-            return "The target path does not exist. Ensure the file path is correct and absolute. You can use 'list_dir' or 'find_files' to check the folder contents.".to_string();
-        }
-        if err_lower.contains("permission") || err_lower.contains("denied") {
-            return "Permission denied. The agent process does not have access to read/write this path. Ensure you are targeting files within the permitted workspace folder.".to_string();
-        }
-    }
-
-    if tool_lower.contains("exec") || tool_lower.contains("shell") || tool_lower.contains("command")
-    {
-        if err_lower.contains("permission") || err_lower.contains("denied") {
-            return "Execution permission denied. You may need to make the file executable via 'chmod +x <path>' or run the script using an explicit interpreter (e.g. 'bash <script_path>').".to_string();
-        }
-        if err_lower.contains("not found")
-            || err_lower.contains("127")
-            || err_lower.contains("no such file")
-        {
-            return "Command or script executable not found. Verify the path or binary name is correct and check if the required tool is installed on the system.".to_string();
-        }
-        if err_lower.contains("seccomp")
-            || err_lower.contains("sandbox")
-            || err_lower.contains("operation not permitted")
-        {
-            return "Operation blocked by the seccomp BPF sandbox. Note that networking syscalls (e.g. curl, wget, git push), mount/umount, and other privileged actions are forbidden in the sandboxed environment. Please perform the action without network or sandbox-restricted system calls, or run locally via a different approved script if possible.".to_string();
-        }
-    }
-
-    if tool_lower == "openmedia_video_create" || tool_lower == "openmedia_video_preview" {
-        return "OpenMedia VideoScene schema: pass `scene` as a structured object or `scene_path` as a .json file. Top level requires width, height, fps, duration, background, scenes. Each scene requires id, start, end, elements. Text elements use type=text with content, position {x,y}, anchor, and style.font_family, style.font_size, style.font_weight (number), style.color, style.text_align. Valid transition types include crossfade, dissolve, blur, glitch, radial_wipe; do not use fade_in/fade_out as transitions or rect/circle as element types.".to_string();
-    }
-
-    if tool_lower == "openmedia_create_svg" {
-        return "OpenMedia SVG schema: pass width, height, and elements (or alias shapes). Valid element type values are rect, circle, line, and text. Text uses content (alias text is accepted by OpenZ), x, y, fill, font_size, font_family, font_weight, and text_anchor=middle for centered logos. Use line with stroke, stroke_width, and stroke_linecap for diagonals instead of unsupported path-like guesses. Optional output_path copies the generated SVG to your requested location.".to_string();
-    }
-
-    if is_research_or_browser_tool(&tool_lower) {
-        let failure = super::research_policy::classify_research_failure(error_str);
-        match failure {
-            super::research_policy::ResearchFailureKind::Captcha => {
-                return "Research browser fallback hit an anti-bot or CAPTCHA page. Do not keep retrying the same browser path; switch to official URLs, cached sources, or return a partial answer with an unverified-source caveat.".to_string();
-            }
-            super::research_policy::ResearchFailureKind::BrowserDependencyMissing => {
-                return "Research browser fallback cannot run because a browser dependency is missing. Use inspect_browsers to check Chrome CDP, gsd-browser, and geckodriver status before trying another browser tool.".to_string();
-            }
-            super::research_policy::ResearchFailureKind::BrowserSessionLost => {
-                return "Research browser fallback lost its active browser session. Use inspect_browsers, restart the browser backend once if healthy, then stop retrying that backend if the same failure repeats.".to_string();
-            }
-            super::research_policy::ResearchFailureKind::SearchExhausted => {
-                return "Search backends returned no usable results. Run searchxyz_doctor for backend health, then use configured fallback policy or answer from cached/official sources with a clear source caveat.".to_string();
-            }
-            _ if failure.is_retryable() => {
-                return "Research lookup failed with a transient backend/network condition. Retry within the configured research budget; after budget exhaustion, return partial findings and cite which sources could not be verified.".to_string();
-            }
-            _ => {}
-        }
-    }
-
-    if err_lower.contains("mcp")
-        || err_lower.contains("connection")
-        || err_lower.contains("broken pipe")
-        || err_lower.contains("bridge")
-    {
-        return "MCP server connection error. The MCP server process might be offline or failed to initialize. Try using the 'manage_mcp' tool to list, configure, or restart the active MCP servers.".to_string();
-    }
-
-    if tool_lower.contains("delegate")
-        || tool_lower.contains("research")
-        || tool_lower.contains("optimizer")
-        || tool_lower.contains("loop")
-    {
-        return "Subagent execution encountered an error. You can use the 'optimize_subagent' tool to refine the subagent system prompt/instructions to handle the issue better, or try breaking the goal down into smaller, simpler tasks for subagent delegation.".to_string();
-    }
-
-    "Please double-check the arguments format, verify the target file paths or command options exist, and try a different tool or approach if this error persists.".to_string()
+    tool_not_found_hint(&err_lower)
+        .or_else(|| filesystem_self_healing_hint(&tool_lower, &err_lower))
+        .or_else(|| shell_self_healing_hint(&tool_lower, &err_lower))
+        .or_else(|| openmedia_self_healing_hint(&tool_lower))
+        .or_else(|| research_self_healing_hint(&tool_lower, error_str))
+        .or_else(|| {
+            contains_any(&err_lower, &["mcp", "connection", "broken pipe", "bridge"]).then_some(
+                "MCP server connection error. The MCP server process might be offline or failed to initialize. Try using the 'manage_mcp' tool to list, configure, or restart the active MCP servers.",
+            )
+        })
+        .or_else(|| {
+            contains_any(&tool_lower, &["delegate", "research", "optimizer", "loop"]).then_some(
+                "Subagent execution encountered an error. You can use the 'optimize_subagent' tool to refine the subagent system prompt/instructions to handle the issue better, or try breaking the goal down into smaller, simpler tasks for subagent delegation.",
+            )
+        })
+        .unwrap_or(
+            "Please double-check the arguments format, verify the target file paths or command options exist, and try a different tool or approach if this error persists.",
+        )
+        .to_string()
 }
 
 #[cfg(test)]

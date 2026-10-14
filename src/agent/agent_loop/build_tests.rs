@@ -425,3 +425,94 @@ async fn test_cross_session_memory_is_query_relevant() {
     })
     .unwrap();
 }
+
+#[test]
+fn kv_cached_system_prompt_keeps_static_prefix_identical_across_turns_and_timestamps() {
+    let prefix = StaticPromptPrefix {
+        bot_name: "OpenZ",
+        user_profile_part: "\n\n[User Profile]\nPrefer Rust.",
+        system_guidelines: "\n\nYou are OpenZ...",
+        grounding_rules: "\n\n[Grounding Rules]\nVerify facts.",
+        weak_model_rules: "\n\n[Weak Model Rules]\nBe direct.",
+        vision_instruction: " Use vision_agent.",
+        caveman_rules: "\n\nRespond terse.",
+        pinned_memory: "\n\n[Pinned Memory]\n- User name is Aswin",
+    };
+    let expected_prefix = prefix.render();
+
+    let suffix_turn_1 = DynamicPromptSuffix {
+        persona_priority_part: "",
+        summary_part: "\n\nSummary turn 1",
+        memory_part: "\n\nMemory turn 1",
+        cross_session_memory: "\n\nCross memory 1",
+        skills_part: "\n\nSkills 1",
+        workflow_context: "",
+        brief_context: "\n\nBrief 1",
+        source_context: "",
+        recent_session_part: "\n\n- User: hello",
+        activity_part: "",
+        utc_timestamp_rfc3339: "2026-10-15T00:00:01Z",
+    };
+    let suffix_turn_2 = DynamicPromptSuffix {
+        persona_priority_part: "\n\n[Persona Priority]",
+        summary_part: "\n\nSummary turn 2 updated",
+        memory_part: "\n\nMemory turn 2 updated",
+        cross_session_memory: "\n\nCross memory 2",
+        skills_part: "\n\nSkills 2",
+        workflow_context: "\n\nWorkflow card",
+        brief_context: "\n\nBrief 2",
+        source_context: "\n\nSource 2",
+        recent_session_part: "\n\n- User: next question",
+        activity_part: "\n\n[SYSTEM NOTICE] Other session active",
+        utc_timestamp_rfc3339: "2026-10-15T00:05:42Z",
+    };
+
+    let prompt_1 = assemble_kv_cached_system_prompt(&prefix, &suffix_turn_1, 64_000);
+    let prompt_2 = assemble_kv_cached_system_prompt(&prefix, &suffix_turn_2, 64_000);
+
+    assert!(prompt_1.starts_with(&expected_prefix));
+    assert!(prompt_2.starts_with(&expected_prefix));
+    assert_eq!(
+        &prompt_1[..expected_prefix.len()],
+        &prompt_2[..expected_prefix.len()],
+        "static prefix from byte 0 must remain 100% identical across turns for LLM KV caching"
+    );
+    assert!(prompt_1.ends_with("Current date and time: 2026-10-15T00:00:01Z"));
+    assert!(prompt_2.ends_with("Current date and time: 2026-10-15T00:05:42Z"));
+}
+
+#[test]
+fn kv_cached_system_prompt_budget_truncates_dynamic_sections_without_touching_static_prefix() {
+    let prefix = StaticPromptPrefix {
+        bot_name: "OpenZ",
+        user_profile_part: "",
+        system_guidelines: "\nGuidelines",
+        grounding_rules: "\nGrounding",
+        weak_model_rules: "",
+        vision_instruction: "",
+        caveman_rules: "\nCaveman",
+        pinned_memory: "\nPinned",
+    };
+    let expected_prefix = prefix.render();
+    let long_skills = format!("\nSkills: {}", "S".repeat(500));
+    let long_cross = format!("\nCross: {}", "C".repeat(500));
+    let suffix = DynamicPromptSuffix {
+        persona_priority_part: "",
+        summary_part: "",
+        memory_part: "",
+        cross_session_memory: &long_cross,
+        skills_part: &long_skills,
+        workflow_context: "",
+        brief_context: "",
+        source_context: "",
+        recent_session_part: "",
+        activity_part: "",
+        utc_timestamp_rfc3339: "2026-10-15T00:00:00Z",
+    };
+
+    let prompt = assemble_kv_cached_system_prompt(&prefix, &suffix, expected_prefix.len() + 240);
+    assert!(prompt.starts_with(&expected_prefix));
+    assert!(prompt.contains("... [truncated]"));
+    assert!(prompt.ends_with("Current date and time: 2026-10-15T00:00:00Z"));
+}
+

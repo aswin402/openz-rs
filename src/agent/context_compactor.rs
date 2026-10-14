@@ -1,250 +1,368 @@
-use regex::Regex;
 use serde_json::Value;
 
 pub fn compress_json(raw_json: &str) -> anyhow::Result<String> {
     let value: Value = serde_json::from_str(raw_json)?;
-    if let Value::Array(arr) = value {
-        if arr.is_empty() {
-            return Ok("[]".to_string());
-        }
-        let total_count = arr.len();
-        if total_count <= 5 {
-            return Ok(serde_json::to_string_pretty(&arr)?);
-        }
-        let mut keys = std::collections::BTreeSet::new();
-        for item in &arr {
-            if let Value::Object(map) = item {
-                for k in map.keys() {
-                    keys.insert(k.clone());
+    match value {
+        Value::Array(arr) => match arr.len() {
+            0 => Ok("[]".to_string()),
+            1..=5 => Ok(serde_json::to_string_pretty(&arr)?),
+            total_count => {
+                let keys: std::collections::BTreeSet<String> = arr
+                    .iter()
+                    .filter_map(Value::as_object)
+                    .flat_map(|map| map.keys().cloned())
+                    .collect();
+                let keys_str = keys.into_iter().collect::<Vec<String>>().join(", ");
+                let first_items: Vec<_> = arr.iter().take(2).collect();
+                let first_str = serde_json::to_string_pretty(&first_items).unwrap_or_default();
+                let last_str = arr
+                    .last()
+                    .and_then(|item| serde_json::to_string_pretty(item).ok())
+                    .unwrap_or_default();
+
+                Ok(format!(
+                    "[JSON Array: {} objects. Common keys: [{}].\nFirst 2 items:\n{}\n\n... [{} intermediate items omitted; full payload saved to disk] ...\n\nLast item:\n{}]",
+                    total_count,
+                    keys_str,
+                    first_str,
+                    total_count.saturating_sub(3),
+                    last_str
+                ))
+            }
+        },
+        other => {
+            let pretty = serde_json::to_string_pretty(&other)?;
+            let char_count = pretty.chars().count();
+            match char_count > 16_000 {
+                false => Ok(pretty),
+                true => {
+                    let first_part: String = pretty.chars().take(8_000).collect();
+                    let last_part: String = pretty
+                        .chars()
+                        .skip(char_count.saturating_sub(8_000))
+                        .collect();
+                    Ok(format!(
+                        "{}\n\n... [TRUNCATED INTERMEDIATE JSON OBJECT; full payload saved to disk] ...\n\n{}",
+                        first_part, last_part
+                    ))
                 }
             }
         }
-
-        let keys_str = keys.into_iter().collect::<Vec<String>>().join(", ");
-        let first_items: Vec<_> = arr.iter().take(2).collect();
-        let last_item = arr.last();
-        let first_str = serde_json::to_string_pretty(&first_items).unwrap_or_default();
-        let last_str = last_item
-            .map(|item| serde_json::to_string_pretty(item).unwrap_or_default())
-            .unwrap_or_default();
-
-        Ok(format!(
-            "[JSON Array: {} objects. Common keys: [{}].\nFirst 2 items:\n{}\n\n... [{} intermediate items omitted; full payload saved to disk] ...\n\nLast item:\n{}]",
-            total_count,
-            keys_str,
-            first_str,
-            total_count.saturating_sub(3),
-            last_str
-        ))
-    } else {
-        let pretty = serde_json::to_string_pretty(&value)?;
-        if pretty.len() > 16_000 {
-            let first_part: String = pretty.chars().take(8_000).collect();
-            let last_part: String = pretty
-                .chars()
-                .skip(pretty.chars().count().saturating_sub(8_000))
-                .collect();
-            Ok(format!(
-                "{}\n\n... [TRUNCATED INTERMEDIATE JSON OBJECT; full payload saved to disk] ...\n\n{}",
-                first_part, last_part
-            ))
-        } else {
-            Ok(pretty)
-        }
     }
 }
 
-fn re_block() -> Option<&'static Regex> {
-    static RE: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(?s)/\*.*?\*/").ok())
-        .as_ref()
+#[derive(Clone, Copy)]
+enum CodeLexState {
+    Normal,
+    SeenSlash,
+    InLineComment,
+    InBlockComment,
+    InBlockCommentSeenStar,
+    InDoubleQuote,
+    InDoubleQuoteEscape,
 }
 
-fn re_line() -> Option<&'static Regex> {
-    static RE: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(?m)(^|[^:])//.*").ok())
-        .as_ref()
+pub(crate) fn is_hashline_anchored_line(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed
+        .split_once('|')
+        .and_then(|(prefix, _)| prefix.split_once(':'))
+        .is_some_and(|(line_num, hash_hex)| {
+            !line_num.is_empty()
+                && line_num.chars().all(|c| c.is_ascii_digit())
+                && hash_hex.len() == 4
+                && hash_hex.chars().all(|c| c.is_ascii_hexdigit())
+        })
 }
 
-fn re_lines() -> Option<&'static Regex> {
-    static RE: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\n\s*\n").ok()).as_ref()
+pub(crate) fn has_hashline_anchors(raw_code: &str) -> bool {
+    let mut sample = raw_code
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .take(5);
+    sample
+        .next()
+        .is_some_and(|first| is_hashline_anchored_line(first) && sample.all(is_hashline_anchored_line))
 }
 
-fn re_ansi() -> Option<&'static Regex> {
-    static RE: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\x1B\[[0-9;]*[a-zA-Z]").ok())
-        .as_ref()
-}
+pub(crate) fn strip_code_comments_preserving_strings(raw_code: &str) -> String {
+    let mut out = String::with_capacity(raw_code.len());
+    let final_state = raw_code.chars().fold(CodeLexState::Normal, |state, ch| {
+        match (state, ch) {
+            (CodeLexState::Normal, '/') => CodeLexState::SeenSlash,
+            (CodeLexState::Normal, '"') => {
+                out.push('"');
+                CodeLexState::InDoubleQuote
+            }
+            (CodeLexState::Normal, c) => {
+                out.push(c);
+                CodeLexState::Normal
+            }
+            (CodeLexState::SeenSlash, '/') => match out.ends_with(':') {
+                true => {
+                    out.push_str("//");
+                    CodeLexState::Normal
+                }
+                false => CodeLexState::InLineComment,
+            },
+            (CodeLexState::SeenSlash, '*') => CodeLexState::InBlockComment,
+            (CodeLexState::SeenSlash, '"') => {
+                out.push('/');
+                out.push('"');
+                CodeLexState::InDoubleQuote
+            }
+            (CodeLexState::SeenSlash, c) => {
+                out.push('/');
+                out.push(c);
+                CodeLexState::Normal
+            }
+            (CodeLexState::InLineComment, '\n') => {
+                out.push('\n');
+                CodeLexState::Normal
+            }
+            (CodeLexState::InLineComment, _) => CodeLexState::InLineComment,
+            (CodeLexState::InBlockComment, '*') => CodeLexState::InBlockCommentSeenStar,
+            (CodeLexState::InBlockComment, _) => CodeLexState::InBlockComment,
+            (CodeLexState::InBlockCommentSeenStar, '/') => CodeLexState::Normal,
+            (CodeLexState::InBlockCommentSeenStar, '*') => CodeLexState::InBlockCommentSeenStar,
+            (CodeLexState::InBlockCommentSeenStar, _) => CodeLexState::InBlockComment,
+            (CodeLexState::InDoubleQuote, '\\') => {
+                out.push('\\');
+                CodeLexState::InDoubleQuoteEscape
+            }
+            (CodeLexState::InDoubleQuote, '"') => {
+                out.push('"');
+                CodeLexState::Normal
+            }
+            (CodeLexState::InDoubleQuote, c) => {
+                out.push(c);
+                CodeLexState::InDoubleQuote
+            }
+            (CodeLexState::InDoubleQuoteEscape, c) => {
+                out.push(c);
+                CodeLexState::InDoubleQuote
+            }
+        }
+    });
 
-fn re_backtrace_line() -> Option<&'static Regex> {
-    static RE: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"^\s*at\s+|^\s*\d+:\s+").ok())
-        .as_ref()
-}
+    match final_state {
+        CodeLexState::SeenSlash => out.push('/'),
+        _ => {}
+    }
 
-fn re_rust_backtrace() -> Option<&'static Regex> {
-    static RE: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"stack backtrace:|backtrace::").ok())
-        .as_ref()
-}
-
-fn re_cargo_warning() -> Option<&'static Regex> {
-    static RE: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(?i)warning:").ok()).as_ref()
-}
-
-fn re_cargo_error() -> Option<&'static Regex> {
-    static RE: std::sync::OnceLock<Option<Regex>> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"(?i)error\[E\d+\]:|error:").ok())
-        .as_ref()
+    out.lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
 }
 
 pub fn compress_code(raw_code: &str) -> String {
-    let no_blocks = if let Some(re) = re_block() {
-        re.replace_all(raw_code, "").into_owned()
-    } else {
-        raw_code.to_string()
-    };
-    let no_comments = if let Some(re) = re_line() {
-        re.replace_all(&no_blocks, "$1").into_owned()
-    } else {
-        no_blocks
-    };
-    let collapsed = if let Some(re) = re_lines() {
-        re.replace_all(&no_comments, "\n").into_owned()
-    } else {
-        no_comments
-    };
-    collapsed.trim().to_string()
+    match has_hashline_anchors(raw_code) {
+        true => raw_code.trim().to_string(),
+        false => strip_code_comments_preserving_strings(raw_code),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum AnsiState {
+    Normal,
+    SeenEsc,
+    InCsi,
+}
+
+pub(crate) fn strip_ansi_escapes(raw_logs: &str) -> String {
+    let mut out = String::with_capacity(raw_logs.len());
+    raw_logs.chars().fold(AnsiState::Normal, |state, ch| match (state, ch) {
+        (AnsiState::Normal, '\x1B') => AnsiState::SeenEsc,
+        (AnsiState::Normal, c) => {
+            out.push(c);
+            AnsiState::Normal
+        }
+        (AnsiState::SeenEsc, '[') => AnsiState::InCsi,
+        (AnsiState::SeenEsc, c) => {
+            out.push(c);
+            AnsiState::Normal
+        }
+        (AnsiState::InCsi, c) => match c.is_ascii_alphabetic() {
+            true => AnsiState::Normal,
+            false => AnsiState::InCsi,
+        },
+    });
+    out
+}
+
+fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
+    let needle_bytes = needle.as_bytes();
+    let n_len = needle_bytes.len();
+    match n_len == 0 {
+        true => true,
+        false => haystack
+            .as_bytes()
+            .windows(n_len)
+            .any(|window| window.eq_ignore_ascii_case(needle_bytes)),
+    }
+}
+
+fn is_rust_backtrace_header(trimmed: &str) -> bool {
+    trimmed.contains("stack backtrace:") || trimmed.contains("backtrace::")
+}
+
+fn is_numbered_frame_prefix(trimmed: &str) -> bool {
+    trimmed
+        .split_once(':')
+        .is_some_and(|(digits, rest)| {
+            !digits.is_empty()
+                && digits.chars().all(|c| c.is_ascii_digit())
+                && rest.chars().next().is_some_and(char::is_whitespace)
+        })
+}
+
+fn is_backtrace_frame_line(trimmed: &str) -> bool {
+    trimmed.starts_with("at ")
+        || trimmed.starts_with("at\t")
+        || trimmed.starts_with("frame #")
+        || is_numbered_frame_prefix(trimmed)
+}
+
+fn is_cargo_warning_line(trimmed: &str) -> bool {
+    contains_ascii_case_insensitive(trimmed, "warning:")
+}
+
+fn has_rust_error_code(trimmed: &str) -> bool {
+    let bytes = trimmed.as_bytes();
+    bytes.windows(7).enumerate().any(|(idx, window)| {
+        window.eq_ignore_ascii_case(b"error[e")
+            && trimmed[idx + 7..]
+                .split_once("]:")
+                .is_some_and(|(digits, _)| {
+                    !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+                })
+    })
+}
+
+fn is_cargo_error_line(trimmed: &str) -> bool {
+    contains_ascii_case_insensitive(trimmed, "error:") || has_rust_error_code(trimmed)
+}
+
+#[derive(Default)]
+struct LogFilterState {
+    filtered_lines: Vec<String>,
+    warning_count: usize,
+    error_count: usize,
+    is_backtrace: bool,
 }
 
 pub fn compress_logs(raw_logs: &str) -> String {
-    let clean_logs = if let Some(re) = re_ansi() {
-        re.replace_all(raw_logs, "").into_owned()
-    } else {
-        raw_logs.to_string()
-    };
+    let clean_logs = strip_ansi_escapes(raw_logs);
+    let mut state = clean_logs
+        .lines()
+        .fold(LogFilterState::default(), |mut acc, line| {
+            let trimmed = line.trim();
+            match is_rust_backtrace_header(trimmed) {
+                true => {
+                    acc.is_backtrace = true;
+                    acc.filtered_lines.push(
+                        "[Backtrace detected - stripping stack frames for token reduction]"
+                            .to_string(),
+                    );
+                    acc
+                }
+                false => {
+                    let skip_frame = match (acc.is_backtrace, trimmed.is_empty()) {
+                        (true, true) => {
+                            acc.is_backtrace = false;
+                            false
+                        }
+                        (true, false) => is_backtrace_frame_line(trimmed),
+                        (false, _) => false,
+                    };
+                    match skip_frame {
+                        true => acc,
+                        false => {
+                            let is_warn = is_cargo_warning_line(trimmed);
+                            acc.warning_count += usize::from(is_warn);
+                            let skip_warn = is_warn && acc.warning_count > 10;
 
-    let mut filtered_lines = Vec::new();
-    let mut warning_count = 0;
-    let mut error_count = 0;
-    let mut is_backtrace = false;
+                            let is_err = !skip_warn && is_cargo_error_line(trimmed);
+                            acc.error_count += usize::from(is_err);
+                            let skip_err = is_err && acc.error_count > 5;
 
-    let re_backtrace_line = re_backtrace_line();
-    let re_rust_backtrace = re_rust_backtrace();
-    let re_cargo_warning = re_cargo_warning();
-    let re_cargo_error = re_cargo_error();
-
-    for line in clean_logs.lines() {
-        let trimmed = line.trim();
-
-        if re_rust_backtrace
-            .map(|re| re.is_match(trimmed))
-            .unwrap_or(false)
-        {
-            is_backtrace = true;
-            filtered_lines.push(
-                "[Backtrace detected - stripping stack frames for token reduction]".to_string(),
-            );
-            continue;
-        }
-        if is_backtrace {
-            if trimmed.is_empty() {
-                is_backtrace = false;
-            } else if re_backtrace_line
-                .map(|re| re.is_match(trimmed))
-                .unwrap_or(false)
-                || trimmed.starts_with("frame #")
-                || trimmed.starts_with("at ")
-            {
-                continue;
+                            match skip_warn || skip_err {
+                                true => acc,
+                                false => {
+                                    acc.filtered_lines.push(line.to_string());
+                                    acc
+                                }
+                            }
+                        }
+                    }
+                }
             }
-        }
+        });
 
-        if re_cargo_warning
-            .map(|re| re.is_match(trimmed))
-            .unwrap_or(false)
-        {
-            warning_count += 1;
-            if warning_count > 10 {
-                continue;
-            }
-        }
-
-        if re_cargo_error
-            .map(|re| re.is_match(trimmed))
-            .unwrap_or(false)
-        {
-            error_count += 1;
-            if error_count > 5 {
-                continue;
-            }
-        }
-
-        filtered_lines.push(line.to_string());
-    }
-
-    let mut filtered_logs = filtered_lines.join("\n");
-    if warning_count > 10 {
-        filtered_logs.push_str(&format!(
-            "\n... [Skipped {} additional cargo warnings to save tokens] ...",
-            warning_count - 10
+    (state.warning_count > 10).then(|| {
+        state.filtered_lines.push(format!(
+            "... [Skipped {} additional cargo warnings to save tokens] ...",
+            state.warning_count - 10
         ));
-    }
-    if error_count > 5 {
-        filtered_logs.push_str(&format!(
-            "\n... [Skipped {} additional cargo errors to save tokens] ...",
-            error_count - 5
+    });
+    (state.error_count > 5).then(|| {
+        state.filtered_lines.push(format!(
+            "... [Skipped {} additional cargo errors to save tokens] ...",
+            state.error_count - 5
         ));
-    }
+    });
 
-    if filtered_logs.len() > 2000 {
-        let first_part: String = filtered_logs.chars().take(1000).collect();
-        let last_part: String = filtered_logs
-            .chars()
-            .skip(filtered_logs.chars().count().saturating_sub(1000))
-            .collect();
-        format!(
-            "{}\n\n... [TRUNCATED LOGS] ...\n\n{}",
-            first_part, last_part
-        )
-    } else {
-        filtered_logs
+    let filtered_logs = state.filtered_lines.join("\n");
+    let char_count = filtered_logs.chars().count();
+    match filtered_logs.len() > 2000 {
+        false => filtered_logs,
+        true => {
+            let first_part: String = filtered_logs.chars().take(1000).collect();
+            let last_part: String = filtered_logs
+                .chars()
+                .skip(char_count.saturating_sub(1000))
+                .collect();
+            format!(
+                "{}\n\n... [TRUNCATED LOGS] ...\n\n{}",
+                first_part, last_part
+            )
+        }
     }
 }
 
 pub fn compress_tool_output(tool_name: &str, raw_output: &str) -> String {
     let raw_trimmed = raw_output.trim();
-    if raw_trimmed.is_empty() {
-        return "Empty output.".to_string();
-    }
-
-    if raw_trimmed.starts_with('[') || raw_trimmed.starts_with('{') {
-        if let Ok(compressed) = compress_json(raw_trimmed) {
-            return compressed;
+    match raw_trimmed.is_empty() {
+        true => "Empty output.".to_string(),
+        false => {
+            let json_candidate = (raw_trimmed.starts_with('[') || raw_trimmed.starts_with('{'))
+                .then(|| compress_json(raw_trimmed).ok())
+                .flatten();
+            match json_candidate {
+                Some(compressed) => compressed,
+                None => {
+                    let is_code_tool = matches!(
+                        tool_name,
+                        "read_file"
+                            | "read_file_content"
+                            | "patch_file"
+                            | "write_file"
+                            | "grep_search"
+                            | "code_outline"
+                            | "view_file"
+                    );
+                    match is_code_tool && raw_trimmed.len() > 2000 {
+                        true => compress_code(raw_trimmed),
+                        false => compress_logs(raw_trimmed),
+                    }
+                }
+            }
         }
     }
-
-    let is_code_tool = matches!(
-        tool_name,
-        "read_file"
-            | "read_file_content"
-            | "patch_file"
-            | "write_file"
-            | "grep_search"
-            | "code_outline"
-            | "view_file"
-    );
-
-    if is_code_tool {
-        // Only strip comments/whitespace if it exceeds a reasonable size
-        if raw_trimmed.len() > 2000 {
-            return compress_code(raw_trimmed);
-        }
-    }
-
-    compress_logs(raw_trimmed)
 }
 
 #[cfg(test)]
@@ -262,21 +380,16 @@ mod tests {
 
     #[test]
     fn test_compress_json_large_array_structure_preserved() {
-        let mut items = Vec::new();
-        for i in 1..=10 {
-            items.push(format!(r#"{{"index": {}, "data": "item_{}"}}"#, i, i));
-        }
+        let items: Vec<String> = (1..=10)
+            .map(|i| format!(r#"{{"index": {}, "data": "item_{}"}}"#, i, i))
+            .collect();
         let json_input = format!("[{}]", items.join(", "));
         let compressed = compress_json(&json_input).unwrap();
 
-        // Verifies common keys are extracted
         assert!(compressed.contains("Common keys: [data, index]"));
-        // Verifies head items are preserved
         assert!(compressed.contains("item_1"));
         assert!(compressed.contains("item_2"));
-        // Verifies tail item is preserved
         assert!(compressed.contains("item_10"));
-        // Verifies omission notice indicates count
         assert!(compressed.contains("7 intermediate items omitted"));
     }
 
@@ -285,4 +398,61 @@ mod tests {
         assert_eq!(compress_tool_output("exec_command", ""), "Empty output.");
         assert_eq!(compress_tool_output("exec_command", "   \n"), "Empty output.");
     }
+
+    #[test]
+    fn test_compress_code_strips_comments_while_preserving_urls_and_string_literals() {
+        let code = r#"
+// Top level comment
+fn endpoint() -> &'static str {
+    /* block comment
+       spanning lines */
+    let url = "https://example.com/api//v1";
+    let pattern = "/* not a comment */";
+    url // trailing comment
 }
+"#;
+        let compressed = compress_code(code);
+        assert!(!compressed.contains("Top level comment"));
+        assert!(!compressed.contains("spanning lines"));
+        assert!(!compressed.contains("trailing comment"));
+        assert!(compressed.contains(r#""https://example.com/api//v1""#));
+        assert!(compressed.contains(r#""/* not a comment */""#));
+    }
+
+    #[test]
+    fn test_compress_code_preserves_hashline_anchored_output() {
+        let hashline_output = [
+            "1:a3f1| // header comment that contributes to line hash",
+            "2:09bc| fn main() {",
+            "3:f41d|     println!(\"hello\"); // inline comment",
+            "4:77e2| }",
+        ]
+        .join("\n");
+        let compressed = compress_code(&hashline_output);
+        assert_eq!(compressed, hashline_output);
+    }
+
+    #[test]
+    fn test_compress_logs_strips_ansi_and_folds_backtraces_and_caps_diagnostics() {
+        let mut lines = vec![
+            "\x1B[32mCompiling\x1B[0m openz v0.0.253".to_string(),
+            "stack backtrace:".to_string(),
+            "   0: rust_begin_unwind".to_string(),
+            "             at /rustc/library/std/src/panicking.rs:645:5".to_string(),
+            "   1: core::panicking::panic_fmt".to_string(),
+            "".to_string(),
+        ];
+        lines.extend((1..=12).map(|i| format!("warning: unused variable `w{i}`")));
+        lines.extend((1..=7).map(|i| format!("error[E0425]: cannot find value `e{i}`")));
+        let raw = lines.join("\n");
+
+        let compressed = compress_logs(&raw);
+        assert!(compressed.contains("Compiling openz v0.0.253"));
+        assert!(!compressed.contains("\x1B["));
+        assert!(compressed.contains("[Backtrace detected - stripping stack frames for token reduction]"));
+        assert!(!compressed.contains("rust_begin_unwind"));
+        assert!(compressed.contains("Skipped 2 additional cargo warnings"));
+        assert!(compressed.contains("Skipped 2 additional cargo errors"));
+    }
+}
+
