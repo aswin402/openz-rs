@@ -13,6 +13,13 @@ tokio::task_local! {
     pub static DELEGATION_DEPTH: usize;
     pub static ACTIVE_SUBAGENT: String;
     pub static ORCHESTRATED_NESTED_DELEGATION_ALLOWED: bool;
+    pub static ACTIVE_PARENT_STICKY_TOOLS: Vec<String>;
+}
+
+pub fn active_parent_sticky_tools() -> Vec<String> {
+    ACTIVE_PARENT_STICKY_TOOLS
+        .try_with(|sticky| sticky.clone())
+        .unwrap_or_default()
 }
 
 pub mod allowlist;

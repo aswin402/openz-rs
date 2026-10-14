@@ -985,6 +985,32 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                         .await
                                     }
                                     true => {
+                                        crate::tools::subagent::ACTIVE_PARENT_STICKY_TOOLS
+                                            .scope(
+                                                loop_ref.tools.current_sticky_tools(),
+                                                execute_approved_tool(ApprovedToolExec {
+                                                    tool: t.clone(),
+                                                    call: &call,
+                                                    metadata: &metadata,
+                                                    config: &config,
+                                                    formatted_args: &formatted_args,
+                                                    session_key: ctx.session_key,
+                                                    silent,
+                                                    tool_spinner_msg: &tool_spinner_msg,
+                                                    turn_cancel: &turn_cancel_clone,
+                                                    turn_errors: &mut ctx.turn_errors,
+                                                    prefetched_output: prefetched_outputs
+                                                        .remove(&call.id),
+                                                }),
+                                            )
+                                            .await
+                                    }
+                                }
+                            }
+                            crate::tools::resource_policy::ToolResourceDecision::Allow => {
+                                crate::tools::subagent::ACTIVE_PARENT_STICKY_TOOLS
+                                    .scope(
+                                        loop_ref.tools.current_sticky_tools(),
                                         execute_approved_tool(ApprovedToolExec {
                                             tool: t.clone(),
                                             call: &call,
@@ -997,26 +1023,9 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                             turn_cancel: &turn_cancel_clone,
                                             turn_errors: &mut ctx.turn_errors,
                                             prefetched_output: prefetched_outputs.remove(&call.id),
-                                        })
-                                        .await
-                                    }
-                                }
-                            }
-                            crate::tools::resource_policy::ToolResourceDecision::Allow => {
-                                execute_approved_tool(ApprovedToolExec {
-                                    tool: t.clone(),
-                                    call: &call,
-                                    metadata: &metadata,
-                                    config: &config,
-                                    formatted_args: &formatted_args,
-                                    session_key: ctx.session_key,
-                                    silent,
-                                    tool_spinner_msg: &tool_spinner_msg,
-                                    turn_cancel: &turn_cancel_clone,
-                                    turn_errors: &mut ctx.turn_errors,
-                                    prefetched_output: prefetched_outputs.remove(&call.id),
-                                })
-                                .await
+                                        }),
+                                    )
+                                    .await
                             }
                         }
                     }

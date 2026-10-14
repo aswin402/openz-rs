@@ -283,6 +283,51 @@ impl ToolRegistry {
             .unwrap_or_default()
     }
 
+    pub fn seed_subagent_working_set(
+        &self,
+        goal: &str,
+        context: &str,
+        inherited_sticky: &[String],
+    ) {
+        let combined = format!("{goal}\n{context}");
+        let static_tools = self.read_tools();
+        let explicit_tools =
+            routing::explicitly_requested_tool_names(&combined, &static_tools);
+        let candidates: Vec<String> = inherited_sticky
+            .iter()
+            .cloned()
+            .chain(explicit_tools)
+            .filter_map(|name| {
+                let canonical = self.resolve_canonical_name(&name);
+                let is_valid = (!canonical.is_empty())
+                    && (!routing::is_core_tool(&canonical))
+                    && static_tools.contains_key(&canonical);
+                is_valid.then_some(canonical)
+            })
+            .collect();
+        drop(static_tools);
+
+        let _ = self.sticky_tools.lock().map(|mut map| {
+            let initial_ttl = STICKY_TOOL_TTL_TURNS.saturating_add(1);
+            for canonical in candidates {
+                map.insert(canonical, initial_ttl);
+                while map.len() > MAX_STICKY_TOOLS {
+                    let evict_key = map
+                        .iter()
+                        .min_by_key(|(k, ttl)| (**ttl, (*k).clone()))
+                        .map(|(k, _)| k.clone());
+                    match evict_key {
+                        Some(k) => {
+                            map.remove(&k);
+                        }
+                        None => break,
+                    }
+                }
+            }
+        });
+        self.clear_route_cache();
+    }
+
     pub fn request_tool_scope<I, J>(&self, tools: I, domains: J)
     where
         I: IntoIterator<Item = String>,

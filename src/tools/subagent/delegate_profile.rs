@@ -201,17 +201,23 @@ impl Tool for DelegateProfileTool {
 
             // Only manager-style profiles can spawn generic workers. Standard subagents must finish their own task.
             let allowed_delegate = super::can_spawn_nested_subagents(&self.profile.name);
-
-            if allowed_delegate {
-                child_registry.register(std::sync::Arc::new(super::delegate_task::DelegateTaskTool {
-                    config: child_config.clone(),
-                    parent_provider: provider.clone(),
-                    session_manager: self.session_manager.clone(),
-                    parent_tools: self.parent_tools.clone(),
-                    cancellation_token: self.cancellation_token.clone(),
-                    capability_policy: self.capability_policy.clone(),
-                }));
-            }
+            let _ = allowed_delegate.then(|| {
+                child_registry.register(std::sync::Arc::new(
+                    super::delegate_task::DelegateTaskTool {
+                        config: child_config.clone(),
+                        parent_provider: provider.clone(),
+                        session_manager: self.session_manager.clone(),
+                        parent_tools: self.parent_tools.clone(),
+                        cancellation_token: self.cancellation_token.clone(),
+                        capability_policy: self.capability_policy.clone(),
+                    },
+                ));
+            });
+            child_registry.seed_subagent_working_set(
+                &clean_goal,
+                &clean_context,
+                &super::active_parent_sticky_tools(),
+            );
 
             let child_agent = AgentLoop::new(
                 child_config,

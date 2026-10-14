@@ -455,58 +455,75 @@ pub fn build_provider_for_model(
     Ok(resolved.instance)
 }
 
+const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "webp", "gif"];
+
+fn is_image_extension(ext: &str) -> bool {
+    IMAGE_EXTENSIONS
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(ext))
+}
+
+fn has_image_suffix(token: &str) -> bool {
+    token
+        .rsplit_once('.')
+        .is_some_and(|(_, ext)| is_image_extension(ext))
+}
+
+fn is_token_delimiter(ch: char) -> bool {
+    ch.is_whitespace() || matches!(ch, '(' | ')' | '[' | ']' | '"' | '\'' | ',' | ';' | '<' | '>')
+}
+
+fn extract_token_spans(text: &str) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut open_start: Option<usize> = None;
+    for (idx, ch) in text.char_indices() {
+        match (open_start, is_token_delimiter(ch)) {
+            (None, false) => open_start = Some(idx),
+            (Some(start), true) => {
+                spans.push((start, idx));
+                open_start = None;
+            }
+            _ => {}
+        }
+    }
+    let _ = open_start.map(|start| spans.push((start, text.len())));
+    spans
+}
+
+fn resolve_candidate_image_path(token: &str) -> Option<String> {
+    let raw = token
+        .strip_prefix("file://")
+        .unwrap_or(token)
+        .trim_end_matches('.');
+    (raw.starts_with('/') || raw.starts_with("~/")).then_some(())?;
+    let resolved = crate::config::resolve_path(raw);
+    let direct = (resolved.exists() && resolved.is_file()).then(|| resolved.clone());
+    let with_ext = IMAGE_EXTENSIONS.iter().find_map(|ext| {
+        let candidate = resolved.with_extension(ext);
+        (candidate.exists() && candidate.is_file()).then_some(candidate)
+    });
+    let final_path = direct.or(with_ext)?;
+    let ext = final_path.extension().and_then(|e| e.to_str())?;
+    is_image_extension(ext).then(|| final_path.to_string_lossy().to_string())
+}
+
 pub fn scan_for_images(goal: &str, context: &str) -> Vec<String> {
+    let combined = format!("{goal} {context}");
     let mut image_paths = Vec::new();
-    if let Ok(path_regex) =
-        regex::Regex::new(r"(?:file://)?(/[a-zA-Z0-9_\-\./]+|~/[a-zA-Z0-9_\-\./]+)")
-    {
-        for cap in path_regex.captures_iter(&format!("{} {}", goal, context)) {
-            if let Some(mat) = cap.get(1) {
-                let path_str = mat.as_str();
-                let resolved_path = crate::config::resolve_path(path_str);
-
-                let mut final_path = None;
-                if resolved_path.exists() && resolved_path.is_file() {
-                    final_path = Some(resolved_path);
-                } else {
-                    for ext in &["png", "jpg", "jpeg", "webp", "gif"] {
-                        let path_with_ext = resolved_path.with_extension(ext);
-                        if path_with_ext.exists() && path_with_ext.is_file() {
-                            final_path = Some(path_with_ext);
-                            break;
-                        }
-                    }
-                }
-
-                if let Some(path) = final_path {
-                    let ext = path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or("")
-                        .to_lowercase();
-                    if ["png", "jpg", "jpeg", "webp", "gif"].contains(&ext.as_str()) {
-                        let canonical = path.to_string_lossy().to_string();
-                        if !image_paths.contains(&canonical) {
-                            image_paths.push(canonical);
-                        }
-                    }
-                }
-            }
-        }
+    for (start, end) in extract_token_spans(&combined) {
+        let _ = resolve_candidate_image_path(&combined[start..end]).map(|canonical| {
+            let _ = (!image_paths.contains(&canonical)).then(|| image_paths.push(canonical));
+        });
     }
-    // Fallback to default clipboard image if no specific path was found but task mentions an image
-    if image_paths.is_empty() {
+    let _ = image_paths.is_empty().then(|| {
         let default_clip = crate::config::runtime_data_dir().join("clipboard_image_0.png");
-        if default_clip.exists() && default_clip.is_file() {
-            let text_lower = format!("{} {}", goal, context).to_lowercase();
-            if text_lower.contains("image")
-                || text_lower.contains("picture")
-                || text_lower.contains("screenshot")
-            {
-                image_paths.push(default_clip.to_string_lossy().to_string());
-            }
-        }
-    }
+        let text_lower = combined.to_lowercase();
+        let mentions_image = text_lower.contains("image")
+            || text_lower.contains("picture")
+            || text_lower.contains("screenshot");
+        let _ = (default_clip.exists() && default_clip.is_file() && mentions_image)
+            .then(|| image_paths.push(default_clip.to_string_lossy().to_string()));
+    });
     image_paths
 }
 
@@ -534,32 +551,35 @@ pub async fn execute_subagent_run(
     let run_res_fut =
         crate::config::loader::ACTIVE_WORKSPACE.scope(workspace_dir, async move {
             DELEGATION_DEPTH.scope(current_depth + 1, async move {
-            crate::tools::subagent::ACTIVE_SUBAGENT.scope(subagent_name_str.clone(), async move {
-                tokio::select! {
-                    biased;
-                    _ = cancellation_token_clone.wait_for_cancellation() => {
-                        if !crate::agent::style::is_silent() {
-                            let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                            let line = compact_lifecycle_line(
-                                &subagent_name_str,
-                                &model_name_str,
-                                &SubagentRunStatus::Cancelling,
-                            );
-                            crate::tui_println!(
-                                "{}{}{}▲ {}{}",
-                                crate::agent::style::AURA_SLATE,
-                                leaf_prefix,
-                                crate::agent::style::AURA_GOLD,
-                                line,
-                                crate::agent::style::COLOR_RESET
-                            );
+                crate::tools::subagent::ACTIVE_SUBAGENT
+                    .scope(subagent_name_str.clone(), async move {
+                        tokio::select! {
+                            biased;
+                            _ = cancellation_token_clone.wait_for_cancellation() => {
+                                let _ = (!crate::agent::style::is_silent()).then(|| {
+                                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                                    let line = compact_lifecycle_line(
+                                        &subagent_name_str,
+                                        &model_name_str,
+                                        &SubagentRunStatus::Cancelling,
+                                    );
+                                    crate::tui_println!(
+                                        "{}{}{}▲ {}{}",
+                                        crate::agent::style::AURA_SLATE,
+                                        leaf_prefix,
+                                        crate::agent::style::AURA_GOLD,
+                                        line,
+                                        crate::agent::style::COLOR_RESET
+                                    );
+                                });
+                                Err(anyhow::anyhow!("Subagent task cancelled"))
+                            }
+                            res = child_agent_ref.run(p_ref, c_ref) => res,
                         }
-                        Err(anyhow::anyhow!("Subagent task cancelled"))
-                    }
-                    res = child_agent_ref.run(p_ref, c_ref) => res,
-                }
-            }).await
-        }).await
+                    })
+                    .await
+            })
+            .await
         });
 
     let sub_timeout = resolve_subagent_timeout_secs(timeout_secs, default_timeout_secs);
@@ -573,35 +593,27 @@ pub async fn execute_subagent_run(
     }
 }
 
+fn is_wrappable_image_token(token: &str) -> bool {
+    let has_valid_prefix = token.starts_with("file://")
+        || token.starts_with("http://")
+        || token.starts_with("https://")
+        || token.starts_with('/');
+    has_valid_prefix && has_image_suffix(token)
+}
+
 pub fn ensure_markdown_images(text: &str) -> String {
-    let re = match regex::Regex::new(
-        r"(?i)(file://[^\s\)\(]+\.(?:png|jpg|jpeg|webp|gif)|https?://[^\s\)\(]+\.(?:png|jpg|jpeg|webp|gif)|/[^\s\)\(]+\.(?:png|jpg|jpeg|webp|gif))",
-    ) {
-        Ok(r) => r,
-        Err(_) => return text.to_string(),
-    };
-
     let mut result = text.to_string();
-    let mut matches: Vec<_> = re.find_iter(text).collect();
-    matches.reverse();
-
-    for mat in matches {
-        let start = mat.start();
-        let end = mat.end();
-        let matched_str = mat.as_str();
-
-        let mut already_formatted = false;
-        if start > 0 {
-            let before = &text[..start];
-            if before.ends_with('(') || before.ends_with("](") {
-                already_formatted = true;
-            }
-        }
-
-        if !already_formatted {
-            let replacement = format!("![]({})", matched_str);
-            result.replace_range(start..end, &replacement);
-        }
+    let spans = extract_token_spans(text);
+    for (start, end) in spans.into_iter().rev() {
+        let trimmed = text[start..end].trim_end_matches('.');
+        let effective_end = start + trimmed.len();
+        let before = &text[..start];
+        let already_formatted = before.ends_with('(') || before.ends_with("](");
+        let should_wrap = is_wrappable_image_token(trimmed) && !already_formatted;
+        let _ = should_wrap.then(|| {
+            let replacement = format!("![]({trimmed})");
+            result.replace_range(start..effective_end, &replacement);
+        });
     }
     result
 }
@@ -619,17 +631,16 @@ pub fn build_subagent_prompt(
         When finished, provide a clear, concise summary of what you did and found."
     );
 
-    let image_paths = scan_for_images(clean_goal, clean_context);
-    for img in image_paths {
+    for img in scan_for_images(clean_goal, clean_context) {
         prompt.push_str(&format!(" ![](file://{img})"));
     }
 
-    if let Some(schema) = json_schema {
+    let _ = json_schema.map(|schema| {
         prompt.push_str(&format!(
             "\n\nCRITICAL REQUIREMENT: Your final response MUST be a raw JSON object strictly conforming to this JSON Schema:\n{}\nDo not wrap it in markdown code blocks, do not add any conversational text. Return only the raw valid JSON.",
             serde_json::to_string_pretty(schema).unwrap_or_default()
         ));
-    }
+    });
 
     prompt
 }

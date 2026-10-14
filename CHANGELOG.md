@@ -1,5 +1,46 @@
-## [0.0.253] - 2026-10-15
-### v0.0.253 (Latest Release)
+## [0.0.254] - 2026-10-15
+### v0.0.254 (Latest Release)
+
+#### Added
+- **Sticky Tool & Explicit Task Scope Handoff to Child Subagents ([`src/tools/registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry.rs), [`src/tools/subagent/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod.rs), [`src/tools/subagent/delegate_task.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_task.rs), [`src/tools/subagent/delegate_profile.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_profile.rs), [`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs))**: Added task-local `ACTIVE_PARENT_STICKY_TOOLS`, `active_parent_sticky_tools()`, and `ToolRegistry::seed_subagent_working_set()` so child subagents automatically inherit the parent agent's active sticky tool working set and pre-mount explicitly mentioned tools from the subagent `goal` and `context` before Turn 1 (`STICKY_TOOL_TTL_TURNS + 1`), eliminating cold-start `tool_search` round-trips inside subagent turns.
+- **Working-State-Preserving Session Compaction Ledger ([`src/agent/agent_loop/compact.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/compact.rs))**: Added `extract_working_state_ledger()`, `merge_summary_with_ledger()`, and `resolve_compaction_split_index()` so deterministic `[Preserved Working State Ledger]` metadata (touched file paths, mutating tool executions, and archived `~/.openz/tool_outputs/...` references) is preserved verbatim across session history truncation without relying on lossy LLM prose summarization.
+- **Subagent & Compaction Unit Tests**: Added `test_scan_for_images_resolves_existing_image_files_without_regex` and `test_seed_subagent_working_set_preserves_sticky_tools_across_begin_turn` in [`src/tools/subagent/runner_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/runner_tests.rs), plus `extract_working_state_ledger_captures_touched_files_mutating_tools_and_archives` and `resolve_compaction_split_index_aligns_to_user_turn_boundary` in [`src/agent/agent_loop/compact.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/compact.rs).
+
+#### Changed
+- **Zero-Regex Subagent Image Scanner & Markdown Formatter ([`src/tools/subagent/runner.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/runner.rs))**: Replaced `regex::Regex` (`SCAN_IMAGE_RE` and `ENSURE_MD_IMAGE_RE`) in `scan_for_images()` and `ensure_markdown_images()` with deterministic lexical token-span scanners (`is_image_extension()`, `has_image_suffix()`, `is_token_delimiter()`, `extract_token_spans()`, `resolve_candidate_image_path()`, and `is_wrappable_image_token()`) using `0` `regex` and `0` `if/else` statements.
+- **Pure Combinator Session Compaction State Machine ([`src/agent/agent_loop/compact.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/compact.rs))**: Refactored `compact::handle()` to use pure `match` / `bool::then` combinators and user-turn boundary alignment (`resolve_compaction_split_index()`) with `0` `if/else` statements.
+
+#### Performance
+- **Zero Cold-Start Tool Discovery Overhead in Subagents ([`src/tools/registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry.rs))**: Child subagents spawned via `delegate_task` or profile tools immediately receive their parent's active domain tools and goal-referenced tools in Turn 1, saving 1–2 LLM round-trips per subagent invocation.
+- **Zero-Regex Image Span Extraction ([`src/tools/subagent/runner.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/runner.rs))**: Replaced regex backtracking over subagent output buffers with single-pass byte/character delimiter slicing.
+
+#### Documentation
+- **Synchronized Release Manifests**: Updated [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md), and [`CHANGELOG.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/CHANGELOG.md) to `0.0.254`.
+
+### Sources & Inspirations
+- **[Inspiration]**: Claude Code & Oh My Pi (`omp` / `can1357/oh-my-pi`) subagent tool-working-set inheritance and task-scoped tool mounting — guided `ACTIVE_PARENT_STICKY_TOOLS` and `ToolRegistry::seed_subagent_working_set()` in [`src/tools/registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry.rs).
+- **[Inspiration]**: OpenAI Codex CLI & Pi Agent (`badlogic/pi-mono`) structured working-state preservation across context compaction — guided `extract_working_state_ledger()` and `merge_summary_with_ledger()` in [`src/agent/agent_loop/compact.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/compact.rs).
+
+- **Ideas**:
+  - Sticky Tool & Explicit Task Scope Handoff to Child Subagents, Zero-Regex Subagent Image Scanner & Markdown Formatter, and Working-State-Preserving Session Compaction Ledger.
+- **Inspirations**:
+  - Claude Code, Oh My Pi (`omp`), OpenAI Codex CLI, and Pi Agent (`pi-mono`), implemented with pure combinators, iterator folds, and lexical token scanners (`0` `if/else`, `0` `regex`).
+- **Sources & References**:
+  - [`src/tools/registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry.rs), [`src/tools/subagent/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod.rs), [`src/tools/subagent/delegate_task.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_task.rs), [`src/tools/subagent/delegate_profile.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_profile.rs), [`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs)
+  - [`src/tools/subagent/runner.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/runner.rs), [`src/tools/subagent/runner_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/runner_tests.rs)
+  - [`src/agent/agent_loop/compact.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/compact.rs)
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Synchronous SemVer increment to `0.0.254`.
+- **Details & Metrics**:
+  - Removed all `regex::Regex` usage from `src/tools/subagent/runner.rs`.
+  - Achieved `0` `if/else` statements and `0` `regex` across all added/modified lines in `registry.rs`, `subagent/mod.rs`, `delegate_task.rs`, `delegate_profile.rs`, `runner.rs`, `run/mod.rs`, and `compact.rs`.
+  - Maintained the 260 registered native tools invariant (`test_native_tool_registration_names`).
+- **Verification**:
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 1 -- tools::subagent::runner::tests`: PASS (9/9).
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 1 -- agent::agent_loop::compact::tests`: PASS (2/2).
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 1 -- test_native_tool_registration_names`: PASS (1/1).
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 1 -- release_version_surfaces_match_cargo_package_version`: PASS (1/1).
+
+### v0.0.253 — 2026-10-15
 
 #### Added
 - **KV-Cache-Stable System Prompt Prefix Architecture ([`src/agent/agent_loop/build.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs))**: Added `StaticPromptPrefix`, `DynamicPromptSuffix`, `allocate_dynamic_budgets()`, `safe_truncate()`, and `assemble_kv_cached_system_prompt()` so static identity, user profile, system guidelines, grounding rules, weak-model rules, vision rules, caveman rules, and pinned memories form a byte-for-byte deterministic prefix from byte `0`, while turn-volatile context and `[Current Turn Timestamp]` are appended at the tail.

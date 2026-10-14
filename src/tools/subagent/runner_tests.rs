@@ -160,3 +160,62 @@ async fn test_run_subagent_attempt_returns_cancelled_when_token_pre_cancelled() 
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[test]
+fn test_scan_for_images_resolves_existing_image_files_without_regex() {
+    let temp_dir =
+        std::env::temp_dir().join(format!("test_scan_img_{}", uuid::Uuid::new_v4()));
+    let _ = std::fs::create_dir_all(&temp_dir);
+    let img_path = temp_dir.join("diagram.png");
+    std::fs::write(&img_path, b"PNG_BYTES").unwrap();
+
+    let found = scan_for_images(
+        &format!("Inspect file://{}", img_path.display()),
+        "Provide layout feedback.",
+    );
+    assert_eq!(found, vec![img_path.to_string_lossy().to_string()]);
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_seed_subagent_working_set_preserves_sticky_tools_across_begin_turn() {
+    struct DummyDomainTool(&'static str);
+    #[async_trait::async_trait]
+    impl crate::tools::Tool for DummyDomainTool {
+        fn name(&self) -> &str {
+            self.0
+        }
+        fn description(&self) -> &str {
+            "domain tool"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({"type": "object"})
+        }
+        async fn call(&self, _args: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
+            Ok(serde_json::json!({}))
+        }
+    }
+
+    let child_registry = ToolRegistry::new();
+    child_registry.register(Arc::new(DummyDomainTool("openmedia_image_resize")));
+    child_registry.register(Arc::new(DummyDomainTool("opendoc_pdf_merge")));
+
+    child_registry.seed_subagent_working_set(
+        "Please call opendoc_pdf_merge on the generated reports",
+        "Parent already prepared image assets",
+        &["openmedia_image_resize".to_string()],
+    );
+
+    // Simulate child_agent.run() calling begin_turn() at the start of Turn 1
+    child_registry.begin_turn();
+    let sticky = child_registry.current_sticky_tools();
+    assert!(
+        sticky.contains(&"openmedia_image_resize".to_string()),
+        "inherited parent sticky tool must survive child begin_turn()"
+    );
+    assert!(
+        sticky.contains(&"opendoc_pdf_merge".to_string()),
+        "explicit tool in subagent goal must be seeded into sticky working set"
+    );
+}
+

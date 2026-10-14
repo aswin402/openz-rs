@@ -144,10 +144,21 @@ impl Tool for DelegateTaskTool {
         child_registry.set_capability_policy(self.capability_policy.clone());
         for tool in &self.parent_tools {
             let name = tool.name();
-            if name != "delegate_task" && name != "parallel_research" && name != "evaluator_optimizer_loop" {
-                child_registry.register(tool.clone());
+            match matches!(
+                name,
+                "delegate_task" | "parallel_research" | "evaluator_optimizer_loop"
+            ) {
+                true => {}
+                false => {
+                    child_registry.register(tool.clone());
+                }
             }
         }
+        child_registry.seed_subagent_working_set(
+            &clean_goal,
+            &clean_context,
+            &super::active_parent_sticky_tools(),
+        );
 
         let child_session_id = format!("subagent:{}", &uuid::Uuid::new_v4().to_string()[..8]);
         let child_agent = AgentLoop::new(
