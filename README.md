@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.251-orange.svg" alt="Version 0.0.251"/></a>
+  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.252-orange.svg" alt="Version 0.0.252"/></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.82%2B-blue.svg" alt="Rust 1.82+"/></a>
   <a href="https://tokio.rs/"><img src="https://img.shields.io/badge/runtime-tokio-purple.svg" alt="Tokio Async"/></a>
   <a href="https://github.com/aswin402/openz-rs/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-green.svg" alt="License"/></a>
@@ -41,27 +41,28 @@ Most agent frameworks require users to manually select tools, switch providers, 
 
 | Capability | Overview |
 |---|---|
-| 🖥 **Agent Runtime** | Interactive TUI, streaming/non-streaming completions, cancellation, session persistence, SHA-256 Merkle history verification (`ChainIntegrity`) |
+| 🖥 **Agent Runtime** | Interactive TUI, streaming/non-streaming completions, parallel read-only tool batches, cancellation, session persistence, SHA-256 Merkle history verification (`ChainIntegrity`) |
 | 🔎 **Web & Research** | `SearchXyz` local-first search engine, direct URL fetching with SSRF IP-pinning, cache revalidation, source ledger, research briefs |
 | 🌐 **Browser Automation** | GSD browser engine, Firefox/WebDriver, Obscura CDP headless browser, preflight diagnostics |
 | 🧠 **Cognitive Memory** | SQLite structured memory (`~/.openz/memory.db`), vector embeddings (`embeddings_cache.db`), working memory, knowledge graph (`graph_memory.db`) |
 | 🛠 **Native Code Tools** | Structural `ast_grep`, code outline, grep, Rust docs lookup, Cargo manager, compiler auto-heal |
-| 📝 **Filesystem & Edits** | Read, write, patch, replace lines, transactional Zenflow checkpoint edits, `PathPolicy` containment |
+| 📝 **Filesystem & Edits** | `Hashline` content-hash anchors (`read_file` + `replace_lines`), exact/fuzzy/search-replace `patch_file`, transactional Zenflow checkpoint edits, `PathPolicy` containment |
 | 📊 **Document Pipelines** | PDF, DOCX, XLSX, PPTX, CSV extraction & creation, Poppler/Tesseract OCR fallback, document complexity analysis |
 | 🎨 **Media Pipelines** | Image generation, SVG compilation & animation, OpenMedia graphics, programmatic MP4 video via Wavyte engine |
 | 🤖 **Subagents** | 19 built-in profiles (planner, researcher, reviewer, etc.) + typed multi-agent `orchestrate_workflow` runtime |
 | 💬 **Channels** | Interactive TUI, WebSocket gateway & React WebUI (port 8765), Telegram, Discord, WhatsApp, Email (IMAP/SMTP) |
 | ⏱ **Automation & SOPs** | DAG SOP workflows, cron jobs (`schedule_job`), autonomous `daemon` mode, background self-improvement curator, `doctor` diagnostics |
-| 🔌 **Extensibility** | Stdio MCP client support, `mcp-bridge` gRPC-to-stdio bridge, prompt-aware layered tool routing (`ScopeEngine`) |
+| 🔌 **Extensibility** | Stdio MCP client support, `mcp-bridge` gRPC-to-stdio bridge, prompt-aware layered tool routing (`ScopeEngine`), single-turn `batch_execute` in `tool_catalog` |
 
 ---
 
 ## 🆕 Latest Highlights
 
-### 🧭 Canonical Tool Routing, BM25 Deduplication & Scope Alignment
-- **Unified Alias Canonicalization**: Tool compatibility aliases (`crawl_site` → `crawl_website`, `open_path` → `open`, `device_inventory` → `system_info`, `create_subagent_profile` → `create_subagent`) and camelCase/snake_case path arguments (`TargetFile`, `filePath`, `file_path`, `AbsolutePath`) normalize through a single pipeline across `ToolRegistry`, `ScopeEngine`, and run-loop artifact guards.
-- **Word-Bounded Explicit Tool Matching & Deduplicated BM25 Index**: `ToolRouter` indexes unique tool aliases via `BTreeSet` and matches explicit prompt tool mentions on token boundaries without false-positive domain keyword explosions.
-- **Dynamic Turn Cancellation Inheritance**: Dynamically resolved subagent and orchestration tools (`orchestrate_workflow`, `delegate_task`, `parallel_research`, `optimize_subagent_execution`, and custom `DelegateProfileTool` profiles) automatically inherit the active turn's `CancellationToken`.
+### 🧭 Next-Generation Tool Routing, `Hashline` Edits & Parallel Batch Execution
+- **Turn-Sticky Working Set & KV-Cache Prefix Ordering**: Executed non-core domain tools automatically remain mounted in a bounded turn-decaying working set (`STICKY_TOOL_TTL_TURNS = 2`, `MAX_STICKY_TOOLS = 8`) across follow-up prompts, while `to_openai_format_for_prompt` orders `Core` tools as a deterministic prefix before scoped tools to preserve LLM provider KV prompt caches.
+- **`Hashline` Content-Hash Anchors & Fuzzy/Search-Replace Patching**: `read_file` supports `include_hashes: true` (`<line_no>:<4-char-fnv1a-hash>| <content>`), `replace_lines` auto-relocates drifted line numbers via `expected_hash` or `anchor_text`, and `patch_file` supports exact unified diffs, fuzzy whitespace-normalized hunks, and `target`+`replacement` / `<<<<<<< SEARCH ... >>>>>>> REPLACE` blocks.
+- **Parallel Read-Only Tool Batches & Single-Turn `batch_execute`**: Pure read-only tool batches execute concurrently via `futures_util::future::join_all` (`prefetch_parallel_safe_batch`), and `tool_catalog` supports programmatic `batch_execute` for up to 8 safe tool calls in a single turn with per-step `SecurityGuard` and `ToolResourcePolicy` enforcement.
+- **Unified Alias Canonicalization & Turn Cancellation**: Tool compatibility aliases and camelCase/snake_case path arguments normalize through a single pipeline, and dynamically resolved subagent/orchestration tools inherit the active turn's `CancellationToken`.
 
 ### 💻 TUI Ergonomics & Multi-line Prompt Wrapping
 - **Visible Terminal Cursor**: Explicit terminal hardware cursor (`crossterm::cursor::Show`) on raw mode start and every render frame.

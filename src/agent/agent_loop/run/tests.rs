@@ -548,3 +548,70 @@ fn auto_scope_and_saved_output_recognize_camel_case_path_aliases() {
     assert_eq!(normalized_read.name, "retrieve_original");
     assert_eq!(normalized_read.arguments["ccr_id"], file_url);
 }
+
+#[tokio::test]
+async fn parallel_safe_read_only_tools_prefetch_concurrently_while_write_tools_excluded() {
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_parallel_batch_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let file_a = temp_dir.join("a.txt");
+    let file_b = temp_dir.join("b.txt");
+    std::fs::write(&file_a, "content A").unwrap();
+    std::fs::write(&file_b, "content B").unwrap();
+
+    let registry = crate::tools::ToolRegistry::new();
+    registry.register(std::sync::Arc::new(crate::tools::filesystem::ReadFileTool));
+    registry.register(std::sync::Arc::new(crate::tools::filesystem::WriteFileTool));
+    registry.register(std::sync::Arc::new(crate::tools::shell::ExecCommandTool));
+
+    let call_read_a = crate::providers::ToolCallRequest {
+        id: "call_read_a".to_string(),
+        name: "read_file".to_string(),
+        arguments: json!({ "path": file_a.to_str().unwrap() }),
+    };
+    let call_read_b = crate::providers::ToolCallRequest {
+        id: "call_read_b".to_string(),
+        name: "read_file".to_string(),
+        arguments: json!({ "path": file_b.to_str().unwrap() }),
+    };
+    let call_write = crate::providers::ToolCallRequest {
+        id: "call_write".to_string(),
+        name: "write_file".to_string(),
+        arguments: json!({ "path": file_a.to_str().unwrap(), "content": "mutated" }),
+    };
+
+    assert!(super::tool_pipeline::is_parallel_safe_tool_call(
+        &registry,
+        &call_read_a,
+        "strict"
+    ));
+    assert!(!super::tool_pipeline::is_parallel_safe_tool_call(
+        &registry,
+        &call_write,
+        "strict"
+    ));
+
+    let config = crate::config::schema::Config::default();
+    let cancel = crate::tools::subagent::CancellationToken::new();
+    let prefetched = super::tool_pipeline::prefetch_parallel_safe_batch(
+        &registry,
+        &[call_read_a, call_read_b, call_write],
+        &config,
+        &cancel,
+    )
+    .await;
+
+    assert_eq!(prefetched.len(), 2);
+    assert_eq!(
+        prefetched.get("call_read_a"),
+        Some(&serde_json::Value::String("content A".to_string()))
+    );
+    assert_eq!(
+        prefetched.get("call_read_b"),
+        Some(&serde_json::Value::String("content B".to_string()))
+    );
+    assert!(!prefetched.contains_key("call_write"));
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+

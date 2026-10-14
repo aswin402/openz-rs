@@ -60,6 +60,102 @@ pub(super) struct ApprovedToolExec<'a> {
     pub(super) tool_spinner_msg: &'a str,
     pub(super) turn_cancel: &'a crate::tools::subagent::CancellationToken,
     pub(super) turn_errors: &'a mut Vec<String>,
+    pub(super) prefetched_output: Option<serde_json::Value>,
+}
+
+pub(crate) fn is_parallel_safe_tool_call(
+    tools: &crate::tools::ToolRegistry,
+    call: &crate::providers::ToolCallRequest,
+    security_mode: &str,
+) -> bool {
+    let canonical = tools.resolve_canonical_name(&call.name);
+    match (canonical.as_str(), tools.get(&canonical)) {
+        ("tool_catalog", _) | (_, None) => false,
+        (_, Some(tool)) => {
+            let meta = tool.metadata();
+            let normalized = crate::tools::normalize_tool_args(&call.arguments);
+            let is_pure_read = !meta.writes_disk
+                && !meta.spawns_process
+                && !meta.uses_network
+                && !meta.requires_risk_approval();
+            let is_security_safe =
+                !crate::agent::security::SecurityGuard::is_forbidden(&canonical, &normalized)
+                    && !crate::agent::security::SecurityGuard::is_sensitive_with_mode(
+                        &canonical,
+                        &normalized,
+                        security_mode,
+                    );
+            is_pure_read && is_security_safe
+        }
+    }
+}
+
+pub(super) async fn prefetch_parallel_safe_batch(
+    tools: &crate::tools::ToolRegistry,
+    calls: &[crate::providers::ToolCallRequest],
+    config: &crate::config::schema::Config,
+    turn_cancel: &crate::tools::subagent::CancellationToken,
+) -> std::collections::HashMap<String, serde_json::Value> {
+    let mut seen_signatures = std::collections::HashSet::new();
+    let eligible: Vec<(
+        String,
+        std::sync::Arc<dyn crate::tools::Tool>,
+        serde_json::Value,
+        u64,
+    )> = calls
+        .iter()
+        .filter(|call| {
+            is_parallel_safe_tool_call(tools, call, &config.agents.defaults.security_mode)
+        })
+        .filter_map(|call| {
+            let canonical = tools.resolve_canonical_name(&call.name);
+            let tool = tools.get(&canonical)?;
+            let normalized = crate::tools::normalize_tool_args(&call.arguments);
+            let sig = format!("{}:{}", canonical, normalized);
+            seen_signatures.insert(sig).then(|| {
+                let meta = tool.metadata();
+                let timeout_secs = resolve_tool_timeout_secs(
+                    &canonical,
+                    &normalized,
+                    meta.recommended_timeout_secs,
+                    config.agents.defaults.tool_timeout_secs,
+                );
+                (call.id.clone(), tool, normalized, timeout_secs)
+            })
+        })
+        .collect();
+
+    match eligible.len() >= 2 && !turn_cancel.is_cancelled() {
+        false => std::collections::HashMap::new(),
+        true => {
+            let futures =
+                eligible
+                    .into_iter()
+                    .map(|(call_id, tool, normalized, timeout_secs)| {
+                        let cancel = turn_cancel.clone();
+                        async move {
+                            let timed = tokio::time::timeout(
+                                std::time::Duration::from_secs(timeout_secs),
+                                tool.call(&normalized),
+                            );
+                            let outcome = tokio::select! {
+                                biased;
+                                _ = cancel.wait_for_cancellation() => None,
+                                res = timed => match res {
+                                    Ok(Ok(val)) => Some(val),
+                                    _ => None,
+                                },
+                            };
+                            outcome.map(|val| (call_id, val))
+                        }
+                    });
+            futures_util::future::join_all(futures)
+                .await
+                .into_iter()
+                .flatten()
+                .collect()
+        }
+    }
 }
 
 struct ToolExecutionPipeline<'a> {
@@ -72,33 +168,37 @@ impl<'a> ToolExecutionPipeline<'a> {
     }
 
     async fn execute(&mut self) -> serde_json::Value {
-        let _process_guard = match self.acquire_process_guard() {
-            Ok(guard) => guard,
-            Err(reason) => return self.render_process_policy_block(&reason).await,
-        };
+        match self.params.prefetched_output.take() {
+            Some(prefetched) => self.render_success(prefetched).await,
+            None => {
+                let _process_guard = match self.acquire_process_guard() {
+                    Ok(guard) => guard,
+                    Err(reason) => return self.render_process_policy_block(&reason).await,
+                };
 
-        let tool_timeout_secs = self.resolve_timeout_secs();
-        let mut attempts = 0;
-        let max_attempts = 3;
-        let mut delay = std::time::Duration::from_secs(1);
+                let tool_timeout_secs = self.resolve_timeout_secs();
+                let mut attempts = 0;
+                let max_attempts = 3;
+                let mut delay = std::time::Duration::from_secs(1);
 
-        loop {
-            attempts += 1;
-            match self.run_with_spinner(tool_timeout_secs).await {
-                Ok(res) => return self.render_success(res).await,
-                Err(err) => {
-                    if attempts < max_attempts && is_transient_error(&err) {
-                        tracing::warn!(
-                            tool = %self.params.call.name,
-                            attempt = attempts,
-                            error = %err,
-                            "Transient tool error encountered. Retrying in {:?}",
-                            delay
-                        );
-                        tokio::time::sleep(delay).await;
-                        delay *= 2;
-                    } else {
-                        return self.render_error(err).await;
+                loop {
+                    attempts += 1;
+                    match self.run_with_spinner(tool_timeout_secs).await {
+                        Ok(res) => return self.render_success(res).await,
+                        Err(err) => match attempts < max_attempts && is_transient_error(&err) {
+                            true => {
+                                tracing::warn!(
+                                    tool = %self.params.call.name,
+                                    attempt = attempts,
+                                    error = %err,
+                                    "Transient tool error encountered. Retrying in {:?}",
+                                    delay
+                                );
+                                tokio::time::sleep(delay).await;
+                                delay *= 2;
+                            }
+                            false => return self.render_error(err).await,
+                        },
                     }
                 }
             }
@@ -280,6 +380,7 @@ pub(super) async fn execute_auto_tool_call(
             tool_spinner_msg: &tool_spinner_msg,
             turn_cancel,
             turn_errors,
+            prefetched_output: None,
         })
         .await,
     )

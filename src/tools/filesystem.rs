@@ -10,26 +10,11 @@ where
 {
     let opt = Option::<serde_json::Value>::deserialize(deserializer)?;
     match opt {
-        Some(serde_json::Value::Number(n)) => {
-            if let Some(u) = n.as_u64() {
-                Ok(Some(u as usize))
-            } else if let Some(i) = n.as_i64() {
-                if i >= 0 {
-                    Ok(Some(i as usize))
-                } else {
-                    Ok(None)
-                }
-            } else {
-                Ok(None)
-            }
-        }
-        Some(serde_json::Value::String(s)) => {
-            if let Ok(u) = s.trim().parse::<usize>() {
-                Ok(Some(u))
-            } else {
-                Ok(None)
-            }
-        }
+        Some(serde_json::Value::Number(n)) => Ok(n
+            .as_u64()
+            .map(|u| u as usize)
+            .or_else(|| n.as_i64().and_then(|i| (i >= 0).then_some(i as usize)))),
+        Some(serde_json::Value::String(s)) => Ok(s.trim().parse::<usize>().ok()),
         _ => Ok(None),
     }
 }
@@ -40,25 +25,318 @@ where
 {
     let val = serde_json::Value::deserialize(deserializer)?;
     match val {
-        serde_json::Value::Number(n) => {
-            if let Some(u) = n.as_u64() {
-                Ok(u as usize)
-            } else if let Some(i) = n.as_i64() {
-                if i >= 0 {
-                    Ok(i as usize)
-                } else {
-                    Err(serde::de::Error::custom("expected positive number"))
-                }
-            } else {
-                Err(serde::de::Error::custom("expected integer"))
-            }
-        }
+        serde_json::Value::Number(n) => n
+            .as_u64()
+            .map(|u| u as usize)
+            .or_else(|| n.as_i64().and_then(|i| (i >= 0).then_some(i as usize)))
+            .ok_or_else(|| serde::de::Error::custom("expected non-negative integer")),
         serde_json::Value::String(s) => s
             .trim()
             .parse::<usize>()
             .map_err(|_| serde::de::Error::custom("expected integer string")),
         _ => Err(serde::de::Error::custom("expected number or string integer")),
     }
+}
+
+/// Computes a deterministic 16-bit FNV-1a hex digest (`4` lowercase hex chars)
+/// for a single line of text (ignoring trailing `\r`).
+pub fn line_content_hash(line: &str) -> String {
+    let hash32 = line
+        .trim_end_matches('\r')
+        .as_bytes()
+        .iter()
+        .fold(0x811c_9dc5_u32, |acc, &b| {
+            (acc ^ (b as u32)).wrapping_mul(0x0100_0193)
+        });
+    let hash16 = ((hash32 >> 16) ^ (hash32 & 0xffff)) as u16;
+    format!("{:04x}", hash16)
+}
+
+fn normalize_expected_hash(raw: &str) -> String {
+    raw.rsplit(':')
+        .next()
+        .unwrap_or(raw)
+        .trim()
+        .to_ascii_lowercase()
+}
+
+fn find_line_span_by_anchor(
+    lines: &[String],
+    requested_start_idx: usize,
+    anchor_text: &str,
+) -> Option<(usize, usize)> {
+    let anchor_lines: Vec<&str> = anchor_text.lines().collect();
+    let span = anchor_lines.len();
+    (span > 0 && span <= lines.len()).then(|| {
+        let max_start = lines.len() - span;
+        let exact_match = (0..=max_start)
+            .filter(|&idx| {
+                lines[idx..idx + span]
+                    .iter()
+                    .zip(anchor_lines.iter())
+                    .all(|(file_line, anchor_line)| file_line.trim_end_matches('\r') == anchor_line.trim_end_matches('\r'))
+            })
+            .min_by_key(|&idx| idx.abs_diff(requested_start_idx));
+
+        exact_match
+            .or_else(|| {
+                (0..=max_start)
+                    .filter(|&idx| {
+                        lines[idx..idx + span]
+                            .iter()
+                            .zip(anchor_lines.iter())
+                            .all(|(file_line, anchor_line)| file_line.trim() == anchor_line.trim())
+                    })
+                    .min_by_key(|&idx| idx.abs_diff(requested_start_idx))
+            })
+            .map(|start_idx| (start_idx, start_idx + span))
+    })?
+}
+
+fn find_line_span_by_hash(
+    lines: &[String],
+    requested_start_idx: usize,
+    span_len: usize,
+    expected_hash: &str,
+) -> Option<(usize, usize)> {
+    let target_hash = normalize_expected_hash(expected_hash);
+    (!target_hash.is_empty() && !lines.is_empty()).then(|| {
+        (0..lines.len())
+            .filter(|&idx| idx.abs_diff(requested_start_idx) <= 50)
+            .filter(|&idx| line_content_hash(&lines[idx]) == target_hash)
+            .min_by_key(|&idx| idx.abs_diff(requested_start_idx))
+            .map(|start_idx| (start_idx, (start_idx + span_len.max(1)).min(lines.len())))
+    })?
+}
+
+#[derive(Deserialize, Clone)]
+struct SearchReplaceEdit {
+    #[serde(
+        alias = "old_text",
+        alias = "oldText",
+        alias = "old_str",
+        alias = "oldStr",
+        alias = "search",
+        alias = "find"
+    )]
+    target: String,
+    #[serde(
+        alias = "new_text",
+        alias = "newText",
+        alias = "new_str",
+        alias = "newStr",
+        alias = "replace",
+        alias = "content"
+    )]
+    replacement: String,
+}
+
+fn parse_conflict_marker_edits(patch_text: &str) -> Vec<SearchReplaceEdit> {
+    #[derive(Clone, Copy)]
+    enum MarkerState {
+        Outside,
+        InSearch,
+        InReplace,
+    }
+
+    let (edits, _, _, _) = patch_text.lines().fold(
+        (Vec::new(), MarkerState::Outside, Vec::<String>::new(), Vec::<String>::new()),
+        |(mut acc, state, mut search_buf, mut replace_buf), line| {
+            let trimmed = line.trim_end_matches('\r');
+            match (
+                state,
+                trimmed.starts_with("<<<<<<< SEARCH"),
+                trimmed == "=======",
+                trimmed.starts_with(">>>>>>> REPLACE"),
+            ) {
+                (MarkerState::Outside, true, _, _) => {
+                    search_buf.clear();
+                    replace_buf.clear();
+                    (acc, MarkerState::InSearch, search_buf, replace_buf)
+                }
+                (MarkerState::InSearch, _, true, _) => {
+                    (acc, MarkerState::InReplace, search_buf, replace_buf)
+                }
+                (MarkerState::InReplace, _, _, true) => {
+                    acc.push(SearchReplaceEdit {
+                        target: search_buf.join("\n"),
+                        replacement: replace_buf.join("\n"),
+                    });
+                    search_buf.clear();
+                    replace_buf.clear();
+                    (acc, MarkerState::Outside, search_buf, replace_buf)
+                }
+                (MarkerState::InSearch, _, _, _) => {
+                    search_buf.push(trimmed.to_string());
+                    (acc, MarkerState::InSearch, search_buf, replace_buf)
+                }
+                (MarkerState::InReplace, _, _, _) => {
+                    replace_buf.push(trimmed.to_string());
+                    (acc, MarkerState::InReplace, search_buf, replace_buf)
+                }
+                (MarkerState::Outside, false, _, _) => {
+                    (acc, MarkerState::Outside, search_buf, replace_buf)
+                }
+            }
+        },
+    );
+    edits
+}
+
+fn apply_single_search_replace(content: &str, edit: &SearchReplaceEdit) -> Result<String> {
+    let exact_replaced = (!edit.target.is_empty())
+        .then(|| content.find(&edit.target))
+        .flatten()
+        .map(|pos| {
+            let mut out = String::with_capacity(content.len() + edit.replacement.len());
+            out.push_str(&content[..pos]);
+            out.push_str(&edit.replacement);
+            out.push_str(&content[pos + edit.target.len()..]);
+            out
+        });
+
+    match exact_replaced {
+        Some(updated) => Ok(updated),
+        None => {
+            let file_lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+            let target_lines: Vec<&str> = edit.target.lines().collect();
+            let span = target_lines.len();
+            let matched_start = (span > 0 && span <= file_lines.len())
+                .then(|| {
+                    let max_start = file_lines.len() - span;
+                    (0..=max_start)
+                        .find(|&idx| {
+                            file_lines[idx..idx + span]
+                                .iter()
+                                .zip(target_lines.iter())
+                                .all(|(a, b)| a.trim_end() == b.trim_end())
+                        })
+                        .or_else(|| {
+                            (0..=max_start).find(|&idx| {
+                                file_lines[idx..idx + span]
+                                    .iter()
+                                    .zip(target_lines.iter())
+                                    .all(|(a, b)| a.trim() == b.trim())
+                            })
+                        })
+                })
+                .flatten()
+                .ok_or_else(|| anyhow!("Search block not found in target file"))?;
+
+            let mut updated_lines = Vec::with_capacity(file_lines.len() + edit.replacement.lines().count());
+            updated_lines.extend(file_lines[..matched_start].iter().cloned());
+            updated_lines.extend(edit.replacement.lines().map(|l| l.to_string()));
+            updated_lines.extend(file_lines[matched_start + span..].iter().cloned());
+
+            let mut joined = updated_lines.join("\n");
+            let needs_trailing_newline = content.ends_with('\n') && !joined.ends_with('\n');
+            needs_trailing_newline.then(|| joined.push('\n'));
+            Ok(joined)
+        }
+    }
+}
+
+#[derive(Default)]
+struct FuzzyHunk {
+    old_lines: Vec<String>,
+    new_lines: Vec<String>,
+}
+
+fn parse_fuzzy_hunks(patch_text: &str) -> Vec<FuzzyHunk> {
+    let (mut hunks, current) = patch_text.lines().fold(
+        (Vec::<FuzzyHunk>::new(), FuzzyHunk::default()),
+        |(mut acc, mut cur), raw_line| {
+            let line = raw_line.trim_end_matches('\r');
+            let is_file_header = line.starts_with("--- ")
+                || line.starts_with("+++ ")
+                || line.starts_with("diff ")
+                || line.starts_with("index ")
+                || line.starts_with("\\ No newline");
+            let is_hunk_header = line.starts_with("@@");
+
+            match (is_file_header, is_hunk_header, line.chars().next()) {
+                (true, _, _) => (acc, cur),
+                (false, true, _) => {
+                    let has_lines = !cur.old_lines.is_empty() || !cur.new_lines.is_empty();
+                    has_lines.then(|| acc.push(std::mem::take(&mut cur)));
+                    (acc, cur)
+                }
+                (false, false, Some('-')) => {
+                    cur.old_lines.push(line[1..].to_string());
+                    (acc, cur)
+                }
+                (false, false, Some('+')) => {
+                    cur.new_lines.push(line[1..].to_string());
+                    (acc, cur)
+                }
+                (false, false, Some(' ')) => {
+                    cur.old_lines.push(line[1..].to_string());
+                    cur.new_lines.push(line[1..].to_string());
+                    (acc, cur)
+                }
+                _ => (acc, cur),
+            }
+        },
+    );
+    let has_trailing = !current.old_lines.is_empty() || !current.new_lines.is_empty();
+    has_trailing.then(|| hunks.push(current));
+    hunks
+}
+
+fn apply_fuzzy_unified_diff(content: &str, patch_text: &str) -> Result<String> {
+    let hunks = parse_fuzzy_hunks(patch_text);
+    (!hunks.is_empty())
+        .then_some(())
+        .ok_or_else(|| anyhow!("No valid diff hunks found in patch"))?;
+
+    let initial_lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+    let patched_lines = hunks.iter().try_fold(initial_lines, |mut lines, hunk| -> Result<Vec<String>> {
+        let span = hunk.old_lines.len();
+        let matched_idx = match span {
+            0 => Some(lines.len()),
+            _ => (span <= lines.len())
+                .then(|| {
+                    let max_start = lines.len() - span;
+                    (0..=max_start)
+                        .find(|&idx| {
+                            lines[idx..idx + span]
+                                .iter()
+                                .zip(hunk.old_lines.iter())
+                                .all(|(a, b)| a == b)
+                        })
+                        .or_else(|| {
+                            (0..=max_start).find(|&idx| {
+                                lines[idx..idx + span]
+                                    .iter()
+                                    .zip(hunk.old_lines.iter())
+                                    .all(|(a, b)| a.trim_end() == b.trim_end())
+                            })
+                        })
+                        .or_else(|| {
+                            (0..=max_start).find(|&idx| {
+                                lines[idx..idx + span]
+                                    .iter()
+                                    .zip(hunk.old_lines.iter())
+                                    .all(|(a, b)| a.trim() == b.trim())
+                            })
+                        })
+                })
+                .flatten(),
+        }
+        .ok_or_else(|| anyhow!("Failed to locate fuzzy diff hunk context in file"))?;
+
+        let mut next_lines = Vec::with_capacity(lines.len() + hunk.new_lines.len());
+        next_lines.extend(lines[..matched_idx].iter().cloned());
+        next_lines.extend(hunk.new_lines.iter().cloned());
+        next_lines.extend(lines[matched_idx + span..].iter().cloned());
+        lines = next_lines;
+        Ok(lines)
+    })?;
+
+    let mut joined = patched_lines.join("\n");
+    let preserve_newline = content.ends_with('\n') && !joined.ends_with('\n');
+    preserve_newline.then(|| joined.push('\n'));
+    Ok(joined)
 }
 
 #[derive(Deserialize)]
@@ -103,6 +381,14 @@ struct ReadFileArgs {
         alias = "to_line"
     )]
     end_line: Option<usize>,
+    #[serde(
+        default,
+        alias = "hashline",
+        alias = "includeHashes",
+        alias = "with_hashes",
+        alias = "line_hashes"
+    )]
+    include_hashes: bool,
 }
 
 #[derive(Deserialize)]
@@ -138,12 +424,34 @@ struct PatchFileArgs {
     )]
     path: String,
     #[serde(
+        default,
         alias = "diff",
         alias = "unified_diff",
         alias = "unifiedDiff",
         alias = "content"
     )]
-    patch: String,
+    patch: Option<String>,
+    #[serde(
+        default,
+        alias = "old_text",
+        alias = "oldText",
+        alias = "old_str",
+        alias = "oldStr",
+        alias = "search",
+        alias = "find"
+    )]
+    target: Option<String>,
+    #[serde(
+        default,
+        alias = "new_text",
+        alias = "newText",
+        alias = "new_str",
+        alias = "newStr",
+        alias = "replace"
+    )]
+    replacement: Option<String>,
+    #[serde(default)]
+    edits: Option<Vec<SearchReplaceEdit>>,
 }
 
 #[derive(Deserialize)]
@@ -178,6 +486,23 @@ struct ReplaceLinesArgs {
         alias = "code"
     )]
     replacement: String,
+    #[serde(
+        default,
+        alias = "expectedHash",
+        alias = "start_hash",
+        alias = "startHash",
+        alias = "hash"
+    )]
+    expected_hash: Option<String>,
+    #[serde(
+        default,
+        alias = "anchorText",
+        alias = "target_text",
+        alias = "targetText",
+        alias = "old_text",
+        alias = "oldText"
+    )]
+    anchor_text: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -209,6 +534,134 @@ fn default_find_dir() -> String {
     ".".to_string()
 }
 
+const PATH_ALIAS_KEYS: &[&str] = &[
+    "path",
+    "file_path",
+    "filePath",
+    "target_file",
+    "targetFile",
+    "target_path",
+    "targetPath",
+    "file",
+    "filename",
+    "uri",
+    "output_path",
+    "outputPath",
+    "AbsolutePath",
+    "absolute_path",
+    "DirectoryPath",
+    "directory_path",
+];
+const DIR_PATH_ALIAS_KEYS: &[&str] = &[
+    "path",
+    "file_path",
+    "filePath",
+    "dir",
+    "directory",
+    "target_dir",
+    "targetDir",
+    "folder",
+    "AbsolutePath",
+    "absolute_path",
+    "DirectoryPath",
+    "directory_path",
+];
+const START_LINE_ALIAS_KEYS: &[&str] = &["start_line", "startLine", "start", "from_line", "fromLine"];
+const END_LINE_ALIAS_KEYS: &[&str] = &["end_line", "endLine", "end", "to_line", "toLine"];
+const INCLUDE_HASHES_ALIAS_KEYS: &[&str] = &[
+    "include_hashes",
+    "includeHashes",
+    "hashline",
+    "with_hashes",
+    "withHashes",
+    "line_hashes",
+    "lineHashes",
+];
+const CONTENT_ALIAS_KEYS: &[&str] = &["content", "text", "code", "data", "body"];
+const PATCH_ALIAS_KEYS: &[&str] = &["patch", "diff", "unified_diff", "unifiedDiff", "content"];
+const TARGET_ALIAS_KEYS: &[&str] = &[
+    "target", "old_text", "oldText", "old_str", "oldStr", "search", "find",
+];
+const PATCH_REPLACEMENT_ALIAS_KEYS: &[&str] = &[
+    "replacement",
+    "new_text",
+    "newText",
+    "new_str",
+    "newStr",
+    "replace",
+];
+const REPLACE_LINES_REPLACEMENT_ALIAS_KEYS: &[&str] = &[
+    "replacement",
+    "content",
+    "new_content",
+    "newContent",
+    "text",
+    "code",
+];
+const EXPECTED_HASH_ALIAS_KEYS: &[&str] = &[
+    "expected_hash",
+    "expectedHash",
+    "start_hash",
+    "startHash",
+    "hash",
+];
+const ANCHOR_TEXT_ALIAS_KEYS: &[&str] = &[
+    "anchor_text",
+    "anchorText",
+    "target_text",
+    "targetText",
+    "old_text",
+    "oldText",
+];
+
+const READ_FILE_GROUPS: &[(&str, &[&str])] = &[
+    ("path", PATH_ALIAS_KEYS),
+    ("start_line", START_LINE_ALIAS_KEYS),
+    ("end_line", END_LINE_ALIAS_KEYS),
+    ("include_hashes", INCLUDE_HASHES_ALIAS_KEYS),
+];
+const WRITE_FILE_GROUPS: &[(&str, &[&str])] = &[
+    ("path", PATH_ALIAS_KEYS),
+    ("content", CONTENT_ALIAS_KEYS),
+];
+const LIST_DIR_GROUPS: &[(&str, &[&str])] = &[("path", DIR_PATH_ALIAS_KEYS)];
+const PATCH_FILE_GROUPS: &[(&str, &[&str])] = &[
+    ("path", PATH_ALIAS_KEYS),
+    ("patch", PATCH_ALIAS_KEYS),
+    ("target", TARGET_ALIAS_KEYS),
+    ("replacement", PATCH_REPLACEMENT_ALIAS_KEYS),
+];
+const REPLACE_LINES_GROUPS: &[(&str, &[&str])] = &[
+    ("path", PATH_ALIAS_KEYS),
+    ("start_line", START_LINE_ALIAS_KEYS),
+    ("end_line", END_LINE_ALIAS_KEYS),
+    ("replacement", REPLACE_LINES_REPLACEMENT_ALIAS_KEYS),
+    ("expected_hash", EXPECTED_HASH_ALIAS_KEYS),
+    ("anchor_text", ANCHOR_TEXT_ALIAS_KEYS),
+];
+
+fn collapse_alias_groups(
+    arguments: &serde_json::Value,
+    groups: &[(&str, &[&str])],
+) -> serde_json::Value {
+    match arguments.as_object() {
+        None => arguments.clone(),
+        Some(orig_map) => {
+            let mut map = orig_map.clone();
+            for &(canonical, aliases) in groups {
+                let resolved = aliases
+                    .iter()
+                    .find_map(|&alias_key| map.get(alias_key).cloned());
+                for &alias_key in aliases {
+                    map.remove(alias_key);
+                }
+                resolved.map(|val| map.insert(canonical.to_string(), val));
+            }
+            serde_json::Value::Object(map)
+        }
+    }
+}
+
 pub struct ReadFileTool;
 
 #[async_trait::async_trait]
@@ -218,7 +671,7 @@ impl Tool for ReadFileTool {
     }
 
     fn description(&self) -> &str {
-        "Read contents of a file. Supports reading specific line ranges (1-indexed)."
+        "Read contents of a file. Supports reading specific line ranges (1-indexed) and optional content-hash line anchors (include_hashes)."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -227,49 +680,61 @@ impl Tool for ReadFileTool {
             "properties": {
                 "path": { "type": "string", "description": "Absolute or relative path to the file. Aliases accepted: file_path, filePath." },
                 "start_line": { "type": "integer", "description": "Start line (1-indexed, inclusive). Alias accepted: startLine." },
-                "end_line": { "type": "integer", "description": "End line (1-indexed, inclusive). Alias accepted: endLine." }
+                "end_line": { "type": "integer", "description": "End line (1-indexed, inclusive). Alias accepted: endLine." },
+                "include_hashes": { "type": "boolean", "description": "When true, prefixes each returned line with '<line_no>:<4-char-fnv1a-hash>| ' for drift-safe editing with replace_lines. Alias accepted: hashline." }
             },
             "required": ["path"]
         })
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let args: ReadFileArgs = serde_json::from_value(arguments.clone())
+        let collapsed = collapse_alias_groups(arguments, READ_FILE_GROUPS);
+        let args: ReadFileArgs = serde_json::from_value(collapsed)
             .map_err(|e| anyhow!("Invalid read_file arguments: {}", e))?;
         let path = resolve_path(&args.path);
         crate::config::loader::verify_safe_path(&path)?;
 
-        // Guard against reading excessively large files (>50MB) to prevent OOM
         let metadata = fs::metadata(&path)
             .with_context(|| format!("Failed to read file metadata at {:?}", path))?;
-        const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
-        if metadata.len() > MAX_FILE_SIZE {
-            return Err(anyhow!(
-                "File too large to read ({} bytes, max {} bytes). Use start_line/end_line to read specific ranges.",
-                metadata.len(),
-                MAX_FILE_SIZE
-            ));
-        }
+        const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024;
+        (metadata.len() <= MAX_FILE_SIZE)
+            .then_some(())
+            .ok_or_else(|| {
+                anyhow!(
+                    "File too large to read ({} bytes, max {} bytes). Use start_line/end_line to read specific ranges.",
+                    metadata.len(),
+                    MAX_FILE_SIZE
+                )
+            })?;
 
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read file at {:?}", path))?;
 
-        let start_line = args.start_line;
-        let end_line = args.end_line;
+        let has_range = args.start_line.is_some() || args.end_line.is_some();
+        match (has_range, args.include_hashes) {
+            (false, false) => Ok(serde_json::Value::String(content)),
+            _ => {
+                let lines: Vec<&str> = content.lines().collect();
+                let start = args.start_line.unwrap_or(1).saturating_sub(1);
+                let end = args.end_line.unwrap_or(lines.len()).min(lines.len());
+                let valid_slice = (start <= lines.len() && start < end)
+                    .then(|| &lines[start..end])
+                    .unwrap_or(&[]);
 
-        if start_line.is_some() || end_line.is_some() {
-            let lines: Vec<&str> = content.lines().collect();
-            let start = start_line.unwrap_or(1).saturating_sub(1);
-            let end = end_line.unwrap_or(lines.len()).min(lines.len());
-
-            if start > lines.len() || start >= end {
-                return Ok(serde_json::Value::String(String::new()));
+                let formatted = match args.include_hashes {
+                    true => valid_slice
+                        .iter()
+                        .enumerate()
+                        .map(|(offset, line)| {
+                            let line_no = start + offset + 1;
+                            format!("{}:{}| {}", line_no, line_content_hash(line), line)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                    false => valid_slice.join("\n"),
+                };
+                Ok(serde_json::Value::String(formatted))
             }
-
-            let sliced = lines[start..end].join("\n");
-            Ok(serde_json::Value::String(sliced))
-        } else {
-            Ok(serde_json::Value::String(content))
         }
     }
 }
@@ -298,14 +763,13 @@ impl Tool for WriteFileTool {
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let args: WriteFileArgs = serde_json::from_value(arguments.clone())
+        let collapsed = collapse_alias_groups(arguments, WRITE_FILE_GROUPS);
+        let args: WriteFileArgs = serde_json::from_value(collapsed)
             .map_err(|e| anyhow!("Invalid write_file arguments: {}", e))?;
 
         let path = resolve_path(&args.path);
         crate::config::loader::verify_safe_path(&path)?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        path.parent().map(fs::create_dir_all).transpose()?;
 
         fs::write(&path, &args.content)
             .with_context(|| format!("Failed to write to file at {:?}", path))?;
@@ -337,7 +801,8 @@ impl Tool for ListDirTool {
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let args: PathArg = serde_json::from_value(arguments.clone())
+        let collapsed = collapse_alias_groups(arguments, LIST_DIR_GROUPS);
+        let args: PathArg = serde_json::from_value(collapsed)
             .map_err(|e| anyhow!("Invalid list_dir arguments: {}", e))?;
         let path = resolve_path(&args.path);
         crate::config::loader::verify_safe_path(&path)?;
@@ -377,7 +842,7 @@ impl Tool for PatchFileTool {
     }
 
     fn description(&self) -> &str {
-        "Apply a unified diff patch to a file. This is highly efficient for applying specific modifications to a file without rewriting it entirely."
+        "Apply a unified diff patch (exact or fuzzy whitespace-tolerant) or search-and-replace blocks to a file without rewriting it entirely."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -385,14 +850,29 @@ impl Tool for PatchFileTool {
             "type": "object",
             "properties": {
                 "path": { "type": "string", "description": "Absolute or relative path to the file to modify. Aliases accepted: file_path, filePath." },
-                "patch": { "type": "string", "description": "Unified diff patch content to apply (standard diff format)" }
+                "patch": { "type": "string", "description": "Unified diff patch content or SEARCH/REPLACE conflict blocks to apply." },
+                "target": { "type": "string", "description": "Optional search block to find when using direct search-and-replace mode. Aliases: old_text, search." },
+                "replacement": { "type": "string", "description": "Optional replacement text when using direct search-and-replace mode. Aliases: new_text, replace." },
+                "edits": {
+                    "type": "array",
+                    "description": "Optional list of {target, replacement} search-and-replace blocks.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "target": { "type": "string" },
+                            "replacement": { "type": "string" }
+                        },
+                        "required": ["target", "replacement"]
+                    }
+                }
             },
-            "required": ["path", "patch"]
+            "required": ["path"]
         })
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let args: PatchFileArgs = serde_json::from_value(arguments.clone())
+        let collapsed = collapse_alias_groups(arguments, PATCH_FILE_GROUPS);
+        let args: PatchFileArgs = serde_json::from_value(collapsed)
             .map_err(|e| anyhow!("Invalid patch_file arguments: {}", e))?;
 
         let path = resolve_path(&args.path);
@@ -401,16 +881,52 @@ impl Tool for PatchFileTool {
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read file at {:?}", path))?;
 
-        let parsed_patch = diffy::Patch::from_str(&args.patch)
-            .map_err(|e| anyhow!("Failed to parse patch: {}", e))?;
+        let mut search_replace_edits: Vec<SearchReplaceEdit> = args.edits.unwrap_or_default();
+        args.target
+            .zip(args.replacement)
+            .map(|(target, replacement)| {
+                search_replace_edits.push(SearchReplaceEdit { target, replacement })
+            });
+        args.patch
+            .as_deref()
+            .map(parse_conflict_marker_edits)
+            .filter(|parsed| !parsed.is_empty())
+            .map(|parsed| search_replace_edits.extend(parsed));
 
-        let patched_content = diffy::apply(&content, &parsed_patch)
-            .map_err(|e| anyhow!("Failed to apply patch: {}", e))?;
+        let (patched_content, mode) = match (!search_replace_edits.is_empty(), args.patch.as_deref()) {
+            (true, _) => {
+                let updated = search_replace_edits
+                    .iter()
+                    .try_fold(content.clone(), |acc, edit| apply_single_search_replace(&acc, edit))?;
+                Ok((updated, "search_replace"))
+            }
+            (false, Some(patch_str)) => {
+                let exact_attempt = diffy::Patch::from_str(patch_str)
+                    .map_err(|e| anyhow!("Failed to parse patch: {}", e))
+                    .and_then(|parsed| {
+                        diffy::apply(&content, &parsed)
+                            .map_err(|e| anyhow!("Failed to apply patch: {}", e))
+                    });
+                match exact_attempt {
+                    Ok(applied) => Ok((applied, "exact_diff")),
+                    Err(exact_err) => apply_fuzzy_unified_diff(&content, patch_str)
+                        .map(|applied| (applied, "fuzzy_diff"))
+                        .map_err(|_| exact_err),
+                }
+            }
+            (false, None) => Err(anyhow!(
+                "patch_file requires either 'patch' (unified diff) or 'target'+'replacement' / 'edits'"
+            )),
+        }?;
 
         fs::write(&path, &patched_content)
             .with_context(|| format!("Failed to write patched content to file at {:?}", path))?;
 
-        Ok(serde_json::json!({ "status": "success", "path": path.to_string_lossy() }))
+        Ok(serde_json::json!({
+            "status": "success",
+            "mode": mode,
+            "path": path.to_string_lossy()
+        }))
     }
 }
 
@@ -423,7 +939,7 @@ impl Tool for ReplaceLinesTool {
     }
 
     fn description(&self) -> &str {
-        "Replace a specific range of lines (1-indexed, inclusive) in a file with new content."
+        "Replace a specific range of lines (1-indexed, inclusive) in a file with new content. Supports optional expected_hash (from read_file include_hashes) or anchor_text to automatically relocate drifted line numbers."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -433,26 +949,29 @@ impl Tool for ReplaceLinesTool {
                 "path": { "type": "string", "description": "Absolute or relative path to the file to edit. Aliases accepted: file_path, filePath." },
                 "start_line": { "type": "integer", "description": "Start line number (1-indexed, inclusive). Alias accepted: startLine." },
                 "end_line": { "type": "integer", "description": "End line number (1-indexed, inclusive). Alias accepted: endLine." },
-                "replacement": { "type": "string", "description": "The new replacement text content. Alias accepted: content." }
+                "replacement": { "type": "string", "description": "The new replacement text content. Alias accepted: content." },
+                "expected_hash": { "type": "string", "description": "Optional 4-char FNV-1a hex hash of start_line (from read_file with include_hashes=true) to verify content and auto-relocate drifted line numbers." },
+                "anchor_text": { "type": "string", "description": "Optional expected original line(s) at the target range to verify content and auto-relocate drifted line numbers." }
             },
             "required": ["path", "start_line", "end_line", "replacement"]
         })
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let args: ReplaceLinesArgs = serde_json::from_value(arguments.clone())
+        let collapsed = collapse_alias_groups(arguments, REPLACE_LINES_GROUPS);
+        let args: ReplaceLinesArgs = serde_json::from_value(collapsed)
             .map_err(|e| anyhow!("Invalid replace_lines arguments: {}", e))?;
-        let start_line = if args.start_line == 0 { 1 } else { args.start_line };
-        let end_line = if args.end_line == 0 { 1 } else { args.end_line };
+        let start_line = args.start_line.max(1);
+        let end_line = args.end_line.max(1);
         let replacement = args.replacement;
 
-        if start_line > end_line {
-            return Err(anyhow!(
+        (start_line <= end_line).then_some(()).ok_or_else(|| {
+            anyhow!(
                 "Invalid line range: {} to {} (start_line cannot be greater than end_line)",
                 start_line,
                 end_line
-            ));
-        }
+            )
+        })?;
 
         let path = resolve_path(&args.path);
         crate::config::loader::verify_safe_path(&path)?;
@@ -462,37 +981,81 @@ impl Tool for ReplaceLinesTool {
 
         let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
 
-        if start_line > lines.len() + 1 {
-            return Err(anyhow!(
-                "start_line {} is beyond file line count {}",
-                start_line,
-                lines.len()
-            ));
-        }
+        let requested_start_idx = start_line - 1;
+        let requested_span = end_line - start_line + 1;
 
-        let start_idx = start_line - 1;
-        let end_idx = (end_line).min(lines.len());
+        let anchor_resolved = match args.anchor_text.as_deref().filter(|s| !s.is_empty()) {
+            Some(anchor) => Some(
+                find_line_span_by_anchor(&lines, requested_start_idx, anchor).ok_or_else(|| {
+                    anyhow!(
+                        "anchor_text not found near line {} in {:?}",
+                        start_line,
+                        path
+                    )
+                })?,
+            ),
+            None => None,
+        };
+
+        let hash_resolved = match (
+            anchor_resolved,
+            args.expected_hash.as_deref().filter(|s| !s.is_empty()),
+        ) {
+            (Some(span), _) => Some(span),
+            (None, Some(expected_hash)) => Some(
+                find_line_span_by_hash(&lines, requested_start_idx, requested_span, expected_hash)
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "expected_hash '{}' did not match line {} or nearby lines in {:?}",
+                            expected_hash,
+                            start_line,
+                            path
+                        )
+                    })?,
+            ),
+            (None, None) => None,
+        };
+
+        let (start_idx, end_idx, relocated) = match hash_resolved {
+            Some((resolved_start, resolved_end)) => (
+                resolved_start,
+                resolved_end,
+                resolved_start != requested_start_idx,
+            ),
+            None => {
+                (start_line <= lines.len() + 1)
+                    .then_some(())
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "start_line {} is beyond file line count {}",
+                            start_line,
+                            lines.len()
+                        )
+                    })?;
+                (requested_start_idx, end_line.min(lines.len()), false)
+            }
+        };
 
         let mut new_lines = Vec::new();
         new_lines.extend(lines[..start_idx].iter().cloned());
-        for repl_line in replacement.lines() {
-            new_lines.push(repl_line.to_string());
-        }
-        if end_idx < lines.len() {
+        new_lines.extend(replacement.lines().map(|s| s.to_string()));
+        (end_idx < lines.len()).then(|| {
             new_lines.extend(lines[end_idx..].iter().cloned());
-        }
+        });
 
-        // Preserve trailing newline of the original file
         let mut new_content = new_lines.join("\n");
-        if content.ends_with('\n') && !new_content.ends_with('\n') {
-            new_content.push('\n');
-        }
+        let preserve_trailing_newline = content.ends_with('\n') && !new_content.ends_with('\n');
+        preserve_trailing_newline.then(|| new_content.push('\n'));
+
         fs::write(&path, &new_content)
             .with_context(|| format!("Failed to write to file at {:?}", path))?;
 
         Ok(serde_json::json!({
             "status": "success",
             "path": path.to_string_lossy(),
+            "applied_start_line": start_idx + 1,
+            "applied_end_line": end_idx,
+            "relocated": relocated,
             "lines_modified": end_idx - start_idx,
             "new_line_count": new_lines.len()
         }))

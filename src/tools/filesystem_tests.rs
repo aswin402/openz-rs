@@ -295,3 +295,128 @@ async fn test_filesystem_stringified_lines_and_target_file_aliases() -> Result<(
     Ok(())
 }
 
+#[tokio::test]
+async fn test_read_file_hashline_and_replace_lines_drift_relocation() -> Result<()> {
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_hashline_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir)?;
+    let file_path = temp_dir.join("drifted.rs");
+    std::fs::write(
+        &file_path,
+        "// header 1\n// header 2\nfn compute() -> i32 {\n    41\n}\n",
+    )?;
+
+    let read_res = ReadFileTool
+        .call(&serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "include_hashes": true
+        }))
+        .await?;
+    let text = read_res.as_str().unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 5);
+
+    let line4_hash = line_content_hash("    41");
+    assert!(lines[3].starts_with(&format!("4:{}|     41", line4_hash)));
+
+    // Simulate stale line number (model passes start_line=2 instead of 4, but with expected_hash of line 4)
+    let replace_res = ReplaceLinesTool
+        .call(&serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "start_line": 2,
+            "end_line": 2,
+            "expected_hash": line4_hash,
+            "replacement": "    42"
+        }))
+        .await?;
+    assert_eq!(replace_res["status"], "success");
+    assert_eq!(replace_res["relocated"], true);
+    assert_eq!(replace_res["applied_start_line"], 4);
+    assert_eq!(
+        std::fs::read_to_string(&file_path)?,
+        "// header 1\n// header 2\nfn compute() -> i32 {\n    42\n}\n"
+    );
+
+    // Anchor text relocation test
+    let anchor_res = ReplaceLinesTool
+        .call(&serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "start_line": 1,
+            "end_line": 1,
+            "anchor_text": "    42",
+            "replacement": "    100"
+        }))
+        .await?;
+    assert_eq!(anchor_res["status"], "success");
+    assert_eq!(anchor_res["relocated"], true);
+    assert_eq!(anchor_res["applied_start_line"], 4);
+    assert_eq!(
+        std::fs::read_to_string(&file_path)?,
+        "// header 1\n// header 2\nfn compute() -> i32 {\n    100\n}\n"
+    );
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_patch_file_fuzzy_unified_diff_and_search_replace_modes() -> Result<()> {
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_fuzzy_patch_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir)?;
+    let file_path = temp_dir.join("module.rs");
+    std::fs::write(
+        &file_path,
+        "// extra comment 1\n// extra comment 2\nfn greet() {\n    println!(\"hello\");\n}\n",
+    )?;
+
+    // 1. Fuzzy unified diff with wrong line numbers in @@ header and slightly different indentation in context
+    let fuzzy_diff = "@@ -1,3 +1,3 @@\n fn greet() {\n-  println!(\"hello\");\n+    println!(\"hello world\");\n }\n";
+    let res1 = PatchFileTool
+        .call(&serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "patch": fuzzy_diff
+        }))
+        .await?;
+    assert_eq!(res1["status"], "success");
+    assert_eq!(res1["mode"], "fuzzy_diff");
+    assert_eq!(
+        std::fs::read_to_string(&file_path)?,
+        "// extra comment 1\n// extra comment 2\nfn greet() {\n    println!(\"hello world\");\n}\n"
+    );
+
+    // 2. Direct target + replacement search-and-replace mode
+    let res2 = PatchFileTool
+        .call(&serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "target": "    println!(\"hello world\");",
+            "replacement": "    println!(\"salutations\");"
+        }))
+        .await?;
+    assert_eq!(res2["status"], "success");
+    assert_eq!(res2["mode"], "search_replace");
+    assert_eq!(
+        std::fs::read_to_string(&file_path)?,
+        "// extra comment 1\n// extra comment 2\nfn greet() {\n    println!(\"salutations\");\n}\n"
+    );
+
+    // 3. Conflict-marker SEARCH/REPLACE block inside patch string
+    let marker_patch = "<<<<<<< SEARCH\nfn greet() {\n    println!(\"salutations\");\n}\n=======\nfn greet() {\n    println!(\"done\");\n}\n>>>>>>> REPLACE";
+    let res3 = PatchFileTool
+        .call(&serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "patch": marker_patch
+        }))
+        .await?;
+    assert_eq!(res3["status"], "success");
+    assert_eq!(res3["mode"], "search_replace");
+    assert_eq!(
+        std::fs::read_to_string(&file_path)?,
+        "// extra comment 1\n// extra comment 2\nfn greet() {\n    println!(\"done\");\n}\n"
+    );
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(())
+}
+
+

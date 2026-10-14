@@ -157,3 +157,87 @@ async fn test_tool_catalog_bm25_search_and_hot_mount() {
     assert!(tools.contains(&"read_file".to_string()));
 }
 
+#[tokio::test]
+async fn test_tool_catalog_batch_execute_runs_safe_tools_and_enforces_security() {
+    struct SafeDomainTool;
+    #[async_trait::async_trait]
+    impl Tool for SafeDomainTool {
+        fn name(&self) -> &str {
+            "openmedia_inspect_svg"
+        }
+        fn description(&self) -> &str {
+            "Inspect SVG metadata"
+        }
+        fn parameters(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        async fn call(&self, _args: &serde_json::Value) -> Result<serde_json::Value> {
+            Ok(serde_json::json!({"svg_ok": true}))
+        }
+    }
+
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_batch_exec_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let sample_file = temp_dir.join("sample.txt");
+    std::fs::write(&sample_file, "line alpha\nline beta\n").unwrap();
+
+    let registry = crate::tools::ToolRegistry::new();
+    registry.register(std::sync::Arc::new(crate::tools::filesystem::ReadFileTool));
+    registry.register(std::sync::Arc::new(crate::tools::filesystem::ListDirTool));
+    registry.register(std::sync::Arc::new(SafeDomainTool));
+    registry.register(std::sync::Arc::new(crate::tools::shell::ExecCommandTool));
+
+    let catalog = ToolCatalogTool::new(registry.clone());
+    let res = catalog
+        .call(&serde_json::json!({
+            "batch_execute": [
+                {
+                    "tool": "read_file",
+                    "arguments": {
+                        "filePath": sample_file.to_str().unwrap(),
+                        "include_hashes": true
+                    }
+                },
+                {
+                    "tool": "openmedia_inspect_svg",
+                    "arguments": {}
+                },
+                {
+                    "tool": "exec_command",
+                    "arguments": {
+                        "command": "rm -rf /"
+                    }
+                }
+            ]
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(res["success"].as_bool(), Some(true));
+    assert_eq!(res["batch_executed_count"].as_u64(), Some(3));
+    let batch_results = res["batch_results"].as_array().unwrap();
+    assert_eq!(batch_results[0]["tool"], "read_file");
+    assert_eq!(batch_results[0]["status"], "success");
+    assert!(batch_results[0]["output"]
+        .as_str()
+        .unwrap()
+        .contains("line alpha"));
+
+    assert_eq!(batch_results[1]["tool"], "openmedia_inspect_svg");
+    assert_eq!(batch_results[1]["status"], "success");
+
+    assert_eq!(batch_results[2]["tool"], "exec_command");
+    assert_eq!(batch_results[2]["status"], "blocked");
+
+    let (turn_scoped, _) = registry.current_turn_scope();
+    assert!(turn_scoped.contains(&"read_file".to_string()));
+    assert!(turn_scoped.contains(&"openmedia_inspect_svg".to_string()));
+
+    let sticky = registry.current_sticky_tools();
+    assert!(sticky.contains(&"openmedia_inspect_svg".to_string()));
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+

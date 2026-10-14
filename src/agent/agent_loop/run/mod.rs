@@ -26,7 +26,9 @@ use self::research::{
     user_content_requests_fresh_fetch,
 };
 use self::response::normalize_response;
-use self::tool_pipeline::{execute_approved_tool, execute_auto_tool_call, ApprovedToolExec};
+use self::tool_pipeline::{
+    execute_approved_tool, execute_auto_tool_call, prefetch_parallel_safe_batch, ApprovedToolExec,
+};
 use self::turn::{acquire_provider_turn_lock, RunContext};
 use self::events::{
     compact_reasoning_summary,
@@ -634,6 +636,13 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         let mut tool_results = Vec::new();
         let mut assistant_tool_calls_json = Vec::new();
         let mut loop_detection_messages = ctx.messages.clone();
+        let mut prefetched_outputs = prefetch_parallel_safe_batch(
+            &loop_ref.tools,
+            &resp.tool_calls,
+            &config,
+            &turn_cancel,
+        )
+        .await;
 
         for mut call in resp.tool_calls {
             call.name = loop_ref.tools.resolve_canonical_name(&call.name);
@@ -641,39 +650,49 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             let orig_name = call.name.clone();
             let scoped_candidate =
                 auto_scope_context_before_edit(call.clone(), &mut run.auto_scoped_edit_paths);
-            if orig_name != "scope_context" && scoped_candidate.name == "scope_context" {
-                let pre_scope_call = crate::providers::ToolCallRequest {
-                    id: format!("auto_scope_{}", call.id),
-                    name: scoped_candidate.name,
-                    arguments: scoped_candidate.arguments,
-                };
-                let pre_silent = crate::agent::style::spinner::is_silent();
-                let pre_cancel = turn_cancel.clone();
-                if let Some(scope_result) = execute_auto_tool_call(
-                    &loop_ref.tools,
-                    &pre_scope_call,
-                    &config,
-                    ctx.session_key,
-                    pre_silent,
-                    &pre_cancel,
-                    &mut ctx.turn_errors,
-                )
-                .await
-                {
-                    ctx.tools_used.push(pre_scope_call.name.clone());
-                    super::transcript::append_auto_tool_result(
-                        &mut tool_results,
-                        &mut assistant_tool_calls_json,
+            match (
+                orig_name != "scope_context",
+                scoped_candidate.name == "scope_context",
+            ) {
+                (true, true) => {
+                    let pre_scope_call = crate::providers::ToolCallRequest {
+                        id: format!("auto_scope_{}", call.id),
+                        name: scoped_candidate.name,
+                        arguments: scoped_candidate.arguments,
+                    };
+                    let pre_silent = crate::agent::style::spinner::is_silent();
+                    let pre_cancel = turn_cancel.clone();
+                    match execute_auto_tool_call(
+                        &loop_ref.tools,
                         &pre_scope_call,
-                        scope_result,
-                    );
+                        &config,
+                        ctx.session_key,
+                        pre_silent,
+                        &pre_cancel,
+                        &mut ctx.turn_errors,
+                    )
+                    .await
+                    {
+                        Some(scope_result) => {
+                            ctx.tools_used.push(pre_scope_call.name.clone());
+                            super::transcript::append_auto_tool_result(
+                                &mut tool_results,
+                                &mut assistant_tool_calls_json,
+                                &pre_scope_call,
+                                scope_result,
+                            );
+                        }
+                        None => {}
+                    }
                 }
+                _ => {}
             }
-            // Break early if already cancelled (e.g. previous tool in batch was cancelled)
-            if turn_cancel.is_cancelled() {
-                break;
+            match turn_cancel.is_cancelled() {
+                true => break,
+                false => {}
             }
             ctx.tools_used.push(call.name.clone());
+            loop_ref.tools.record_tool_used(&call.name);
 
             crate::agent::activity::update_activity(
                 ctx.session_key,
@@ -910,6 +929,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                     tool_spinner_msg: &tool_spinner_msg,
                                     turn_cancel: &turn_cancel,
                                     turn_errors: &mut ctx.turn_errors,
+                                    prefetched_output: prefetched_outputs.remove(&call.id),
                                 })
                                 .await
                             }
@@ -932,10 +952,9 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                 .await
                             }
                             crate::tools::resource_policy::ToolResourceDecision::RequireApproval { reason } => {
-                                let approved = if approval.approval_requested {
-                                    true
-                                } else {
-                                    crate::agent::security::ask_approval(
+                                let approved = match approval.approval_requested {
+                                    true => true,
+                                    false => crate::agent::security::ask_approval(
                                         ctx.session_key,
                                         &call.name,
                                         &serde_json::json!({
@@ -944,39 +963,43 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                         }),
                                     )
                                     .await
-                                    .unwrap_or(false)
+                                    .unwrap_or(false),
                                 };
-                                if !approved {
-                                    let error_str = format!(
-                                        "Tool denied by resource policy approval: {}. {}",
-                                        call.name, reason
-                                    );
-                                    ctx.turn_errors.push(format!(
-                                        "Tool {} denied by resource policy approval: {}",
-                                        call.name, reason
-                                    ));
-                                    super::tool_execution::render_tool_failure(
-                                        &call,
-                                        &formatted_args,
-                                        ctx.session_key,
-                                        silent,
-                                        &error_str,
-                                    )
-                                    .await
-                                } else {
-                                    execute_approved_tool(ApprovedToolExec {
-                                        tool: t.clone(),
-                                        call: &call,
-                                        metadata: &metadata,
-                                        config: &config,
-                                        formatted_args: &formatted_args,
-                                        session_key: ctx.session_key,
-                                        silent,
-                                        tool_spinner_msg: &tool_spinner_msg,
-                                        turn_cancel: &turn_cancel_clone,
-                                        turn_errors: &mut ctx.turn_errors,
-                                    })
-                                    .await
+                                match approved {
+                                    false => {
+                                        let error_str = format!(
+                                            "Tool denied by resource policy approval: {}. {}",
+                                            call.name, reason
+                                        );
+                                        ctx.turn_errors.push(format!(
+                                            "Tool {} denied by resource policy approval: {}",
+                                            call.name, reason
+                                        ));
+                                        super::tool_execution::render_tool_failure(
+                                            &call,
+                                            &formatted_args,
+                                            ctx.session_key,
+                                            silent,
+                                            &error_str,
+                                        )
+                                        .await
+                                    }
+                                    true => {
+                                        execute_approved_tool(ApprovedToolExec {
+                                            tool: t.clone(),
+                                            call: &call,
+                                            metadata: &metadata,
+                                            config: &config,
+                                            formatted_args: &formatted_args,
+                                            session_key: ctx.session_key,
+                                            silent,
+                                            tool_spinner_msg: &tool_spinner_msg,
+                                            turn_cancel: &turn_cancel_clone,
+                                            turn_errors: &mut ctx.turn_errors,
+                                            prefetched_output: prefetched_outputs.remove(&call.id),
+                                        })
+                                        .await
+                                    }
                                 }
                             }
                             crate::tools::resource_policy::ToolResourceDecision::Allow => {
@@ -991,6 +1014,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                     tool_spinner_msg: &tool_spinner_msg,
                                     turn_cancel: &turn_cancel_clone,
                                     turn_errors: &mut ctx.turn_errors,
+                                    prefetched_output: prefetched_outputs.remove(&call.id),
                                 })
                                 .await
                             }

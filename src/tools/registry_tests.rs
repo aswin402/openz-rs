@@ -650,3 +650,93 @@ fn generic_domain_words_do_not_trigger_explicit_tool_request_explosion() {
         "Unrequested tool must not receive explicit_tool_request bonus"
     );
 }
+
+#[test]
+fn sticky_working_set_retains_executed_tools_across_turns_and_decays_after_ttl() {
+    let registry = registry_with_named_tools(&[
+        ("read_file", "filesystem"),
+        ("write_file", "filesystem"),
+        ("list_dir", "filesystem"),
+        ("find_files", "filesystem"),
+        ("patch_file", "filesystem"),
+        ("replace_lines", "filesystem"),
+        ("grep_search", "code"),
+        ("code_outline", "code"),
+        ("exec_command", "shell"),
+        ("tool_catalog", "self_management"),
+        ("openz_inventory", "self_management"),
+        ("openmedia_rasterize_svg", "media"),
+    ]);
+
+    let initial = exposed_tool_names(&registry, "fix this bug");
+    assert!(!initial.contains(&"openmedia_rasterize_svg".to_string()));
+
+    registry.record_tool_used("openmedia_rasterize_svg");
+    assert!(registry
+        .current_sticky_tools()
+        .contains(&"openmedia_rasterize_svg".to_string()));
+
+    // Turn 1 after execution: begin_turn decays TTL from 2 -> 1, tool remains sticky
+    registry.begin_turn();
+    let turn1 = exposed_tool_names(&registry, "continue with the next step");
+    assert!(
+        turn1.contains(&"openmedia_rasterize_svg".to_string()),
+        "Sticky tool must remain mounted on subsequent turn 1"
+    );
+
+    // Turn 2 after execution: begin_turn decays TTL from 1 -> 0, tool expires
+    registry.begin_turn();
+    let turn2 = exposed_tool_names(&registry, "continue with the next step");
+    assert!(
+        !turn2.contains(&"openmedia_rasterize_svg".to_string()),
+        "Sticky tool must expire after STICKY_TOOL_TTL_TURNS"
+    );
+}
+
+#[test]
+fn openai_tool_payload_orders_core_tools_as_stable_prefix_for_kv_cache() {
+    let registry = registry_with_named_tools(&[
+        ("web_fetch", "web"),
+        ("write_file", "filesystem"),
+        ("read_file", "filesystem"),
+        ("tool_catalog", "self_management"),
+        ("openmedia_create_svg", "media"),
+    ]);
+
+    let tools = registry.to_openai_format_for_prompt("fetch https://example.com and create svg");
+    let names: Vec<String> = tools
+        .iter()
+        .filter_map(|t| t["function"]["name"].as_str().map(String::from))
+        .collect();
+
+    let first_non_core_idx = names
+        .iter()
+        .position(|n| !crate::tools::routing::is_core_tool(n))
+        .unwrap_or(names.len());
+    let last_core_idx = names
+        .iter()
+        .rposition(|n| crate::tools::routing::is_core_tool(n))
+        .unwrap_or(0);
+
+    assert!(
+        last_core_idx < first_non_core_idx,
+        "All core tools must precede dynamic scoped tools for KV-cache prefix stability: {:?}",
+        names
+    );
+}
+
+#[test]
+fn format_tool_description_deduplicates_routing_hints() {
+    let meta = ToolMetadata::infer("read_file");
+    let base = format!(
+        "Read file. Use when: {}. Avoid when: {}. Example: {}.",
+        meta.when_to_use,
+        meta.when_not_to_use,
+        meta.examples[0]
+    );
+    let formatted = super::format_tool_description(&base, &meta);
+    assert_eq!(formatted.matches("Use when:").count(), 1);
+    assert_eq!(formatted.matches("Avoid when:").count(), 1);
+    assert_eq!(formatted.matches("Example:").count(), 1);
+}
+

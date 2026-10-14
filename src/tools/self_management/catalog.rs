@@ -22,6 +22,151 @@ impl ToolCatalogTool {
     pub fn new(registry: crate::tools::ToolRegistry) -> Self {
         Self { registry }
     }
+
+    async fn run_batch_step(
+        &self,
+        item: &Value,
+        defaults: &crate::config::schema::AgentDefaults,
+        runtime: &crate::tools::resource_policy::RuntimeResourceSnapshot,
+    ) -> (Option<String>, Value) {
+        let raw_name = item
+            .get("tool")
+            .or_else(|| item.get("name"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .unwrap_or("");
+        let canonical_name = self.registry.resolve_canonical_name(raw_name);
+        let raw_args = item
+            .get("arguments")
+            .or_else(|| item.get("args"))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+        let normalized_args = crate::tools::normalize_tool_args(&raw_args);
+
+        let is_empty_name = canonical_name.is_empty();
+        let is_recursive_catalog = canonical_name == "tool_catalog";
+        let is_forbidden =
+            crate::agent::security::SecurityGuard::is_forbidden(&canonical_name, &normalized_args);
+        let is_sensitive = crate::agent::security::SecurityGuard::is_sensitive_with_mode(
+            &canonical_name,
+            &normalized_args,
+            &defaults.security_mode,
+        );
+
+        match (
+            is_empty_name,
+            is_recursive_catalog,
+            is_forbidden,
+            is_sensitive,
+        ) {
+            (true, _, _, _) => (
+                None,
+                serde_json::json!({
+                    "tool": raw_name,
+                    "status": "error",
+                    "error": "Missing 'tool' name in batch_execute step"
+                }),
+            ),
+            (false, true, _, _) => (
+                None,
+                serde_json::json!({
+                    "tool": canonical_name,
+                    "status": "blocked",
+                    "error": "Recursive tool_catalog calls are not permitted inside batch_execute"
+                }),
+            ),
+            (false, false, true, _) => (
+                None,
+                serde_json::json!({
+                    "tool": canonical_name,
+                    "status": "blocked",
+                    "error": "Execution denied by host: command is forbidden by security rules"
+                }),
+            ),
+            (false, false, false, true) => (
+                None,
+                serde_json::json!({
+                    "tool": canonical_name,
+                    "status": "requires_approval",
+                    "error": "Tool requires interactive approval and cannot run inside batch_execute; invoke it as a direct tool call"
+                }),
+            ),
+            (false, false, false, false) => match self.registry.get(&canonical_name) {
+                None => (
+                    None,
+                    serde_json::json!({
+                        "tool": canonical_name,
+                        "status": "not_found",
+                        "error": format!("Tool '{}' not found in registry", canonical_name)
+                    }),
+                ),
+                Some(tool) => {
+                    let metadata = tool.metadata();
+                    let decision = crate::tools::resource_policy::ToolResourcePolicy::evaluate(
+                        &metadata, defaults, runtime,
+                    );
+                    match decision {
+                        crate::tools::resource_policy::ToolResourceDecision::Block { reason } => (
+                            None,
+                            serde_json::json!({
+                                "tool": canonical_name,
+                                "status": "blocked_by_resource_policy",
+                                "error": reason
+                            }),
+                        ),
+                        crate::tools::resource_policy::ToolResourceDecision::RequireApproval {
+                            reason,
+                        } => (
+                            None,
+                            serde_json::json!({
+                                "tool": canonical_name,
+                                "status": "requires_approval",
+                                "error": reason
+                            }),
+                        ),
+                        crate::tools::resource_policy::ToolResourceDecision::Allow => {
+                            self.registry.record_tool_used(&canonical_name);
+                            let timeout_secs = metadata
+                                .recommended_timeout_secs
+                                .unwrap_or(defaults.tool_timeout_secs)
+                                .clamp(5, 300);
+                            let timed = tokio::time::timeout(
+                                std::time::Duration::from_secs(timeout_secs),
+                                tool.call(&normalized_args),
+                            )
+                            .await;
+                            match timed {
+                                Ok(Ok(output)) => (
+                                    Some(canonical_name.clone()),
+                                    serde_json::json!({
+                                        "tool": canonical_name,
+                                        "status": "success",
+                                        "output": output
+                                    }),
+                                ),
+                                Ok(Err(err)) => (
+                                    Some(canonical_name.clone()),
+                                    serde_json::json!({
+                                        "tool": canonical_name,
+                                        "status": "error",
+                                        "error": err.to_string()
+                                    }),
+                                ),
+                                Err(_) => (
+                                    Some(canonical_name.clone()),
+                                    serde_json::json!({
+                                        "tool": canonical_name,
+                                        "status": "timeout",
+                                        "error": format!("Timed out after {}s", timeout_secs)
+                                    }),
+                                ),
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -31,7 +176,7 @@ impl Tool for ToolCatalogTool {
     }
 
     fn description(&self) -> &str {
-        "Search, discover, and hot-mount native tools from the 260-tool catalog using BM25 relevance (alias: tool_search). Also lists registered tools by domain, risk, or resource status."
+        "Search, discover, hot-mount, and batch-execute native tools from the 260-tool catalog using BM25 relevance (alias: tool_search). Also lists registered tools by domain, risk, or resource status."
     }
 
     fn parameters(&self) -> Value {
@@ -45,6 +190,18 @@ impl Tool for ToolCatalogTool {
                 "mount": {
                     "type": "boolean",
                     "description": "If true (default when query is provided), automatically hot-mounts the top matched tools into active context for immediate execution in subsequent steps."
+                },
+                "batch_execute": {
+                    "type": "array",
+                    "description": "Optional list of up to 8 safe tool calls [{tool, arguments}] to execute immediately in a single turn without an extra LLM round-trip.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "tool": { "type": "string", "description": "Tool name or alias to execute." },
+                            "arguments": { "type": "object", "description": "JSON arguments object for the tool." }
+                        },
+                        "required": ["tool"]
+                    }
                 },
                 "domain": {
                     "type": "string",
@@ -77,22 +234,21 @@ impl Tool for ToolCatalogTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let str_arg = arguments.as_str().map(|s| s.trim()).filter(|s| !s.is_empty());
-        let (raw_domain, raw_risk) = if let Some(s) = str_arg {
-            let lower = s.to_lowercase();
-            if matches!(lower.as_str(), "low" | "medium" | "high") {
-                (None, Some(lower))
-            } else {
-                (Some(lower), None)
-            }
-        } else {
-            (None, None)
+        let str_arg = arguments
+            .as_str()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_lowercase);
+        let (raw_domain, raw_risk) = match str_arg.as_deref() {
+            Some("low" | "medium" | "high") => (None, str_arg),
+            Some(_) => (str_arg, None),
+            None => (None, None),
         };
 
         let query_str = arguments
             .get("query")
             .and_then(|v| v.as_str())
-            .map(|s| s.trim())
+            .map(str::trim)
             .filter(|s| !s.is_empty());
         let mount = parse_bool_value(arguments.get("mount"), query_str.is_some());
         let include_schema = parse_bool_value(arguments.get("include_schema"), false);
@@ -114,48 +270,55 @@ impl Tool for ToolCatalogTool {
             .map(|config| config.agents.defaults)
             .unwrap_or_default();
         let mut runtime = crate::tools::resource_policy::RuntimeResourceSnapshot::current();
-        if let Some(overrides) = arguments
+        arguments
             .get("resource_overrides")
             .and_then(|v| v.as_object())
-        {
-            if let Some(value) = overrides
-                .get("allow_network_tools")
-                .and_then(|v| v.as_bool())
-            {
-                defaults.allow_network_tools = value;
+            .map(|overrides| {
+                overrides
+                    .get("allow_network_tools")
+                    .and_then(|v| v.as_bool())
+                    .map(|value| defaults.allow_network_tools = value);
+                overrides
+                    .get("min_free_disk_gb")
+                    .and_then(|v| v.as_f64())
+                    .map(|value| defaults.min_free_disk_gb = value);
+                overrides
+                    .get("max_concurrent_process_tools")
+                    .and_then(|v| v.as_u64())
+                    .map(|value| defaults.max_concurrent_process_tools = value as usize);
+                overrides
+                    .get("warn_before_expensive_tools")
+                    .and_then(|v| v.as_bool())
+                    .map(|value| defaults.warn_before_expensive_tools = value);
+                overrides
+                    .get("free_disk_gb")
+                    .and_then(|v| v.as_f64())
+                    .map(|value| runtime.free_disk_gb = Some(value));
+                overrides
+                    .get("active_process_tools")
+                    .and_then(|v| v.as_u64())
+                    .map(|value| runtime.active_process_tools = value as usize);
+            });
+
+        let mut batch_results = Vec::new();
+        let mut batch_mounted_tools = Vec::new();
+        match arguments.get("batch_execute").and_then(|v| v.as_array()) {
+            Some(steps) => {
+                for step in steps.iter().take(8) {
+                    let (executed_tool, step_res) =
+                        self.run_batch_step(step, &defaults, &runtime).await;
+                    executed_tool.map(|name| batch_mounted_tools.push(name));
+                    batch_results.push(step_res);
+                }
             }
-            if let Some(value) = overrides.get("min_free_disk_gb").and_then(|v| v.as_f64()) {
-                defaults.min_free_disk_gb = value;
-            }
-            if let Some(value) = overrides
-                .get("max_concurrent_process_tools")
-                .and_then(|v| v.as_u64())
-            {
-                defaults.max_concurrent_process_tools = value as usize;
-            }
-            if let Some(value) = overrides
-                .get("warn_before_expensive_tools")
-                .and_then(|v| v.as_bool())
-            {
-                defaults.warn_before_expensive_tools = value;
-            }
-            if let Some(value) = overrides.get("free_disk_gb").and_then(|v| v.as_f64()) {
-                runtime.free_disk_gb = Some(value);
-            }
-            if let Some(value) = overrides
-                .get("active_process_tools")
-                .and_then(|v| v.as_u64())
-            {
-                runtime.active_process_tools = value as usize;
-            }
+            None => {}
         }
 
         let mut all_entries = self
             .registry
             .catalog_entries_for_prompt(include_schema, prompt);
 
-        // If query is provided, compute BM25 relevance scores and sort by relevance
-        if let Some(query) = query_str {
+        query_str.map(|query| {
             let static_tools = self.registry.read_tools();
             let bm25_scores = crate::tools::routing::compute_bm25_scores(query, &static_tools);
             drop(static_tools);
@@ -171,7 +334,7 @@ impl Tool for ToolCatalogTool {
                 let sb = b["bm25_score"].as_f64().unwrap_or(0.0);
                 sb.partial_cmp(&sa).unwrap_or(std::cmp::Ordering::Equal)
             });
-        }
+        });
 
         let tool_meta_map: std::collections::HashMap<String, crate::tools::ToolMetadata> = self
             .registry
@@ -196,7 +359,9 @@ impl Tool for ToolCatalogTool {
                 risk,
                 uses_network: entry["uses_network"].as_bool().unwrap_or(inferred.uses_network),
                 writes_disk: entry["writes_disk"].as_bool().unwrap_or(inferred.writes_disk),
-                spawns_process: entry["spawns_process"].as_bool().unwrap_or(inferred.spawns_process),
+                spawns_process: entry["spawns_process"]
+                    .as_bool()
+                    .unwrap_or(inferred.spawns_process),
                 requires_approval: entry["requires_approval"]
                     .as_bool()
                     .unwrap_or(inferred.requires_approval),
@@ -228,54 +393,50 @@ impl Tool for ToolCatalogTool {
         let entries: Vec<Value> = all_entries
             .into_iter()
             .filter(|entry| {
-                if query_str.is_some() && entry.get("bm25_score").and_then(|v| v.as_f64()).unwrap_or(0.0) <= 0.0 {
-                    return false;
-                }
-                if only_exposed && !entry["exposed_to_model"].as_bool().unwrap_or(false) {
-                    return false;
-                }
-                if let Some(domain) = domain_filter {
-                    if entry["domain"].as_str() != Some(domain) {
-                        return false;
-                    }
-                }
-                if let Some(risk) = risk_filter {
-                    if entry["risk"].as_str() != Some(risk) {
-                        return false;
-                    }
-                }
-                true
+                let passes_query = query_str.is_none()
+                    || entry
+                        .get("bm25_score")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0)
+                        > 0.0;
+                let passes_exposed =
+                    !only_exposed || entry["exposed_to_model"].as_bool().unwrap_or(false);
+                let passes_domain =
+                    domain_filter.is_none_or(|domain| entry["domain"].as_str() == Some(domain));
+                let passes_risk =
+                    risk_filter.is_none_or(|risk| entry["risk"].as_str() == Some(risk));
+                passes_query && passes_exposed && passes_domain && passes_risk
             })
             .collect();
 
-        // If mount is enabled, hot-mount top matched tools into active context
-        let mut mounted_tools = Vec::new();
+        let mut mounted_tools = batch_mounted_tools;
         let mut mounted_domains = Vec::new();
-        if mount && query_str.is_some() {
+        (mount && query_str.is_some()).then(|| {
             for entry in entries.iter().take(8) {
-                if let Some(name) = entry["name"].as_str() {
-                    mounted_tools.push(name.to_string());
-                }
-                if let Some(domain) = entry["domain"].as_str() {
-                    if !mounted_domains.contains(&domain.to_string()) {
-                        mounted_domains.push(domain.to_string());
-                    }
-                }
+                entry["name"]
+                    .as_str()
+                    .map(|name| mounted_tools.push(name.to_string()));
+                entry["domain"].as_str().map(|domain| {
+                    let domain_string = domain.to_string();
+                    (!mounted_domains.contains(&domain_string))
+                        .then(|| mounted_domains.push(domain_string));
+                });
             }
-            if !mounted_tools.is_empty() {
-                self.registry.request_tool_scope(mounted_tools.clone(), mounted_domains.clone());
-            }
-        }
+        });
+        (!mounted_tools.is_empty()).then(|| {
+            self.registry
+                .request_tool_scope(mounted_tools.clone(), mounted_domains.clone());
+        });
 
         let mut domains = std::collections::BTreeMap::<String, usize>::new();
         let mut risks = std::collections::BTreeMap::<String, usize>::new();
         for entry in &entries {
-            if let Some(domain) = entry["domain"].as_str() {
+            entry["domain"].as_str().map(|domain| {
                 *domains.entry(domain.to_string()).or_default() += 1;
-            }
-            if let Some(risk) = entry["risk"].as_str() {
+            });
+            entry["risk"].as_str().map(|risk| {
                 *risks.entry(risk.to_string()).or_default() += 1;
-            }
+            });
         }
 
         let mut response = serde_json::json!({
@@ -287,13 +448,17 @@ impl Tool for ToolCatalogTool {
             "risks": risks,
             "tools": entries
         });
-        if !mounted_tools.is_empty() {
+        (!mounted_tools.is_empty()).then(|| {
             response["mounted"] = serde_json::json!(true);
             response["mounted_tools"] = serde_json::json!(mounted_tools);
             response["message"] = serde_json::json!(
                 "Found matching tools and hot-mounted them into active context for immediate execution in subsequent steps."
             );
-        }
+        });
+        (!batch_results.is_empty()).then(|| {
+            response["batch_executed_count"] = serde_json::json!(batch_results.len());
+            response["batch_results"] = serde_json::json!(batch_results);
+        });
 
         Ok(response)
     }

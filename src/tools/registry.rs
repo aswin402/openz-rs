@@ -132,17 +132,24 @@ pub(crate) fn static_tool_drift(
     report
 }
 
+const STICKY_TOOL_TTL_TURNS: u8 = 2;
+const MAX_STICKY_TOOLS: usize = 8;
+
 pub(crate) fn format_tool_description(description: &str, metadata: &ToolMetadata) -> String {
+    let lower_desc = description.to_ascii_lowercase();
     let mut parts = vec![description.to_string()];
-    let _ = (!metadata.when_to_use.is_empty())
-        .then(|| parts.push(format!("Use when: {}", metadata.when_to_use)));
-    let _ = (!metadata.when_not_to_use.is_empty())
-        .then(|| parts.push(format!("Avoid when: {}", metadata.when_not_to_use)));
+    let _ = (!metadata.when_to_use.is_empty()
+        && !lower_desc.contains(&metadata.when_to_use.to_ascii_lowercase()))
+    .then(|| parts.push(format!("Use when: {}", metadata.when_to_use)));
+    let _ = (!metadata.when_not_to_use.is_empty()
+        && !lower_desc.contains(&metadata.when_not_to_use.to_ascii_lowercase()))
+    .then(|| parts.push(format!("Avoid when: {}", metadata.when_not_to_use)));
     let _ = (!metadata.aliases.is_empty())
         .then(|| parts.push(format!("Aliases: {}.", metadata.aliases.join(", "))));
     let _ = metadata
         .examples
         .first()
+        .filter(|example| !lower_desc.contains(&example.to_ascii_lowercase()))
         .map(|example| parts.push(format!("Example: {}.", example)));
     parts.join(" ")
 }
@@ -181,6 +188,7 @@ struct ToolRouteCacheKey {
     static_tool_names: Vec<String>,
     pending_tools: Vec<String>,
     pending_domains: Vec<String>,
+    sticky_tools: Vec<String>,
     capability_policy: Option<crate::orchestrator::spec::CapabilityPolicy>,
 }
 
@@ -192,6 +200,7 @@ pub struct ToolRegistry {
     capability_policy: Arc<std::sync::Mutex<Option<crate::orchestrator::spec::CapabilityPolicy>>>,
     route_cache: Arc<std::sync::Mutex<Option<(ToolRouteCacheKey, ToolRouteAnalysis)>>>,
     pending_scope: Arc<std::sync::Mutex<PendingToolScope>>,
+    sticky_tools: Arc<std::sync::Mutex<std::collections::BTreeMap<String, u8>>>,
 }
 
 impl Default for ToolRegistry {
@@ -209,6 +218,7 @@ impl ToolRegistry {
             capability_policy: Arc::new(std::sync::Mutex::new(None)),
             route_cache: Arc::new(std::sync::Mutex::new(None)),
             pending_scope: Arc::new(std::sync::Mutex::new(PendingToolScope::default())),
+            sticky_tools: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
         }
     }
 
@@ -224,6 +234,7 @@ impl ToolRegistry {
             capability_policy: Arc::new(std::sync::Mutex::new(None)),
             route_cache: Arc::new(std::sync::Mutex::new(None)),
             pending_scope: Arc::new(std::sync::Mutex::new(PendingToolScope::default())),
+            sticky_tools: Arc::new(std::sync::Mutex::new(std::collections::BTreeMap::new())),
         }
     }
 
@@ -232,7 +243,44 @@ impl ToolRegistry {
             .pending_scope
             .lock()
             .map(|mut pending| *pending = PendingToolScope::default());
+        let _ = self.sticky_tools.lock().map(|mut sticky| {
+            for ttl in sticky.values_mut() {
+                *ttl = ttl.saturating_sub(1);
+            }
+            sticky.retain(|_, ttl| *ttl > 0);
+        });
         self.clear_route_cache();
+    }
+
+    pub fn record_tool_used(&self, requested: &str) {
+        let canonical = self.resolve_canonical_name(requested);
+        let should_record = (!canonical.is_empty()) && (!routing::is_core_tool(&canonical));
+        let _ = should_record.then(|| {
+            let _ = self.sticky_tools.lock().map(|mut map| {
+                map.insert(canonical, STICKY_TOOL_TTL_TURNS);
+                while map.len() > MAX_STICKY_TOOLS {
+                    let evict_key = map
+                        .iter()
+                        .min_by_key(|(k, ttl)| (**ttl, (*k).clone()))
+                        .map(|(k, _)| k.clone());
+                    match evict_key {
+                        Some(k) => {
+                            map.remove(&k);
+                        }
+                        None => break,
+                    }
+                }
+            });
+            self.clear_route_cache();
+        });
+    }
+
+    pub fn current_sticky_tools(&self) -> Vec<String> {
+        self.sticky_tools
+            .lock()
+            .ok()
+            .map(|map| map.keys().cloned().collect())
+            .unwrap_or_default()
     }
 
     pub fn request_tool_scope<I, J>(&self, tools: I, domains: J)
@@ -267,15 +315,17 @@ impl ToolRegistry {
     }
 
     pub fn current_turn_scope(&self) -> (Vec<String>, Vec<String>) {
-        if let Ok(pending) = self.pending_scope.lock() {
-            let mut tools: Vec<String> = pending.tools.iter().cloned().collect();
-            let mut domains: Vec<String> = pending.domains.iter().cloned().collect();
-            tools.sort();
-            domains.sort();
-            (tools, domains)
-        } else {
-            (Vec::new(), Vec::new())
-        }
+        self.pending_scope
+            .lock()
+            .ok()
+            .map(|pending| {
+                let mut tools: Vec<String> = pending.tools.iter().cloned().collect();
+                let mut domains: Vec<String> = pending.domains.iter().cloned().collect();
+                tools.sort();
+                domains.sort();
+                (tools, domains)
+            })
+            .unwrap_or_default()
     }
 
     pub(crate) fn read_tools(&self) -> std::sync::RwLockReadGuard<'_, HashMap<String, Arc<dyn Tool>>> {
@@ -293,18 +343,17 @@ impl ToolRegistry {
     }
 
     fn clear_route_cache(&self) {
-        if let Ok(mut cache) = self.route_cache.lock() {
-            *cache = None;
-        }
+        let _ = self.route_cache.lock().map(|mut cache| *cache = None);
     }
 
     pub fn set_capability_policy(
         &self,
         policy: Option<crate::orchestrator::spec::CapabilityPolicy>,
     ) {
-        if let Ok(mut capability_policy) = self.capability_policy.lock() {
-            *capability_policy = policy;
-        }
+        let _ = self
+            .capability_policy
+            .lock()
+            .map(|mut capability_policy| *capability_policy = policy);
         self.clear_route_cache();
     }
 
@@ -687,6 +736,7 @@ impl ToolRegistry {
     pub fn route_for_prompt(&self, prompt: &str) -> ToolRouteAnalysis {
         let filter = self.filter_scope.lock().ok().and_then(|g| g.clone());
         let (pending_tools, pending_domains) = self.current_turn_scope();
+        let sticky_tools = self.current_sticky_tools();
         let capability_policy = self.active_capability_policy();
         let static_tools = self.read_tools();
         let mut static_tool_names: Vec<String> = static_tools.keys().cloned().collect();
@@ -697,6 +747,7 @@ impl ToolRegistry {
             static_tool_names: static_tool_names.clone(),
             pending_tools,
             pending_domains,
+            sticky_tools: sticky_tools.clone(),
             capability_policy,
         };
         let cached = self.route_cache.lock().ok().and_then(|cache| {
@@ -714,10 +765,9 @@ impl ToolRegistry {
             .as_ref()
             .map(|(cfg, _, _)| cfg.agents.defaults.layered_tool_routing.clone())
             .unwrap_or_default();
-        let max_visible = if routing_cfg.enabled {
-            routing_cfg.max_visible_tools
-        } else {
-            usize::MAX
+        let max_visible = match routing_cfg.enabled {
+            true => routing_cfg.max_visible_tools,
+            false => usize::MAX,
         };
         let intent = crate::agent::agent_loop::intent::classify_turn_intent(prompt);
         let mut scope =
@@ -730,6 +780,7 @@ impl ToolRegistry {
             .lock()
             .map(|pending| pending.clone())
             .unwrap_or_default();
+        let sticky_set: HashSet<String> = sticky_tools.into_iter().collect();
         let mut explicit_names = routing::explicitly_requested_tool_names(prompt, &static_tools);
         explicit_names.extend(pending_scope.tools.iter().cloned());
         let bm25_scores = routing::compute_bm25_scores(prompt, &static_tools);
@@ -752,9 +803,11 @@ impl ToolRegistry {
             .map(|tool| {
                 let metadata = tool.metadata();
                 let bm25 = bm25_scores.get(tool.name()).copied().unwrap_or(0.0);
+                let is_sticky = sticky_set.contains(tool.name());
                 let in_scope = !routing_cfg.enabled
                     || scope.allowed_names.contains(tool.name())
                     || crate::tools::scope::tool_matches_pack(tool.name(), &metadata, &scope.packs)
+                    || is_sticky
                     || bm25 > 2.0;
                 let base_score = routing::tool_selection_score_with_bm25(
                     tool.name(),
@@ -764,13 +817,13 @@ impl ToolRegistry {
                 );
                 let explicitly_requested = explicit_names.contains(tool.name())
                     || pending_scope.domains.contains(tool.metadata().domain);
-                let selected_score = if explicitly_requested {
-                    base_score.saturating_add(10_000)
-                } else if in_scope {
-                    base_score.saturating_add(100)
-                } else {
-                    base_score
+                let scope_bonus = match (explicitly_requested, is_sticky, in_scope) {
+                    (true, _, _) => 10_000,
+                    (false, true, _) => 250,
+                    (false, false, true) => 100,
+                    (false, false, false) => 0,
                 };
+                let selected_score = base_score.saturating_add(scope_bonus);
                 let matched_prompt_domain = selected_domains_set.contains(metadata.domain);
                 let mut selection_reason = routing::tool_selection_reasons_with_bm25(
                     tool.name(),
@@ -781,12 +834,10 @@ impl ToolRegistry {
                 .into_iter()
                 .map(str::to_string)
                 .collect::<Vec<_>>();
-                if in_scope {
-                    selection_reason.push("intent_scope".to_string());
-                }
-                if explicitly_requested {
-                    selection_reason.push("explicit_tool_request".to_string());
-                }
+                let _ = in_scope.then(|| selection_reason.push("intent_scope".to_string()));
+                let _ = is_sticky.then(|| selection_reason.push("session_continuity".to_string()));
+                let _ = explicitly_requested
+                    .then(|| selection_reason.push("explicit_tool_request".to_string()));
                 ToolRouteEntry {
                     name: tool.name().to_string(),
                     description: tool.description().to_string(),
@@ -811,6 +862,7 @@ impl ToolRegistry {
         let mut selected_count = 0usize;
         for entry in entries.iter_mut() {
             let bm25 = bm25_scores.get(&entry.name).copied().unwrap_or(0.0);
+            let is_sticky = sticky_set.contains(entry.name.as_str());
             let in_scope = !routing_cfg.enabled
                 || scope.allowed_names.contains(entry.name.as_str())
                 || crate::tools::scope::tool_matches_pack(
@@ -818,18 +870,22 @@ impl ToolRegistry {
                     &entry.metadata,
                     &scope.packs,
                 )
+                || is_sticky
                 || bm25 > 2.0;
             let explicitly_requested = explicit_names.contains(entry.name.as_str())
                 || pending_scope.domains.contains(entry.metadata.domain);
-            if (in_scope || explicitly_requested) && selected_count < static_limit {
-                entry.exposed_to_model = true;
-                selected_count += 1;
-            } else {
-                entry.hidden_reason = Some(if in_scope {
-                    "scope_limit"
-                } else {
-                    "out_of_scope"
-                });
+            let should_expose = (in_scope || explicitly_requested) && selected_count < static_limit;
+            match should_expose {
+                true => {
+                    entry.exposed_to_model = true;
+                    selected_count += 1;
+                }
+                false => {
+                    entry.hidden_reason = Some(match in_scope {
+                        true => "scope_limit",
+                        false => "out_of_scope",
+                    });
+                }
             }
         }
         let dropped_count = entries.len().saturating_sub(selected_count);
@@ -840,19 +896,19 @@ impl ToolRegistry {
             dropped_count,
             entries,
         };
-        if let Ok(mut cache) = self.route_cache.lock() {
-            *cache = Some((cache_key, route.clone()));
-        }
+        let _ = self
+            .route_cache
+            .lock()
+            .map(|mut cache| *cache = Some((cache_key, route.clone())));
         route
     }
 
     pub fn tool_router_status_line(&self, prompt: &str) -> String {
         let route = self.route_for_prompt(prompt);
         let total = route.entries.len();
-        let domains = if route.selected_domains.is_empty() {
-            "none".to_string()
-        } else {
-            route.selected_domains.join(", ")
+        let domains = match route.selected_domains.is_empty() {
+            true => "none".to_string(),
+            false => route.selected_domains.join(", "),
         };
         format!(
             "Tool Router selected {}/{} tools: {} · dropped {}",
@@ -891,10 +947,9 @@ impl ToolRegistry {
             .as_ref()
             .map(|(cfg, _, _)| cfg.agents.defaults.layered_tool_routing.clone())
             .unwrap_or_default();
-        let max_visible = if routing_cfg.enabled {
-            routing_cfg.max_visible_tools
-        } else {
-            usize::MAX
+        let max_visible = match routing_cfg.enabled {
+            true => routing_cfg.max_visible_tools,
+            false => usize::MAX,
         };
         let intent = crate::agent::agent_loop::intent::classify_turn_intent(prompt);
         let scope = crate::tools::scope::ToolScopeEngine::default().decide(&intent, max_visible);
@@ -903,7 +958,7 @@ impl ToolRegistry {
             .lock()
             .map(|pending| pending.clone())
             .unwrap_or_default();
-        let mut subagent_tools = if scope.packs.iter().any(|pack| {
+        let include_subagents = scope.packs.iter().any(|pack| {
             matches!(
                 pack,
                 crate::tools::scope::ToolPack::Subagent
@@ -913,11 +968,10 @@ impl ToolRegistry {
             || prompt_contains_image_reference(prompt)
             || pending_scope.domains.contains("subagent")
             || pending_scope.domains.contains("orchestrator")
-            || pending_scope.tools.contains("vision_agent")
-        {
-            self.dynamic_subagent_tools(filter.as_ref(), &static_names)
-        } else {
-            Vec::new()
+            || pending_scope.tools.contains("vision_agent");
+        let mut subagent_tools = match include_subagents {
+            true => self.dynamic_subagent_tools(filter.as_ref(), &static_names),
+            false => Vec::new(),
         };
         let route = self.route_for_prompt(prompt);
         let total_tools = route.entries.len() + subagent_tools.len();
@@ -949,6 +1003,13 @@ impl ToolRegistry {
                 })
             })
             .collect();
+        selected.sort_by(|a, b| {
+            let name_a = a["function"]["name"].as_str().unwrap_or("");
+            let name_b = b["function"]["name"].as_str().unwrap_or("");
+            let tier_a = !routing::is_core_tool(name_a);
+            let tier_b = !routing::is_core_tool(name_b);
+            tier_a.cmp(&tier_b).then_with(|| name_a.cmp(name_b))
+        });
         subagent_tools.truncate(128usize.saturating_sub(selected.len()));
         selected.extend(subagent_tools);
         selected
@@ -959,73 +1020,68 @@ impl ToolRegistry {
         filter: Option<&Vec<String>>,
         static_names: &std::collections::HashSet<String>,
     ) -> Vec<serde_json::Value> {
-        let mut subagent_tools: Vec<serde_json::Value> = Vec::new();
-        if let Some((_, _, _)) = &self.context {
-            if let Ok(profiles) = crate::subagents::load_profiles() {
-                let active_subagent = crate::tools::subagent::ACTIVE_SUBAGENT
-                    .try_with(|s| s.clone())
-                    .unwrap_or_default();
-                if !active_subagent.is_empty()
-                    && !crate::tools::subagent::nested_delegation_allowed_for_active_context(
-                        &active_subagent,
-                    )
-                {
-                    return subagent_tools;
-                }
-                for profile in profiles {
-                    if !active_subagent.is_empty() && profile.name == active_subagent {
-                        continue;
-                    }
-                    if let Some(prefixes) = filter {
-                        if !prefixes
-                            .iter()
-                            .any(|prefix| profile.name.starts_with(prefix) || prefix == "subagent")
-                        {
-                            continue;
-                        }
-                    }
-                    let profile_metadata =
-                        crate::tools::subagent::subagent_tool_metadata(&profile.name);
-                    let policy = self.active_capability_policy();
-                    if !policy
-                        .as_ref()
-                        .map(|policy| {
-                            crate::tools::orchestrator::tool_allowed_by_policy_with_metadata(
-                                &profile.name,
-                                &profile_metadata,
-                                policy,
-                            )
+        let active_subagent = crate::tools::subagent::ACTIVE_SUBAGENT
+            .try_with(|s| s.clone())
+            .unwrap_or_default();
+        let nested_allowed = active_subagent.is_empty()
+            || crate::tools::subagent::nested_delegation_allowed_for_active_context(
+                &active_subagent,
+            );
+        let policy = self.active_capability_policy();
+        let mut subagent_tools: Vec<serde_json::Value> = self
+            .context
+            .as_ref()
+            .filter(|_| nested_allowed)
+            .and_then(|_| crate::subagents::load_profiles().ok())
+            .into_iter()
+            .flatten()
+            .filter(|profile| active_subagent.is_empty() || profile.name != active_subagent)
+            .filter(|profile| {
+                filter.is_none_or(|prefixes| {
+                    prefixes
+                        .iter()
+                        .any(|prefix| profile.name.starts_with(prefix) || prefix == "subagent")
+                })
+            })
+            .filter(|profile| {
+                let profile_metadata =
+                    crate::tools::subagent::subagent_tool_metadata(&profile.name);
+                policy
+                    .as_ref()
+                    .map(|pol| {
+                        crate::tools::orchestrator::tool_allowed_by_policy_with_metadata(
+                            &profile.name,
+                            &profile_metadata,
+                            pol,
+                        )
+                    })
+                    .unwrap_or(true)
+            })
+            .filter(|profile| !static_names.contains(&profile.name))
+            .map(|profile| {
+                serde_json::json!({
+                    "type": "function",
+                    "function": {
+                        "name": profile.name,
+                        "description": profile.description,
+                        "parameters": serde_json::json!({
+                            "type": "object",
+                            "properties": {
+                                "goal": {
+                                    "type": "string",
+                                    "description": "The specific goal or task for this specialized subagent to accomplish."
+                                },
+                                "context": {
+                                    "type": "string",
+                                    "description": "Additional context or background details required for the task."
+                                }
+                            },
+                            "required": ["goal"]
                         })
-                        .unwrap_or(true)
-                    {
-                        continue;
                     }
-                    if !static_names.contains(&profile.name) {
-                        subagent_tools.push(serde_json::json!({
-                            "type": "function",
-                            "function": {
-                                "name": profile.name,
-                                "description": profile.description,
-                                "parameters": serde_json::json!({
-                                    "type": "object",
-                                    "properties": {
-                                        "goal": {
-                                            "type": "string",
-                                            "description": "The specific goal or task for this specialized subagent to accomplish."
-                                        },
-                                        "context": {
-                                            "type": "string",
-                                            "description": "Additional context or background details required for the task."
-                                        }
-                                    },
-                                    "required": ["goal"]
-                                })
-                            }
-                        }));
-                    }
-                }
-            }
-        }
+                })
+            })
+            .collect();
         subagent_tools.sort_by(|a, b| {
             let name_a = a["function"]["name"].as_str().unwrap_or("");
             let name_b = b["function"]["name"].as_str().unwrap_or("");
