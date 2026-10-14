@@ -8,6 +8,8 @@ pub const PATH_KEYS: &[&str] = &[
     "path",
     "file_path",
     "filePath",
+    "target_path",
+    "target_file",
     "TargetFile",
     "filepath",
     "file",
@@ -94,10 +96,24 @@ pub fn normalize_tool_args(args: &serde_json::Value) -> serde_json::Value {
                 };
                 let normalized_value = normalize_tool_args(value);
                 new_map.insert(key.clone(), normalized_value.clone());
-                if alias != *key && !new_map.contains_key(&alias) {
-                    new_map.insert(alias, normalized_value);
-                }
+                let should_insert_alias = alias != *key && !new_map.contains_key(&alias);
+                let _ = should_insert_alias.then(|| new_map.insert(alias, normalized_value));
             }
+            let fallback_path = (!new_map.contains_key("path"))
+                .then(|| {
+                    [
+                        "file_path",
+                        "target_file",
+                        "filepath",
+                        "absolute_path",
+                        "directory_path",
+                        "file",
+                    ]
+                    .into_iter()
+                    .find_map(|candidate| new_map.get(candidate).cloned())
+                })
+                .flatten();
+            let _ = fallback_path.map(|val| new_map.insert("path".to_string(), val));
             serde_json::Value::Object(new_map)
         }
         serde_json::Value::Array(values) => {

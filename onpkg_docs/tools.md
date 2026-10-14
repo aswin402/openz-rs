@@ -38,9 +38,9 @@ pub trait Tool: Send + Sync {
 
 ## 2. Registering a Tool
 
-Register new tools through the responsibility-specific modules in `src/cli/tool_registration/`; the registry itself remains in `src/tools/mod.rs`:
+Register new tools through `src/cli/tools.rs`, backed by `ToolRegistry` in `src/tools/registry.rs` and `ScopeEngine` in `src/tools/scope_engine.rs`:
 - Use `registry.register(Arc::new(MyNewTool::new()))`.
-- Custom subagents (from `~/.openz/subagents.json`) are dynamically loaded as tools (`DelegateProfileTool`) at LLM runtime via the registry's `.get()` method.
+- Custom subagents (from `~/.openz/subagents.json`) and built-in delegation tools are dynamically resolved as tools at LLM runtime via `ToolRegistry::get()`, inheriting the active turn's `CancellationToken`.
 
 ---
 
@@ -48,18 +48,18 @@ Register new tools through the responsibility-specific modules in `src/cli/tool_
 
 ### Argument Naming and Aliases
 Tool arguments do not follow a single unified convention. Some models supply `camelCase` while others supply `snake_case`.
-- Handle casing differences gracefully in your `call()` implementation.
-- Check `format_tool_args` in `src/agent/agent_loop/tool_execution.rs` to map your tool arguments to friendly display names and formatting strings for the user's progress spinner.
+- `normalize_tool_args` in `src/tools/arguments.rs` normalizes common path (`path`, `file_path`, `filePath`, `filepath`, `TargetFile`, `AbsolutePath`, `target_path`, `target_file`), command, URL, and query aliases automatically before tool execution and security checks.
+- Register tool-specific name aliases and presentation labels in `src/tools/metadata.rs` (`TOOL_SPECS` and `compatibility_canonical_name`).
 
 ### Handling Large Outputs (>4,000 Characters)
 If a tool returns output larger than 4,000 characters:
 1. OpenZ automatically dumps the full output to `~/.openz/tool_outputs/<tool_name>_<uuid>.json`.
 2. The output is compacted using the `context_compactor` (Z-Context / Headroom).
-3. Only the compacted summary and file reference are sent to the LLM to prevent context pollution.
+3. Only the compacted summary and file reference are sent to the LLM to prevent context pollution. Use `retrieve_original` to restore the full raw payload when needed.
 
 ### Security and Sensitive Actions
 Any tool that executes shell commands or writes files must be declared sensitive.
-- Check and update `SecurityGuard::is_sensitive` inside `src/agent/security.rs` to intercept these tools.
+- Check and update `SecurityGuard::is_sensitive_with_mode` inside `src/agent/security.rs` or `ToolRisk` metadata in `src/tools/metadata.rs` to intercept these tools.
 - When intercepted, the channel prompt pauses and requests user approval before execution begins.
 
 ---
@@ -162,7 +162,12 @@ OpenZ natively integrates document rendering, text extraction, visual and text d
 OpenZ natively integrates tools that allow the agent to test, debug, and optimize its own execution parameters and database guidelines:
 
 - `diagnose_tool`: Test, profile, and validate parameters against JSON schemas for any registered native tool.
-- `curate_skill`: List, add, update, or delete procedural skills and guidelines dynamically in the SQLite database store.
+- `tool_catalog`: Search and inspect the 260 registered tools via BM25 ranking, view domain/resource-policy visibility, and hot-mount tools for the active turn.
+- `request_tool_scope`: Dynamically mount specific tools or domains for the next turn when `layered_tool_routing` scopes out an uncommon tool.
+- `openz_inventory`: Inspect OpenZ runtime identity, workspace paths, active model/provider, and capability counts.
+- `manage_servers`: List, inspect, and stop OpenZ-launched background dev servers.
+- `workflow_memory`: Store and query reusable procedural workflow checkpoints across turns.
+- `curate_skills` (alias `curate_skill`): List, add, update, or delete procedural skills and guidelines dynamically in the SQLite database store.
 - `optimize_tool_scope`: Restrict or reset the set of active tool prefixes exposed to the agent loop to minimize prompt size and prevent tool hallucinations.
 - `manage_config`: View active configuration (with automatic secret key redaction) or update agent hyper-parameters (such as model, provider, temperature, max_tokens, caveman_mode, tool_timeout_secs, streaming, max_tool_iterations) in real-time.
 - `diagnose_system`: Retrieve comprehensive OpenZ system diagnostics including directory file sizes (sessions, traces, outputs) and SQLite database health checks.

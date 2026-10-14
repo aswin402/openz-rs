@@ -635,7 +635,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         let mut assistant_tool_calls_json = Vec::new();
         let mut loop_detection_messages = ctx.messages.clone();
 
-        for call in resp.tool_calls {
+        for mut call in resp.tool_calls {
+            call.name = loop_ref.tools.resolve_canonical_name(&call.name);
             let call = auto_adjust_tool_call_for_user_intent(call, ctx.user_content);
             let orig_name = call.name.clone();
             let scoped_candidate =

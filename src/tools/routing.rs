@@ -27,11 +27,9 @@ pub(crate) fn is_core_tool(name: &str) -> bool {
 }
 
 pub(crate) fn tool_allowed_by_filter(name: &str, filter: Option<&Vec<String>>) -> bool {
-    if let Some(prefixes) = filter {
+    filter.is_none_or(|prefixes| {
         is_core_tool(name) || prefixes.iter().any(|prefix| name.starts_with(prefix))
-    } else {
-        true
-    }
+    })
 }
 
 /// Tokenize input string into lowercase alphanumeric words, filtering out single chars and stopwords.
@@ -104,19 +102,18 @@ impl<'a> ToolDoc<'a> {
     pub fn from_tool(tool: &'a dyn super::Tool) -> Self {
         let meta = tool.metadata();
         let name_tokens = tokenize(tool.name());
-        let mut alias_tokens = Vec::new();
-        for alias in meta.aliases {
-            alias_tokens.extend(tokenize(alias));
-        }
-        if let Some(spec) = crate::tools::tool_spec(tool.name()) {
-            for alias in spec.aliases {
-                alias_tokens.extend(tokenize(alias));
-            }
-        }
+        let spec_aliases = crate::tools::tool_spec(tool.name())
+            .map(|spec| spec.aliases)
+            .unwrap_or(&[]);
         let inferred = ToolMetadata::infer(tool.name());
-        for alias in inferred.aliases {
-            alias_tokens.extend(tokenize(alias));
-        }
+        let unique_aliases: BTreeSet<&str> = meta
+            .aliases
+            .iter()
+            .chain(spec_aliases.iter())
+            .chain(inferred.aliases.iter())
+            .copied()
+            .collect();
+        let alias_tokens: Vec<String> = unique_aliases.into_iter().flat_map(tokenize).collect();
         let domain_tokens = tokenize(meta.domain);
         let mut desc_tokens = tokenize(tool.description());
         desc_tokens.extend(tokenize(meta.when_to_use));
@@ -436,75 +433,58 @@ pub(crate) fn tool_selection_reasons_with_bm25(
     reasons
 }
 
+fn contains_phrase_bounded(haystack: &str, needle: &str) -> bool {
+    !needle.is_empty()
+        && haystack.match_indices(needle).any(|(start, _)| {
+            let end = start + needle.len();
+            let before_ok = haystack[..start]
+                .chars()
+                .next_back()
+                .is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_');
+            let after_ok = haystack[end..]
+                .chars()
+                .next()
+                .is_none_or(|c| !c.is_ascii_alphanumeric() && c != '_');
+            before_ok && after_ok
+        })
+}
+
 pub(crate) fn explicitly_requested_tool_names(
     prompt: &str,
     static_tools: &HashMap<String, std::sync::Arc<dyn super::Tool>>,
 ) -> HashSet<String> {
     let lower = prompt.to_ascii_lowercase();
-    let mut requested = HashSet::new();
-
-    for (name, tool) in static_tools {
-        let name_lower = name.to_ascii_lowercase();
-        // 1. Direct tool name match
-        if lower.contains(&name_lower) {
-            requested.insert(name.clone());
-            continue;
-        }
-
-        // 2. Direct alias match from tool metadata or curated tool spec
-        let metadata = tool.metadata();
-        let mut matched = false;
-        for alias in metadata.aliases {
-            let alias_lower = alias.to_ascii_lowercase();
-            if alias_lower.len() >= 3 && lower.contains(&alias_lower) {
-                requested.insert(name.clone());
-                matched = true;
-                break;
-            }
-        }
-        if !matched {
-            if let Some(spec) = crate::tools::tool_spec(name) {
-                for alias in spec.aliases {
-                    let alias_lower = alias.to_ascii_lowercase();
-                    if alias_lower.len() >= 3 && lower.contains(&alias_lower) {
-                        requested.insert(name.clone());
-                        matched = true;
-                        break;
-                    }
-                }
-            }
-        }
-        if !matched {
-            let inferred = ToolMetadata::infer(name);
-            for alias in inferred.aliases {
-                let alias_lower = alias.to_ascii_lowercase();
-                if alias_lower.len() >= 3 && lower.contains(&alias_lower) {
-                    requested.insert(name.clone());
-                    break;
-                }
-            }
-        }
-
-        // 3. Spaced name match (e.g. "device inventory" -> "device_inventory")
-        let spaced = name_lower.replace('_', " ");
-        if spaced.len() >= 4 && lower.contains(&spaced) {
-            requested.insert(name.clone());
-        }
-    }
-
-    // 4. Browser requests
     let browser_request = lower.contains("browser")
         || lower.contains("firefox")
         || lower.contains("youtube")
         || (lower.contains("play") && lower.contains("song"));
-    if browser_request {
-        for name in static_tools.keys() {
-            let name_lower = name.to_ascii_lowercase();
-            if name_lower.contains("browser") || name_lower == "inspect_browsers" {
-                requested.insert(name.clone());
-            }
-        }
-    }
 
-    requested
+    static_tools
+        .iter()
+        .filter_map(|(name, tool)| {
+            let name_lower = name.to_ascii_lowercase();
+            let direct_name_match = contains_phrase_bounded(&lower, &name_lower);
+            let metadata = tool.metadata();
+            let spec_aliases = crate::tools::tool_spec(name)
+                .map(|spec| spec.aliases)
+                .unwrap_or(&[]);
+            let inferred = ToolMetadata::infer(name);
+            let alias_match = metadata
+                .aliases
+                .iter()
+                .chain(spec_aliases.iter())
+                .chain(inferred.aliases.iter())
+                .map(|alias| alias.to_ascii_lowercase())
+                .any(|alias_lower| {
+                    alias_lower.len() >= 3 && contains_phrase_bounded(&lower, &alias_lower)
+                });
+            let spaced = name_lower.replace('_', " ");
+            let spaced_match = spaced.len() >= 4 && contains_phrase_bounded(&lower, &spaced);
+            let browser_match = browser_request
+                && (name_lower.contains("browser") || name_lower == "inspect_browsers");
+
+            (direct_name_match || alias_match || spaced_match || browser_match)
+                .then(|| name.clone())
+        })
+        .collect()
 }

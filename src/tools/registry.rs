@@ -70,9 +70,8 @@ pub(crate) fn resolve_static_name(
     requested: &str,
 ) -> Option<String> {
     let requested = normalize_tool_name(requested);
-    if requested.is_empty() {
-        return None;
-    }
+    (!requested.is_empty()).then_some(())?;
+    let compat_canonical = crate::tools::metadata::compatibility_canonical_name(&requested);
 
     let mut matches = tools
         .values()
@@ -88,37 +87,8 @@ pub(crate) fn resolve_static_name(
                 || aliases
                     .iter()
                     .any(|alias| normalize_tool_name(alias) == requested)
-                || match requested.as_str() {
-                    "doc_reader" | "read_document_file" => canonical == "read_doc",
-                    "read_document" => canonical == "opendoc_read_document_text",
-                    "opendoc_extract_tables" => canonical == "opendoc_find_tables",
-                    "opendoc_convert_document" => canonical == "opendoc_convert",
-                    "crawl_site" | "crawl" | "spider" | "crawl_website_tool" => canonical == "crawl_website",
-                    "web_scrape" | "web_fetch_tool" | "fetch_web" | "scrape_web" => canonical == "web_fetch",
-                    "web_search_tool" | "search_web" | "tavily_search" => canonical == "web_search",
-                    "obscura" | "obscura_tool" | "chrome_cdp" => canonical == "obscura_browser",
-                    "gsd" | "gsd_tool" | "chrome_gui" => canonical == "gsd_browser",
-                    "firefox" | "firefox_tool" => canonical == "firefox_browser",
-                    "inspect_browser" | "browser_status" | "browser_health" => canonical == "inspect_browsers",
-                    "db_writer" | "sqlite_write" | "sqlite_writer" => canonical == "db_write",
-                    "sqlite" | "sqlite_query" | "sqlite_inspector" => canonical == "db_inspector",
-                    "diagnose" | "system_diagnostics" | "health_check" | "system_health" => canonical == "diagnose_system",
-                    "cron_schedule" | "cron_add" => canonical == "schedule_job",
-                    "cron_list" | "cron_jobs" => canonical == "list_jobs",
-                    "cron_remove" | "cron_delete" => canonical == "remove_job",
-                    "save_link" | "bookmark_url" | "add_bookmark" | "bookmark_link" | "source_bookmark" | "bookmarks" => canonical == "knowledge_source",
-                    "save_memory" | "remember" | "record_memory" => canonical == "store_memory",
-                    "search_memory" | "query_memory" | "find_memory" => canonical == "recall_memory",
-                    "curate_skills" | "manage_skills" | "save_skill" => canonical == "curate_skill",
-                    "inventory" | "runtime_inventory" => canonical == "openz_inventory",
-                    "catalog" | "list_tools" | "tool_search" | "search_tools" | "find_tools" | "discover_tools" => canonical == "tool_catalog",
-                    _ => false,
-                };
-            if is_match {
-                Some(tool.name().to_string())
-            } else {
-                None
-            }
+                || compat_canonical == Some(canonical.as_str());
+            is_match.then(|| tool.name().to_string())
         })
         .collect::<Vec<_>>();
     matches.sort();
@@ -164,18 +134,16 @@ pub(crate) fn static_tool_drift(
 
 pub(crate) fn format_tool_description(description: &str, metadata: &ToolMetadata) -> String {
     let mut parts = vec![description.to_string()];
-    if !metadata.when_to_use.is_empty() {
-        parts.push(format!("Use when: {}", metadata.when_to_use));
-    }
-    if !metadata.when_not_to_use.is_empty() {
-        parts.push(format!("Avoid when: {}", metadata.when_not_to_use));
-    }
-    if !metadata.aliases.is_empty() {
-        parts.push(format!("Aliases: {}.", metadata.aliases.join(", ")));
-    }
-    if let Some(example) = metadata.examples.first() {
-        parts.push(format!("Example: {}.", example));
-    }
+    let _ = (!metadata.when_to_use.is_empty())
+        .then(|| parts.push(format!("Use when: {}", metadata.when_to_use)));
+    let _ = (!metadata.when_not_to_use.is_empty())
+        .then(|| parts.push(format!("Avoid when: {}", metadata.when_not_to_use)));
+    let _ = (!metadata.aliases.is_empty())
+        .then(|| parts.push(format!("Aliases: {}.", metadata.aliases.join(", "))));
+    let _ = metadata
+        .examples
+        .first()
+        .map(|example| parts.push(format!("Example: {}.", example)));
     parts.join(" ")
 }
 
@@ -211,6 +179,9 @@ struct ToolRouteCacheKey {
     prompt: String,
     filter_scope: Option<Vec<String>>,
     static_tool_names: Vec<String>,
+    pending_tools: Vec<String>,
+    pending_domains: Vec<String>,
+    capability_policy: Option<crate::orchestrator::spec::CapabilityPolicy>,
 }
 
 #[derive(Clone)]
@@ -257,12 +228,11 @@ impl ToolRegistry {
     }
 
     pub fn begin_turn(&self) {
-        if let Ok(mut pending) = self.pending_scope.lock() {
-            *pending = PendingToolScope::default();
-        }
-        if let Ok(mut cache) = self.route_cache.lock() {
-            *cache = None;
-        }
+        let _ = self
+            .pending_scope
+            .lock()
+            .map(|mut pending| *pending = PendingToolScope::default());
+        self.clear_route_cache();
     }
 
     pub fn request_tool_scope<I, J>(&self, tools: I, domains: J)
@@ -270,25 +240,26 @@ impl ToolRegistry {
         I: IntoIterator<Item = String>,
         J: IntoIterator<Item = String>,
     {
-        if let Ok(mut pending) = self.pending_scope.lock() {
-            pending
-                .tools
-                .extend(tools.into_iter().map(|name| name.to_ascii_lowercase()));
-            pending.domains.extend(
-                domains
-                    .into_iter()
-                    .map(|domain| domain.to_ascii_lowercase()),
-            );
-        }
-        if let Ok(mut cache) = self.route_cache.lock() {
-            *cache = None;
-        }
+        let resolved_tools: Vec<String> = tools
+            .into_iter()
+            .map(|name| self.resolve_canonical_name(&name).to_ascii_lowercase())
+            .collect();
+        let resolved_domains: Vec<String> = domains
+            .into_iter()
+            .map(|domain| domain.to_ascii_lowercase())
+            .collect();
+        let _ = self.pending_scope.lock().map(|mut pending| {
+            pending.tools.extend(resolved_tools);
+            pending.domains.extend(resolved_domains);
+        });
+        self.clear_route_cache();
     }
 
     pub fn request_tool_scope_for_prompt(&self, prompt: &str) {
         let selected_domains = routing::select_domains_for_prompt(prompt);
         let static_tools = self.read_tools();
         let explicit_tools = routing::explicitly_requested_tool_names(prompt, &static_tools);
+        drop(static_tools);
         self.request_tool_scope(
             explicit_tools,
             selected_domains.into_iter().map(|d| d.to_string()),
@@ -456,6 +427,17 @@ impl ToolRegistry {
         resolve_static_name(&tools, requested)
     }
 
+    pub fn resolve_canonical_name(&self, requested: &str) -> String {
+        self.resolve_static_name(requested)
+            .unwrap_or_else(|| crate::tools::canonical_tool_name(requested))
+    }
+
+    fn active_cancellation_token() -> CancellationToken {
+        crate::agent::agent_loop::current_turn_cancellation_context()
+            .map(|ctx| ctx.token)
+            .unwrap_or_default()
+    }
+
     pub fn tool_inventory_snapshot(&self) -> Vec<(String, String, ToolMetadata)> {
         let mut tools = self
             .read_tools()
@@ -476,115 +458,107 @@ impl ToolRegistry {
         let resolved_name = self.resolve_static_name(name);
         let name = resolved_name.as_deref().unwrap_or(name);
         let filter = self.filter_scope.lock().ok().and_then(|g| g.clone());
-        if let Some(ref prefixes) = filter {
-            if name != "delegate_task"
-                && name != "send_remote_input"
-                && name != "optimize_tool_scope"
-                && name != "request_tool_scope"
-                && !prefixes.iter().any(|prefix| name.starts_with(prefix))
-            {
-                return None;
+        let allowed_by_filter = filter.as_ref().is_none_or(|prefixes| {
+            routing::tool_allowed_by_filter(name, Some(prefixes))
+                || (!self.read_tools().contains_key(name)
+                    && prefixes.iter().any(|prefix| prefix == "subagent"))
+        });
+        allowed_by_filter.then_some(())?;
+        self.tool_allowed_by_active_policy(name).then_some(())?;
+        self.tool_allowed_for_active_subagent(name).then_some(())?;
+
+        match name {
+            "orchestrate_workflow" => {
+                let (config, provider, session_manager) = self.context.as_ref()?;
+                let parent_tools = self.collect_parent_tools_excluding(&[
+                    "delegate_task",
+                    "parallel_research",
+                    "evaluator_optimizer_loop",
+                    "orchestrate_workflow",
+                    "send_remote_input",
+                ]);
+                return Some(Arc::new(
+                    crate::tools::orchestrator::OrchestrateWorkflowTool::new(
+                        config.clone(),
+                        provider.clone(),
+                        session_manager.clone(),
+                        parent_tools,
+                        Self::active_cancellation_token(),
+                        self.active_capability_policy(),
+                    ),
+                ));
             }
-        }
-        if !self.tool_allowed_by_active_policy(name) {
-            return None;
-        }
-
-        if !self.tool_allowed_for_active_subagent(name) {
-            return None;
-        }
-
-        if name == "orchestrate_workflow" {
-            let (config, provider, session_manager) = self.context.as_ref()?;
-            let parent_tools = self.collect_parent_tools_excluding(&[
-                "delegate_task",
-                "parallel_research",
-                "evaluator_optimizer_loop",
-                "orchestrate_workflow",
-                "send_remote_input",
-            ]);
-            return Some(Arc::new(
-                crate::tools::orchestrator::OrchestrateWorkflowTool::new(
-                    config.clone(),
-                    provider.clone(),
-                    session_manager.clone(),
-                    parent_tools,
-                    CancellationToken::new(),
-                    self.active_capability_policy(),
-                ),
-            ));
-        }
-
-        // 1. If name is "delegate_task", override and inject parent tools dynamically
-        if name == "delegate_task" {
-            let (config, provider, session_manager) = self.context.as_ref()?;
-            let parent_tools = self.collect_parent_tools_excluding(&[
-                "delegate_task",
-                "parallel_research",
-                "send_remote_input",
-            ]);
-            let tool: Arc<dyn Tool> = Arc::new(crate::tools::subagent::DelegateTaskTool {
-                config: config.clone(),
-                parent_provider: provider.clone(),
-                session_manager: session_manager.clone(),
-                parent_tools,
-                cancellation_token: CancellationToken::new(),
-                capability_policy: self.active_capability_policy(),
-            });
-            return self
-                .tool_allowed_by_active_policy_for_tool(tool.as_ref())
-                .then_some(tool);
-        }
-
-        // 1b. If name is "parallel_research", override and inject parent tools dynamically
-        if name == "parallel_research" {
-            let (config, provider, session_manager) = self.context.as_ref()?;
-            let parent_tools = self.collect_parent_tools_excluding(&[
-                "delegate_task",
-                "parallel_research",
-                "send_remote_input",
-            ]);
-            let tool: Arc<dyn Tool> = Arc::new(crate::tools::subagent::ParallelResearchTool {
-                config: config.clone(),
-                parent_provider: provider.clone(),
-                session_manager: session_manager.clone(),
-                parent_tools,
-                cancellation_token: CancellationToken::new(),
-                capability_policy: self.active_capability_policy(),
-            });
-            return self
-                .tool_allowed_by_active_policy_for_tool(tool.as_ref())
-                .then_some(tool);
-        }
-
-        // 1c. If name is "evaluator_optimizer_loop", override and inject parent tools dynamically
-        if name == "evaluator_optimizer_loop" {
-            let (config, provider, session_manager) = self.context.as_ref()?;
-            let parent_tools = self.collect_parent_tools_excluding(&[
-                "delegate_task",
-                "parallel_research",
-                "evaluator_optimizer_loop",
-                "send_remote_input",
-            ]);
-            let tool: Arc<dyn Tool> =
-                Arc::new(crate::tools::subagent::EvaluatorOptimizerLoopTool {
+            "delegate_task" => {
+                let (config, provider, session_manager) = self.context.as_ref()?;
+                let parent_tools = self.collect_parent_tools_excluding(&[
+                    "delegate_task",
+                    "parallel_research",
+                    "send_remote_input",
+                ]);
+                let tool: Arc<dyn Tool> = Arc::new(crate::tools::subagent::DelegateTaskTool {
                     config: config.clone(),
                     parent_provider: provider.clone(),
                     session_manager: session_manager.clone(),
                     parent_tools,
-                    cancellation_token: CancellationToken::new(),
+                    cancellation_token: Self::active_cancellation_token(),
                     capability_policy: self.active_capability_policy(),
                 });
-            return self
-                .tool_allowed_by_active_policy_for_tool(tool.as_ref())
-                .then_some(tool);
+                return self
+                    .tool_allowed_by_active_policy_for_tool(tool.as_ref())
+                    .then_some(tool);
+            }
+            "parallel_research" => {
+                let (config, provider, session_manager) = self.context.as_ref()?;
+                let parent_tools = self.collect_parent_tools_excluding(&[
+                    "delegate_task",
+                    "parallel_research",
+                    "send_remote_input",
+                ]);
+                let tool: Arc<dyn Tool> = Arc::new(crate::tools::subagent::ParallelResearchTool {
+                    config: config.clone(),
+                    parent_provider: provider.clone(),
+                    session_manager: session_manager.clone(),
+                    parent_tools,
+                    cancellation_token: Self::active_cancellation_token(),
+                    capability_policy: self.active_capability_policy(),
+                });
+                return self
+                    .tool_allowed_by_active_policy_for_tool(tool.as_ref())
+                    .then_some(tool);
+            }
+            "evaluator_optimizer_loop" => {
+                let (config, provider, session_manager) = self.context.as_ref()?;
+                let parent_tools = self.collect_parent_tools_excluding(&[
+                    "delegate_task",
+                    "parallel_research",
+                    "evaluator_optimizer_loop",
+                    "send_remote_input",
+                ]);
+                let tool: Arc<dyn Tool> =
+                    Arc::new(crate::tools::subagent::EvaluatorOptimizerLoopTool {
+                        config: config.clone(),
+                        parent_provider: provider.clone(),
+                        session_manager: session_manager.clone(),
+                        parent_tools,
+                        cancellation_token: Self::active_cancellation_token(),
+                        capability_policy: self.active_capability_policy(),
+                    });
+                return self
+                    .tool_allowed_by_active_policy_for_tool(tool.as_ref())
+                    .then_some(tool);
+            }
+            _ => {}
         }
 
         // 2. Check static tools
-        if let Some(tool) = self.read_tools().get(name) {
-            return self
-                .tool_allowed_by_active_policy_for_tool(tool.as_ref())
-                .then_some(tool.clone());
+        let static_match = self.read_tools().get(name).cloned();
+        match static_match {
+            Some(tool) => {
+                return self
+                    .tool_allowed_by_active_policy_for_tool(tool.as_ref())
+                    .then_some(tool);
+            }
+            None => {}
         }
 
         // 3. If not found, check if it matches a custom subagent profile dynamically
@@ -592,20 +566,16 @@ impl ToolRegistry {
         let active_subagent = crate::tools::subagent::ACTIVE_SUBAGENT
             .try_with(|s| s.clone())
             .unwrap_or_default();
-        if !active_subagent.is_empty() {
-            if name == active_subagent {
-                return None;
-            }
-            if !crate::tools::subagent::nested_delegation_allowed_for_active_context(
-                &active_subagent,
-            ) {
-                return None;
-            }
-        }
+        let subagent_allowed = active_subagent.is_empty()
+            || (name != active_subagent
+                && crate::tools::subagent::nested_delegation_allowed_for_active_context(
+                    &active_subagent,
+                ));
+        subagent_allowed.then_some(())?;
         let profiles = crate::subagents::load_profiles().ok()?;
         let profile = profiles.into_iter().find(|p| p.name == name)?;
         let profile_metadata = crate::tools::subagent::subagent_tool_metadata(&profile.name);
-        if !self
+        let policy_allowed = self
             .active_capability_policy()
             .as_ref()
             .map(|policy| {
@@ -615,10 +585,8 @@ impl ToolRegistry {
                     policy,
                 )
             })
-            .unwrap_or(true)
-        {
-            return None;
-        }
+            .unwrap_or(true);
+        policy_allowed.then_some(())?;
 
         let parent_tools = self.collect_parent_tools_excluding(&[
             "delegate_task",
@@ -632,7 +600,7 @@ impl ToolRegistry {
             session_manager: session_manager.clone(),
             profile,
             parent_tools,
-            cancellation_token: CancellationToken::new(),
+            cancellation_token: Self::active_cancellation_token(),
             capability_policy: self.active_capability_policy(),
         }))
     }
@@ -643,26 +611,15 @@ impl ToolRegistry {
             .values()
             .filter(|t| {
                 let name = t.name();
-                if !self.tool_allowed_by_active_policy_for_tool(t.as_ref()) {
-                    return false;
-                }
-                if let Some(ref prefixes) = filter {
-                    name == "delegate_task"
-                        || name == "send_remote_input"
-                        || name == "optimize_tool_scope"
-                        || prefixes.iter().any(|prefix| name.starts_with(prefix))
-                } else {
-                    true
-                }
+                self.tool_allowed_by_active_policy_for_tool(t.as_ref())
+                    && routing::tool_allowed_by_filter(name, filter.as_ref())
             })
             .cloned()
             .collect()
     }
 
     pub fn set_filter_scope(&self, prefixes: Option<Vec<String>>) {
-        if let Ok(mut g) = self.filter_scope.lock() {
-            *g = prefixes;
-        }
+        let _ = self.filter_scope.lock().map(|mut g| *g = prefixes);
         self.clear_route_cache();
     }
 
@@ -708,9 +665,9 @@ impl ToolRegistry {
                     "exposed_to_model": entry.exposed_to_model,
                     "hidden_reason": entry.hidden_reason,
                 });
-                if include_schema {
+                let _ = include_schema.then(|| {
                     value["parameters"] = entry.parameters;
-                }
+                });
                 value
             })
             .collect();
@@ -729,6 +686,8 @@ impl ToolRegistry {
 
     pub fn route_for_prompt(&self, prompt: &str) -> ToolRouteAnalysis {
         let filter = self.filter_scope.lock().ok().and_then(|g| g.clone());
+        let (pending_tools, pending_domains) = self.current_turn_scope();
+        let capability_policy = self.active_capability_policy();
         let static_tools = self.read_tools();
         let mut static_tool_names: Vec<String> = static_tools.keys().cloned().collect();
         static_tool_names.sort();
@@ -736,13 +695,18 @@ impl ToolRegistry {
             prompt: prompt.to_string(),
             filter_scope: filter.clone(),
             static_tool_names: static_tool_names.clone(),
+            pending_tools,
+            pending_domains,
+            capability_policy,
         };
-        if let Ok(cache) = self.route_cache.lock() {
-            if let Some((cached_key, cached_route)) = cache.as_ref() {
-                if cached_key == &cache_key {
-                    return cached_route.clone();
-                }
-            }
+        let cached = self.route_cache.lock().ok().and_then(|cache| {
+            cache.as_ref().and_then(|(cached_key, cached_route)| {
+                (cached_key == &cache_key).then(|| cached_route.clone())
+            })
+        });
+        match cached {
+            Some(route) => return route,
+            None => {}
         }
 
         let routing_cfg = self

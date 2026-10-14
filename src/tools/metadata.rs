@@ -63,12 +63,46 @@ pub fn normalize_tool_name(name: &str) -> String {
     name.trim().to_ascii_lowercase()
 }
 
-/// Return the canonical static name for a curated alias. Unknown and dynamic
-/// tool names are returned trimmed so profile policy can compare them without
-/// changing their executable identity.
+pub(crate) fn compatibility_canonical_name(requested: &str) -> Option<&'static str> {
+    match normalize_tool_name(requested).as_str() {
+        "doc_reader" | "read_document_file" => Some("read_doc"),
+        "read_document" => Some("opendoc_read_document_text"),
+        "opendoc_extract_tables" => Some("opendoc_find_tables"),
+        "opendoc_convert_document" => Some("opendoc_convert"),
+        "crawl_site" | "crawl" | "spider" | "crawl_website_tool" => Some("crawl_website"),
+        "web_scrape" | "web_fetch_tool" | "fetch_web" | "scrape_web" => Some("web_fetch"),
+        "web_search_tool" | "search_web" | "tavily_search" => Some("web_search"),
+        "obscura" | "obscura_tool" | "chrome_cdp" => Some("obscura_browser"),
+        "gsd" | "gsd_tool" | "chrome_gui" => Some("gsd_browser"),
+        "firefox" | "firefox_tool" => Some("firefox_browser"),
+        "inspect_browser" | "browser_status" | "browser_health" => Some("inspect_browsers"),
+        "db_writer" | "sqlite_write" | "sqlite_writer" => Some("db_write"),
+        "sqlite" | "sqlite_query" | "sqlite_inspector" => Some("db_inspector"),
+        "diagnose" | "system_diagnostics" | "health_check" | "system_health" => {
+            Some("diagnose_system")
+        }
+        "cron_schedule" | "cron_add" => Some("schedule_job"),
+        "cron_list" | "cron_jobs" => Some("list_jobs"),
+        "cron_remove" | "cron_delete" => Some("remove_job"),
+        "save_link" | "bookmark_url" | "add_bookmark" | "bookmark_link" | "source_bookmark"
+        | "bookmarks" => Some("knowledge_source"),
+        "save_memory" | "remember" | "record_memory" => Some("store_memory"),
+        "search_memory" | "query_memory" | "find_memory" => Some("recall_memory"),
+        "curate_skills" | "manage_skills" | "save_skill" => Some("curate_skill"),
+        "inventory" | "runtime_inventory" => Some("openz_inventory"),
+        "catalog" | "list_tools" | "tool_search" | "search_tools" | "find_tools"
+        | "discover_tools" => Some("tool_catalog"),
+        _ => None,
+    }
+}
+
+/// Return the canonical static name for a curated or compatibility alias.
+/// Unknown and dynamic tool names are returned trimmed so profile policy can
+/// compare them without changing their executable identity.
 pub fn canonical_tool_name(name: &str) -> String {
     super::tool_spec(name)
         .map(|spec| spec.name.to_string())
+        .or_else(|| compatibility_canonical_name(name).map(str::to_string))
         .unwrap_or_else(|| name.trim().to_string())
 }
 
@@ -99,26 +133,24 @@ fn title_case_identifier(name: &str) -> String {
 /// Aliases are resolved first so presentation remains consistent at every
 /// caller boundary while the emitted/executed tool name stays canonical.
 pub fn presentation_name(name: &str) -> String {
-    if let Some(spec) = super::tool_spec(name) {
-        return spec.presentation_name.to_string();
-    }
-
     let canonical = super::canonical_tool_name(name);
-    match canonical.as_str() {
-        "api_integrator" => "API Integrator".to_string(),
-        "ast_searcher" => "AST Searcher".to_string(),
-        "git_ops_agent" => "Git Operations Agent".to_string(),
-        "mcps_manager" => "MCPs Manager".to_string(),
-        "openz" => "OpenZ".to_string(),
-        "openz_coordinator" | "openz_maintainer" => {
-            format!(
-                "OpenZ {}",
-                title_case_identifier(canonical.strip_prefix("openz_").unwrap_or_default())
-            )
-        }
-        "sop_designer" => "SOP Designer".to_string(),
-        _ => title_case_identifier(&canonical),
-    }
+    super::tool_spec(&canonical)
+        .map(|spec| spec.presentation_name.to_string())
+        .unwrap_or_else(|| match canonical.as_str() {
+            "api_integrator" => "API Integrator".to_string(),
+            "ast_searcher" => "AST Searcher".to_string(),
+            "git_ops_agent" => "Git Operations Agent".to_string(),
+            "mcps_manager" => "MCPs Manager".to_string(),
+            "openz" => "OpenZ".to_string(),
+            "openz_coordinator" | "openz_maintainer" => {
+                format!(
+                    "OpenZ {}",
+                    title_case_identifier(canonical.strip_prefix("openz_").unwrap_or_default())
+                )
+            }
+            "sop_designer" => "SOP Designer".to_string(),
+            _ => title_case_identifier(&canonical),
+        })
 }
 
 /// Return the compact label used in inline CLI tool-execution messages.
@@ -155,11 +187,11 @@ pub fn compact_presentation_name(name: &str) -> String {
         "db_inspector" => "DbInspect".to_string(),
         "db_write" => "DbWrite".to_string(),
         "read_doc" => "DocRead".to_string(),
-        "crawl" => "Crawl".to_string(),
+        "crawl" | "crawl_website" => "Crawl".to_string(),
         "semantic_search" => "SemanticSearch".to_string(),
         "wasm_sandbox" => "Wasm".to_string(),
-        "cron" => "Cron".to_string(),
-        "watcher" => "Watcher".to_string(),
+        "cron" | "schedule_job" | "list_jobs" | "remove_job" => "Cron".to_string(),
+        "watcher" | "file_watcher" => "Watcher".to_string(),
         "openz" => "OpenZ".to_string(),
         _ => canonical,
     }
@@ -180,63 +212,58 @@ impl ToolRisk {
 /// because navigation and mutation calls have different progress semantics.
 pub(crate) fn is_progress_sensitive_repeat(name: &str, args: &serde_json::Value) -> bool {
     let name = canonical_tool_name(name);
-    if matches!(
-        name.as_str(),
+    match name.as_str() {
         "web_fetch"
-            | "web_search"
-            | "crawl"
-            | "crawl_site"
-            | "social_search"
-            | "searchxyz_search_web"
-            | "searchxyz_read_url"
-            | "searchxyz_search_and_read"
-            | "searchxyz_deep_research"
-            | "searchxyz_site_map"
-            | "searchxyz_read_github_repo"
-            | "read_file"
-            | "list_dir"
-            | "find_files"
-            | "grep_search"
-            | "ast_grep"
-            | "code_outline"
-            | "doc_reader"
-            | "system_info"
-            | "check_port"
-            | "browser_status"
-            | "git_manager"
-            | "open_path"
-            | "device_inventory"
-            | "retrieve_original"
-            | "scope_context"
-            | "compress_content"
-            | "search_nodes"
-            | "open_nodes"
-            | "read_graph"
-            | "recall_memory"
-            | "proactive_recall"
-            | "semantic_search"
-            | "rust_docs"
-            | "get_working_memory"
-            | "list_jobs"
-    ) {
-        return true;
-    }
-
-    if name == "gsd_browser" {
-        return matches!(
+        | "web_search"
+        | "crawl"
+        | "crawl_site"
+        | "crawl_website"
+        | "social_search"
+        | "searchxyz_search_web"
+        | "searchxyz_read_url"
+        | "searchxyz_search_and_read"
+        | "searchxyz_deep_research"
+        | "searchxyz_site_map"
+        | "searchxyz_read_github_repo"
+        | "read_file"
+        | "list_dir"
+        | "find_files"
+        | "file_watcher"
+        | "grep_search"
+        | "ast_grep"
+        | "code_outline"
+        | "doc_reader"
+        | "read_doc"
+        | "system_info"
+        | "check_port"
+        | "browser_status"
+        | "inspect_browsers"
+        | "git_manager"
+        | "open_path"
+        | "device_inventory"
+        | "retrieve_original"
+        | "scope_context"
+        | "compress_content"
+        | "compress_context"
+        | "search_nodes"
+        | "open_nodes"
+        | "read_graph"
+        | "recall_memory"
+        | "proactive_recall"
+        | "semantic_search"
+        | "rust_docs"
+        | "get_working_memory"
+        | "list_jobs" => true,
+        "gsd_browser" => matches!(
             args.get("action").and_then(|value| value.as_str()),
             Some("snapshot" | "page_source" | "accessibility_tree" | "screenshot" | "eval")
-        );
-    }
-
-    if name == "obscura_browser" || name == "firefox_browser" {
-        return matches!(
+        ),
+        "obscura_browser" | "firefox_browser" => matches!(
             args.get("action").and_then(|value| value.as_str()),
             Some("render" | "screenshot" | "eval" | "page_source" | "accessibility_tree")
-        );
+        ),
+        _ => false,
     }
-
-    false
 }
 
 pub(crate) fn tool_repetition_block_threshold(
@@ -431,30 +458,20 @@ fn tool_recommended_timeout(name: &str) -> Option<u64> {
     }
 }
 
-fn tool_aliases(name: &str, domain: &str) -> &'static [&'static str] {
-    if let Some(def) = super::tool_spec(name) {
-        return def.aliases;
-    }
-    match name {
-        "open_path" => &[
-            "system image viewer",
-            "image viewer",
-            "default application",
-            "open application",
-            "open in system viewer",
-        ],
-        "device_inventory" => &["device inventory", "list devices", "connected devices"],
-        _ => match domain {
-            "code" => &["code search", "compile", "test", "refactor"],
-            "filesystem" => &["file", "directory", "edit file"],
-            "web" => &["website", "browser", "research online"],
-            "media" => &["image", "video", "svg", "diagram"],
-            "document" => &["pdf", "docx", "xlsx", "document"],
-            "memory" => &["remember", "recall", "knowledge graph"],
-            "subagent" => &["delegate", "worker", "specialist"],
+fn tool_aliases(name: &str, _domain: &str) -> &'static [&'static str] {
+    super::tool_spec(name)
+        .map(|def| def.aliases)
+        .unwrap_or_else(|| match name {
+            "open_path" => &[
+                "system image viewer",
+                "image viewer",
+                "default application",
+                "open application",
+                "open in system viewer",
+            ],
+            "device_inventory" => &["device inventory", "list devices", "connected devices"],
             _ => &[],
-        },
-    }
+        })
 }
 
 fn tool_examples(name: &str, domain: &str) -> &'static [&'static str] {

@@ -45,8 +45,8 @@ mod hash_tests {
         assert!(session.verify_hash_chain().is_ok());
     }
 
-    #[test]
-    fn tampered_session_load_preserves_tampering_evidence_for_audit() -> anyhow::Result<()> {
+    #[tokio::test]
+    async fn tampered_session_load_preserves_tampering_evidence_for_audit() -> anyhow::Result<()> {
         let dir =
             std::env::temp_dir().join(format!("openz_session_tamper_{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&dir)?;
@@ -55,7 +55,7 @@ mod hash_tests {
         let mut session = Session::new("audit_test");
         session.add_message("user", "transfer $10 to Alice");
         session.add_message("assistant", "Confirmed transfer of $10 to Alice.");
-        manager.save(&mut session)?;
+        manager.save(&mut session).await?;
 
         // Tamper with message content on disk without updating hashes
         let path = dir.join("audit_test.json");

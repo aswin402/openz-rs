@@ -522,3 +522,29 @@ fn process_tool_guard_respects_resource_limit() {
     drop(first);
     assert!(crate::tools::resource_policy::try_acquire_process_tool(1).is_ok());
 }
+
+#[test]
+fn auto_scope_and_saved_output_recognize_camel_case_path_aliases() {
+    let edit_call = crate::providers::ToolCallRequest {
+        id: "call_camel_edit".to_string(),
+        name: "replace_lines".to_string(),
+        arguments: json!({ "TargetFile": "src/main.rs", "start_line": 1, "end_line": 2 }),
+    };
+    let mut scoped = std::collections::HashSet::new();
+    let normalized_edit = auto_scope_context_before_edit(edit_call, &mut scoped);
+    assert_eq!(normalized_edit.name, "scope_context");
+    assert_eq!(normalized_edit.arguments["target_path"], "src/main.rs");
+
+    let output_path = crate::config::loader::runtime_data_dir()
+        .join("tool_outputs")
+        .join("output_alias.json");
+    let file_url = format!("file://{}", output_path.display());
+    let read_call = crate::providers::ToolCallRequest {
+        id: "call_camel_read".to_string(),
+        name: "open file".to_string(),
+        arguments: json!({ "AbsolutePath": file_url }),
+    };
+    let normalized_read = auto_adjust_tool_call_for_user_intent(read_call, "show output");
+    assert_eq!(normalized_read.name, "retrieve_original");
+    assert_eq!(normalized_read.arguments["ccr_id"], file_url);
+}

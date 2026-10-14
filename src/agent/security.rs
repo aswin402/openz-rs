@@ -240,13 +240,12 @@ impl SecurityGuard {
                     let hits_workspace = Self::resolve_workspace()
                         .and_then(|ws| ws.canonicalize().ok())
                         .map(|w_canon| {
+                            let git_dir = w_canon.join(".git");
                             check_path == w_canon
-                                || WORKSPACE_PROTECTED_ENTRIES.iter().any(|entry| {
-                                    let protected = w_canon.join(entry);
-                                    check_path == protected
-                                        || path_str_canon
-                                            .starts_with(&format!("{}/", protected.to_string_lossy()))
-                                })
+                                || check_path.starts_with(&git_dir)
+                                || WORKSPACE_PROTECTED_ENTRIES
+                                    .iter()
+                                    .any(|entry| check_path == w_canon.join(entry))
                         })
                         .unwrap_or(false);
 

@@ -173,29 +173,39 @@ impl Tool for ToolCatalogTool {
             });
         }
 
+        let tool_meta_map: std::collections::HashMap<String, crate::tools::ToolMetadata> = self
+            .registry
+            .tool_inventory_snapshot()
+            .into_iter()
+            .map(|(name, _, meta)| (name, meta))
+            .collect();
         for entry in &mut all_entries {
+            let entry_name = entry["name"].as_str().unwrap_or("");
+            let inferred = tool_meta_map
+                .get(entry_name)
+                .cloned()
+                .unwrap_or_else(|| crate::tools::ToolMetadata::infer(entry_name));
             let risk = match entry["risk"].as_str().unwrap_or("low") {
                 "high" => crate::tools::ToolRisk::High,
                 "medium" => crate::tools::ToolRisk::Medium,
                 _ => crate::tools::ToolRisk::Low,
             };
             let metadata = crate::tools::ToolMetadata {
-                presentation_name: entry["name"]
-                    .as_str()
-                    .map(crate::tools::presentation_name)
-                    .unwrap_or_else(|| "Tool".to_string()),
-                domain: "general",
+                presentation_name: inferred.presentation_name,
+                domain: inferred.domain,
                 risk,
-                uses_network: entry["uses_network"].as_bool().unwrap_or(false),
-                writes_disk: entry["writes_disk"].as_bool().unwrap_or(false),
-                spawns_process: entry["spawns_process"].as_bool().unwrap_or(false),
-                requires_approval: entry["requires_approval"].as_bool().unwrap_or(false),
-                priority: entry["priority"].as_u64().unwrap_or(0) as u8,
-                aliases: &[],
-                examples: &[],
-                when_to_use: "",
-                when_not_to_use: "",
-                recommended_timeout_secs: None,
+                uses_network: entry["uses_network"].as_bool().unwrap_or(inferred.uses_network),
+                writes_disk: entry["writes_disk"].as_bool().unwrap_or(inferred.writes_disk),
+                spawns_process: entry["spawns_process"].as_bool().unwrap_or(inferred.spawns_process),
+                requires_approval: entry["requires_approval"]
+                    .as_bool()
+                    .unwrap_or(inferred.requires_approval),
+                priority: entry["priority"].as_u64().unwrap_or(inferred.priority as u64) as u8,
+                aliases: inferred.aliases,
+                examples: inferred.examples,
+                when_to_use: inferred.when_to_use,
+                when_not_to_use: inferred.when_not_to_use,
+                recommended_timeout_secs: inferred.recommended_timeout_secs,
             };
             let decision = crate::tools::resource_policy::ToolResourcePolicy::evaluate(
                 &metadata, &defaults, &runtime,

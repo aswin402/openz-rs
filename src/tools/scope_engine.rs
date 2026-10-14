@@ -76,32 +76,33 @@ pub fn pack_for_intent(intent: TurnIntent) -> &'static [ToolPack] {
 }
 
 pub fn tool_matches_pack(name: &str, metadata: &ToolMetadata, packs: &[ToolPack]) -> bool {
-    if let Some(spec) = crate::tools::tool_spec(name) {
-        return packs.iter().any(|pack| {
-            spec.packs.iter().any(|label| *label == pack_label(*pack))
-        });
-    }
-
-    packs.iter().any(|pack| match pack {
-        ToolPack::Core => false,
-        ToolPack::RepoRead => {
-            matches!(metadata.domain, "filesystem" | "code" | "git") && !metadata.writes_disk
-        }
-        ToolPack::RepoWrite => {
-            matches!(metadata.domain, "filesystem" | "git") && metadata.writes_disk
-        }
-        ToolPack::LocalExec => {
-            matches!(metadata.domain, "shell" | "code")
-        }
-        ToolPack::WebResearch => {
-            matches!(metadata.domain, "web" | "search") || name.contains("browser")
-        }
-        ToolPack::Memory => matches!(metadata.domain, "memory" | "context" | "reasoning"),
-        ToolPack::Cron => metadata.domain == "cron",
-        ToolPack::Subagent => metadata.domain == "subagent",
-        ToolPack::Orchestrator => false,
-        ToolPack::Media => matches!(metadata.domain, "media" | "document"),
-    })
+    crate::tools::tool_spec(name)
+        .map(|spec| {
+            packs
+                .iter()
+                .any(|pack| spec.packs.iter().any(|label| *label == pack_label(*pack)))
+        })
+        .unwrap_or_else(|| {
+            packs.iter().any(|pack| match pack {
+                ToolPack::Core => crate::tools::routing::is_core_tool(name),
+                ToolPack::RepoRead => {
+                    matches!(metadata.domain, "filesystem" | "code" | "git")
+                        && !metadata.writes_disk
+                }
+                ToolPack::RepoWrite => {
+                    matches!(metadata.domain, "filesystem" | "git") && metadata.writes_disk
+                }
+                ToolPack::LocalExec => matches!(metadata.domain, "shell" | "code"),
+                ToolPack::WebResearch => {
+                    matches!(metadata.domain, "web" | "search") || name.contains("browser")
+                }
+                ToolPack::Memory => matches!(metadata.domain, "memory" | "context" | "reasoning"),
+                ToolPack::Cron => metadata.domain == "cron",
+                ToolPack::Subagent => metadata.domain == "subagent",
+                ToolPack::Orchestrator => name == "orchestrate_workflow",
+                ToolPack::Media => matches!(metadata.domain, "media" | "document"),
+            })
+        })
 }
 
 fn pack_label(pack: ToolPack) -> &'static str {

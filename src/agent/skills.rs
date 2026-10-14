@@ -284,15 +284,13 @@ fn quarantine_malformed_memory_db(path: &std::path::Path) {
     );
 }
 
-fn is_sqlite_corruption_error(err: &anyhow::Error) -> bool {
-    err.downcast_ref::<rusqlite::Error>()
-        .and_then(|sqlite_err| sqlite_err.sqlite_error_code())
-        .is_some_and(|code| {
-            matches!(
-                code,
-                rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
-            )
-        })
+fn is_sqlite_corruption_error(err: &rusqlite::Error) -> bool {
+    err.sqlite_error_code().is_some_and(|code| {
+        matches!(
+            code,
+            rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
+        )
+    })
 }
 
 pub fn get_connection() -> Result<Connection> {
@@ -317,7 +315,7 @@ pub fn get_connection() -> Result<Connection> {
                 conn = Connection::open(&path)?;
                 crate::core::sqlite::apply_standard_pragmas(&conn)?;
             }
-            false => return Err(err),
+            false => return Err(err.into()),
         },
     }
 

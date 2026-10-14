@@ -66,6 +66,10 @@ fn test_tool_catalog_reports_metadata_and_exposure() {
     assert_eq!(read_file["domain"].as_str().unwrap(), "filesystem");
     assert_eq!(read_file["risk"].as_str().unwrap(), "low");
     assert_eq!(read_file["writes_disk"].as_bool().unwrap(), false);
+    assert_eq!(
+        read_file["resource_policy"]["decision"].as_str(),
+        Some("allow")
+    );
 }
 
 #[test]

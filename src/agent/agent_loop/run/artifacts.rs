@@ -5,54 +5,57 @@ use super::user_content_requests_fresh_fetch;
 pub(super) fn saved_tool_output_ref_from_read_file(
     call: &crate::providers::ToolCallRequest,
 ) -> Option<String> {
-    if call.name != "read_file" {
-        return None;
-    }
+    (crate::tools::canonical_tool_name(&call.name) == "read_file").then_some(())?;
 
-    let raw_path = call.arguments.get("path")?.as_str()?.trim();
-    if raw_path.is_empty() {
-        return None;
-    }
+    let raw_paths = crate::tools::arguments::argument_values(
+        &call.arguments,
+        crate::tools::arguments::ToolArgumentKind::Path,
+    );
+    let raw_path = raw_paths
+        .iter()
+        .map(|s| s.trim())
+        .find(|s| !s.is_empty())?;
 
     let path_without_scheme = raw_path.strip_prefix("file://").unwrap_or(raw_path);
     let path = std::path::Path::new(path_without_scheme);
     let outputs_dir = crate::config::loader::runtime_data_dir().join("tool_outputs");
 
-    if !path.is_absolute() || !path.starts_with(&outputs_dir) {
-        return None;
-    }
-
-    if raw_path.starts_with("file://") {
-        Some(raw_path.to_string())
-    } else {
-        Some(format!("file://{}", path.to_string_lossy()))
-    }
+    (path.is_absolute() && path.starts_with(&outputs_dir)).then(|| {
+        raw_path
+            .strip_prefix("file://")
+            .map(|_| raw_path.to_string())
+            .unwrap_or_else(|| format!("file://{}", path.to_string_lossy()))
+    })
 }
 
 pub(super) fn auto_adjust_tool_call_for_user_intent(
     mut call: crate::providers::ToolCallRequest,
     user_content: &str,
 ) -> crate::providers::ToolCallRequest {
-    if let Some(original_ref) = saved_tool_output_ref_from_read_file(&call) {
-        return crate::providers::ToolCallRequest {
-            id: call.id,
-            name: "retrieve_original".to_string(),
-            arguments: serde_json::json!({ "ccr_id": original_ref }),
-        };
+    match saved_tool_output_ref_from_read_file(&call) {
+        Some(original_ref) => {
+            return crate::providers::ToolCallRequest {
+                id: call.id,
+                name: "retrieve_original".to_string(),
+                arguments: serde_json::json!({ "ccr_id": original_ref }),
+            };
+        }
+        None => {}
     }
 
-    if call.name == "web_fetch"
+    let should_revalidate = crate::tools::canonical_tool_name(&call.name) == "web_fetch"
         && user_content_requests_fresh_fetch(user_content)
         && call.arguments.get("cache_mode").is_none()
-        && call.arguments.get("cacheMode").is_none()
-    {
-        if let serde_json::Value::Object(map) = &mut call.arguments {
+        && call.arguments.get("cacheMode").is_none();
+    let _ = should_revalidate
+        .then(|| call.arguments.as_object_mut())
+        .flatten()
+        .map(|map| {
             map.insert(
                 "cache_mode".to_string(),
                 serde_json::Value::String("revalidate".to_string()),
-            );
-        }
-    }
+            )
+        });
     call
 }
 
@@ -60,21 +63,21 @@ pub(super) fn edit_tool_target_path(
     tool_name: &str,
     arguments: &serde_json::Value,
 ) -> Option<String> {
-    if !matches!(
-        tool_name,
+    let canonical = crate::tools::canonical_tool_name(tool_name);
+    matches!(
+        canonical.as_str(),
         "write_file" | "patch_file" | "replace_lines" | "zenflow_edit"
-    ) {
-        return None;
-    }
-
-    arguments
-        .get("path")
-        .or_else(|| arguments.get("file_path"))
-        .or_else(|| arguments.get("target_path"))
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|path| !path.is_empty())
-        .map(ToString::to_string)
+    )
+    .then(|| {
+        crate::tools::arguments::argument_values(
+            arguments,
+            crate::tools::arguments::ToolArgumentKind::Path,
+        )
+        .into_iter()
+        .map(|s| s.trim().to_string())
+        .find(|s| !s.is_empty())
+    })
+    .flatten()
 }
 
 pub(super) fn scope_context_target_for_edit_path(target_path: &str) -> String {

@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.250-orange.svg" alt="Version 0.0.250"/></a>
+  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.251-orange.svg" alt="Version 0.0.251"/></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.82%2B-blue.svg" alt="Rust 1.82+"/></a>
   <a href="https://tokio.rs/"><img src="https://img.shields.io/badge/runtime-tokio-purple.svg" alt="Tokio Async"/></a>
   <a href="https://github.com/aswin402/openz-rs/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-green.svg" alt="License"/></a>
@@ -57,6 +57,11 @@ Most agent frameworks require users to manually select tools, switch providers, 
 ---
 
 ## 🆕 Latest Highlights
+
+### 🧭 Canonical Tool Routing, BM25 Deduplication & Scope Alignment
+- **Unified Alias Canonicalization**: Tool compatibility aliases (`crawl_site` → `crawl_website`, `open_path` → `open`, `device_inventory` → `system_info`, `create_subagent_profile` → `create_subagent`) and camelCase/snake_case path arguments (`TargetFile`, `filePath`, `file_path`, `AbsolutePath`) normalize through a single pipeline across `ToolRegistry`, `ScopeEngine`, and run-loop artifact guards.
+- **Word-Bounded Explicit Tool Matching & Deduplicated BM25 Index**: `ToolRouter` indexes unique tool aliases via `BTreeSet` and matches explicit prompt tool mentions on token boundaries without false-positive domain keyword explosions.
+- **Dynamic Turn Cancellation Inheritance**: Dynamically resolved subagent and orchestration tools (`orchestrate_workflow`, `delegate_task`, `parallel_research`, `optimize_subagent_execution`, and custom `DelegateProfileTool` profiles) automatically inherit the active turn's `CancellationToken`.
 
 ### 💻 TUI Ergonomics & Multi-line Prompt Wrapping
 - **Visible Terminal Cursor**: Explicit terminal hardware cursor (`crossterm::cursor::Show`) on raw mode start and every render frame.
@@ -183,7 +188,7 @@ composes focused handler modules under `src/tools/openmedia/mcp/`.
 
 OpenZ includes multi-layered safety controls:
 
-1. **SecurityGuard DFA Gate (`src/agent/security.rs`)**: Tokenizes shell commands with a quote-state DFA lexer, unwraps `$(...)`/backtick substitutions and inline scripts (`sh -c`, `python3 -c`, `node -e`), hard-blocks destructive root/system deletions and `curl`/`wget` pipes into 12 shells/interpreters, and prompts for user confirmation on sensitive actions.
+1. **SecurityGuard DFA Gate (`src/agent/security.rs`)**: Tokenizes shell commands with a quote-state DFA lexer, unwraps `$(...)`/backtick substitutions and inline scripts (`sh -c`, `python3 -c`, `node -e`), hard-blocks destructive root/system/workspace-core deletions (`.git` recursively, `Cargo.toml`, `src`, `build.rs`), disk formatting, and host power commands (`is_forbidden`), and requires explicit user confirmation across all security modes for privilege escalation and pipes into 12 shells/interpreters (`sh`, `bash`, `zsh`, `dash`, `ksh`, `fish`, `python`, `python3`, `perl`, `ruby`, `node`, `php`).
 2. **PathPolicy & Multimodal Verification (`src/config/path_policy.rs`, `src/providers/mod.rs`)**: Restricts file reads/writes to the active workspace, `~/.openz`, and OS temp directories while blocking sensitive dotfiles (`.env`, `.ssh`, `.aws`). Outbound multimodal image parsing verifies binary magic signatures (PNG, JPEG, GIF, WEBP) and SSRF IP safety.
 3. **Linux seccomp BPF Sandbox (`src/tools/shell.rs`)**: Optional subprocess BPF filter (`enable_sandbox` in `~/.openz/config.json`, `false` by default to allow compiler and browser toolchains; toggle via `openz configure`) restricting child processes to ~110 allowed syscalls with `PR_SET_NO_NEW_PRIVS` and `RLIMIT` caps.
 4. **Subagent Worktree Isolation**: Subagents launched from non-project workspace roots operate inside isolated scratch worktrees under `~/.openz/worktrees`.

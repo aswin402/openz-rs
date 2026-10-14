@@ -581,3 +581,72 @@ async fn test_dynamic_tool_retrieval_and_scoping_benchmark() {
     assert!(mounted_names.contains(&"openmedia_rasterize_svg".to_string()), "Explicitly requested tool must be hot-mounted into active scope");
 }
 
+#[test]
+fn filter_scope_allows_all_core_tools_across_get_and_static_tools() {
+    let registry = registry_with_named_tools(&[
+        ("read_file", "filesystem"),
+        ("find_files", "filesystem"),
+        ("grep_search", "code"),
+        ("tool_catalog", "self_management"),
+        ("openz_inventory", "self_management"),
+        ("web_fetch", "web"),
+    ]);
+    registry.set_filter_scope(Some(vec!["custom_prefix_".to_string()]));
+
+    let exposed = exposed_tool_names(&registry, "inspect files in this repository");
+    for name in &exposed {
+        assert!(
+            registry.get(name).is_some(),
+            "Every tool exposed under filter_scope must also be resolvable via get('{name}')"
+        );
+    }
+    assert!(registry.get("read_file").is_some());
+    assert!(registry.get("find_files").is_some());
+    assert!(registry.get("grep_search").is_some());
+    assert!(registry.get("tool_catalog").is_some());
+    assert!(registry.get("web_fetch").is_none());
+
+    let static_names: Vec<String> = registry
+        .get_static_tools()
+        .into_iter()
+        .map(|t| t.name().to_string())
+        .collect();
+    assert!(static_names.contains(&"read_file".to_string()));
+    assert!(static_names.contains(&"grep_search".to_string()));
+    assert!(!static_names.contains(&"web_fetch".to_string()));
+}
+
+#[test]
+fn canonical_tool_name_resolves_compatibility_aliases() {
+    assert_eq!(crate::tools::canonical_tool_name("sqlite_write"), "db_write");
+    assert_eq!(crate::tools::canonical_tool_name("db_writer"), "db_write");
+    assert_eq!(crate::tools::canonical_tool_name("doc_reader"), "read_doc");
+    assert_eq!(crate::tools::canonical_tool_name("crawl_site"), "crawl_website");
+    assert_eq!(crate::tools::canonical_tool_name("browser_status"), "inspect_browsers");
+    assert!(crate::agent::security::SecurityGuard::is_sensitive(
+        "sqlite_write",
+        &serde_json::json!({"query": "DELETE FROM items"})
+    ));
+}
+
+#[test]
+fn generic_domain_words_do_not_trigger_explicit_tool_request_explosion() {
+    let registry = registry_with_named_tools(&[
+        ("openmedia_create_svg", "media"),
+        ("openmedia_rasterize_svg", "media"),
+        ("read_file", "filesystem"),
+    ]);
+    let route = registry.route_for_prompt("read the file src/main.rs");
+    let media_entry = route
+        .entries
+        .iter()
+        .find(|e| e.name == "openmedia_create_svg")
+        .expect("openmedia_create_svg entry");
+    assert!(
+        !media_entry
+            .selection_reason
+            .iter()
+            .any(|r| r == "explicit_tool_request"),
+        "Unrequested tool must not receive explicit_tool_request bonus"
+    );
+}

@@ -91,7 +91,8 @@ impl Tool for DiagnoseToolTool {
                 },
                 "mock_args": {
                     "type": "object",
-                    "description": "JSON arguments to pass to the tool call."
+                    "description": "JSON arguments to pass to the tool call.",
+                    "additionalProperties": true
                 }
             },
             "required": ["tool_name"]
