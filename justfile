@@ -2,13 +2,17 @@
 default:
     @just --list
 
-# Build and install the global binary with balanced resources (2 jobs, release-balanced profile)
+# Build and install the global binary with balanced resources and cargo-pretty TUI (2 jobs, release-balanced profile)
 build:
     bash localupdate.sh --balanced
 
-# Compile a specific package/crate (defaults to "openz") without installing globally (uses 2 jobs)
+# Alias for `just build` — run the cargo-pretty TUI update manager
+update:
+    bash localupdate.sh --balanced
+
+# Compile a specific package/crate using cargo-pretty when available (uses 2 jobs)
 compile package="openz":
-    cargo build -p {{package}} -j 2
+    if command -v cargo-pretty >/dev/null 2>&1 && [ -t 0 ] && [ -t 1 ]; then cargo pretty build -p {{package}} -j 2; else cargo build -p {{package}} -j 2; fi
 
 # List all available packages/crates in this workspace
 list-packages:

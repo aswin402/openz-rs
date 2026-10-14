@@ -1,5 +1,35 @@
-## [0.0.254] - 2026-10-15
-### v0.0.254 (Latest Release)
+## [0.0.255] - 2026-10-15
+### v0.0.255 (Latest Release)
+
+#### Added
+- **`cargo-pretty` Live Unit-Graph TUI & Built-In Animated Fallback in [`localupdate.sh`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/localupdate.sh) & [`localinstall.sh`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/localinstall.sh)**: Integrated [`romancitodev/cargo-pretty`](https://github.com/romancitodev/cargo-pretty) (`cargo pretty build --bin openz --locked ...`) for interactive TTY builds alongside a built-in `cargo-pretty`-styled ANSI live status renderer (`run_builtin_cargo_pretty_tui()`, `render_rust_progress_bar()`, `#C1440E → #E8834E → #F6C9A0 → #FFFFFF` Rust color ramp, active `Compiling` viewport, and 4-row fading `Compiled` history), animated braille pipeline step runners (`run_pipeline_step()`), and a boxed post-install telemetry summary card (`render_summary_card()`).
+- **New Build & TUI CLI Flags in [`localupdate.sh`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/localupdate.sh)**: Added `--pretty`, `--no-pretty` / `--builtin-tui`, `--install-pretty`, and `--release` / `--full-release` (`-r`) flags, and added `just update` and `cargo-pretty`-aware `just compile` in [`justfile`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/justfile).
+
+#### Fixed
+- **Fixed Silent Freeze During `localupdate.sh` & `localinstall.sh` Compilation ([`localupdate.sh`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/localupdate.sh), [`localinstall.sh`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/localinstall.sh))**: Eliminated `cargo install ... --offline 2>/dev/null` which redirected Cargo's `stderr` (`fd 2`) to `/dev/null` and caused the terminal to appear frozen at `🔄 Re-compiling and installing new binary globally...` for 15+ minutes during offline builds.
+- **Eliminated Redundant 600-Crate Double Compilation ([`localupdate.sh`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/localupdate.sh))**: Disabled the default pre-install `cargo check` (which previously compiled all 600 crates in the `dev` profile before compiling all 600 crates again in `release` mode) and defaulted bare `./localupdate.sh` to the `release-balanced` profile (`-j 2`, `opt-level = 2`, `codegen-units = 4`, `lto = false`) followed by atomic `install -m 755` + `mv -f` into `~/.cargo/bin/openz` (preventing `ETXTBSY` when `openz` is running).
+
+#### Documentation
+- **Synchronized Release Manifests**: Updated [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md), and [`CHANGELOG.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/CHANGELOG.md) to `0.0.255`.
+
+### Sources & Inspirations
+- **[Inspiration]**: [`romancitodev/cargo-pretty`](https://github.com/romancitodev/cargo-pretty) (`src/main.rs`, `src/ui.rs`, `src/build.rs`) — guided direct `cargo pretty build` invocation, the `#C1440E → #E8834E → #F6C9A0 → #FFFFFF` 28-cell `rust_ramp()` progress bar, and the fading `Compiled` crate list in [`localupdate.sh`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/localupdate.sh).
+
+- **Ideas**:
+  - `cargo-pretty` Live Unit-Graph TUI Integration, Built-In Rust-Ramp Live Fallback Renderer, Single-Pass Balanced Compilation, and Atomic `~/.cargo/bin/openz` Binary Installation.
+- **Inspirations**:
+  - `romancitodev/cargo-pretty` (`nobubbles`/`rimel` inline status view and `rust_ramp` gradient palette).
+- **Sources & References**:
+  - [`localupdate.sh`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/localupdate.sh), [`localinstall.sh`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/localinstall.sh), [`justfile`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/justfile)
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Synchronous SemVer increment to `0.0.255`.
+- **Details & Metrics**:
+  - Replaced silent `cargo install ... 2>/dev/null` and redundant `cargo check` with single-pass `cargo pretty build` + atomic binary installation into `~/.cargo/bin/openz`.
+  - Maintained the 260 registered native tools invariant (`test_native_tool_registration_names`).
+- **Verification**:
+  - `bash -n localupdate.sh && bash -n localinstall.sh`: PASS.
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 1 -- release_version_surfaces_match_cargo_package_version`: PASS (1/1).
+
+### v0.0.254 — 2026-10-15
 
 #### Added
 - **Sticky Tool & Explicit Task Scope Handoff to Child Subagents ([`src/tools/registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/registry.rs), [`src/tools/subagent/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod.rs), [`src/tools/subagent/delegate_task.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_task.rs), [`src/tools/subagent/delegate_profile.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/delegate_profile.rs), [`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs))**: Added task-local `ACTIVE_PARENT_STICKY_TOOLS`, `active_parent_sticky_tools()`, and `ToolRegistry::seed_subagent_working_set()` so child subagents automatically inherit the parent agent's active sticky tool working set and pre-mount explicitly mentioned tools from the subagent `goal` and `context` before Turn 1 (`STICKY_TOOL_TTL_TURNS + 1`), eliminating cold-start `tool_search` round-trips inside subagent turns.
