@@ -1,7 +1,9 @@
+use crate::agent::style::markdown::terminal_width_or_default;
 use crate::agent::style::*;
 use crate::print;
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use std::io::{stdout, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,25 +22,38 @@ impl Drop for RawInputGuard {
 }
 
 pub(super) fn is_ctrl_exit_key(key_event: &crossterm::event::KeyEvent) -> bool {
-    if key_event.kind == KeyEventKind::Release {
-        return false;
-    }
-
-    match key_event.code {
-        KeyCode::Char('\u{3}') | KeyCode::Char('\u{4}') => true,
-        KeyCode::Char(c) if c.eq_ignore_ascii_case(&'c') || c.eq_ignore_ascii_case(&'d') => {
-            key_event.modifiers.contains(KeyModifiers::CONTROL)
-        }
-        _ => false,
+    match key_event.kind == KeyEventKind::Release {
+        true => false,
+        false => match key_event.code {
+            KeyCode::Char('\u{3}') | KeyCode::Char('\u{4}') => true,
+            KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::Char('d') | KeyCode::Char('D') => {
+                key_event.modifiers.contains(KeyModifiers::CONTROL)
+            }
+            _ => false,
+        },
     }
 }
 
 pub(super) fn is_turn_cancel_key(key_event: &crossterm::event::KeyEvent) -> bool {
-    if key_event.kind == KeyEventKind::Release {
-        return false;
+    match key_event.kind == KeyEventKind::Release {
+        true => false,
+        false => key_event.code == KeyCode::Esc || is_ctrl_exit_key(key_event),
     }
+}
 
-    key_event.code == KeyCode::Esc || is_ctrl_exit_key(key_event)
+fn is_paste_image_shortcut(key_event: &crossterm::event::KeyEvent) -> bool {
+    let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
+    let alt = key_event.modifiers.contains(KeyModifiers::ALT);
+    let shift = key_event.modifiers.contains(KeyModifiers::SHIFT);
+    let is_v = matches!(key_event.code, KeyCode::Char('v') | KeyCode::Char('V'));
+    is_v && !shift && (ctrl || alt)
+}
+
+fn format_image_placeholder(index: usize) -> String {
+    match index == 0 {
+        true => "[image]".to_string(),
+        false => format!("[image{}]", index),
+    }
 }
 
 pub(super) fn handle_clipboard_paste(index: usize) -> Result<PathBuf> {
@@ -47,8 +62,9 @@ pub(super) fn handle_clipboard_paste(index: usize) -> Result<PathBuf> {
     let image = clipboard.get_image()?;
 
     let path = crate::config::runtime_data_dir().join(format!("clipboard_image_{}.png", index));
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+    match path.parent() {
+        Some(parent) => std::fs::create_dir_all(parent)?,
+        None => {}
     }
 
     image::save_buffer(
@@ -62,695 +78,531 @@ pub(super) fn handle_clipboard_paste(index: usize) -> Result<PathBuf> {
     Ok(path)
 }
 
+struct InputEditorState {
+    typed_input: Vec<char>,
+    cursor_idx: usize,
+    viewport_start: usize,
+    selected_index: Option<usize>,
+    history_index: Option<usize>,
+    temp_typed_input: String,
+    pasted_images: Vec<PathBuf>,
+    width_usize: usize,
+    lines_printed: usize,
+    autocomplete_visible: bool,
+}
+
+impl InputEditorState {
+    fn new() -> Self {
+        Self {
+            typed_input: Vec::new(),
+            cursor_idx: 0,
+            viewport_start: 0,
+            selected_index: None,
+            history_index: None,
+            temp_typed_input: String::new(),
+            pasted_images: Vec::new(),
+            width_usize: terminal_width_or_default(80),
+            lines_printed: 1,
+            autocomplete_visible: true,
+        }
+    }
+
+    fn text(&self) -> String {
+        self.typed_input.iter().collect()
+    }
+
+    fn set_text(&mut self, value: &str) {
+        self.typed_input = value.chars().collect();
+        self.cursor_idx = self.typed_input.len();
+    }
+
+    fn refresh_terminal_width(&mut self) {
+        self.width_usize = terminal_width_or_default(80);
+    }
+
+    fn redraw(
+        &mut self,
+        model: &str,
+        provider: &str,
+        session_manager: &crate::session::SessionManager,
+        session_key: &str,
+    ) -> Result<()> {
+        let typed_input_str = self.text();
+        super::render::render_box(
+            model,
+            provider,
+            session_manager,
+            session_key,
+            &typed_input_str,
+            self.cursor_idx,
+            &mut self.viewport_start,
+            self.selected_index,
+            self.autocomplete_visible,
+            self.width_usize,
+            &mut self.lines_printed,
+        )
+    }
+
+    fn slash_matches(&self) -> Vec<(&'static str, &'static str)> {
+        let typed_input_str = self.text();
+        match typed_input_str.starts_with('/') && !typed_input_str.contains(' ') {
+            true => super::render::SLASH_COMMANDS
+                .iter()
+                .filter(|&&(cmd, _)| cmd.starts_with(&typed_input_str))
+                .copied()
+                .collect(),
+            false => Vec::new(),
+        }
+    }
+
+    fn apply_selected_slash_command(&mut self) {
+        match self.selected_index {
+            Some(idx) => {
+                let matches = self.slash_matches();
+                match matches.get(idx) {
+                    Some(&(cmd, _)) => self.set_text(cmd),
+                    None => {}
+                }
+                self.selected_index = None;
+            }
+            None => {}
+        }
+    }
+
+    fn step_history_up(
+        &mut self,
+        session_manager: &crate::session::SessionManager,
+        session_key: &str,
+    ) -> bool {
+        let session = session_manager.get_or_create(session_key);
+        let history_prompts: Vec<String> = session
+            .messages
+            .iter()
+            .filter(|m| m.role == "user")
+            .map(|m| m.content.clone())
+            .collect();
+        match history_prompts.is_empty() {
+            true => false,
+            false => {
+                match self.history_index {
+                    None => {
+                        self.temp_typed_input = self.text();
+                        self.history_index = Some(history_prompts.len() - 1);
+                    }
+                    Some(idx) => match idx > 0 {
+                        true => self.history_index = Some(idx - 1),
+                        false => {}
+                    },
+                }
+                match self.history_index {
+                    Some(idx) => {
+                        self.set_text(&history_prompts[idx]);
+                        self.selected_index = None;
+                        true
+                    }
+                    None => false,
+                }
+            }
+        }
+    }
+
+    fn step_history_down(
+        &mut self,
+        session_manager: &crate::session::SessionManager,
+        session_key: &str,
+    ) -> bool {
+        let session = session_manager.get_or_create(session_key);
+        let history_prompts: Vec<String> = session
+            .messages
+            .iter()
+            .filter(|m| m.role == "user")
+            .map(|m| m.content.clone())
+            .collect();
+        match (history_prompts.is_empty(), self.history_index) {
+            (false, Some(idx)) => {
+                match idx + 1 < history_prompts.len() {
+                    true => {
+                        self.history_index = Some(idx + 1);
+                        self.set_text(&history_prompts[idx + 1]);
+                    }
+                    false => {
+                        self.history_index = None;
+                        let restored = self.temp_typed_input.clone();
+                        self.set_text(&restored);
+                    }
+                }
+                self.selected_index = None;
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+fn check_shutdown_signal() -> bool {
+    match crate::shutdown::receiver() {
+        Some(rx) => *rx.borrow(),
+        None => false,
+    }
+}
+
+fn drain_notifications() -> Vec<String> {
+    match super::mcp::get_pending_notifications().lock() {
+        Ok(mut pending) => match pending.is_empty() {
+            true => Vec::new(),
+            false => std::mem::take(&mut *pending),
+        },
+        Err(_) => Vec::new(),
+    }
+}
+
+fn pop_remote_inbox_message(session_key: &str) -> Option<crate::agent::activity::InboxMessage> {
+    crate::agent::activity::pop_inbox_message(session_key).or_else(|| {
+        match crate::agent::activity::direct_inbox_belongs_to(session_key) {
+            true => crate::agent::activity::pop_inbox_message("cli:direct"),
+            false => None,
+        }
+    })
+}
+
+fn print_submitted_prompt(final_cmd_str: &str, width_usize: usize) {
+    let display_chars: Vec<char> = final_cmd_str.chars().collect();
+    let max_line_content_width = width_usize.saturating_sub(2).max(1);
+
+    let mut submit_lines = Vec::new();
+    let mut cur_line = String::new();
+    let mut cur_w = 0;
+
+    for &c in &display_chars {
+        let cw = super::render::char_display_width(c);
+        match c == '\n' || (cur_w + cw > max_line_content_width && !cur_line.is_empty()) {
+            true => {
+                submit_lines.push(cur_line);
+                cur_line = String::new();
+                cur_w = 0;
+            }
+            false => {}
+        }
+        match c != '\n' {
+            true => {
+                cur_line.push(c);
+                cur_w += cw;
+            }
+            false => {}
+        }
+    }
+    submit_lines.push(cur_line);
+
+    for (i, line) in submit_lines.iter().enumerate() {
+        let prefix = match i == 0 {
+            true => "> ",
+            false => "- ",
+        };
+        match i > 0 {
+            true => print!("\r\n"),
+            false => {}
+        }
+        print!("{}{}{}{}", COLOR_BOLD, AURA_SLATE, prefix, line);
+    }
+    print!("{}\r\n", COLOR_RESET);
+}
+
 pub fn read_line_raw(
     model: &str,
     provider: &str,
     session_manager: &crate::session::SessionManager,
     session_key: &str,
 ) -> Result<(String, Option<String>)> {
-    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-
     enable_raw_mode()?;
     let _ = crossterm::execute!(
         stdout(),
         crossterm::event::EnableBracketedPaste,
         crossterm::cursor::Show
     );
-    super::render::LAST_CURSOR_LINE.store(0, std::sync::atomic::Ordering::Relaxed);
+    super::render::LAST_CURSOR_LINE.store(0, Ordering::Relaxed);
     IS_RAW_INPUT_ACTIVE.store(true, Ordering::SeqCst);
     let _guard = RawInputGuard;
 
-    let mut typed_input = Vec::<char>::new();
-    let mut cursor_idx = 0;
-    let mut viewport_start = 0;
-    let mut selected_index: Option<usize> = None;
-    let mut history_index: Option<usize> = None;
-    let mut temp_typed_input = String::new();
-    let mut pasted_images = Vec::new();
-    let (width, _) = crossterm::terminal::size().unwrap_or((80, 24));
-    let mut width_usize = width as usize;
-    let mut lines_printed = 1;
-    let mut autocomplete_visible = true;
-
-    let typed_input_str: String = typed_input.iter().collect();
-    super::render::render_box(
-        model,
-        provider,
-        session_manager,
-        session_key,
-        &typed_input_str,
-        cursor_idx,
-        &mut viewport_start,
-        selected_index,
-        autocomplete_visible,
-        width_usize,
-        &mut lines_printed,
-    )?;
+    let mut state = InputEditorState::new();
+    state.redraw(model, provider, session_manager, session_key)?;
 
     let mut last_mcp_done = super::mcp::is_mcp_done();
 
     loop {
-        if let Some(rx) = crate::shutdown::receiver() {
-            if *rx.borrow() {
-                super::render::clear_input_rendering(lines_printed);
+        match check_shutdown_signal() {
+            true => {
+                super::render::clear_input_rendering(state.lines_printed);
                 let _ = crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
                 let _ = disable_raw_mode();
                 return Ok(("/exit".to_string(), None));
             }
+            false => {}
         }
-        // Process any pending notifications first
-        let mut notifications = Vec::new();
-        if let Ok(mut pending) = super::mcp::get_pending_notifications().lock() {
-            if !pending.is_empty() {
-                notifications = std::mem::take(&mut *pending);
+
+        let notifications = drain_notifications();
+        match notifications.is_empty() {
+            true => {}
+            false => {
+                super::render::clear_input_rendering(state.lines_printed);
+                let _ = stdout().flush();
+
+                for notif in notifications {
+                    let formatted_notif = notif.replace('\n', "\r\n");
+                    print!("{}\r\n", formatted_notif);
+                }
+                let _ = stdout().flush();
+
+                state.lines_printed = 1;
+                super::render::LAST_CURSOR_LINE.store(0, Ordering::Relaxed);
+                state.redraw(model, provider, session_manager, session_key)?;
             }
         }
 
-        if !notifications.is_empty() {
-            super::render::clear_input_rendering(lines_printed);
-            let _ = stdout().flush();
-
-            for notif in notifications {
-                let formatted_notif = notif.replace("\n", "\r\n");
-                print!("{}\r\n", formatted_notif);
+        match pop_remote_inbox_message(session_key) {
+            Some(inbox_msg) => {
+                super::render::clear_input_rendering(state.lines_printed);
+                let _ = stdout().flush();
+                let _ = crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
+                let _ = disable_raw_mode();
+                println!(
+                    "\r\n{}🔌 [Remote Control] Received prompt: {}{}",
+                    AURA_BLUE, inbox_msg.message, COLOR_RESET
+                );
+                return Ok((inbox_msg.message, Some(inbox_msg.sender)));
             }
-            let _ = stdout().flush();
-
-            lines_printed = 1;
-            super::render::LAST_CURSOR_LINE.store(0, std::sync::atomic::Ordering::Relaxed);
-            let typed_input_str: String = typed_input.iter().collect();
-            super::render::render_box(
-                model,
-                provider,
-                session_manager,
-                session_key,
-                &typed_input_str,
-                cursor_idx,
-                &mut viewport_start,
-                selected_index,
-                autocomplete_visible,
-                width_usize,
-                &mut lines_printed,
-            )?;
-        }
-
-        let inbox_msg = crate::agent::activity::pop_inbox_message(session_key).or_else(|| {
-            if crate::agent::activity::direct_inbox_belongs_to(session_key) {
-                crate::agent::activity::pop_inbox_message("cli:direct")
-            } else {
-                None
-            }
-        });
-        if let Some(inbox_msg) = inbox_msg {
-            super::render::clear_input_rendering(lines_printed);
-            let _ = stdout().flush();
-            let _ = crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
-            let _ = disable_raw_mode();
-            println!(
-                "\r\n{}🔌 [Remote Control] Received prompt: {}{}",
-                AURA_BLUE, inbox_msg.message, COLOR_RESET
-            );
-            return Ok((inbox_msg.message, Some(inbox_msg.sender)));
+            None => {}
         }
 
         let current_mcp_done = super::mcp::is_mcp_done();
         let mcp_status_changed = current_mcp_done != last_mcp_done;
-        if mcp_status_changed {
-            last_mcp_done = current_mcp_done;
-        }
+        last_mcp_done = current_mcp_done;
 
-        if !event::poll(std::time::Duration::from_millis(100))? {
-            if !current_mcp_done || mcp_status_changed {
-                let typed_input_str: String = typed_input.iter().collect();
-                super::render::render_box(
-                    model,
-                    provider,
-                    session_manager,
-                    session_key,
-                    &typed_input_str,
-                    cursor_idx,
-                    &mut viewport_start,
-                    selected_index,
-                    autocomplete_visible,
-                    width_usize,
-                    &mut lines_printed,
-                )?;
-            }
-            continue;
-        }
-        let ev = event::read()?;
-
-        // Handle bracketed paste event
-        if let Event::Paste(text) = &ev {
-            let cleaned_text = text.replace('\r', "").replace('\n', " ");
-            for c in cleaned_text.chars() {
-                typed_input.insert(cursor_idx, c);
-                cursor_idx += 1;
-            }
-            history_index = None;
-            selected_index = None;
-            if let Ok((w, _)) = crossterm::terminal::size() {
-                width_usize = w as usize;
-            }
-            let typed_input_str: String = typed_input.iter().collect();
-            super::render::render_box(
-                model,
-                provider,
-                session_manager,
-                session_key,
-                &typed_input_str,
-                cursor_idx,
-                &mut viewport_start,
-                selected_index,
-                autocomplete_visible,
-                width_usize,
-                &mut lines_printed,
-            )?;
-            continue;
-        }
-
-        if let Event::Key(key_event) = ev {
-            if key_event.kind == KeyEventKind::Release {
-                continue;
-            }
-
-            let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
-            let alt = key_event.modifiers.contains(KeyModifiers::ALT);
-            let shift = key_event.modifiers.contains(KeyModifiers::SHIFT);
-
-            // Ctrl+C or Ctrl+D to exit. In raw mode different terminals can deliver
-            // uppercase chars or literal ETX/EOT control chars, so keep this broader
-            // than the printable-input branch below.
-            if is_ctrl_exit_key(&key_event) {
-                super::render::clear_input_rendering(lines_printed);
-                let _ = crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
-                let _ = disable_raw_mode();
-                println!();
-                return Ok(("/exit".to_string(), None));
-            }
-
-            // Ctrl+V or Alt+V to paste image (ONLY if shift is not pressed)
-            let is_paste_image = (ctrl
-                && !shift
-                && (key_event.code == KeyCode::Char('v') || key_event.code == KeyCode::Char('V')))
-                || (alt
-                    && !shift
-                    && (key_event.code == KeyCode::Char('v')
-                        || key_event.code == KeyCode::Char('V')));
-            if is_paste_image {
-                if let Some(idx) = selected_index {
-                    let typed_input_str: String = typed_input.iter().collect();
-                    let matches: Vec<(&str, &str)> = super::render::SLASH_COMMANDS
-                        .iter()
-                        .filter(|&&(cmd, _)| cmd.starts_with(&typed_input_str))
-                        .copied()
-                        .collect();
-                    if idx < matches.len() {
-                        typed_input = matches[idx].0.chars().collect();
-                        cursor_idx = typed_input.len();
-                    }
-                    selected_index = None;
-                }
-                history_index = None;
-
-                let next_index = pasted_images.len();
-                match handle_clipboard_paste(next_index) {
-                    Ok(img_path) => {
-                        pasted_images.push(img_path);
-                        let placeholder = if next_index == 0 {
-                            "[image]".to_string()
-                        } else {
-                            format!("[image{}]", next_index)
-                        };
-                        let space = if typed_input.is_empty() { "" } else { " " };
-                        let to_add = format!("{space}{placeholder}");
-                        for c in to_add.chars() {
-                            typed_input.insert(cursor_idx, c);
-                            cursor_idx += 1;
-                        }
-                        if let Ok((w, _)) = crossterm::terminal::size() {
-                            width_usize = w as usize;
-                        }
-                        let typed_input_str: String = typed_input.iter().collect();
-                        super::render::render_box(
-                            model,
-                            provider,
-                            session_manager,
-                            session_key,
-                            &typed_input_str,
-                            cursor_idx,
-                            &mut viewport_start,
-                            selected_index,
-                            autocomplete_visible,
-                            width_usize,
-                            &mut lines_printed,
-                        )?;
-                    }
-                    Err(e) => {
-                        super::render::clear_input_rendering(lines_printed);
-                        print!(
-                            "{}✕ Error: No image found in clipboard: {}{}\r\n",
-                            ERROR_RED, e, COLOR_RESET
-                        );
-                        lines_printed = 1;
-                        super::render::LAST_CURSOR_LINE
-                            .store(0, std::sync::atomic::Ordering::Relaxed);
-                        if let Ok((w, _)) = crossterm::terminal::size() {
-                            width_usize = w as usize;
-                        }
-                        let typed_input_str: String = typed_input.iter().collect();
-                        super::render::render_box(
-                            model,
-                            provider,
-                            session_manager,
-                            session_key,
-                            &typed_input_str,
-                            cursor_idx,
-                            &mut viewport_start,
-                            selected_index,
-                            autocomplete_visible,
-                            width_usize,
-                            &mut lines_printed,
-                        )?;
-                    }
+        match event::poll(std::time::Duration::from_millis(100))? {
+            false => {
+                match !current_mcp_done || mcp_status_changed {
+                    true => state.redraw(model, provider, session_manager, session_key)?,
+                    false => {}
                 }
                 continue;
             }
+            true => {}
+        }
 
-            if let Ok((w, _)) = crossterm::terminal::size() {
-                width_usize = w as usize;
+        match event::read()? {
+            Event::Paste(text) => {
+                let cleaned_text = text.replace('\r', "").replace('\n', " ");
+                for c in cleaned_text.chars() {
+                    state.typed_input.insert(state.cursor_idx, c);
+                    state.cursor_idx += 1;
+                }
+                state.history_index = None;
+                state.selected_index = None;
+                state.refresh_terminal_width();
+                state.redraw(model, provider, session_manager, session_key)?;
             }
+            Event::Key(key_event) => {
+                match key_event.kind == KeyEventKind::Release {
+                    true => continue,
+                    false => {}
+                }
 
-            match key_event.code {
-                KeyCode::Up => {
-                    autocomplete_visible = true;
-                    let mut autocomplete_active = false;
-                    let typed_input_str: String = typed_input.iter().collect();
-                    if typed_input_str.starts_with('/') && !typed_input_str.contains(' ') {
-                        let matches: Vec<(&str, &str)> = super::render::SLASH_COMMANDS
-                            .iter()
-                            .filter(|&&(cmd, _)| cmd.starts_with(&typed_input_str))
-                            .copied()
-                            .collect();
-                        if !matches.is_empty() {
-                            autocomplete_active = true;
-                            selected_index = match selected_index {
-                                None => Some(matches.len() - 1),
-                                Some(idx) => Some((idx + matches.len() - 1) % matches.len()),
-                            };
-                            super::render::render_box(
-                                model,
-                                provider,
-                                session_manager,
-                                session_key,
-                                &typed_input_str,
-                                cursor_idx,
-                                &mut viewport_start,
-                                selected_index,
-                                autocomplete_visible,
-                                width_usize,
-                                &mut lines_printed,
-                            )?;
-                        }
-                    }
-
-                    if !autocomplete_active {
-                        let session = session_manager.get_or_create(session_key);
-                        let history_prompts: Vec<String> = session
-                            .messages
-                            .iter()
-                            .filter(|m| m.role == "user")
-                            .map(|m| m.content.clone())
-                            .collect();
-                        if !history_prompts.is_empty() {
-                            if history_index.is_none() {
-                                temp_typed_input = typed_input.iter().collect::<String>();
-                                history_index = Some(history_prompts.len() - 1);
-                            } else if let Some(idx) = history_index {
-                                if idx > 0 {
-                                    history_index = Some(idx - 1);
-                                }
-                            }
-                            if let Some(idx) = history_index {
-                                typed_input = history_prompts[idx].chars().collect();
-                                cursor_idx = typed_input.len();
-                                selected_index = None;
-                                let typed_input_str: String = typed_input.iter().collect();
-                                super::render::render_box(
-                                    model,
-                                    provider,
-                                    session_manager,
-                                    session_key,
-                                    &typed_input_str,
-                                    cursor_idx,
-                                    &mut viewport_start,
-                                    selected_index,
-                                    autocomplete_visible,
-                                    width_usize,
-                                    &mut lines_printed,
-                                )?;
-                            }
-                        }
-                    }
-                }
-                KeyCode::Down => {
-                    autocomplete_visible = true;
-                    let mut autocomplete_active = false;
-                    let typed_input_str: String = typed_input.iter().collect();
-                    if typed_input_str.starts_with('/') && !typed_input_str.contains(' ') {
-                        let matches: Vec<(&str, &str)> = super::render::SLASH_COMMANDS
-                            .iter()
-                            .filter(|&&(cmd, _)| cmd.starts_with(&typed_input_str))
-                            .copied()
-                            .collect();
-                        if !matches.is_empty() {
-                            autocomplete_active = true;
-                            selected_index = match selected_index {
-                                None => Some(0),
-                                Some(idx) => Some((idx + 1) % matches.len()),
-                            };
-                            super::render::render_box(
-                                model,
-                                provider,
-                                session_manager,
-                                session_key,
-                                &typed_input_str,
-                                cursor_idx,
-                                &mut viewport_start,
-                                selected_index,
-                                autocomplete_visible,
-                                width_usize,
-                                &mut lines_printed,
-                            )?;
-                        }
-                    }
-
-                    if !autocomplete_active {
-                        let session = session_manager.get_or_create(session_key);
-                        let history_prompts: Vec<String> = session
-                            .messages
-                            .iter()
-                            .filter(|m| m.role == "user")
-                            .map(|m| m.content.clone())
-                            .collect();
-                        if !history_prompts.is_empty() {
-                            if let Some(idx) = history_index {
-                                if idx < history_prompts.len() - 1 {
-                                    history_index = Some(idx + 1);
-                                    typed_input = history_prompts[idx + 1].chars().collect();
-                                    cursor_idx = typed_input.len();
-                                } else {
-                                    history_index = None;
-                                    typed_input = temp_typed_input.chars().collect();
-                                    cursor_idx = typed_input.len();
-                                }
-                                selected_index = None;
-                                let typed_input_str: String = typed_input.iter().collect();
-                                super::render::render_box(
-                                    model,
-                                    provider,
-                                    session_manager,
-                                    session_key,
-                                    &typed_input_str,
-                                    cursor_idx,
-                                    &mut viewport_start,
-                                    selected_index,
-                                    autocomplete_visible,
-                                    width_usize,
-                                    &mut lines_printed,
-                                )?;
-                            }
-                        }
-                    }
-                }
-                KeyCode::Left => {
-                    if cursor_idx > 0 {
-                        cursor_idx -= 1;
-                        let typed_input_str: String = typed_input.iter().collect();
-                        super::render::render_box(
-                            model,
-                            provider,
-                            session_manager,
-                            session_key,
-                            &typed_input_str,
-                            cursor_idx,
-                            &mut viewport_start,
-                            selected_index,
-                            autocomplete_visible,
-                            width_usize,
-                            &mut lines_printed,
-                        )?;
-                    }
-                }
-                KeyCode::Right => {
-                    if cursor_idx < typed_input.len() {
-                        cursor_idx += 1;
-                        let typed_input_str: String = typed_input.iter().collect();
-                        super::render::render_box(
-                            model,
-                            provider,
-                            session_manager,
-                            session_key,
-                            &typed_input_str,
-                            cursor_idx,
-                            &mut viewport_start,
-                            selected_index,
-                            autocomplete_visible,
-                            width_usize,
-                            &mut lines_printed,
-                        )?;
-                    }
-                }
-                KeyCode::Home => {
-                    cursor_idx = 0;
-                    let typed_input_str: String = typed_input.iter().collect();
-                    super::render::render_box(
-                        model,
-                        provider,
-                        session_manager,
-                        session_key,
-                        &typed_input_str,
-                        cursor_idx,
-                        &mut viewport_start,
-                        selected_index,
-                        autocomplete_visible,
-                        width_usize,
-                        &mut lines_printed,
-                    )?;
-                }
-                KeyCode::End => {
-                    cursor_idx = typed_input.len();
-                    let typed_input_str: String = typed_input.iter().collect();
-                    super::render::render_box(
-                        model,
-                        provider,
-                        session_manager,
-                        session_key,
-                        &typed_input_str,
-                        cursor_idx,
-                        &mut viewport_start,
-                        selected_index,
-                        autocomplete_visible,
-                        width_usize,
-                        &mut lines_printed,
-                    )?;
-                }
-                KeyCode::Delete => {
-                    if cursor_idx < typed_input.len() {
-                        typed_input.remove(cursor_idx);
-                        selected_index = None;
-                        history_index = None;
-                        let typed_input_str: String = typed_input.iter().collect();
-                        super::render::render_box(
-                            model,
-                            provider,
-                            session_manager,
-                            session_key,
-                            &typed_input_str,
-                            cursor_idx,
-                            &mut viewport_start,
-                            selected_index,
-                            autocomplete_visible,
-                            width_usize,
-                            &mut lines_printed,
-                        )?;
-                    }
-                }
-                KeyCode::Char(c) => {
-                    autocomplete_visible = true;
-                    selected_index = None;
-                    history_index = None;
-                    typed_input.insert(cursor_idx, c);
-                    cursor_idx += 1;
-                    let typed_input_str: String = typed_input.iter().collect();
-                    super::render::render_box(
-                        model,
-                        provider,
-                        session_manager,
-                        session_key,
-                        &typed_input_str,
-                        cursor_idx,
-                        &mut viewport_start,
-                        selected_index,
-                        autocomplete_visible,
-                        width_usize,
-                        &mut lines_printed,
-                    )?;
-                }
-                KeyCode::Backspace => {
-                    autocomplete_visible = true;
-                    selected_index = None;
-                    history_index = None;
-                    if cursor_idx > 0 {
-                        typed_input.remove(cursor_idx - 1);
-                        cursor_idx -= 1;
-                        let typed_input_str: String = typed_input.iter().collect();
-                        super::render::render_box(
-                            model,
-                            provider,
-                            session_manager,
-                            session_key,
-                            &typed_input_str,
-                            cursor_idx,
-                            &mut viewport_start,
-                            selected_index,
-                            autocomplete_visible,
-                            width_usize,
-                            &mut lines_printed,
-                        )?;
-                    }
-                }
-                KeyCode::Tab => {
-                    autocomplete_visible = true;
-                    let typed_input_str: String = typed_input.iter().collect();
-                    if typed_input_str.starts_with('/') && !typed_input_str.contains(' ') {
-                        let matches: Vec<(&str, &str)> = super::render::SLASH_COMMANDS
-                            .iter()
-                            .filter(|&&(cmd, _)| cmd.starts_with(&typed_input_str))
-                            .copied()
-                            .collect();
-                        if !matches.is_empty() {
-                            let completed = if let Some(idx) = selected_index {
-                                matches[idx].0.to_string()
-                            } else {
-                                matches[0].0.to_string()
-                            };
-                            typed_input = completed.chars().collect();
-                            cursor_idx = typed_input.len();
-                            selected_index = None;
-                            history_index = None;
-                            let typed_input_str: String = typed_input.iter().collect();
-                            super::render::render_box(
-                                model,
-                                provider,
-                                session_manager,
-                                session_key,
-                                &typed_input_str,
-                                cursor_idx,
-                                &mut viewport_start,
-                                selected_index,
-                                autocomplete_visible,
-                                width_usize,
-                                &mut lines_printed,
-                            )?;
-                        }
-                    }
-                }
-                KeyCode::Esc => {
-                    if typed_input.is_empty() {
-                        super::render::clear_input_rendering(lines_printed);
+                match is_ctrl_exit_key(&key_event) {
+                    true => {
+                        super::render::clear_input_rendering(state.lines_printed);
                         let _ =
                             crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
                         let _ = disable_raw_mode();
                         println!();
                         return Ok(("/exit".to_string(), None));
                     }
-
-                    autocomplete_visible = false;
-                    selected_index = None;
-                    let typed_input_str: String = typed_input.iter().collect();
-                    super::render::render_box(
-                        model,
-                        provider,
-                        session_manager,
-                        session_key,
-                        &typed_input_str,
-                        cursor_idx,
-                        &mut viewport_start,
-                        selected_index,
-                        autocomplete_visible,
-                        width_usize,
-                        &mut lines_printed,
-                    )?;
+                    false => {}
                 }
-                KeyCode::Enter => {
-                    let typed_input_str: String = typed_input.iter().collect();
-                    let mut final_cmd = typed_input_str.clone();
-                    if let Some(idx) = selected_index {
-                        let matches: Vec<(&str, &str)> = super::render::SLASH_COMMANDS
-                            .iter()
-                            .filter(|&&(cmd, _)| cmd.starts_with(&typed_input_str))
-                            .copied()
-                            .collect();
-                        if idx < matches.len() {
-                            final_cmd = matches[idx].0.to_string();
+
+                match is_paste_image_shortcut(&key_event) {
+                    true => {
+                        state.apply_selected_slash_command();
+                        state.history_index = None;
+                        let next_index = state.pasted_images.len();
+                        match handle_clipboard_paste(next_index) {
+                            Ok(img_path) => {
+                                state.pasted_images.push(img_path);
+                                let placeholder = format_image_placeholder(next_index);
+                                let space = match state.typed_input.is_empty() {
+                                    true => "",
+                                    false => " ",
+                                };
+                                let to_add = format!("{space}{placeholder}");
+                                for c in to_add.chars() {
+                                    state.typed_input.insert(state.cursor_idx, c);
+                                    state.cursor_idx += 1;
+                                }
+                            }
+                            Err(e) => {
+                                super::render::clear_input_rendering(state.lines_printed);
+                                print!(
+                                    "{}✕ Error: No image found in clipboard: {}{}\r\n",
+                                    ERROR_RED, e, COLOR_RESET
+                                );
+                                state.lines_printed = 1;
+                                super::render::LAST_CURSOR_LINE.store(0, Ordering::Relaxed);
+                            }
                         }
+                        state.refresh_terminal_width();
+                        state.redraw(model, provider, session_manager, session_key)?;
+                        continue;
                     }
-                    typed_input = final_cmd.chars().collect();
-                    super::render::clear_input_rendering(lines_printed);
-                    let final_cmd_str: String = typed_input.iter().collect();
-
-                    let display_chars: Vec<char> = final_cmd_str.chars().collect();
-                    let prompt_prefix_width = 2;
-                    let max_line_content_width =
-                        width_usize.saturating_sub(prompt_prefix_width).max(1);
-
-                    let mut submit_lines = Vec::new();
-                    let mut cur_line = String::new();
-                    let mut cur_w = 0;
-
-                    for &c in &display_chars {
-                        let cw = super::render::char_display_width(c);
-                        if c == '\n'
-                            || (cur_w + cw > max_line_content_width && !cur_line.is_empty())
-                        {
-                            submit_lines.push(cur_line);
-                            cur_line = String::new();
-                            cur_w = 0;
-                        }
-                        if c != '\n' {
-                            cur_line.push(c);
-                            cur_w += cw;
-                        }
-                    }
-                    submit_lines.push(cur_line);
-
-                    for (i, line) in submit_lines.iter().enumerate() {
-                        let prefix = if i == 0 { "> " } else { "- " };
-                        if i > 0 {
-                            print!("\r\n");
-                        }
-                        print!("{}{}{}{}", COLOR_BOLD, AURA_SLATE, prefix, line);
-                    }
-                    print!("{}\r\n", COLOR_RESET);
-
-                    let _ = crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
-                    let _ = disable_raw_mode();
-                    stdout().flush()?;
-                    break;
+                    false => {}
                 }
-                _ => {}
+
+                state.refresh_terminal_width();
+
+                match key_event.code {
+                    KeyCode::Up => {
+                        state.autocomplete_visible = true;
+                        let matches = state.slash_matches();
+                        match matches.is_empty() {
+                            false => {
+                                state.selected_index = match state.selected_index {
+                                    None => Some(matches.len() - 1),
+                                    Some(idx) => Some((idx + matches.len() - 1) % matches.len()),
+                                };
+                                state.redraw(model, provider, session_manager, session_key)?;
+                            }
+                            true => match state.step_history_up(session_manager, session_key) {
+                                true => {
+                                    state.redraw(model, provider, session_manager, session_key)?
+                                }
+                                false => {}
+                            },
+                        }
+                    }
+                    KeyCode::Down => {
+                        state.autocomplete_visible = true;
+                        let matches = state.slash_matches();
+                        match matches.is_empty() {
+                            false => {
+                                state.selected_index = match state.selected_index {
+                                    None => Some(0),
+                                    Some(idx) => Some((idx + 1) % matches.len()),
+                                };
+                                state.redraw(model, provider, session_manager, session_key)?;
+                            }
+                            true => match state.step_history_down(session_manager, session_key) {
+                                true => {
+                                    state.redraw(model, provider, session_manager, session_key)?
+                                }
+                                false => {}
+                            },
+                        }
+                    }
+                    KeyCode::Left => match state.cursor_idx > 0 {
+                        true => {
+                            state.cursor_idx -= 1;
+                            state.redraw(model, provider, session_manager, session_key)?;
+                        }
+                        false => {}
+                    },
+                    KeyCode::Right => match state.cursor_idx < state.typed_input.len() {
+                        true => {
+                            state.cursor_idx += 1;
+                            state.redraw(model, provider, session_manager, session_key)?;
+                        }
+                        false => {}
+                    },
+                    KeyCode::Home => {
+                        state.cursor_idx = 0;
+                        state.redraw(model, provider, session_manager, session_key)?;
+                    }
+                    KeyCode::End => {
+                        state.cursor_idx = state.typed_input.len();
+                        state.redraw(model, provider, session_manager, session_key)?;
+                    }
+                    KeyCode::Delete => match state.cursor_idx < state.typed_input.len() {
+                        true => {
+                            state.typed_input.remove(state.cursor_idx);
+                            state.selected_index = None;
+                            state.history_index = None;
+                            state.redraw(model, provider, session_manager, session_key)?;
+                        }
+                        false => {}
+                    },
+                    KeyCode::Char(c) => {
+                        state.autocomplete_visible = true;
+                        state.selected_index = None;
+                        state.history_index = None;
+                        state.typed_input.insert(state.cursor_idx, c);
+                        state.cursor_idx += 1;
+                        state.redraw(model, provider, session_manager, session_key)?;
+                    }
+                    KeyCode::Backspace => {
+                        state.autocomplete_visible = true;
+                        state.selected_index = None;
+                        state.history_index = None;
+                        match state.cursor_idx > 0 {
+                            true => {
+                                state.typed_input.remove(state.cursor_idx - 1);
+                                state.cursor_idx -= 1;
+                                state.redraw(model, provider, session_manager, session_key)?;
+                            }
+                            false => {}
+                        }
+                    }
+                    KeyCode::Tab => {
+                        state.autocomplete_visible = true;
+                        let matches = state.slash_matches();
+                        match matches.is_empty() {
+                            false => {
+                                let completed = match state.selected_index {
+                                    Some(idx) => matches.get(idx).unwrap_or(&matches[0]).0,
+                                    None => matches[0].0,
+                                };
+                                state.set_text(completed);
+                                state.selected_index = None;
+                                state.history_index = None;
+                                state.redraw(model, provider, session_manager, session_key)?;
+                            }
+                            true => {}
+                        }
+                    }
+                    KeyCode::Esc => match state.typed_input.is_empty() {
+                        true => {
+                            super::render::clear_input_rendering(state.lines_printed);
+                            let _ = crossterm::execute!(
+                                stdout(),
+                                crossterm::event::DisableBracketedPaste
+                            );
+                            let _ = disable_raw_mode();
+                            println!();
+                            return Ok(("/exit".to_string(), None));
+                        }
+                        false => {
+                            state.autocomplete_visible = false;
+                            state.selected_index = None;
+                            state.redraw(model, provider, session_manager, session_key)?;
+                        }
+                    },
+                    KeyCode::Enter => {
+                        state.apply_selected_slash_command();
+                        super::render::clear_input_rendering(state.lines_printed);
+                        let final_cmd_str = state.text();
+                        print_submitted_prompt(&final_cmd_str, state.width_usize);
+
+                        let _ =
+                            crossterm::execute!(stdout(), crossterm::event::DisableBracketedPaste);
+                        let _ = disable_raw_mode();
+                        stdout().flush()?;
+                        break;
+                    }
+                    _ => {}
+                }
             }
+            _ => {}
         }
     }
 
-    let mut final_input = typed_input.iter().collect::<String>();
-    for (i, path) in pasted_images.iter().enumerate() {
-        let placeholder = if i == 0 {
-            "[image]".to_string()
-        } else {
-            format!("[image{}]", i)
-        };
+    let mut final_input = state.text();
+    for (i, path) in state.pasted_images.iter().enumerate() {
+        let placeholder = format_image_placeholder(i);
         let replacement = format!("![](file://{})", path.to_string_lossy());
         final_input = final_input.replace(&placeholder, &replacement);
     }

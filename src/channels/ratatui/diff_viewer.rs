@@ -2,6 +2,34 @@ use super::theme::Theme;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 
+enum DiffLineKind<'a> {
+    FileHeader(&'a str),
+    HunkHeader(&'a str),
+    Added(&'a str),
+    Removed(&'a str),
+    Context(&'a str),
+}
+
+fn classify_diff_line(raw_line: &str) -> DiffLineKind<'_> {
+    match raw_line.starts_with("---") || raw_line.starts_with("+++") {
+        true => return DiffLineKind::FileHeader(raw_line),
+        false => {}
+    }
+    match raw_line.starts_with("@@") {
+        true => return DiffLineKind::HunkHeader(raw_line),
+        false => {}
+    }
+    match raw_line.strip_prefix('+') {
+        Some(rest) => return DiffLineKind::Added(rest),
+        None => {}
+    }
+    match raw_line.strip_prefix('-') {
+        Some(rest) => return DiffLineKind::Removed(rest),
+        None => {}
+    }
+    DiffLineKind::Context(raw_line.strip_prefix(' ').unwrap_or(raw_line))
+}
+
 /// Formatter for producing syntax-highlighted, colored unified diff lines in Ratatui.
 pub struct DiffViewer;
 
@@ -27,36 +55,35 @@ impl DiffViewer {
         let mut lines = Vec::new();
 
         for raw_line in patch_str.lines() {
-            if lines.len() >= max_lines {
-                lines.push(Line::from(vec![Span::styled(
-                    "  ... (diff truncated, more lines below)",
-                    Style::default().fg(theme.muted),
-                )]));
-                break;
+            match lines.len() >= max_lines {
+                true => {
+                    lines.push(Line::from(vec![Span::styled(
+                        "  ... (diff truncated, more lines below)",
+                        Style::default().fg(theme.muted),
+                    )]));
+                    break;
+                }
+                false => {}
             }
 
-            if raw_line.starts_with("---") || raw_line.starts_with("+++") {
-                lines.push(Line::from(vec![Span::styled(
-                    raw_line.to_string(),
+            let styled_line = match classify_diff_line(raw_line) {
+                DiffLineKind::FileHeader(header) => Line::from(vec![Span::styled(
+                    header.to_string(),
                     Style::default()
                         .fg(theme.muted)
                         .add_modifier(Modifier::BOLD),
-                )]));
-            } else if raw_line.starts_with("@@") {
-                lines.push(Line::from(vec![
+                )]),
+                DiffLineKind::HunkHeader(hunk) => Line::from(vec![
                     Span::styled(
                         "┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ ",
                         Style::default().fg(theme.border),
                     ),
                     Span::styled(
-                        raw_line.to_string(),
-                        Style::default()
-                            .fg(theme.info)
-                            .add_modifier(Modifier::BOLD),
+                        hunk.to_string(),
+                        Style::default().fg(theme.info).add_modifier(Modifier::BOLD),
                     ),
-                ]));
-            } else if let Some(rest) = raw_line.strip_prefix('+') {
-                lines.push(Line::from(vec![
+                ]),
+                DiffLineKind::Added(rest) => Line::from(vec![
                     Span::styled(
                         "+ ",
                         Style::default()
@@ -65,13 +92,10 @@ impl DiffViewer {
                     ),
                     Span::styled(
                         rest.to_string(),
-                        Style::default()
-                            .fg(theme.success)
-                            .bg(theme.bg_elevated),
+                        Style::default().fg(theme.success).bg(theme.bg_elevated),
                     ),
-                ]));
-            } else if let Some(rest) = raw_line.strip_prefix('-') {
-                lines.push(Line::from(vec![
+                ]),
+                DiffLineKind::Removed(rest) => Line::from(vec![
                     Span::styled(
                         "- ",
                         Style::default()
@@ -80,27 +104,23 @@ impl DiffViewer {
                     ),
                     Span::styled(
                         rest.to_string(),
-                        Style::default()
-                            .fg(theme.destructive)
-                            .bg(theme.bg_elevated),
+                        Style::default().fg(theme.destructive).bg(theme.bg_elevated),
                     ),
-                ]));
-            } else {
-                lines.push(Line::from(vec![
+                ]),
+                DiffLineKind::Context(ctx) => Line::from(vec![
                     Span::styled("  ", Style::default().fg(theme.muted)),
-                    Span::styled(
-                        raw_line.strip_prefix(' ').unwrap_or(raw_line).to_string(),
-                        Style::default().fg(theme.muted),
-                    ),
-                ]));
-            }
+                    Span::styled(ctx.to_string(), Style::default().fg(theme.muted)),
+                ]),
+            };
+            lines.push(styled_line);
         }
 
-        if lines.is_empty() {
-            lines.push(Line::from(vec![Span::styled(
+        match lines.is_empty() {
+            true => lines.push(Line::from(vec![Span::styled(
                 "  (no changes detected)",
                 Style::default().fg(theme.muted),
-            )]));
+            )])),
+            false => {}
         }
 
         lines

@@ -26,17 +26,23 @@ pub async fn handle_device_command(input: &str) -> Result<()> {
         "list" => {
             let category = parts.next();
             let mut args = serde_json::json!({"action": "list"});
-            if let Some(category) = category {
-                args["category"] = serde_json::json!(category);
+            match category {
+                Some(cat) => {
+                    args["category"] = serde_json::json!(cat);
+                }
+                None => {}
             }
             tool.call(&args).await?
         }
         "suggest" => {
             let category = parts.next().unwrap_or("");
             let target = parts.next().unwrap_or("");
-            if category.is_empty() || target.is_empty() {
-                println!("Usage: /device suggest <category> <target|extension>");
-                return Ok(());
+            match category.is_empty() || target.is_empty() {
+                true => {
+                    println!("Usage: /device suggest <category> <target|extension>");
+                    return Ok(());
+                }
+                false => {}
             }
             tool.call(&serde_json::json!({
                 "action": "suggest",
@@ -50,9 +56,12 @@ pub async fn handle_device_command(input: &str) -> Result<()> {
             let name = parts.next().unwrap_or("");
             let command = parts.next().unwrap_or("");
             let works_for = parts.next().unwrap_or("");
-            if category.is_empty() || name.is_empty() || command.is_empty() {
-                println!("Usage: /device add <category> <name> <command> [works_for_csv]");
-                return Ok(());
+            match category.is_empty() || name.is_empty() || command.is_empty() {
+                true => {
+                    println!("Usage: /device add <category> <name> <command> [works_for_csv]");
+                    return Ok(());
+                }
+                false => {}
             }
             let works_for = split_csv(works_for);
             tool.call(&serde_json::json!({
@@ -68,27 +77,36 @@ pub async fn handle_device_command(input: &str) -> Result<()> {
         }
         "delete" | "remove" => {
             let id = parts.next().unwrap_or("");
-            if id.is_empty() {
-                println!("Usage: /device delete <id>");
-                return Ok(());
+            match id.is_empty() {
+                true => {
+                    println!("Usage: /device delete <id>");
+                    return Ok(());
+                }
+                false => {}
             }
             tool.call(&serde_json::json!({"action": "delete", "id": id}))
                 .await?
         }
         "success" => {
             let id = parts.next().unwrap_or("");
-            if id.is_empty() {
-                println!("Usage: /device success <id>");
-                return Ok(());
+            match id.is_empty() {
+                true => {
+                    println!("Usage: /device success <id>");
+                    return Ok(());
+                }
+                false => {}
             }
             tool.call(&serde_json::json!({"action": "record_success", "id": id}))
                 .await?
         }
         "failure" | "fail" => {
             let id = parts.next().unwrap_or("");
-            if id.is_empty() {
-                println!("Usage: /device failure <id>");
-                return Ok(());
+            match id.is_empty() {
+                true => {
+                    println!("Usage: /device failure <id>");
+                    return Ok(());
+                }
+                false => {}
             }
             tool.call(&serde_json::json!({"action": "record_failure", "id": id}))
                 .await?
@@ -130,50 +148,65 @@ pub(crate) fn print_device_usage() {
 }
 
 pub(crate) fn print_device_result(result: &serde_json::Value) {
-    if let Some(capabilities) = result
+    match result
         .get("capabilities")
         .and_then(serde_json::Value::as_array)
     {
-        if capabilities.is_empty() {
-            println!("No device capabilities saved.");
+        Some(capabilities) => {
+            match capabilities.is_empty() {
+                true => println!("No device capabilities saved."),
+                false => {
+                    println!("{}Device capabilities:{}", COLOR_BOLD, COLOR_RESET);
+                    for item in capabilities {
+                        print_device_capability(item, None);
+                    }
+                }
+            }
             return;
         }
-        println!("{}Device capabilities:{}", COLOR_BOLD, COLOR_RESET);
-        for item in capabilities {
-            print_device_capability(item, None);
-        }
-        return;
+        None => {}
     }
 
-    if let Some(suggestions) = result
+    match result
         .get("suggestions")
         .and_then(serde_json::Value::as_array)
     {
-        if suggestions.is_empty() {
-            println!("No matching device capability found.");
+        Some(suggestions) => {
+            match suggestions.is_empty() {
+                true => println!("No matching device capability found."),
+                false => {
+                    println!("{}Suggested capabilities:{}", COLOR_BOLD, COLOR_RESET);
+                    for item in suggestions {
+                        let score = item.get("score").and_then(serde_json::Value::as_f64);
+                        match item.get("capability") {
+                            Some(capability) => print_device_capability(capability, score),
+                            None => {}
+                        }
+                    }
+                }
+            }
             return;
         }
-        println!("{}Suggested capabilities:{}", COLOR_BOLD, COLOR_RESET);
-        for item in suggestions {
-            let score = item.get("score").and_then(serde_json::Value::as_f64);
-            if let Some(capability) = item.get("capability") {
-                print_device_capability(capability, score);
-            }
+        None => {}
+    }
+
+    match result.get("capability") {
+        Some(capability) => {
+            print_device_capability(capability, None);
+            return;
         }
-        return;
+        None => {}
     }
 
-    if let Some(capability) = result.get("capability") {
-        print_device_capability(capability, None);
-        return;
-    }
-
-    if let Some(deleted) = result.get("deleted").and_then(serde_json::Value::as_str) {
-        println!(
-            "{}✓ Deleted device capability {}.{}",
-            EMERALD_GREEN, deleted, COLOR_RESET
-        );
-        return;
+    match result.get("deleted").and_then(serde_json::Value::as_str) {
+        Some(deleted) => {
+            println!(
+                "{}✓ Deleted device capability {}.{}",
+                EMERALD_GREEN, deleted, COLOR_RESET
+            );
+            return;
+        }
+        None => {}
     }
 
     println!("{}", result);

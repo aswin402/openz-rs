@@ -61,3 +61,26 @@ fn turn_cancel_key_accepts_esc_and_ctrl_exit_keys() {
         KeyModifiers::NONE
     )));
 }
+
+#[test]
+fn parsed_slash_command_routes_all_variants() {
+    use super::super::commands::ParsedSlashCommand;
+    assert_eq!(ParsedSlashCommand::parse("/exit"), ParsedSlashCommand::Exit);
+    assert_eq!(ParsedSlashCommand::parse("/help"), ParsedSlashCommand::Help);
+    assert_eq!(
+        ParsedSlashCommand::parse("/model openai/gpt-4o"),
+        ParsedSlashCommand::Model("openai/gpt-4o")
+    );
+    assert_eq!(
+        ParsedSlashCommand::parse("/tui trace compact"),
+        ParsedSlashCommand::TuiTrace("compact")
+    );
+    assert_eq!(
+        ParsedSlashCommand::parse("/device suggest browser html"),
+        ParsedSlashCommand::Device("suggest browser html")
+    );
+    assert_eq!(
+        ParsedSlashCommand::parse("hello world"),
+        ParsedSlashCommand::NotCommand
+    );
+}

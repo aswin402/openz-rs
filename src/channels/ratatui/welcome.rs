@@ -9,11 +9,7 @@ use ratatui::Frame;
 pub use crate::agent::style::markdown::OPENZ_BANNER_PARTS as BANNER_PARTS;
 
 /// Renders the Zen Welcome Screen when the conversation timeline is empty.
-pub fn render_welcome_screen(
-    frame: &mut Frame,
-    app: &RatatuiApp,
-    area: Rect,
-) {
+pub fn render_welcome_screen(frame: &mut Frame, app: &RatatuiApp, area: Rect) {
     let theme = &app.theme;
 
     // 1. Fill entire background
@@ -23,12 +19,16 @@ pub fn render_welcome_screen(
     frame.render_widget(bg_block, area);
 
     // Fallback for constrained terminal dimensions
-    if area.height < 10 || area.width < 34 {
-        return;
+    match area.height < 10 || area.width < 34 {
+        true => return,
+        false => {}
     }
 
     let show_full_banner = area.width >= 50 && area.height >= 16;
-    let logo_height = if show_full_banner { 8 } else { 2 };
+    let logo_height = match show_full_banner {
+        true => 8,
+        false => 2,
+    };
 
     // Vertical layout hierarchy: Centered Banner/Details -> Centered Input Dock -> Bottom Bar
     let vert_chunks = Layout::default()
@@ -46,47 +46,45 @@ pub fn render_welcome_screen(
     // ── 1. Brand Logo & Version Lockup ──────────────────────────────────────
     let mut logo_lines = Vec::new();
 
-    if show_full_banner {
-        for (white_part, orange_part) in BANNER_PARTS {
+    match show_full_banner {
+        true => {
+            for (white_part, orange_part) in BANNER_PARTS {
+                logo_lines.push(Line::from(vec![
+                    Span::styled(
+                        white_part.to_string(),
+                        Style::default()
+                            .fg(theme.brand_white)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        orange_part.to_string(),
+                        Style::default()
+                            .fg(theme.brand_accent)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+            }
+
+            logo_lines.push(Line::from(String::new()));
+            logo_lines.push(Line::from(vec![Span::styled(
+                format!("v{}", env!("CARGO_PKG_VERSION")),
+                Style::default().fg(theme.muted),
+            )]));
+        }
+        false => {
             logo_lines.push(Line::from(vec![
                 Span::styled(
-                    white_part.to_string(),
-                    Style::default()
-                        .fg(theme.brand_white)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(
-                    orange_part.to_string(),
+                    "OpenZ ",
                     Style::default()
                         .fg(theme.brand_accent)
                         .add_modifier(Modifier::BOLD),
                 ),
+                Span::styled(
+                    format!("v{}", env!("CARGO_PKG_VERSION")),
+                    Style::default().fg(theme.muted),
+                ),
             ]));
         }
-
-        // Blank line spacer
-        logo_lines.push(Line::from(String::new()));
-
-        // Version line only directly after logo
-        logo_lines.push(Line::from(vec![
-            Span::styled(
-                format!("v{}", env!("CARGO_PKG_VERSION")),
-                Style::default().fg(theme.muted),
-            ),
-        ]));
-    } else {
-        logo_lines.push(Line::from(vec![
-            Span::styled(
-                "OpenZ ",
-                Style::default()
-                    .fg(theme.brand_accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!("v{}", env!("CARGO_PKG_VERSION")),
-                Style::default().fg(theme.muted),
-            ),
-        ]));
     }
 
     let logo_para = Paragraph::new(logo_lines).alignment(Alignment::Center);
@@ -115,8 +113,8 @@ pub fn render_welcome_screen(
 
     let max_width = inner.width.saturating_sub(3).max(1) as usize;
 
-    let input_line = if app.typed_input.is_empty() {
-        Line::from(vec![
+    let input_line = match app.typed_input.is_empty() {
+        true => Line::from(vec![
             Span::styled(
                 "› ",
                 Style::default()
@@ -127,37 +125,40 @@ pub fn render_welcome_screen(
                 "Ask OpenZ anything or type '/' for commands...",
                 Style::default().fg(theme.muted),
             ),
-        ])
-    } else {
-        let input_str: String = app.typed_input.iter().collect();
-        let display = if input_str.len() > max_width {
-            let start = input_str.len().saturating_sub(max_width);
-            format!("…{}", &input_str[start..])
-        } else {
-            input_str
-        };
-        Line::from(vec![
-            Span::styled(
-                "› ",
-                Style::default()
-                    .fg(theme.brand_accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(display, Style::default().fg(theme.brand_white)),
-        ])
+        ]),
+        false => {
+            let input_str: String = app.typed_input.iter().collect();
+            let display = match input_str.len() > max_width {
+                true => {
+                    let start = input_str.len().saturating_sub(max_width);
+                    format!("…{}", &input_str[start..])
+                }
+                false => input_str,
+            };
+            Line::from(vec![
+                Span::styled(
+                    "› ",
+                    Style::default()
+                        .fg(theme.brand_accent)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(display, Style::default().fg(theme.brand_white)),
+            ])
+        }
     };
 
     frame.render_widget(Paragraph::new(input_line), inner);
 
     // Set cursor position inside the centered input box
-    let cursor_col = if app.typed_input.is_empty() {
-        2
-    } else {
-        let visible_len = app.typed_input.len().min(max_width);
-        2 + if app.typed_input.len() > max_width {
-            visible_len
-        } else {
-            app.cursor_idx
+    let cursor_col = match app.typed_input.is_empty() {
+        true => 2,
+        false => {
+            let visible_len = app.typed_input.len().min(max_width);
+            let offset = match app.typed_input.len() > max_width {
+                true => visible_len,
+                false => app.cursor_idx,
+            };
+            2 + offset
         }
     };
     frame.set_cursor_position((inner.x + cursor_col as u16, inner.y));
@@ -165,27 +166,30 @@ pub fn render_welcome_screen(
     // ── 3. Bottom Edge Bar ──────────────────────────────────────────────────
     let mut left_spans = vec![
         Span::raw(" "),
-        Span::styled(
-            app.cwd_display.clone(),
-            Style::default().fg(theme.info),
-        ),
+        Span::styled(app.cwd_display.clone(), Style::default().fg(theme.info)),
     ];
 
-    if let Some(branch) = RatatuiApp::get_git_branch(&app.workspace_root) {
-        left_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
-        left_spans.push(Span::styled(
-            format!("git:{}", branch),
-            Style::default().fg(theme.success),
-        ));
+    match RatatuiApp::get_git_branch(&app.workspace_root) {
+        Some(branch) => {
+            left_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
+            left_spans.push(Span::styled(
+                format!("git:{}", branch),
+                Style::default().fg(theme.success),
+            ));
+        }
+        None => {}
     }
 
     let (mcp_loaded, _, _) = crate::tools::mcp::get_mcp_stats();
-    if mcp_loaded > 0 {
-        left_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
-        left_spans.push(Span::styled(
-            format!("mcp:{} active", mcp_loaded),
-            Style::default().fg(theme.brand_accent),
-        ));
+    match mcp_loaded > 0 {
+        true => {
+            left_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
+            left_spans.push(Span::styled(
+                format!("mcp:{} active", mcp_loaded),
+                Style::default().fg(theme.brand_accent),
+            ));
+        }
+        false => {}
     }
 
     let provider_model = format!("{} | {}", app.provider, app.model);

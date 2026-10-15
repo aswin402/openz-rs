@@ -36,16 +36,19 @@ pub fn remove_tui_marker_in_dir(dir: &std::path::Path, pid: u32) {
 }
 
 pub fn process_is_alive(pid: u32) -> bool {
-    if pid == std::process::id() {
-        return true;
+    match pid == std::process::id() {
+        true => return true,
+        false => {}
     }
     #[cfg(unix)]
     {
-        if pid > i32::MAX as u32 {
-            return false;
+        match pid > i32::MAX as u32 {
+            true => false,
+            false => {
+                let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
+                result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+            }
         }
-        let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
-        result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
     #[cfg(not(unix))]
     {
@@ -54,26 +57,31 @@ pub fn process_is_alive(pid: u32) -> bool {
 }
 
 pub fn is_last_live_tui_in_dir(dir: &std::path::Path, current_pid: u32) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return true;
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return true,
     };
 
     let mut found_other_live = false;
     for entry in entries.flatten() {
         let path = entry.path();
-        let Some(stem) = path.file_stem().and_then(|value| value.to_str()) else {
-            continue;
+        let pid = match path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .and_then(|stem| stem.parse::<u32>().ok())
+        {
+            Some(p) => p,
+            None => continue,
         };
-        let Ok(pid) = stem.parse::<u32>() else {
-            continue;
-        };
-        if pid == current_pid {
-            continue;
+        match pid == current_pid {
+            true => continue,
+            false => {}
         }
-        if process_is_alive(pid) {
-            found_other_live = true;
-        } else {
-            let _ = std::fs::remove_file(path);
+        match process_is_alive(pid) {
+            true => found_other_live = true,
+            false => {
+                let _ = std::fs::remove_file(path);
+            }
         }
     }
     !found_other_live
@@ -132,8 +140,9 @@ pub async fn apply_session_model_selection(
     let resolved = crate::providers::resolver::resolve_provider_full(&cfg, model)?;
     save_session_model_override(session_manager, session_key, provider, model).await?;
     write_tui_marker_in_dir(marker_dir, std::process::id(), session_key, model, provider)?;
-    if let Ok(mut loop_lock) = agent_loop.try_lock() {
-        loop_lock.update_model_and_provider(cfg, resolved.instance)
+    match agent_loop.try_lock() {
+        Ok(mut loop_lock) => loop_lock.update_model_and_provider(cfg, resolved.instance),
+        Err(_) => {}
     }
     Ok(())
 }
@@ -146,8 +155,11 @@ pub async fn reset_active_session(
     base_key: &str,
 ) {
     let cur = shared.read().await.clone();
-    if !cur.starts_with("cli:history_") {
-        let _ = crate::cli::archive_current_session(session_manager, &cur).await;
+    match cur.starts_with("cli:history_") {
+        true => {}
+        false => {
+            let _ = crate::cli::archive_current_session(session_manager, &cur).await;
+        }
     }
     *shared.write().await = base_key.to_string();
 }

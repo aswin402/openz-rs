@@ -1,6 +1,11 @@
 use crate::agent::style::colors::*;
+use crate::agent::style::markdown::{horizontal_divider, terminal_width_or_default};
 use anyhow::Result;
 use chrono::{DateTime, Local, Utc};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use crossterm::ExecutableCommand;
+use std::io::{stdout, Write};
 
 #[derive(Debug, Clone)]
 pub struct HistoryItem {
@@ -13,28 +18,126 @@ pub fn format_friendly_time(time: DateTime<Utc>) -> String {
     let now = Local::now();
     let local_time: DateTime<Local> = DateTime::from(time);
 
-    if local_time >= now {
-        return "0m".to_string();
+    match local_time >= now {
+        true => return "0m".to_string(),
+        false => {}
     }
 
     let duration = now.signed_duration_since(local_time);
     let secs = duration.num_seconds();
-    if secs < 60 {
-        return "0m".to_string();
+    match secs < 60 {
+        true => return "0m".to_string(),
+        false => {}
     }
 
     let mins = duration.num_minutes();
-    if mins < 60 {
-        return format!("{}m", mins);
+    match mins < 60 {
+        true => return format!("{}m", mins),
+        false => {}
     }
 
     let hours = duration.num_hours();
-    if hours < 24 {
-        return format!("{}h", hours);
+    match hours < 24 {
+        true => return format!("{}h", hours),
+        false => {}
     }
 
-    let days = duration.num_days();
-    format!("{}d", days)
+    format!("{}d", duration.num_days())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MenuAction {
+    MovePrev,
+    MoveNext,
+    QuickSelect(usize),
+    Confirm,
+    Cancel,
+    Interrupt,
+    Ignore,
+}
+
+fn classify_vertical_menu_key(key_event: &KeyEvent) -> MenuAction {
+    match key_event.kind == KeyEventKind::Release {
+        true => return MenuAction::Ignore,
+        false => {}
+    }
+    let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
+    match (key_event.code, ctrl) {
+        (KeyCode::Char('c'), true) => MenuAction::Interrupt,
+        (KeyCode::Up, _) | (KeyCode::Char('k'), false) => MenuAction::MovePrev,
+        (KeyCode::Down, _) | (KeyCode::Char('j'), false) => MenuAction::MoveNext,
+        (KeyCode::Enter, _) => MenuAction::Confirm,
+        (KeyCode::Esc, _) | (KeyCode::Char('q'), false) => MenuAction::Cancel,
+        (KeyCode::Char(d @ '1'..='9'), false) => MenuAction::QuickSelect((d as usize) - ('1' as usize)),
+        _ => MenuAction::Ignore,
+    }
+}
+
+fn classify_horizontal_menu_key(key_event: &KeyEvent) -> MenuAction {
+    match key_event.kind == KeyEventKind::Release {
+        true => return MenuAction::Ignore,
+        false => {}
+    }
+    let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
+    match (key_event.code, ctrl) {
+        (KeyCode::Char('c'), true) => MenuAction::Interrupt,
+        (KeyCode::Left, _) | (KeyCode::Char('h'), false) => MenuAction::MovePrev,
+        (KeyCode::Right, _) | (KeyCode::Tab, _) | (KeyCode::Char('l'), false) => {
+            MenuAction::MoveNext
+        }
+        (KeyCode::Enter, _) => MenuAction::Confirm,
+        (KeyCode::Esc, _) | (KeyCode::Char('q'), false) => MenuAction::Cancel,
+        (KeyCode::Char(d @ '1'..='9'), false) => MenuAction::QuickSelect((d as usize) - ('1' as usize)),
+        _ => MenuAction::Ignore,
+    }
+}
+
+fn compute_menu_viewport(selected_idx: usize, total: usize, max_display: usize) -> (usize, usize) {
+    let start_idx = match selected_idx >= max_display {
+        true => selected_idx + 1 - max_display,
+        false => 0,
+    };
+    let end_idx = (start_idx + max_display).min(total);
+    (start_idx, end_idx)
+}
+
+fn format_scroll_indicator(rem_above: usize, rem_below: usize) -> Option<String> {
+    let mut parts = Vec::new();
+    match rem_above > 0 {
+        true => parts.push(format!("↑ {} more", rem_above)),
+        false => {}
+    }
+    match rem_below > 0 {
+        true => parts.push(format!("↓ {} more", rem_below)),
+        false => {}
+    }
+    match parts.is_empty() {
+        true => None,
+        false => Some(parts.join(" / ")),
+    }
+}
+
+fn clear_lines_above(num_lines: usize) {
+    for _ in 0..num_lines {
+        print!("\r\x1b[1A\x1b[2K");
+    }
+}
+
+fn move_up_and_clear_block(move_up: usize, lines_below: usize) {
+    match move_up > 0 {
+        true => print!("\x1b[{}A\r", move_up),
+        false => print!("\r"),
+    }
+    match lines_below > 0 {
+        true => {
+            for _ in 0..lines_below {
+                print!("\r\n\x1b[2K");
+            }
+            print!("\x1b[{}A\r", lines_below);
+        }
+        false => {}
+    }
+    print!("\r\x1b[2K");
 }
 
 pub fn select_menu_with_history(prompt: &str, history: &[HistoryItem]) -> Result<usize> {
@@ -46,90 +149,68 @@ pub fn select_menu_with_history_first_option(
     history: &[HistoryItem],
     first_option: &str,
 ) -> Result<usize> {
-    use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-    use crossterm::ExecutableCommand;
-    use std::io::stdout;
-    use std::io::Write;
-
     let mut stdout = stdout();
     let _ = stdout.execute(crossterm::cursor::Hide);
     enable_raw_mode()?;
     drain_pending_key_events();
-    let mut selected = 0;
+    let mut selected = 0usize;
     let num_options = 1 + history.len();
 
-    let max_history_display = 10;
+    let max_history_display = 10usize;
     let has_scrolling = history.len() > max_history_display;
-    let num_lines_to_clear = if has_scrolling {
-        5 + max_history_display
-    } else {
-        4 + history.len()
+    let num_lines_to_clear = match has_scrolling {
+        true => 5 + max_history_display,
+        false => 4 + history.len(),
     };
 
     print!("{}\r\n", prompt);
 
     let mut draw_menu = |selected_idx: usize| {
-        if selected_idx == 0 {
-            print!(
+        match selected_idx == 0 {
+            true => print!(
                 "▸ {}{}{}{}\r\n",
                 COLOR_BOLD, RED_ORANGE, first_option, COLOR_RESET
-            );
-        } else {
-            print!("  {}\r\n", first_option);
+            ),
+            false => print!("  {}\r\n", first_option),
         }
 
-        print!("\r\n");
-        print!("Recent\r\n");
-        print!("\r\n");
+        print!("\r\nRecent\r\n\r\n");
 
-        let mut start_idx = 0;
-        if selected_idx > 0 {
-            let history_sel = selected_idx - 1;
-            if history_sel >= max_history_display {
-                start_idx = history_sel - max_history_display + 1;
-            }
-        }
-        let end_idx = (start_idx + max_history_display).min(history.len());
+        let history_sel = selected_idx.saturating_sub(1);
+        let (start_idx, end_idx) = match selected_idx > 0 {
+            true => compute_menu_viewport(history_sel, history.len(), max_history_display),
+            false => (0, max_history_display.min(history.len())),
+        };
 
         for (i, item) in history.iter().enumerate().take(end_idx).skip(start_idx) {
             let option_idx = i + 1;
             let friendly_time = format_friendly_time(item.updated_at);
-
-            let truncated_title = if item.display_title.chars().count() > 40 {
-                let truncated: String = item.display_title.chars().take(37).collect();
-                format!("{}...", truncated)
-            } else {
-                item.display_title.clone()
+            let char_count = item.display_title.chars().count();
+            let truncated_title = match char_count > 40 {
+                true => {
+                    let truncated: String = item.display_title.chars().take(37).collect();
+                    format!("{}...", truncated)
+                }
+                false => item.display_title.clone(),
             };
             let pad_len = 45_usize.saturating_sub(truncated_title.chars().count());
             let padding = " ".repeat(pad_len);
 
-            if selected_idx == option_idx {
-                print!(
+            match selected_idx == option_idx {
+                true => print!(
                     "▸ {}{}{}{}{}{}\r\n",
                     COLOR_BOLD, RED_ORANGE, truncated_title, padding, friendly_time, COLOR_RESET
-                );
-            } else {
-                print!("  {}{}{}\r\n", truncated_title, padding, friendly_time);
+                ),
+                false => print!("  {}{}{}\r\n", truncated_title, padding, friendly_time),
             }
         }
 
-        if has_scrolling {
-            let rem_above = start_idx;
-            let rem_below = history.len() - end_idx;
-            let mut parts = Vec::new();
-            if rem_above > 0 {
-                parts.push(format!("↑ {} more", rem_above));
-            }
-            if rem_below > 0 {
-                parts.push(format!("↓ {} more", rem_below));
-            }
-            if !parts.is_empty() {
-                print!("  {}{}{}\r\n", AURA_SLATE, parts.join(" / "), COLOR_RESET);
-            } else {
-                print!("\r\n");
-            }
+        match has_scrolling {
+            true => match format_scroll_indicator(start_idx, history.len() - end_idx) {
+                Some(ind) => print!("  {}{}{}\r\n", AURA_SLATE, ind, COLOR_RESET),
+                None => print!("\r\n"),
+            },
+            false => {}
         }
         let _ = stdout.flush();
     };
@@ -137,76 +218,59 @@ pub fn select_menu_with_history_first_option(
     draw_menu(selected);
 
     loop {
-        if event::poll(std::time::Duration::from_millis(50))? {
-            if let Event::Key(key_event) = event::read()? {
-                if key_event.kind == KeyEventKind::Release {
-                    continue;
-                }
-
-                let mut changed = false;
-                match key_event.code {
-                    KeyCode::Up => {
-                        if selected > 0 {
-                            selected -= 1;
-                        } else {
-                            selected = num_options - 1;
-                        }
-                        changed = true;
+        match event::poll(std::time::Duration::from_millis(50))? {
+            true => match event::read()? {
+                Event::Key(key_event) => match classify_vertical_menu_key(&key_event) {
+                    MenuAction::MovePrev => {
+                        selected = (selected + num_options - 1) % num_options;
+                        clear_lines_above(num_lines_to_clear);
+                        draw_menu(selected);
                     }
-                    KeyCode::Down => {
-                        if selected < num_options - 1 {
-                            selected += 1;
-                        } else {
-                            selected = 0;
-                        }
-                        changed = true;
+                    MenuAction::MoveNext => {
+                        selected = (selected + 1) % num_options;
+                        clear_lines_above(num_lines_to_clear);
+                        draw_menu(selected);
                     }
-                    KeyCode::Enter => {
-                        for _ in 0..num_lines_to_clear {
-                            print!("\r\x1b[1A\x1b[2K");
+                    MenuAction::QuickSelect(idx) => match idx < num_options {
+                        true => {
+                            clear_lines_above(num_lines_to_clear + 1);
+                            print!("\r");
+                            let _ = stdout.execute(crossterm::cursor::Show);
+                            stdout.flush()?;
+                            disable_raw_mode()?;
+                            return Ok(idx);
                         }
-                        print!("\r\x1b[1A\x1b[2K");
+                        false => {}
+                    },
+                    MenuAction::Confirm => {
+                        clear_lines_above(num_lines_to_clear + 1);
                         print!("\r");
+                        let _ = stdout.execute(crossterm::cursor::Show);
                         stdout.flush()?;
                         disable_raw_mode()?;
                         return Ok(selected);
                     }
-                    KeyCode::Esc => {
-                        for _ in 0..num_lines_to_clear {
-                            print!("\r\x1b[1A\x1b[2K");
-                        }
-                        print!("\r\x1b[1A\x1b[2K");
+                    MenuAction::Cancel => {
+                        clear_lines_above(num_lines_to_clear + 1);
                         print!("\r");
                         let _ = stdout.execute(crossterm::cursor::Show);
                         let _ = stdout.flush();
                         disable_raw_mode()?;
                         return Err(anyhow::anyhow!("Cancelled"));
                     }
-                    KeyCode::Char('c')
-                        if key_event
-                            .modifiers
-                            .contains(crossterm::event::KeyModifiers::CONTROL) =>
-                    {
-                        for _ in 0..num_lines_to_clear {
-                            print!("\r\x1b[1A\x1b[2K");
-                        }
-                        print!("\r\x1b[1A\x1b[2K");
+                    MenuAction::Interrupt => {
+                        clear_lines_above(num_lines_to_clear + 1);
                         print!("\r");
                         let _ = stdout.execute(crossterm::cursor::Show);
                         let _ = stdout.flush();
                         disable_raw_mode()?;
                         return Err(anyhow::anyhow!("Ctrl-C"));
                     }
-                    _ => {}
-                }
-
-                if changed {
-                    for _ in 0..num_lines_to_clear {
-                        print!("\r\x1b[1A\x1b[2K");
-                    }
-                    draw_menu(selected);
-                }
-            }
+                    MenuAction::Ignore => {}
+                },
+                _ => {}
+            },
+            false => {}
         }
     }
 }
@@ -218,121 +282,78 @@ pub fn select_menu_custom(
     header: Option<&str>,
     show_divider: bool,
 ) -> Result<Option<usize>> {
-    use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-    use crossterm::ExecutableCommand;
-    use std::io::{stdout, Write};
-
     let mut stdout = stdout();
     let _ = stdout.execute(crossterm::cursor::Hide);
 
     enable_raw_mode()?;
     drain_pending_key_events();
-    let mut selected = 0;
+    let mut selected = 0usize;
     let num_options = options.len();
-    let max_display = 5;
-    let (width, _) = crossterm::terminal::size().unwrap_or((80, 24));
-    let width_usize = width as usize;
+    let max_display = 5usize;
+    let width_usize = terminal_width_or_default(80);
 
-    let mut lines_printed = 1;
-
-    let mut prompt_line_idx = 1;
-    if show_divider {
-        prompt_line_idx += 1;
-    }
-    if let Some(h) = header {
-        prompt_line_idx += h.lines().count();
-    }
+    let mut lines_printed = 1usize;
+    let divider_offset = usize::from(show_divider);
+    let header_lines = header.map(|h| h.lines().count()).unwrap_or(0);
+    let prompt_line_idx = 1 + divider_offset + header_lines;
 
     let mut draw_menu = |selected_idx: usize, first_draw: bool| -> Result<()> {
-        // Clear previous draw if not the first time
-        if !first_draw && lines_printed > 1 {
-            // Move cursor to the top of the menu
-            let move_up_to_top = prompt_line_idx - 1;
-            if move_up_to_top > 0 {
-                print!("\x1b[{}A\r", move_up_to_top);
-            } else {
-                print!("\r");
-            }
-
-            for _ in 0..(lines_printed - 1) {
-                print!("\r\n\x1b[2K");
-            }
-            print!("\x1b[{}A\r", lines_printed - 1);
+        match !first_draw && lines_printed > 1 {
+            true => move_up_and_clear_block(prompt_line_idx.saturating_sub(1), lines_printed - 1),
+            false => print!("\r\x1b[2K"),
         }
-        print!("\r\x1b[2K");
 
         let mut count: usize = 0;
 
-        // 1. Print divider line first at the top if enabled
-        if show_divider {
-            let divider = "────────────────────────────────────────────────────────────";
-            print!("{}{}{}", LIGHT_WHITE, divider, COLOR_RESET);
-            count += 1;
-        }
-
-        // 2. Print header if present
-        if let Some(h) = header {
-            for (idx, line) in h.lines().enumerate() {
-                if count > 0 || idx > 0 {
-                    print!("\r\n\x1b[2K{}", line);
-                } else {
-                    print!("{}", line);
-                }
+        match show_divider {
+            true => {
+                let divider = horizontal_divider(60);
+                print!("{}{}{}", LIGHT_WHITE, divider, COLOR_RESET);
                 count += 1;
             }
+            false => {}
         }
 
-        // 3. Print prompt
-        if count > 0 {
-            print!("\r\n\x1b[2K> {}{}{}", COLOR_BOLD, prompt, COLOR_RESET);
-        } else {
-            print!("> {}{}{}", COLOR_BOLD, prompt, COLOR_RESET);
+        match header {
+            Some(h) => {
+                for (idx, line) in h.lines().enumerate() {
+                    match count > 0 || idx > 0 {
+                        true => print!("\r\n\x1b[2K{}", line),
+                        false => print!("{}", line),
+                    }
+                    count += 1;
+                }
+            }
+            None => {}
+        }
+
+        match count > 0 {
+            true => print!("\r\n\x1b[2K> {}{}{}", COLOR_BOLD, prompt, COLOR_RESET),
+            false => print!("> {}{}{}", COLOR_BOLD, prompt, COLOR_RESET),
         }
         count += 1;
 
-        let mut start_idx = 0;
-        if selected_idx >= max_display {
-            start_idx = selected_idx - max_display + 1;
-        }
-        let end_idx = (start_idx + max_display).min(num_options);
+        let (start_idx, end_idx) = compute_menu_viewport(selected_idx, num_options, max_display);
 
-        // Print visible items
         for (i, opt) in options.iter().enumerate().take(end_idx).skip(start_idx) {
-            let is_selected = selected_idx == i;
-            if is_selected {
-                print!("\r\n\x1b[2K> {}{}{}", RED_ORANGE, opt, COLOR_RESET);
-            } else {
-                print!("\r\n\x1b[2K  {}", opt);
+            match selected_idx == i {
+                true => print!("\r\n\x1b[2K> {}{}{}", RED_ORANGE, opt, COLOR_RESET),
+                false => print!("\r\n\x1b[2K  {}", opt),
             }
             count += 1;
         }
 
-        // Print rem indicators
-        let rem_below = num_options - end_idx;
-        let rem_above = start_idx;
-        if rem_below > 0 || rem_above > 0 {
-            let mut parts = Vec::new();
-            if rem_above > 0 {
-                parts.push(format!("↑ {} more", rem_above));
+        match format_scroll_indicator(start_idx, num_options.saturating_sub(end_idx)) {
+            Some(ind) => {
+                print!("\r\n\x1b[2K  {}{}{}", AURA_SLATE, ind, COLOR_RESET);
+                count += 1;
             }
-            if rem_below > 0 {
-                parts.push(format!("↓ {} more", rem_below));
-            }
-            print!(
-                "\r\n\x1b[2K  {}{}{}",
-                AURA_SLATE,
-                parts.join(" / "),
-                COLOR_RESET
-            );
-            count += 1;
+            None => {}
         }
 
-        // Print empty spacing line
         print!("\r\n\x1b[2K");
         count += 1;
 
-        // Print help instructions at the bottom
         print!(
             "\r\n\x1b[2K  {}↑/↓ Navigate · enter Select{}",
             AURA_SLATE, COLOR_RESET
@@ -349,7 +370,6 @@ pub fn select_menu_custom(
         print!("\r\n\x1b[2K{}{}{}", cancel_text, spaces, model_display);
         count += 1;
 
-        // Move cursor back up to the prompt line
         let move_up = count.saturating_sub(prompt_line_idx);
         print!("\x1b[{}A\r", move_up);
 
@@ -360,116 +380,78 @@ pub fn select_menu_custom(
 
     draw_menu(selected, true)?;
 
-    loop {
-        if event::poll(std::time::Duration::from_millis(50))? {
-            if let Event::Key(key_event) = event::read()? {
-                if key_event.kind == KeyEventKind::Release {
-                    continue;
-                }
+    let finish_confirm = |chosen: usize, lines_printed: usize, stdout: &mut std::io::Stdout| -> Result<Option<usize>> {
+        let _ = stdout.execute(crossterm::cursor::Show);
+        let clear_start_idx = match show_divider {
+            true => 2,
+            false => 1,
+        };
+        move_up_and_clear_block(
+            prompt_line_idx.saturating_sub(clear_start_idx),
+            lines_printed.saturating_sub(clear_start_idx),
+        );
+        let clean_prompt = prompt.trim_end_matches(':');
+        print!(
+            "> {}: {}{}{}\r\n",
+            clean_prompt, RED_ORANGE, options[chosen], COLOR_RESET
+        );
+        disable_raw_mode()?;
+        let _ = stdout.flush();
+        Ok(Some(chosen))
+    };
 
-                match key_event.code {
-                    KeyCode::Up => {
+    loop {
+        match event::poll(std::time::Duration::from_millis(50))? {
+            true => match event::read()? {
+                Event::Key(key_event) => match classify_vertical_menu_key(&key_event) {
+                    MenuAction::MovePrev => {
                         selected = (selected + num_options - 1) % num_options;
                         draw_menu(selected, false)?;
                     }
-                    KeyCode::Down => {
+                    MenuAction::MoveNext => {
                         selected = (selected + 1) % num_options;
                         draw_menu(selected, false)?;
                     }
-                    KeyCode::Enter => {
-                        let _ = stdout.execute(crossterm::cursor::Show);
-                        // If show_divider is true, we want to KEEP the divider line.
-                        // So we clear starting from Line 2 (one line below the divider).
-                        // If show_divider is false, we clear starting from Line 1.
-                        let clear_start_idx = if show_divider { 2 } else { 1 };
-
-                        let move_up_to_clear_start =
-                            prompt_line_idx.saturating_sub(clear_start_idx);
-                        if move_up_to_clear_start > 0 {
-                            print!("\x1b[{}A\r", move_up_to_clear_start);
-                        } else {
-                            print!("\r");
-                        }
-
-                        // Clear the menu lines
-                        if lines_printed > clear_start_idx {
-                            for _ in 0..(lines_printed - clear_start_idx) {
-                                print!("\r\n\x1b[2K");
-                            }
-                            print!("\x1b[{}A\r", lines_printed - clear_start_idx);
-                        }
-                        print!("\r\x1b[2K");
-
-                        let clean_prompt = prompt.trim_end_matches(':');
-                        print!(
-                            "> {}: {}{}{}\r\n",
-                            clean_prompt, RED_ORANGE, options[selected], COLOR_RESET
-                        );
-                        disable_raw_mode()?;
-                        let _ = stdout.flush();
-                        return Ok(Some(selected));
+                    MenuAction::QuickSelect(idx) => match idx < num_options {
+                        true => return finish_confirm(idx, lines_printed, &mut stdout),
+                        false => {}
+                    },
+                    MenuAction::Confirm => {
+                        return finish_confirm(selected, lines_printed, &mut stdout);
                     }
-                    KeyCode::Esc => {
+                    MenuAction::Cancel => {
                         let _ = stdout.execute(crossterm::cursor::Show);
-                        // Move cursor to the top of the menu (the divider line)
-                        let move_up_to_top = prompt_line_idx - 1;
-                        if move_up_to_top > 0 {
-                            print!("\x1b[{}A\r", move_up_to_top);
-                        } else {
-                            print!("\r");
-                        }
-
-                        // Clear all lines of the menu
-                        if lines_printed > 1 {
-                            for _ in 0..(lines_printed - 1) {
-                                print!("\r\n\x1b[2K");
-                            }
-                            print!("\x1b[{}A\r", lines_printed - 1);
-                        }
-                        print!("\r\x1b[2K");
+                        move_up_and_clear_block(
+                            prompt_line_idx.saturating_sub(1),
+                            lines_printed.saturating_sub(1),
+                        );
                         disable_raw_mode()?;
                         let _ = stdout.flush();
                         return Ok(None);
                     }
-                    KeyCode::Char('c')
-                        if key_event
-                            .modifiers
-                            .contains(crossterm::event::KeyModifiers::CONTROL) =>
-                    {
+                    MenuAction::Interrupt => {
                         let _ = stdout.execute(crossterm::cursor::Show);
-                        // Move cursor to the top of the menu (the divider line)
-                        let move_up_to_top = prompt_line_idx - 1;
-                        if move_up_to_top > 0 {
-                            print!("\x1b[{}A\r", move_up_to_top);
-                        } else {
-                            print!("\r");
-                        }
-
-                        // Clear all lines of the menu
-                        if lines_printed > 1 {
-                            for _ in 0..(lines_printed - 1) {
-                                print!("\r\n\x1b[2K");
-                            }
-                            print!("\x1b[{}A\r", lines_printed - 1);
-                        }
-                        print!("\r\x1b[2K");
+                        move_up_and_clear_block(
+                            prompt_line_idx.saturating_sub(1),
+                            lines_printed.saturating_sub(1),
+                        );
                         disable_raw_mode()?;
                         let _ = stdout.flush();
                         return Err(anyhow::anyhow!("Ctrl-C"));
                     }
-                    _ => {}
-                }
-            }
+                    MenuAction::Ignore => {}
+                },
+                _ => {}
+            },
+            false => {}
         }
     }
 }
 
 fn drain_pending_key_events() {
-    use crossterm::event::{self, Event, KeyEventKind};
     for _ in 0..64 {
         match event::poll(std::time::Duration::from_millis(0)) {
             Ok(true) => match event::read() {
-                Ok(Event::Key(key)) if key.kind == KeyEventKind::Release => continue,
                 Ok(_) => continue,
                 Err(_) => break,
             },
@@ -479,37 +461,29 @@ fn drain_pending_key_events() {
 }
 
 pub fn select_menu_horizontal(options: &[String]) -> Result<Option<usize>> {
-    use crossterm::event::{self, Event, KeyCode, KeyEventKind};
-    use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
-    use crossterm::ExecutableCommand;
-    use std::io::{stdout, Write};
-
     let mut stdout = stdout();
     let _ = stdout.execute(crossterm::cursor::Hide);
 
     enable_raw_mode()?;
     drain_pending_key_events();
-    let mut selected = 0;
+    let mut selected = 0usize;
     let num_options = options.len();
 
     let mut draw_menu = |selected_idx: usize| -> Result<()> {
-        print!("\r\x1b[2K");
-        let prefix = "  L ";
-        print!("{}{}", AURA_SLATE, prefix);
+        print!("\r\x1b[2K{}  L ", AURA_SLATE);
 
         for (i, option) in options.iter().enumerate().take(num_options) {
-            if i > 0 {
-                print!("{}  ·  {}", AURA_SLATE, COLOR_RESET);
+            match i > 0 {
+                true => print!("{}  ·  {}", AURA_SLATE, COLOR_RESET),
+                false => {}
             }
-            if i == selected_idx {
-                print!(
-                    "{}{}{}▸ {}{}",
-                    RED_ORANGE, COLOR_BOLD, COLOR_RESET, COLOR_BOLD, option
-                );
-            } else {
-                print!("{}{}", LIGHT_WHITE, option);
+            match i == selected_idx {
+                true => print!(
+                    "{}{}{}▸ {}{}{}",
+                    RED_ORANGE, COLOR_BOLD, COLOR_RESET, COLOR_BOLD, option, COLOR_RESET
+                ),
+                false => print!("{}{}{}", LIGHT_WHITE, option, COLOR_RESET),
             }
-            print!("{}", COLOR_RESET);
         }
         stdout.flush()?;
         Ok(())
@@ -517,58 +491,57 @@ pub fn select_menu_horizontal(options: &[String]) -> Result<Option<usize>> {
 
     draw_menu(selected)?;
 
-    loop {
-        if event::poll(std::time::Duration::from_millis(50))? {
-            if let Event::Key(key_event) = event::read()? {
-                if key_event.kind == KeyEventKind::Release {
-                    continue;
-                }
+    let finish_horizontal = |chosen: usize, stdout: &mut std::io::Stdout| -> Result<Option<usize>> {
+        let _ = stdout.execute(crossterm::cursor::Show);
+        print!("\r\x1b[2K");
+        let outcome = match chosen {
+            0 => format!("{}approved", AURA_GREEN),
+            1 => format!("{}approved & trusted", AURA_GREEN),
+            _ => format!("{}denied", AURA_ROSE),
+        };
+        print!("{}  L {}{}{}\r\n", AURA_SLATE, COLOR_RESET, outcome, COLOR_RESET);
+        let _ = stdout.flush();
+        disable_raw_mode()?;
+        Ok(Some(chosen))
+    };
 
-                match key_event.code {
-                    KeyCode::Left => {
+    loop {
+        match event::poll(std::time::Duration::from_millis(50))? {
+            true => match event::read()? {
+                Event::Key(key_event) => match classify_horizontal_menu_key(&key_event) {
+                    MenuAction::MovePrev => {
                         selected = (selected + num_options - 1) % num_options;
                         draw_menu(selected)?;
                     }
-                    KeyCode::Right | KeyCode::Tab => {
+                    MenuAction::MoveNext => {
                         selected = (selected + 1) % num_options;
                         draw_menu(selected)?;
                     }
-                    KeyCode::Enter => {
-                        let _ = stdout.execute(crossterm::cursor::Show);
-                        print!("\r\x1b[2K");
-                        let prefix = "  L ";
-                        let outcome = match selected {
-                            0 => format!("{}approved", AURA_GREEN),
-                            1 => format!("{}approved & trusted", AURA_GREEN),
-                            _ => format!("{}denied", AURA_ROSE),
-                        };
-                        print!("{}{}{}{}\r\n", AURA_SLATE, prefix, COLOR_RESET, outcome);
-                        let _ = stdout.flush();
-                        disable_raw_mode()?;
-                        return Ok(Some(selected));
+                    MenuAction::QuickSelect(idx) => match idx < num_options {
+                        true => return finish_horizontal(idx, &mut stdout),
+                        false => {}
+                    },
+                    MenuAction::Confirm => {
+                        return finish_horizontal(selected, &mut stdout);
                     }
-                    KeyCode::Esc => {
+                    MenuAction::Cancel => {
                         let _ = stdout.execute(crossterm::cursor::Show);
-                        print!("\r\x1b[2K");
-                        let prefix = "  L ";
-                        print!("{}{}{}denied\r\n", AURA_SLATE, prefix, AURA_ROSE);
+                        print!("\r\x1b[2K{}  L {}denied{}\r\n", AURA_SLATE, AURA_ROSE, COLOR_RESET);
                         let _ = stdout.flush();
                         disable_raw_mode()?;
                         return Ok(None);
                     }
-                    KeyCode::Char('c')
-                        if key_event
-                            .modifiers
-                            .contains(crossterm::event::KeyModifiers::CONTROL) =>
-                    {
+                    MenuAction::Interrupt => {
                         let _ = stdout.execute(crossterm::cursor::Show);
                         print!("\r\x1b[2K");
                         disable_raw_mode()?;
                         return Err(anyhow::anyhow!("Ctrl-C"));
                     }
-                    _ => {}
-                }
-            }
+                    MenuAction::Ignore => {}
+                },
+                _ => {}
+            },
+            false => {}
         }
     }
 }

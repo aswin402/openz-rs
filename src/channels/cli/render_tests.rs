@@ -14,10 +14,13 @@ fn test_multiline_prompt_wrapping() {
 
     for &c in &display_chars {
         let cw = char_display_width(c);
-        if cur_w + cw > max_line_content_width && !cur.is_empty() {
-            lines.push(cur);
-            cur = String::new();
-            cur_w = 0;
+        match cur_w + cw > max_line_content_width && !cur.is_empty() {
+            true => {
+                lines.push(cur);
+                cur = String::new();
+                cur_w = 0;
+            }
+            false => {}
         }
         cur.push(c);
         cur_w += cw;

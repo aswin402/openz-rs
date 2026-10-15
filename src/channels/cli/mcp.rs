@@ -36,8 +36,9 @@ pub fn set_mcp_done() {
 }
 
 pub fn queue_notification(msg: &str) {
-    if let Ok(mut guard) = get_pending_notifications().lock() {
-        guard.push(msg.to_string());
+    match get_pending_notifications().lock() {
+        Ok(mut guard) => guard.push(msg.to_string()),
+        Err(_) => {}
     }
 }
 

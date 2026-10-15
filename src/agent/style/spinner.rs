@@ -17,12 +17,12 @@ tokio::task_local! {
 }
 
 pub fn is_silent() -> bool {
-    if crate::channels::ratatui::IS_RATATUI_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
-        return true;
+    match crate::channels::ratatui::IS_RATATUI_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+        true => true,
+        false => IS_SILENT
+            .try_with(|s| *s)
+            .unwrap_or_else(|_| std::env::var("OPENZ_SILENT").is_ok()),
     }
-    IS_SILENT
-        .try_with(|s| *s)
-        .unwrap_or_else(|_| std::env::var("OPENZ_SILENT").is_ok())
 }
 
 pub fn get_current_session_key() -> Option<String> {
@@ -50,10 +50,13 @@ impl Drop for SpinnerGuard {
         active.retain(|s| s.id != self.id);
 
         // If there's another spinner on the stack, restore it immediately
-        if let Some(parent) = active.last() {
-            let _stdout_guard = stdout_lock();
-            print!("\r\x1b[2K{}{} ⠋", parent.prefix, parent.msg);
-            let _ = std::io::stdout().flush();
+        match active.last() {
+            Some(parent) => {
+                let _stdout_guard = stdout_lock();
+                print!("\r\x1b[2K{}{} ⠋", parent.prefix, parent.msg);
+                let _ = std::io::stdout().flush();
+            }
+            None => {}
         }
     }
 }
@@ -94,13 +97,13 @@ where
     let depth = crate::tools::subagent::DELEGATION_DEPTH
         .try_with(|d| *d)
         .unwrap_or(0);
-    if is_silent() || msg.trim().is_empty() {
-        return future.await;
+    match is_silent() || msg.trim().is_empty() {
+        true => return future.await,
+        false => {}
     }
-    let prefix = if depth > 0 {
-        crate::agent::style::get_tree_prefix(true)
-    } else {
-        "".to_string()
+    let prefix = match depth > 0 {
+        true => crate::agent::style::get_tree_prefix(true),
+        false => String::new(),
     };
     let msg = msg.to_string();
 
@@ -140,9 +143,12 @@ where
                     let _stdout_guard = stdout_lock();
                     let active = active_spinners_lock();
                     // Only draw if this spinner is the currently active (deepest) one in the stack
-                    if active.last().map(|s| s.id == spinner_id).unwrap_or(false) {
-                        print!("\r\x1b[2K{}{} {}", prefix_clone, msg_clone, frames[idx]);
-                        let _ = std::io::stdout().flush();
+                    match active.last().map(|s| s.id == spinner_id).unwrap_or(false) {
+                        true => {
+                            print!("\r\x1b[2K{}{} {}", prefix_clone, msg_clone, frames[idx]);
+                            let _ = std::io::stdout().flush();
+                        }
+                        false => {}
                     }
                     idx = (idx + 1) % frames.len();
                 }
@@ -151,9 +157,12 @@ where
         // Clear the line when done, but only if we were the active spinner
         let _stdout_guard = stdout_lock();
         let active = active_spinners_lock();
-        if active.last().map(|s| s.id == spinner_id).unwrap_or(true) {
-            print!("\r\x1b[2K");
-            let _ = std::io::stdout().flush();
+        match active.last().map(|s| s.id == spinner_id).unwrap_or(true) {
+            true => {
+                print!("\r\x1b[2K");
+                let _ = std::io::stdout().flush();
+            }
+            false => {}
         }
     });
 
