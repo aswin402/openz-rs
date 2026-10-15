@@ -1,5 +1,36 @@
-## [0.0.256] - 2026-10-15
-### v0.0.256 (Latest Release)
+## [0.0.257] - 2026-10-15
+### v0.0.257 (Latest Release)
+
+#### Added
+- **Post-Edit `Hashline` Window & Structural Diagnostics in `write_file`, `patch_file`, and `replace_lines` ([`src/tools/filesystem.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem.rs))**: Added `format_hashline_window()`, `changed_line_bounds()`, and `compute_structural_diagnostics()` (`0` `if/else`, `0` `regex`) to return fresh `LINE:HASH| ` anchors (`updated_window`) around modified lines along with immediate delimiter-balance (`brace_delta`, `paren_delta`, `bracket_delta`, ignoring comments and string literals) and conflict-marker checks (`diagnostics`). Also stripped copied `Hashline` prefixes inside `ReplaceLinesTool` `replacement` lines.
+- **Workspace-Scoped Cross-Session Memory Filtering ([`src/agent/agent_loop/build.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs))**: Added `has_foreign_workspace_path()` (`0` `if/else`, `0` `regex`) and expanded `memory_query_terms()` stop-words so cross-session memories referencing unrelated repository paths are excluded unless explicitly mentioned in the user prompt.
+- **Concurrent Read-Only Batch Execution in `ToolCatalogTool` ([`src/tools/self_management/catalog.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog.rs))**: Added `is_read_only_batch_step()` and parallel `futures_util::future::join_all` dispatch for read-only `batch_execute` payloads, reporting `"batch_execution_mode": "concurrent"` or `"sequential"`.
+
+#### Documentation
+- **Synchronized Release Manifests**: Updated [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md), and [`CHANGELOG.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/CHANGELOG.md) to `0.0.257`.
+
+### Sources & Inspirations
+- **[Inspiration]**: Oh My Pi (`omp`) post-edit `Hashline` anchor windows, Claude Code / Codex workspace-scoped memory isolation and post-edit diagnostics, and Prime Agent concurrent read-only batch execution.
+
+- **Ideas**:
+  - Post-Edit `Hashline` Context Windows, Zero-Regex Delimiter & Conflict Diagnostics, Workspace-Isolated Memory Retrieval, and Concurrent Read-Only `batch_execute`.
+- **Inspirations**:
+  - Oh My Pi (`omp`), Claude Code, OpenAI Codex CLI, and Prime Agent (`0` `if/else`, `0` `regex`).
+- **Sources & References**:
+  - [`src/tools/filesystem.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem.rs), [`src/tools/filesystem_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem_tests.rs)
+  - [`src/agent/agent_loop/build.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs), [`src/agent/agent_loop/build_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build_tests.rs)
+  - [`src/tools/self_management/catalog.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog.rs), [`src/tools/self_management/catalog_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog_tests.rs)
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Synchronous SemVer increment to `0.0.257`.
+- **Details & Metrics**:
+  - Achieved `0` `if/else` statements and `0` `regex` across all added/modified lines in `filesystem.rs`, `build.rs`, and `catalog.rs`.
+  - Maintained the 260 registered native tools invariant (`test_native_tool_registration_names`).
+- **Verification**:
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 2 -- test_post_edit_hashline_window_and_structural_diagnostics`: PASS (1/1).
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 2 -- foreign_workspace_path_filter_blocks_unrelated_repo_paths`: PASS (1/1).
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 2 -- test_tool_catalog_batch_execute_concurrent_read_only_mode`: PASS (1/1).
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 2 -- release_version_surfaces_match_cargo_package_version`: PASS (1/1).
+
+### v0.0.256 — 2026-10-15
 
 #### Added
 - **`Hashline`-Prefix Tolerance in `patch_file` & `replace_lines` ([`src/tools/filesystem.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem.rs))**: Added `strip_hashline_line_prefix()`, `is_hashline_tag()`, and `is_four_hex_chars()` (`0` `if/else`, `0` `regex`) so when an LLM reads a file with `read_file(include_hashes: true)` and copies `LINE:HASH| ` or `HASH| ` prefixes into `patch_file` (`<<<<<<< SEARCH` / `target` / `replacement`) or `replace_lines` (`anchor_text`), the edit succeeds on the first turn without requiring a retry turn.

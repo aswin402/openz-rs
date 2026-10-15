@@ -516,3 +516,52 @@ fn kv_cached_system_prompt_budget_truncates_dynamic_sections_without_touching_st
     assert!(prompt.ends_with("Current date and time: 2026-10-15T00:00:00Z"));
 }
 
+#[test]
+fn memory_query_terms_excludes_generic_tool_and_action_stop_words() {
+    let terms = memory_query_terms("Read calculator.rs using read_file and patch_file to update line");
+    assert!(terms.contains("calculator"));
+    assert!(!terms.contains("read"));
+    assert!(!terms.contains("file"));
+    assert!(!terms.contains("patch"));
+    assert!(!terms.contains("update"));
+    assert!(!terms.contains("line"));
+}
+
+#[test]
+fn foreign_workspace_path_filter_blocks_unrelated_repo_paths() {
+    let active_ws = "/tmp/openz-live-test-workspace";
+    let foreign_fact =
+        "OpenZ repo is located at /home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/main.rs";
+    let local_fact =
+        "Edited /tmp/openz-live-test-workspace/calculator.rs to add reset() method";
+    let shared_vault_fact =
+        "Deliverables are stored in /home/aswin/OpenZ_Vault/websites/demo";
+    let openz_config_fact =
+        "Skills database is stored at /home/aswin/.openz/memory.db";
+
+    assert!(has_foreign_workspace_path(
+        foreign_fact,
+        active_ws,
+        "Read calculator.rs and add reset()"
+    ));
+    assert!(!has_foreign_workspace_path(
+        foreign_fact,
+        active_ws,
+        "Compare with /home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/main.rs"
+    ));
+    assert!(!has_foreign_workspace_path(
+        local_fact,
+        active_ws,
+        "Read calculator.rs"
+    ));
+    assert!(!has_foreign_workspace_path(
+        shared_vault_fact,
+        active_ws,
+        "Read calculator.rs"
+    ));
+    assert!(!has_foreign_workspace_path(
+        openz_config_fact,
+        active_ws,
+        "Read calculator.rs"
+    ));
+}

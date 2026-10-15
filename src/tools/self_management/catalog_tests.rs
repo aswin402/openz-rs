@@ -230,6 +230,8 @@ async fn test_tool_catalog_batch_execute_runs_safe_tools_and_enforces_security()
     assert_eq!(batch_results[2]["tool"], "exec_command");
     assert_eq!(batch_results[2]["status"], "blocked");
 
+    assert_eq!(res["batch_execution_mode"], "sequential");
+
     let (turn_scoped, _) = registry.current_turn_scope();
     assert!(turn_scoped.contains(&"read_file".to_string()));
     assert!(turn_scoped.contains(&"openmedia_inspect_svg".to_string()));
@@ -240,4 +242,50 @@ async fn test_tool_catalog_batch_execute_runs_safe_tools_and_enforces_security()
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
 
+#[tokio::test]
+async fn test_tool_catalog_batch_execute_concurrent_read_only_mode() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_batch_concurrent_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let sample_file = temp_dir.join("notes.txt");
+    std::fs::write(&sample_file, "first\nsecond\n").unwrap();
 
+    let registry = crate::tools::ToolRegistry::new();
+    registry.register(std::sync::Arc::new(crate::tools::filesystem::ReadFileTool));
+    registry.register(std::sync::Arc::new(crate::tools::filesystem::ListDirTool));
+
+    let catalog = ToolCatalogTool::new(registry);
+    let res = catalog
+        .call(&serde_json::json!({
+            "batch_execute": [
+                {
+                    "tool": "read_file",
+                    "arguments": {
+                        "path": sample_file.to_str().unwrap(),
+                        "include_hashes": true
+                    }
+                },
+                {
+                    "tool": "list_dir",
+                    "arguments": {
+                        "path": temp_dir.to_str().unwrap()
+                    }
+                }
+            ]
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(res["success"].as_bool(), Some(true));
+    assert_eq!(res["batch_executed_count"].as_u64(), Some(2));
+    assert_eq!(res["batch_execution_mode"], "concurrent");
+    let batch_results = res["batch_results"].as_array().unwrap();
+    assert_eq!(batch_results[0]["tool"], "read_file");
+    assert_eq!(batch_results[0]["status"], "success");
+    assert_eq!(batch_results[1]["tool"], "list_dir");
+    assert_eq!(batch_results[1]["status"], "success");
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}

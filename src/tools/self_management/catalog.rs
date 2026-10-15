@@ -167,6 +167,50 @@ impl ToolCatalogTool {
             },
         }
     }
+    fn is_read_only_batch_step(&self, item: &Value) -> bool {
+        let raw_name = item
+            .get("tool")
+            .or_else(|| item.get("name"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .unwrap_or("");
+        let canonical_name = self.registry.resolve_canonical_name(raw_name);
+        let is_mutating_name = matches!(
+            canonical_name.as_str(),
+            "" | "tool_catalog"
+                | "write_file"
+                | "patch_file"
+                | "replace_lines"
+                | "zenflow_edit"
+                | "exec_command"
+                | "db_write"
+                | "store_memory"
+                | "clear_memory"
+                | "set_working_memory"
+                | "evict_expired_working_memory"
+                | "create_entities"
+                | "create_relations"
+                | "add_observations"
+                | "delete_entities"
+                | "delete_observations"
+                | "delete_relations"
+                | "request_tool_scope"
+                | "optimize_tool_scope"
+                | "manage_config"
+                | "manage_sessions"
+                | "manage_backups"
+                | "curate_skill"
+        );
+        match (is_mutating_name, self.registry.get(&canonical_name)) {
+            (true, _) | (false, None) => false,
+            (false, Some(tool)) => {
+                let meta = tool.metadata();
+                matches!(meta.risk, crate::tools::ToolRisk::Low)
+                    && !meta.writes_disk
+                    && !meta.requires_approval
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -302,11 +346,36 @@ impl Tool for ToolCatalogTool {
 
         let mut batch_results = Vec::new();
         let mut batch_mounted_tools = Vec::new();
+        let mut batch_execution_mode: Option<&'static str> = None;
         match arguments.get("batch_execute").and_then(|v| v.as_array()) {
             Some(steps) => {
-                for step in steps.iter().take(8) {
-                    let (executed_tool, step_res) =
-                        self.run_batch_step(step, &defaults, &runtime).await;
+                let capped: Vec<&Value> = steps.iter().take(8).collect();
+                let run_concurrent = capped.len() > 1
+                    && capped
+                        .iter()
+                        .all(|step| self.is_read_only_batch_step(step));
+                let outcomes = match run_concurrent {
+                    true => {
+                        batch_execution_mode = Some("concurrent");
+                        futures_util::future::join_all(
+                            capped
+                                .iter()
+                                .map(|step| self.run_batch_step(step, &defaults, &runtime)),
+                        )
+                        .await
+                    }
+                    false => {
+                        (!capped.is_empty()).then(|| {
+                            batch_execution_mode = Some("sequential");
+                        });
+                        let mut seq = Vec::with_capacity(capped.len());
+                        for step in capped {
+                            seq.push(self.run_batch_step(step, &defaults, &runtime).await);
+                        }
+                        seq
+                    }
+                };
+                for (executed_tool, step_res) in outcomes {
                     executed_tool.map(|name| batch_mounted_tools.push(name));
                     batch_results.push(step_res);
                 }
@@ -457,6 +526,8 @@ impl Tool for ToolCatalogTool {
         });
         (!batch_results.is_empty()).then(|| {
             response["batch_executed_count"] = serde_json::json!(batch_results.len());
+            response["batch_execution_mode"] =
+                serde_json::json!(batch_execution_mode.unwrap_or("sequential"));
             response["batch_results"] = serde_json::json!(batch_results);
         });
 

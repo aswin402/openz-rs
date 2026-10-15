@@ -433,5 +433,84 @@ async fn test_patch_file_fuzzy_unified_diff_and_search_replace_modes() -> Result
     Ok(())
 }
 
+#[tokio::test]
+async fn test_post_edit_hashline_window_and_structural_diagnostics() -> Result<()> {
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_post_edit_diag_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir)?;
+    let file_path = temp_dir.join("diag.rs");
 
+    // 1. write_file returns diagnostics ignoring braces in comments and string literals
+    let write_res = WriteFileTool
+        .call(&serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "content": "// comment with unbalanced {\npub fn demo() -> &'static str {\n    \"literal {([\"\n}\n"
+        }))
+        .await?;
+    assert_eq!(write_res["status"], "success");
+    assert_eq!(write_res["line_count"], 4);
+    assert_eq!(write_res["diagnostics"]["balanced_delimiters"], true);
+    assert_eq!(write_res["diagnostics"]["brace_delta"], 0);
+    assert_eq!(write_res["diagnostics"]["has_conflict_markers"], false);
+    assert!(write_res["diagnostics"]["warnings"]
+        .as_array()
+        .unwrap()
+        .is_empty());
 
+    // 2. replace_lines strips copied Hashline prefixes from replacement and returns updated_window
+    let replace_res = ReplaceLinesTool
+        .call(&serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "start_line": 3,
+            "end_line": 3,
+            "replacement": "3:abcd|     \"updated literal\""
+        }))
+        .await?;
+    assert_eq!(replace_res["status"], "success");
+    assert_eq!(
+        std::fs::read_to_string(&file_path)?,
+        "// comment with unbalanced {\npub fn demo() -> &'static str {\n    \"updated literal\"\n}\n"
+    );
+    let window = replace_res["updated_window"].as_str().unwrap();
+    let expected_hash = line_content_hash("    \"updated literal\"");
+    assert!(window.contains(&format!("3:{}|     \"updated literal\"", expected_hash)));
+    assert_eq!(replace_res["diagnostics"]["balanced_delimiters"], true);
+
+    // 3. replace_lines with expected_hash matching end_line (line 3) preserves [2..=3] without eating line 4's '}'
+    let line3_hash = line_content_hash("    \"updated literal\"");
+    let end_hash_res = ReplaceLinesTool
+        .call(&serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "start_line": 2,
+            "end_line": 3,
+            "expected_hash": line3_hash,
+            "replacement": "pub fn demo() -> &'static str {\n    // initialized\n    \"updated literal\""
+        }))
+        .await?;
+    assert_eq!(end_hash_res["status"], "success");
+    assert_eq!(end_hash_res["relocated"], false);
+    assert_eq!(end_hash_res["diagnostics"]["balanced_delimiters"], true);
+    assert_eq!(
+        std::fs::read_to_string(&file_path)?,
+        "// comment with unbalanced {\npub fn demo() -> &'static str {\n    // initialized\n    \"updated literal\"\n}\n"
+    );
+
+    // 4. Unbalanced edit produces a structural warning in diagnostics
+    let broken_res = PatchFileTool
+        .call(&serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "target": "}\n",
+            "replacement": ""
+        }))
+        .await?;
+    assert_eq!(broken_res["status"], "success");
+    assert_eq!(broken_res["diagnostics"]["balanced_delimiters"], false);
+    assert_eq!(broken_res["diagnostics"]["brace_delta"], 1);
+    assert!(!broken_res["diagnostics"]["warnings"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(())
+}

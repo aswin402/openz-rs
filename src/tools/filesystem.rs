@@ -136,11 +136,25 @@ fn find_line_span_by_hash(
 ) -> Option<(usize, usize)> {
     let target_hash = normalize_expected_hash(expected_hash);
     (!target_hash.is_empty() && !lines.is_empty()).then(|| {
-        (0..lines.len())
-            .filter(|&idx| idx.abs_diff(requested_start_idx) <= 50)
-            .filter(|&idx| line_content_hash(&lines[idx]) == target_hash)
-            .min_by_key(|&idx| idx.abs_diff(requested_start_idx))
-            .map(|start_idx| (start_idx, (start_idx + span_len.max(1)).min(lines.len())))
+        let effective_span = span_len.max(1);
+        let requested_end_idx = requested_start_idx
+            .saturating_add(effective_span)
+            .min(lines.len());
+        let in_place_match = (requested_start_idx < requested_end_idx)
+            .then(|| {
+                (requested_start_idx..requested_end_idx)
+                    .any(|idx| line_content_hash(&lines[idx]) == target_hash)
+                    .then_some((requested_start_idx, requested_end_idx))
+            })
+            .flatten();
+
+        in_place_match.or_else(|| {
+            (0..lines.len())
+                .filter(|&idx| idx.abs_diff(requested_start_idx) <= 50)
+                .filter(|&idx| line_content_hash(&lines[idx]) == target_hash)
+                .min_by_key(|&idx| idx.abs_diff(requested_start_idx))
+                .map(|start_idx| (start_idx, (start_idx + effective_span).min(lines.len())))
+        })
     })?
 }
 
@@ -784,6 +798,278 @@ impl Tool for ReadFileTool {
     }
 }
 
+fn format_hashline_window(
+    lines: &[String],
+    start_idx: usize,
+    end_idx: usize,
+    context_radius: usize,
+    max_window_lines: usize,
+) -> String {
+    let total = lines.len();
+    let win_start = start_idx.saturating_sub(context_radius).min(total);
+    let raw_end = end_idx
+        .saturating_add(context_radius)
+        .min(total)
+        .max(win_start);
+    let win_end = raw_end.min(win_start.saturating_add(max_window_lines));
+    lines[win_start..win_end]
+        .iter()
+        .enumerate()
+        .map(|(offset, line)| {
+            let line_no = win_start + offset + 1;
+            format!("{}:{}| {}", line_no, line_content_hash(line), line)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn changed_line_bounds(old_content: &str, new_content: &str) -> (usize, usize) {
+    let old_lines: Vec<&str> = old_content.lines().collect();
+    let new_lines: Vec<&str> = new_content.lines().collect();
+    let prefix_match = old_lines
+        .iter()
+        .zip(new_lines.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let remaining_old = &old_lines[prefix_match..];
+    let remaining_new = &new_lines[prefix_match..];
+    let suffix_match = remaining_old
+        .iter()
+        .rev()
+        .zip(remaining_new.iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let start_idx = prefix_match.min(new_lines.len());
+    let end_idx = new_lines
+        .len()
+        .saturating_sub(suffix_match)
+        .max(start_idx.saturating_add(1))
+        .min(new_lines.len());
+    (start_idx, end_idx)
+}
+
+fn compute_structural_diagnostics(content: &str) -> serde_json::Value {
+    #[derive(Clone, Copy)]
+    enum ScanMode {
+        Code {
+            prev_slash: bool,
+            prev_lifetime_prefix: bool,
+        },
+        LineComment,
+        DoubleQuote {
+            escaped: bool,
+        },
+        SingleQuote {
+            escaped: bool,
+        },
+    }
+
+    let has_conflict_markers = content.lines().any(|raw| {
+        let trimmed = raw.trim_end_matches('\r');
+        trimmed.starts_with("<<<<<<<")
+            || trimmed == "======="
+            || trimmed.starts_with(">>>>>>>")
+    });
+
+    let (brace_delta, paren_delta, bracket_delta) = content.lines().fold(
+        (0i64, 0i64, 0i64),
+        |(braces, parens, brackets), line| {
+            let (_, b_delta, p_delta, k_delta) = line.chars().fold(
+                (
+                    ScanMode::Code {
+                        prev_slash: false,
+                        prev_lifetime_prefix: false,
+                    },
+                    braces,
+                    parens,
+                    brackets,
+                ),
+                |(mode, br, pa, bk), ch| match (mode, ch) {
+                    (ScanMode::LineComment, _) => (ScanMode::LineComment, br, pa, bk),
+                    (ScanMode::DoubleQuote { escaped: true }, _) => {
+                        (ScanMode::DoubleQuote { escaped: false }, br, pa, bk)
+                    }
+                    (ScanMode::DoubleQuote { escaped: false }, '\\') => {
+                        (ScanMode::DoubleQuote { escaped: true }, br, pa, bk)
+                    }
+                    (ScanMode::DoubleQuote { escaped: false }, '"') => (
+                        ScanMode::Code {
+                            prev_slash: false,
+                            prev_lifetime_prefix: false,
+                        },
+                        br,
+                        pa,
+                        bk,
+                    ),
+                    (ScanMode::DoubleQuote { escaped: false }, _) => {
+                        (ScanMode::DoubleQuote { escaped: false }, br, pa, bk)
+                    }
+                    (ScanMode::SingleQuote { escaped: true }, _) => {
+                        (ScanMode::SingleQuote { escaped: false }, br, pa, bk)
+                    }
+                    (ScanMode::SingleQuote { escaped: false }, '\\') => {
+                        (ScanMode::SingleQuote { escaped: true }, br, pa, bk)
+                    }
+                    (ScanMode::SingleQuote { escaped: false }, '\'') => (
+                        ScanMode::Code {
+                            prev_slash: false,
+                            prev_lifetime_prefix: false,
+                        },
+                        br,
+                        pa,
+                        bk,
+                    ),
+                    (ScanMode::SingleQuote { escaped: false }, _) => {
+                        (ScanMode::SingleQuote { escaped: false }, br, pa, bk)
+                    }
+                    (ScanMode::Code { prev_slash: true, .. }, '/') => {
+                        (ScanMode::LineComment, br, pa, bk)
+                    }
+                    (ScanMode::Code { .. }, '/') => (
+                        ScanMode::Code {
+                            prev_slash: true,
+                            prev_lifetime_prefix: false,
+                        },
+                        br,
+                        pa,
+                        bk,
+                    ),
+                    (ScanMode::Code { .. }, '"') => {
+                        (ScanMode::DoubleQuote { escaped: false }, br, pa, bk)
+                    }
+                    (
+                        ScanMode::Code {
+                            prev_lifetime_prefix: false,
+                            ..
+                        },
+                        '\'',
+                    ) => (ScanMode::SingleQuote { escaped: false }, br, pa, bk),
+                    (
+                        ScanMode::Code {
+                            prev_lifetime_prefix: true,
+                            ..
+                        },
+                        '\'',
+                    ) => (
+                        ScanMode::Code {
+                            prev_slash: false,
+                            prev_lifetime_prefix: false,
+                        },
+                        br,
+                        pa,
+                        bk,
+                    ),
+                    (ScanMode::Code { .. }, '{') => (
+                        ScanMode::Code {
+                            prev_slash: false,
+                            prev_lifetime_prefix: false,
+                        },
+                        br + 1,
+                        pa,
+                        bk,
+                    ),
+                    (ScanMode::Code { .. }, '}') => (
+                        ScanMode::Code {
+                            prev_slash: false,
+                            prev_lifetime_prefix: false,
+                        },
+                        br - 1,
+                        pa,
+                        bk,
+                    ),
+                    (ScanMode::Code { .. }, '(') => (
+                        ScanMode::Code {
+                            prev_slash: false,
+                            prev_lifetime_prefix: false,
+                        },
+                        br,
+                        pa + 1,
+                        bk,
+                    ),
+                    (ScanMode::Code { .. }, ')') => (
+                        ScanMode::Code {
+                            prev_slash: false,
+                            prev_lifetime_prefix: false,
+                        },
+                        br,
+                        pa - 1,
+                        bk,
+                    ),
+                    (ScanMode::Code { .. }, '[') => (
+                        ScanMode::Code {
+                            prev_slash: false,
+                            prev_lifetime_prefix: false,
+                        },
+                        br,
+                        pa,
+                        bk + 1,
+                    ),
+                    (ScanMode::Code { .. }, ']') => (
+                        ScanMode::Code {
+                            prev_slash: false,
+                            prev_lifetime_prefix: false,
+                        },
+                        br,
+                        pa,
+                        bk - 1,
+                    ),
+                    (ScanMode::Code { .. }, other) => (
+                        ScanMode::Code {
+                            prev_slash: false,
+                            prev_lifetime_prefix: other == '&'
+                                || other == '<'
+                                || other.is_alphanumeric()
+                                || other == '_',
+                        },
+                        br,
+                        pa,
+                        bk,
+                    ),
+                },
+            );
+            (b_delta, p_delta, k_delta)
+        },
+    );
+
+    let balanced_delimiters = brace_delta == 0 && paren_delta == 0 && bracket_delta == 0;
+    let warnings: Vec<String> = [
+        (brace_delta != 0).then(|| {
+            format!(
+                "Whole-file syntax warning: unbalanced curly braces across the entire file on disk (brace_delta={}). Repair the missing '{{' or '}}' immediately.",
+                brace_delta
+            )
+        }),
+        (paren_delta != 0).then(|| {
+            format!(
+                "Whole-file syntax warning: unbalanced parentheses across the entire file on disk (paren_delta={}). Repair the missing '(' or ')' immediately.",
+                paren_delta
+            )
+        }),
+        (bracket_delta != 0).then(|| {
+            format!(
+                "Whole-file syntax warning: unbalanced square brackets across the entire file on disk (bracket_delta={}). Repair the missing '[' or ']' immediately.",
+                bracket_delta
+            )
+        }),
+        has_conflict_markers.then(|| {
+            "Whole-file syntax warning: leftover merge conflict markers (<<<<<<< / ======= / >>>>>>>) detected in file content."
+                .to_string()
+        }),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    serde_json::json!({
+        "balanced_delimiters": balanced_delimiters,
+        "brace_delta": brace_delta,
+        "paren_delta": paren_delta,
+        "bracket_delta": bracket_delta,
+        "has_conflict_markers": has_conflict_markers,
+        "warnings": warnings
+    })
+}
+
 pub struct WriteFileTool;
 
 #[async_trait::async_trait]
@@ -819,7 +1105,15 @@ impl Tool for WriteFileTool {
         fs::write(&path, &args.content)
             .with_context(|| format!("Failed to write to file at {:?}", path))?;
 
-        Ok(serde_json::json!({ "status": "success", "path": path.to_string_lossy() }))
+        let line_count = args.content.lines().count();
+        let diagnostics = compute_structural_diagnostics(&args.content);
+
+        Ok(serde_json::json!({
+            "status": "success",
+            "path": path.to_string_lossy(),
+            "line_count": line_count,
+            "diagnostics": diagnostics
+        }))
     }
 }
 
@@ -967,10 +1261,21 @@ impl Tool for PatchFileTool {
         fs::write(&path, &patched_content)
             .with_context(|| format!("Failed to write patched content to file at {:?}", path))?;
 
+        let (changed_start, changed_end) = changed_line_bounds(&content, &patched_content);
+        let patched_lines: Vec<String> = patched_content.lines().map(str::to_string).collect();
+        let updated_window =
+            format_hashline_window(&patched_lines, changed_start, changed_end, 8, 48);
+        let diagnostics = compute_structural_diagnostics(&patched_content);
+
         Ok(serde_json::json!({
             "status": "success",
             "mode": mode,
-            "path": path.to_string_lossy()
+            "path": path.to_string_lossy(),
+            "applied_start_line": changed_start + 1,
+            "applied_end_line": changed_end,
+            "new_line_count": patched_lines.len(),
+            "updated_window": updated_window,
+            "diagnostics": diagnostics
         }))
     }
 }
@@ -1081,9 +1386,15 @@ impl Tool for ReplaceLinesTool {
             }
         };
 
+        let cleaned_replacement_lines: Vec<String> = replacement
+            .lines()
+            .map(|s| strip_hashline_line_prefix(s).to_string())
+            .collect();
+        let replacement_line_count = cleaned_replacement_lines.len();
+
         let mut new_lines = Vec::new();
         new_lines.extend(lines[..start_idx].iter().cloned());
-        new_lines.extend(replacement.lines().map(|s| s.to_string()));
+        new_lines.extend(cleaned_replacement_lines);
         (end_idx < lines.len()).then(|| {
             new_lines.extend(lines[end_idx..].iter().cloned());
         });
@@ -1095,6 +1406,15 @@ impl Tool for ReplaceLinesTool {
         fs::write(&path, &new_content)
             .with_context(|| format!("Failed to write to file at {:?}", path))?;
 
+        let updated_window = format_hashline_window(
+            &new_lines,
+            start_idx,
+            start_idx + replacement_line_count,
+            8,
+            48,
+        );
+        let diagnostics = compute_structural_diagnostics(&new_content);
+
         Ok(serde_json::json!({
             "status": "success",
             "path": path.to_string_lossy(),
@@ -1102,7 +1422,9 @@ impl Tool for ReplaceLinesTool {
             "applied_end_line": end_idx,
             "relocated": relocated,
             "lines_modified": end_idx - start_idx,
-            "new_line_count": new_lines.len()
+            "new_line_count": new_lines.len(),
+            "updated_window": updated_window,
+            "diagnostics": diagnostics
         }))
     }
 }

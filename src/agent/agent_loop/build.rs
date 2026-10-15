@@ -941,12 +941,17 @@ async fn retrieve_pinned_identity_memories(bot_name: &str) -> String {
     out
 }
 
-fn memory_query_terms(text: &str) -> std::collections::HashSet<String> {
+pub(crate) fn memory_query_terms(text: &str) -> std::collections::HashSet<String> {
     const STOP_WORDS: &[&str] = &[
-        "about", "after", "again", "all", "and", "any", "are", "but", "can", "did", "does", "for",
-        "from", "has", "have", "help", "how", "into", "just", "more", "now", "our", "that", "the",
-        "their", "then", "there", "these", "this", "those", "too", "use", "user", "was", "were",
-        "what", "when", "where", "which", "with", "you", "your",
+        "about", "after", "again", "all", "and", "any", "are", "but", "call", "calls", "can",
+        "check", "code", "create", "did", "dir", "does", "edit", "execute", "file", "files",
+        "find", "for", "from", "function", "get", "has", "have", "help", "how", "into", "just",
+        "line", "lines", "list", "make", "method", "modify", "more", "new", "now", "only", "our",
+        "output", "patch", "path", "please", "read", "replace", "return", "run", "search", "set",
+        "show", "some", "step", "task", "test", "that", "the", "their", "then", "there", "these",
+        "this", "those", "tool", "tools", "too", "turn", "update", "use", "used", "user", "using",
+        "value", "verify", "was", "were", "what", "when", "where", "which", "with", "work",
+        "write", "you", "your",
     ];
     text.split(|c: char| !c.is_alphanumeric())
         .map(|t| t.to_lowercase())
@@ -954,25 +959,71 @@ fn memory_query_terms(text: &str) -> std::collections::HashSet<String> {
         .collect()
 }
 
-fn memory_relevance_score(query_terms: &std::collections::HashSet<String>, text: &str) -> f32 {
-    if query_terms.is_empty() {
-        return 1.0;
-    }
+pub(crate) fn memory_relevance_score(
+    query_terms: &std::collections::HashSet<String>,
+    text: &str,
+) -> f32 {
     let text_terms = memory_query_terms(text);
-    if text_terms.is_empty() {
-        return 0.0;
-    }
     let overlap = query_terms.intersection(&text_terms).count();
-    if overlap == 0 {
-        0.0
-    } else {
-        overlap as f32 / query_terms.len().max(1) as f32
+    match (query_terms.is_empty(), text_terms.is_empty(), overlap == 0) {
+        (true, _, _) => 0.0,
+        (false, true, _) | (false, false, true) => 0.0,
+        (false, false, false) => overlap as f32 / query_terms.len().max(1) as f32,
     }
+}
+
+pub(crate) fn has_foreign_workspace_path(
+    text: &str,
+    active_workspace: &str,
+    user_content: &str,
+) -> bool {
+    let clean_ws = active_workspace.trim().trim_end_matches('/');
+    (!clean_ws.is_empty()).then(|| {
+        text.split(|c: char| {
+            matches!(
+                c,
+                ' ' | '\t'
+                    | '\n'
+                    | '\r'
+                    | '"'
+                    | '\''
+                    | '`'
+                    | '('
+                    | ')'
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | ','
+                    | ';'
+                    | ':'
+            )
+        })
+        .map(|tok| tok.trim_end_matches(['.', '/', ')']))
+        .filter(|tok| {
+            (tok.starts_with("/home/")
+                || tok.starts_with("/Users/")
+                || tok.starts_with("/tmp/")
+                || tok.starts_with("/var/folders/"))
+                && tok.matches('/').count() >= 3
+        })
+        .any(|path_tok| {
+            let is_active_ws =
+                path_tok.starts_with(clean_ws) || clean_ws.starts_with(path_tok);
+            let is_global_shared =
+                path_tok.contains("/.openz") || path_tok.contains("/OpenZ_Vault");
+            let explicitly_requested = user_content.contains(path_tok);
+            !is_active_ws && !is_global_shared && !explicitly_requested
+        })
+    }) == Some(true)
 }
 
 async fn retrieve_cross_session_memories(user_content: &str, bot_name: &str) -> String {
     let query_terms = memory_query_terms(user_content);
     let wants_identity = is_identity_or_persona_query(user_content);
+    let active_workspace = crate::tools::subagent::workspace::current_workspace_root()
+        .to_string_lossy()
+        .to_string();
     let mut all_entries: Vec<(f32, String)> = Vec::new();
     let uid = "*";
     let aid = "*";
@@ -981,7 +1032,7 @@ async fn retrieve_cross_session_memories(user_content: &str, bot_name: &str) -> 
     let _lock = crate::tools::shared_memory::get_db_mutex().lock().await;
     let cognitive_rows = with_shared_db(|conn| {
         let mut stmt = conn.prepare(
-            "SELECT text, importance, last_accessed, decay_rate FROM cognitive_memory ORDER BY importance DESC, last_accessed DESC LIMIT 8"
+            "SELECT text, importance, last_accessed, decay_rate FROM cognitive_memory ORDER BY importance DESC, last_accessed DESC LIMIT 8",
         )?;
         let mapped = stmt.query_map([], |row| {
             let text: String = row.get(0)?;
@@ -997,26 +1048,25 @@ async fn retrieve_cross_session_memories(user_content: &str, bot_name: &str) -> 
         Ok(collected)
     });
 
-    if let Ok(rows) = cognitive_rows {
-        for row in rows {
-            let (text, importance, last_acc, decay_rate) = row;
-            let days_elapsed = chrono::Utc::now()
-                .signed_duration_since(
-                    chrono::DateTime::parse_from_rfc3339(&last_acc)
-                        .map(|dt| dt.with_timezone(&chrono::Utc))
-                        .unwrap_or_else(|_| chrono::Utc::now()),
-                )
-                .num_seconds() as f32
-                / 86400.0;
-            let mut relevance = memory_relevance_score(&query_terms, &text);
-            if relevance == 0.0 && wants_identity && identity_memory_candidate(&text, bot_name) {
-                relevance = 1.0;
-            }
-            if relevance > 0.0 {
-                let score = importance * (-decay_rate * days_elapsed).exp() * relevance;
-                all_entries.push((score, text));
-            }
-        }
+    for (text, importance, last_acc, decay_rate) in cognitive_rows.unwrap_or_default() {
+        let is_foreign = has_foreign_workspace_path(&text, &active_workspace, user_content);
+        let days_elapsed = chrono::Utc::now()
+            .signed_duration_since(
+                chrono::DateTime::parse_from_rfc3339(&last_acc)
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now()),
+            )
+            .num_seconds() as f32
+            / 86400.0;
+        let base_relevance = memory_relevance_score(&query_terms, &text);
+        let identity_boost =
+            (base_relevance == 0.0 && wants_identity && identity_memory_candidate(&text, bot_name))
+                .then_some(1.0f32);
+        let relevance = identity_boost.unwrap_or(base_relevance);
+        (!is_foreign && relevance > 0.0).then(|| {
+            let score = importance * (-decay_rate * days_elapsed).exp() * relevance;
+            all_entries.push((score, text));
+        });
     }
     drop(_lock);
 
@@ -1043,15 +1093,17 @@ async fn retrieve_cross_session_memories(user_content: &str, bot_name: &str) -> 
     })
     .unwrap_or_default();
 
-    // Score semantic facts just below cognitive ones, gated by current query relevance.
+    // Score semantic facts just below cognitive ones, gated by current query relevance and workspace scope.
     for fact in &semantic_facts {
-        let mut relevance = memory_relevance_score(&query_terms, fact);
-        if relevance == 0.0 && wants_identity && identity_memory_candidate(fact, bot_name) {
-            relevance = 1.0;
-        }
-        if relevance > 0.0 {
+        let is_foreign = has_foreign_workspace_path(fact, &active_workspace, user_content);
+        let base_relevance = memory_relevance_score(&query_terms, fact);
+        let identity_boost =
+            (base_relevance == 0.0 && wants_identity && identity_memory_candidate(fact, bot_name))
+                .then_some(1.0f32);
+        let relevance = identity_boost.unwrap_or(base_relevance);
+        (!is_foreign && relevance > 0.0).then(|| {
             all_entries.push((0.7 * relevance, fact.clone()));
-        }
+        });
     }
 
     // 3. Query graph_nodes (entity observations)
@@ -1095,51 +1147,46 @@ async fn retrieve_cross_session_memories(user_content: &str, bot_name: &str) -> 
     let mut deduped: Vec<String> = Vec::new();
     for (_, text) in &all_entries {
         let norm = normalize(text);
-        if norm.is_empty() || seen.contains(&norm) {
-            continue;
-        }
-        // Check if norm is a substring of any already-seen entry (or vice versa)
-        let is_duplicate = seen
-            .iter()
-            .any(|s: &String| s.contains(&norm) || norm.contains(s));
-        if !is_duplicate {
+        let is_duplicate = norm.is_empty()
+            || seen.contains(&norm)
+            || seen
+                .iter()
+                .any(|s: &String| s.contains(&norm) || norm.contains(s));
+        (!is_duplicate).then(|| {
             seen.insert(norm);
             deduped.push(text.clone());
-        }
+        });
     }
 
-    // 6. Build output — top 30 scored entries, no char truncation
-    let mut persistent_mem = String::new();
-    if deduped.is_empty() && graph_nodes.is_empty() {
-        return persistent_mem;
-    }
-
-    persistent_mem.push_str(
-        "\n\nHere are persistent key facts, decisions, and context across all past sessions:\n",
-    );
-    for fact in deduped.iter().take(30) {
-        persistent_mem.push_str(&format!("- {}\n", fact));
-    }
-
-    // Append graph nodes
+    // 6. Filter graph nodes by relevance and workspace scope
     let filtered_nodes: Vec<_> = graph_nodes
         .into_iter()
         .filter(|(name, obs)| {
-            if obs.is_empty() {
-                return false;
-            }
             let joined = format!("{} {}", name, obs.join(" "));
-            memory_relevance_score(&query_terms, &joined) > 0.0
+            !obs.is_empty()
+                && !has_foreign_workspace_path(&joined, &active_workspace, user_content)
+                && memory_relevance_score(&query_terms, &joined) > 0.0
         })
         .collect();
-    for (name, obs) in filtered_nodes.iter().take(5) {
-        persistent_mem.push_str(&format!("- Entity '{}':\n", name));
-        for ob in obs.iter().take(10) {
-            persistent_mem.push_str(&format!("  * {}\n", ob));
+
+    match deduped.is_empty() && filtered_nodes.is_empty() {
+        true => String::new(),
+        false => {
+            let mut persistent_mem = String::from(
+                "\n\nHere are persistent key facts, decisions, and context across all past sessions:\n",
+            );
+            for fact in deduped.iter().take(30) {
+                persistent_mem.push_str(&format!("- {}\n", fact));
+            }
+            for (name, obs) in filtered_nodes.iter().take(5) {
+                persistent_mem.push_str(&format!("- Entity '{}':\n", name));
+                for ob in obs.iter().take(10) {
+                    persistent_mem.push_str(&format!("  * {}\n", ob));
+                }
+            }
+            persistent_mem
         }
     }
-
-    persistent_mem
 }
 
 const CHANGELOG_CONTENT: &str = include_str!("../../../CHANGELOG.md");
