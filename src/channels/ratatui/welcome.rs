@@ -102,66 +102,12 @@ pub fn render_welcome_screen(frame: &mut Frame, app: &RatatuiApp, area: Rect) {
         height: vert_chunks[3].height,
     };
 
-    let input_block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(ratatui::widgets::BorderType::Rounded)
-        .border_style(Style::default().fg(theme.border))
-        .style(Style::default().bg(theme.bg_input));
-
-    let inner = input_block.inner(centered_input_rect);
-    frame.render_widget(input_block, centered_input_rect);
-
-    let max_width = inner.width.saturating_sub(3).max(1) as usize;
-
-    let input_line = match app.typed_input.is_empty() {
-        true => Line::from(vec![
-            Span::styled(
-                "› ",
-                Style::default()
-                    .fg(theme.brand_accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                "Ask OpenZ anything or type '/' for commands...",
-                Style::default().fg(theme.muted),
-            ),
-        ]),
-        false => {
-            let input_str: String = app.typed_input.iter().collect();
-            let display = match input_str.len() > max_width {
-                true => {
-                    let start = input_str.len().saturating_sub(max_width);
-                    format!("…{}", &input_str[start..])
-                }
-                false => input_str,
-            };
-            Line::from(vec![
-                Span::styled(
-                    "› ",
-                    Style::default()
-                        .fg(theme.brand_accent)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(display, Style::default().fg(theme.brand_white)),
-            ])
-        }
-    };
-
-    frame.render_widget(Paragraph::new(input_line), inner);
-
-    // Set cursor position inside the centered input box
-    let cursor_col = match app.typed_input.is_empty() {
-        true => 2,
-        false => {
-            let visible_len = app.typed_input.len().min(max_width);
-            let offset = match app.typed_input.len() > max_width {
-                true => visible_len,
-                false => app.cursor_idx,
-            };
-            2 + offset
-        }
-    };
-    frame.set_cursor_position((inner.x + cursor_col as u16, inner.y));
+    super::ui::render_input_dock_with_placeholder(
+        frame,
+        app,
+        centered_input_rect,
+        "Ask OpenZ anything or type '/' for commands...",
+    );
 
     // ── 3. Bottom Edge Bar ──────────────────────────────────────────────────
     let mut left_spans = vec![

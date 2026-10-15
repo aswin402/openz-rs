@@ -116,45 +116,51 @@ pub fn extract_thoughts_from_content(raw: &str) -> (Option<String>, String) {
             .filter_map(|&tag| remaining.find(tag).map(|idx| (idx, tag.len())))
             .min_by_key(|&(idx, _)| idx);
 
-        if let Some((start_idx, open_len)) = earliest_open {
-            cleaned_content.push_str(&remaining[..start_idx]);
-            let after_open = &remaining[start_idx + open_len..];
+        match earliest_open {
+            Some((start_idx, open_len)) => {
+                cleaned_content.push_str(&remaining[..start_idx]);
+                let after_open = &remaining[start_idx + open_len..];
 
-            let earliest_close = CLOSE_THOUGHT_TAGS
-                .iter()
-                .filter_map(|&tag| after_open.find(tag).map(|idx| (idx, tag.len())))
-                .min_by_key(|&(idx, _)| idx);
+                let earliest_close = CLOSE_THOUGHT_TAGS
+                    .iter()
+                    .filter_map(|&tag| after_open.find(tag).map(|idx| (idx, tag.len())))
+                    .min_by_key(|&(idx, _)| idx);
 
-            if let Some((close_idx, close_len)) = earliest_close {
-                let thought_text = &after_open[..close_idx];
-                let sanitized = sanitize_thought_text(thought_text);
-                if !sanitized.is_empty() {
-                    thoughts.push(sanitized);
+                match earliest_close {
+                    Some((close_idx, close_len)) => {
+                        let thought_text = &after_open[..close_idx];
+                        let sanitized = sanitize_thought_text(thought_text);
+                        match sanitized.is_empty() {
+                            false => thoughts.push(sanitized),
+                            true => {}
+                        }
+                        let rest = &after_open[close_idx + close_len..];
+                        remaining = rest
+                            .strip_prefix("\r\n")
+                            .or_else(|| rest.strip_prefix('\n'))
+                            .unwrap_or(rest);
+                    }
+                    None => {
+                        let sanitized = sanitize_thought_text(after_open);
+                        match sanitized.is_empty() {
+                            false => thoughts.push(sanitized),
+                            true => {}
+                        }
+                        remaining = "";
+                    }
                 }
-                remaining = &after_open[close_idx + close_len..];
-                if remaining.starts_with("\r\n") {
-                    remaining = &remaining[2..];
-                } else if remaining.starts_with('\n') {
-                    remaining = &remaining[1..];
-                }
-            } else {
-                let sanitized = sanitize_thought_text(after_open);
-                if !sanitized.is_empty() {
-                    thoughts.push(sanitized);
-                }
-                remaining = "";
             }
-        } else {
-            cleaned_content.push_str(remaining);
-            break;
+            None => {
+                cleaned_content.push_str(remaining);
+                break;
+            }
         }
     }
 
     let final_cleaned = sanitize_assistant_text(&cleaned_content);
-    let final_thought = if thoughts.is_empty() {
-        None
-    } else {
-        Some(thoughts.join("\n\n"))
+    let final_thought = match thoughts.is_empty() {
+        true => None,
+        false => Some(thoughts.join("\n\n")),
     };
 
     (final_thought, final_cleaned)
@@ -163,10 +169,9 @@ pub fn extract_thoughts_from_content(raw: &str) -> (Option<String>, String) {
 impl ChatMessage {
     /// Quick constructor — sets role + content, extracting embedded thoughts if assistant
     pub fn simple(role: &str, content: String) -> Self {
-        let (extracted_reasoning, cleaned_content) = if role == "assistant" {
-            extract_thoughts_from_content(&content)
-        } else {
-            (None, content)
+        let (extracted_reasoning, cleaned_content) = match role {
+            "assistant" => extract_thoughts_from_content(&content),
+            _ => (None, content),
         };
 
         Self {
@@ -226,10 +231,9 @@ impl ChatMessage {
             .map(|s| s.to_string());
         let tool_success = msg.extra.get("tool_success").and_then(|v| v.as_bool());
 
-        let (extracted_thought, cleaned_content) = if msg.role == "assistant" {
-            extract_thoughts_from_content(&msg.content)
-        } else {
-            (None, msg.content.clone())
+        let (extracted_thought, cleaned_content) = match msg.role.as_str() {
+            "assistant" => extract_thoughts_from_content(&msg.content),
+            _ => (None, msg.content.clone()),
         };
         let reasoning = reasoning.or(extracted_thought);
 
@@ -252,84 +256,103 @@ impl ChatMessage {
     pub fn from_session_messages(messages: &[crate::session::Message]) -> Vec<Self> {
         let mut tool_calls_map = std::collections::HashMap::new();
         for msg in messages {
-            if let Some(tool_calls) = msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
-                for tc in tool_calls {
-                    if let (Some(id), Some(name)) = (
-                        tc.get("id").and_then(|v| v.as_str()),
-                        tc.get("function")
-                            .and_then(|f| f.get("name"))
-                            .and_then(|v| v.as_str()),
-                    ) {
-                        let args = tc
+            match msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
+                Some(tool_calls) => {
+                    for tc in tool_calls {
+                        let id_opt = tc.get("id").and_then(|v| v.as_str());
+                        let name_opt = tc
                             .get("function")
-                            .and_then(|f| f.get("arguments"))
-                            .cloned()
-                            .unwrap_or(serde_json::Value::Null);
-                        let parsed_args = if let Some(s) = args.as_str() {
-                            serde_json::from_str(s).unwrap_or(serde_json::Value::Null)
-                        } else {
-                            args
-                        };
-                        tool_calls_map.insert(id.to_string(), (name.to_string(), parsed_args));
+                            .and_then(|f| f.get("name"))
+                            .and_then(|v| v.as_str());
+                        match (id_opt, name_opt) {
+                            (Some(id), Some(name)) => {
+                                let args = tc
+                                    .get("function")
+                                    .and_then(|f| f.get("arguments"))
+                                    .cloned()
+                                    .unwrap_or(serde_json::Value::Null);
+                                let parsed_args = match args.as_str() {
+                                    Some(s) => {
+                                        serde_json::from_str(s).unwrap_or(serde_json::Value::Null)
+                                    }
+                                    None => args,
+                                };
+                                tool_calls_map
+                                    .insert(id.to_string(), (name.to_string(), parsed_args));
+                            }
+                            _ => {}
+                        }
                     }
                 }
+                None => {}
             }
         }
 
         let mut result = Vec::with_capacity(messages.len());
         for msg in messages {
-            if msg.role == "tool" {
-                let tool_call_id = msg
-                    .extra
-                    .get("tool_call_id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+            match msg.role.as_str() {
+                "tool" => {
+                    let tool_call_id = msg
+                        .extra
+                        .get("tool_call_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
 
-                if let Some((raw_name, args)) = tool_calls_map.get(tool_call_id) {
-                    let formatted_args = crate::agent::agent_loop::tool_execution::format_tool_args(
-                        raw_name,
-                        args,
-                    );
-                    let clean_name = crate::agent::style::get_tool_clean_name(raw_name);
-                    let details = crate::agent::style::clean_tool_args_msg(raw_name, &formatted_args);
+                    match tool_calls_map.get(tool_call_id) {
+                        Some((raw_name, args)) => {
+                            let formatted_args =
+                                crate::agent::agent_loop::tool_execution::format_tool_args(
+                                    raw_name,
+                                    args,
+                                );
+                            let clean_name = crate::agent::style::get_tool_clean_name(raw_name);
+                            let details = crate::agent::style::clean_tool_args_msg(
+                                raw_name,
+                                &formatted_args,
+                            );
 
-                    let outcome_val: serde_json::Value = serde_json::from_str(&msg.content)
-                        .unwrap_or_else(|_| {
-                            serde_json::json!({
-                                "status": "success",
-                                "output": &msg.content
-                            })
-                        });
+                            let outcome_val: serde_json::Value =
+                                serde_json::from_str(&msg.content).unwrap_or_else(|_| {
+                                    serde_json::json!({
+                                        "status": "success",
+                                        "output": &msg.content
+                                    })
+                                });
 
-                    let summary = crate::agent::style::format_tool_outcome_summary(
-                        raw_name,
-                        args,
-                        &outcome_val,
-                    );
+                            let summary = crate::agent::style::format_tool_outcome_summary(
+                                raw_name,
+                                args,
+                                &outcome_val,
+                            );
 
-                    let success = outcome_val.get("error").is_none()
-                        && outcome_val.get("status_code").is_none_or(|c| c == 0)
-                        && !summary.contains("Failed")
-                        && !summary.contains('\u{2715}');
+                            let success = outcome_val.get("error").is_none()
+                                && outcome_val.get("status_code").is_none_or(|c| c == 0)
+                                && !summary.contains("Failed")
+                                && !summary.contains('\u{2715}');
 
-                    result.push(ChatMessage {
-                        role: "tool".to_string(),
-                        content: msg.content.clone(),
-                        is_tool: true,
-                        tool_name: Some(clean_name),
-                        tool_details: if details.is_empty() { None } else { Some(details) },
-                        tool_summary: Some(summary),
-                        reasoning: None,
-                        thinking_time: None,
-                        tool_success: Some(success),
-                        tool_duration_ms: None,
-                        ephemeral: false,
-                    });
-                } else {
-                    result.push(ChatMessage::from_session_message(msg));
+                            let opt_details = match details.is_empty() {
+                                true => None,
+                                false => Some(details),
+                            };
+
+                            result.push(ChatMessage {
+                                role: "tool".to_string(),
+                                content: msg.content.clone(),
+                                is_tool: true,
+                                tool_name: Some(clean_name),
+                                tool_details: opt_details,
+                                tool_summary: Some(summary),
+                                reasoning: None,
+                                thinking_time: None,
+                                tool_success: Some(success),
+                                tool_duration_ms: None,
+                                ephemeral: false,
+                            });
+                        }
+                        None => result.push(ChatMessage::from_session_message(msg)),
+                    }
                 }
-            } else {
-                result.push(ChatMessage::from_session_message(msg));
+                _ => result.push(ChatMessage::from_session_message(msg)),
             }
         }
         result
@@ -475,61 +498,57 @@ impl ModalState {
     }
 
     pub fn update_command_catalog_filter(&mut self) {
-        if let ModalState::CommandCatalog {
-            filtered_indices,
-            selected_index,
-            filter,
-        } = self
-        {
-            let query = filter.trim().to_lowercase();
-            *filtered_indices = PALETTE_COMMANDS
-                .iter()
-                .enumerate()
-                .filter(|(_, cmd)| {
-                    if query.is_empty() {
-                        true
-                    } else {
-                        cmd.slash_name.to_lowercase().contains(&query)
-                            || cmd.title.to_lowercase().contains(&query)
-                            || cmd.description.to_lowercase().contains(&query)
-                            || cmd.category.label().to_lowercase().contains(&query)
-                    }
-                })
-                .map(|(i, _)| i)
-                .collect();
+        match self {
+            ModalState::CommandCatalog {
+                filtered_indices,
+                selected_index,
+                filter,
+            } => {
+                let query = filter.trim().to_lowercase();
+                *filtered_indices = PALETTE_COMMANDS
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, cmd)| match query.is_empty() {
+                        true => true,
+                        false => {
+                            cmd.slash_name.to_lowercase().contains(&query)
+                                || cmd.title.to_lowercase().contains(&query)
+                                || cmd.description.to_lowercase().contains(&query)
+                                || cmd.category.label().to_lowercase().contains(&query)
+                        }
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
 
-            if *selected_index >= filtered_indices.len() {
-                *selected_index = filtered_indices.len().saturating_sub(1);
+                *selected_index = (*selected_index).min(filtered_indices.len().saturating_sub(1));
             }
+            _ => {}
         }
     }
 
     pub fn update_model_filter(&mut self) {
-        if let ModalState::ModelSelect {
-            models,
-            filtered_indices,
-            selected_idx,
-            filter,
-            ..
-        } = self
-        {
-            let query = filter.to_lowercase();
-            *filtered_indices = models
-                .iter()
-                .enumerate()
-                .filter(|(_, m)| {
-                    if query.is_empty() {
-                        true
-                    } else {
-                        m.to_lowercase().contains(&query)
-                    }
-                })
-                .map(|(i, _)| i)
-                .collect();
+        match self {
+            ModalState::ModelSelect {
+                models,
+                filtered_indices,
+                selected_idx,
+                filter,
+                ..
+            } => {
+                let query = filter.to_lowercase();
+                *filtered_indices = models
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, m)| match query.is_empty() {
+                        true => true,
+                        false => m.to_lowercase().contains(&query),
+                    })
+                    .map(|(i, _)| i)
+                    .collect();
 
-            if *selected_idx >= filtered_indices.len() {
-                *selected_idx = filtered_indices.len().saturating_sub(1);
+                *selected_idx = (*selected_idx).min(filtered_indices.len().saturating_sub(1));
             }
+            _ => {}
         }
     }
 }
@@ -813,14 +832,12 @@ impl RatatuiApp {
         let workspace_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let cwd_str = workspace_root.to_string_lossy().to_string();
         let home = dirs::home_dir().map(|p| p.to_string_lossy().to_string());
-        let cwd_display = if let Some(ref h) = home {
-            if cwd_str.starts_with(h) {
-                cwd_str.replacen(h, "~", 1)
-            } else {
-                cwd_str
-            }
-        } else {
-            cwd_str
+        let cwd_display = match home {
+            Some(ref h) => match cwd_str.starts_with(h) {
+                true => cwd_str.replacen(h, "~", 1),
+                false => cwd_str,
+            },
+            None => cwd_str,
         };
 
         Self {
@@ -888,73 +905,52 @@ impl RatatuiApp {
         duration_ms: Option<u64>,
     ) {
         let found = self.messages.iter_mut().rev().find(|m| {
-            m.is_tool
-                && m.tool_name.as_deref() == Some(name)
-                && m.tool_success.is_none()
+            m.is_tool && m.tool_name.as_deref() == Some(name) && m.tool_success.is_none()
         });
 
-        if let Some(msg) = found {
-            msg.content = output;
-            msg.tool_summary = summary;
-            msg.tool_success = Some(success);
-            msg.tool_duration_ms = duration_ms;
-        } else {
-            self.messages.push(ChatMessage {
-                role: "tool".to_string(),
-                content: output,
-                is_tool: true,
-                tool_name: Some(name.to_string()),
-                tool_details: None,
-                tool_summary: summary,
-                reasoning: None,
-                thinking_time: None,
-                tool_success: Some(success),
-                tool_duration_ms: duration_ms,
-                ephemeral: false,
-            });
+        match found {
+            Some(msg) => {
+                msg.content = output;
+                msg.tool_summary = summary;
+                msg.tool_success = Some(success);
+                msg.tool_duration_ms = duration_ms;
+            }
+            None => {
+                self.messages.push(ChatMessage {
+                    role: "tool".to_string(),
+                    content: output,
+                    is_tool: true,
+                    tool_name: Some(name.to_string()),
+                    tool_details: None,
+                    tool_summary: summary,
+                    reasoning: None,
+                    thinking_time: None,
+                    tool_success: Some(success),
+                    tool_duration_ms: duration_ms,
+                    ephemeral: false,
+                });
+            }
         }
 
-        let next_activity = {
-            let n = name.to_ascii_lowercase();
-            if n.contains("check")
-                || n.contains("test")
-                || n.contains("clippy")
-                || n.contains("lint")
-                || n.contains("exec")
-                || n.contains("cmd")
-            {
-                super::animation::AgentActivity::Analyzing {
-                    task: "execution results".to_string(),
+        let n = name.to_ascii_lowercase();
+        const POST_TOOL_RULES: &[(&[&str], &str)] = &[
+            (&["check", "test", "clippy", "lint", "exec", "cmd"], "execution results"),
+            (&["search", "web", "fetch", "crawl", "research"], "research findings"),
+            (&["read", "doc", "pdf", "xlsx"], "document data"),
+            (&["write", "patch", "edit", "create"], "code changes"),
+        ];
+        let next_activity = POST_TOOL_RULES
+            .iter()
+            .find_map(|(patterns, task_label)| {
+                match patterns.iter().any(|p| n.contains(p)) {
+                    true => Some(super::animation::AgentActivity::Analyzing {
+                        task: (*task_label).to_string(),
+                    }),
+                    false => None,
                 }
-            } else if n.contains("search")
-                || n.contains("web")
-                || n.contains("fetch")
-                || n.contains("crawl")
-                || n.contains("research")
-            {
-                super::animation::AgentActivity::Analyzing {
-                    task: "research findings".to_string(),
-                }
-            } else if n.contains("read")
-                || n.contains("doc")
-                || n.contains("pdf")
-                || n.contains("xlsx")
-            {
-                super::animation::AgentActivity::Analyzing {
-                    task: "document data".to_string(),
-                }
-            } else if n.contains("write")
-                || n.contains("patch")
-                || n.contains("edit")
-                || n.contains("create")
-            {
-                super::animation::AgentActivity::Analyzing {
-                    task: "code changes".to_string(),
-                }
-            } else {
-                super::animation::AgentActivity::Working
-            }
-        };
+            })
+            .unwrap_or(super::animation::AgentActivity::Working);
+
         self.set_activity(next_activity);
         self.update_approx_tokens();
         self.scroll_to_bottom();
@@ -962,8 +958,9 @@ impl RatatuiApp {
 
     pub fn queue_prompt(&mut self, prompt: String) {
         let trimmed = prompt.trim().to_string();
-        if !trimmed.is_empty() {
-            self.queued_prompts.push_back(trimmed);
+        match trimmed.is_empty() {
+            false => self.queued_prompts.push_back(trimmed),
+            true => {}
         }
     }
 
@@ -972,22 +969,31 @@ impl RatatuiApp {
     }
 
     pub fn scroll_up(&mut self, lines: u32) {
-        if self.auto_scroll {
-            self.auto_scroll = false;
-            self.scroll_offset = self.max_scroll.saturating_sub(lines);
-        } else {
-            self.scroll_offset = self.scroll_offset.saturating_sub(lines);
+        match self.auto_scroll {
+            true => {
+                self.auto_scroll = false;
+                self.scroll_offset = self.max_scroll.saturating_sub(lines);
+            }
+            false => {
+                self.scroll_offset = self.scroll_offset.saturating_sub(lines);
+            }
         }
     }
 
     pub fn scroll_down(&mut self, lines: u32) {
-        if !self.auto_scroll {
-            let next = self.scroll_offset.saturating_add(lines);
-            if next >= self.max_scroll {
-                self.scroll_offset = self.max_scroll;
-                self.auto_scroll = true;
-            } else {
-                self.scroll_offset = next;
+        match self.auto_scroll {
+            true => {}
+            false => {
+                let next = self.scroll_offset.saturating_add(lines);
+                match next >= self.max_scroll {
+                    true => {
+                        self.scroll_offset = self.max_scroll;
+                        self.auto_scroll = true;
+                    }
+                    false => {
+                        self.scroll_offset = next;
+                    }
+                }
             }
         }
     }
@@ -1035,50 +1041,64 @@ impl RatatuiApp {
         let mut cached_branch = None;
         let mut needs_refresh = true;
 
-        if let Ok(guard) = BRANCH_CACHE.lock() {
-            if let Some((last_check, branch)) = guard.get(&workspace_key) {
-                cached_branch = branch.clone();
-                if now.duration_since(*last_check) < Duration::from_secs(3) {
-                    needs_refresh = false;
+        match BRANCH_CACHE.lock() {
+            Ok(guard) => match guard.get(&workspace_key) {
+                Some((last_check, branch)) => {
+                    cached_branch = branch.clone();
+                    match now.duration_since(*last_check) < Duration::from_secs(3) {
+                        true => needs_refresh = false,
+                        false => {}
+                    }
                 }
-            }
+                None => {}
+            },
+            Err(_) => {}
         }
 
-        if needs_refresh && !IS_FETCHING_GIT.swap(true, std::sync::atomic::Ordering::SeqCst) {
-            let cache_key = workspace_key.clone();
-            let ws = workspace_key;
-            let fetcher = move || {
-                let output = std::process::Command::new("git")
-                    .arg("rev-parse")
-                    .arg("--abbrev-ref")
-                    .arg("HEAD")
-                    .current_dir(&ws)
-                    .output();
+        let should_spawn =
+            needs_refresh && !IS_FETCHING_GIT.swap(true, std::sync::atomic::Ordering::SeqCst);
+        match should_spawn {
+            true => {
+                let cache_key = workspace_key.clone();
+                let ws = workspace_key;
+                let fetcher = move || {
+                    let output = std::process::Command::new("git")
+                        .arg("rev-parse")
+                        .arg("--abbrev-ref")
+                        .arg("HEAD")
+                        .current_dir(&ws)
+                        .output();
 
-                let branch = output.ok().and_then(|out| {
-                    if out.status.success() {
-                        let b = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                        if !b.is_empty() {
-                            Some(b)
-                        } else {
-                            None
+                    let branch = output.ok().and_then(|out| match out.status.success() {
+                        true => {
+                            let b = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                            match b.is_empty() {
+                                false => Some(b),
+                                true => None,
+                            }
                         }
-                    } else {
-                        None
+                        false => None,
+                    });
+
+                    match BRANCH_CACHE.lock() {
+                        Ok(mut guard) => {
+                            guard.insert(cache_key, (Instant::now(), branch));
+                        }
+                        Err(_) => {}
                     }
-                });
+                    IS_FETCHING_GIT.store(false, std::sync::atomic::Ordering::SeqCst);
+                };
 
-                if let Ok(mut guard) = BRANCH_CACHE.lock() {
-                    guard.insert(cache_key, (Instant::now(), branch));
+                match tokio::runtime::Handle::try_current() {
+                    Ok(handle) => {
+                        handle.spawn_blocking(fetcher);
+                    }
+                    Err(_) => {
+                        std::thread::spawn(fetcher);
+                    }
                 }
-                IS_FETCHING_GIT.store(false, std::sync::atomic::Ordering::SeqCst);
-            };
-
-            if let Ok(handle) = tokio::runtime::Handle::try_current() {
-                handle.spawn_blocking(fetcher);
-            } else {
-                std::thread::spawn(fetcher);
             }
+            false => {}
         }
 
         cached_branch
@@ -1086,19 +1106,17 @@ impl RatatuiApp {
 
     pub fn matching_slash_commands(&self) -> Vec<(String, String)> {
         let input_str: String = self.typed_input.iter().collect();
-        if !input_str.starts_with('/') {
-            return Vec::new();
+        match input_str.starts_with('/') {
+            false => Vec::new(),
+            true => SLASH_COMMANDS
+                .iter()
+                .copied()
+                .filter(|(cmd, _)| cmd.starts_with(&input_str))
+                .map(|(cmd, desc)| (cmd.to_string(), desc.to_string()))
+                .collect(),
         }
-
-        SLASH_COMMANDS
-            .iter()
-            .copied()
-            .filter(|(cmd, _)| cmd.starts_with(&input_str))
-            .map(|(cmd, desc)| (cmd.to_string(), desc.to_string()))
-            .collect()
     }
 
-    /// Whether user is currently typing a slash command
     /// Checks whether the user is typing a slash command (starts with '/' and hasn't started typing arguments)
     pub fn has_active_slash_query(&self) -> bool {
         self.typed_input.first() == Some(&'/') && !self.typed_input.contains(&' ')
@@ -1107,10 +1125,9 @@ impl RatatuiApp {
     /// Extract query text without leading slash
     pub fn slash_search_text(&self) -> String {
         let input: String = self.typed_input.iter().collect();
-        if let Some(stripped) = input.strip_prefix('/') {
-            stripped.trim().to_string()
-        } else {
-            String::new()
+        match input.strip_prefix('/') {
+            Some(stripped) => stripped.trim().to_string(),
+            None => String::new(),
         }
     }
 
@@ -1120,48 +1137,53 @@ impl RatatuiApp {
         let current_cat = categories[self.slash_category_idx % categories.len()];
         let query = self.slash_search_text().to_lowercase();
 
-        let mut matches = Vec::new();
-        for (i, cmd) in PALETTE_COMMANDS.iter().enumerate() {
-            if current_cat != CommandCategory::All && cmd.category != current_cat {
-                continue;
-            }
-            if query.is_empty() {
-                matches.push(i);
-            } else {
-                let name = cmd.slash_name.trim_start_matches('/').to_lowercase();
-                let title = cmd.title.to_lowercase();
-                let desc = cmd.description.to_lowercase();
-                if name.starts_with(&query)
-                    || title.starts_with(&query)
-                    || name.contains(&query)
-                    || title.contains(&query)
-                    || desc.contains(&query)
-                {
-                    matches.push(i);
-                }
-            }
-        }
+        let mut matches: Vec<usize> = PALETTE_COMMANDS
+            .iter()
+            .enumerate()
+            .filter(|(_, cmd)| {
+                let category_ok =
+                    current_cat == CommandCategory::All || cmd.category == current_cat;
+                let query_ok = match query.is_empty() {
+                    true => true,
+                    false => {
+                        let name = cmd.slash_name.trim_start_matches('/').to_lowercase();
+                        let title = cmd.title.to_lowercase();
+                        let desc = cmd.description.to_lowercase();
+                        name.starts_with(&query)
+                            || title.starts_with(&query)
+                            || name.contains(&query)
+                            || title.contains(&query)
+                            || desc.contains(&query)
+                    }
+                };
+                category_ok && query_ok
+            })
+            .map(|(i, _)| i)
+            .collect();
 
-        // Sort by match relevance: exact match first, prefix next, then substring
-        if !query.is_empty() {
-            matches.sort_by_key(|&idx| {
-                let cmd = &PALETTE_COMMANDS[idx];
-                let name = cmd.slash_name.trim_start_matches('/').to_lowercase();
-                let title = cmd.title.to_lowercase();
-                if name == query {
-                    0
-                } else if name.starts_with(&query) {
-                    1
-                } else if title.starts_with(&query) {
-                    2
-                } else if name.contains(&query) {
-                    3
-                } else if title.contains(&query) {
-                    4
-                } else {
-                    5
-                }
-            });
+        match query.is_empty() {
+            false => {
+                matches.sort_by_key(|&idx| {
+                    let cmd = &PALETTE_COMMANDS[idx];
+                    let name = cmd.slash_name.trim_start_matches('/').to_lowercase();
+                    let title = cmd.title.to_lowercase();
+                    match (
+                        name == query,
+                        name.starts_with(&query),
+                        title.starts_with(&query),
+                        name.contains(&query),
+                        title.contains(&query),
+                    ) {
+                        (true, _, _, _, _) => 0,
+                        (false, true, _, _, _) => 1,
+                        (false, false, true, _, _) => 2,
+                        (false, false, false, true, _) => 3,
+                        (false, false, false, false, true) => 4,
+                        (false, false, false, false, false) => 5,
+                    }
+                });
+            }
+            true => {}
         }
 
         matches
@@ -1170,26 +1192,23 @@ impl RatatuiApp {
     /// Returns the currently selected palette command
     pub fn selected_palette_command(&self) -> Option<&'static PaletteCommand> {
         let matches = self.matching_palette_commands();
-        if matches.is_empty() {
-            None
-        } else {
-            let idx = self.slash_selected_idx.min(matches.len().saturating_sub(1));
-            Some(&PALETTE_COMMANDS[matches[idx]])
+        match matches.is_empty() {
+            true => None,
+            false => {
+                let idx = self.slash_selected_idx.min(matches.len().saturating_sub(1));
+                Some(&PALETTE_COMMANDS[matches[idx]])
+            }
         }
     }
 
     /// Cycle category tabs in spotlight palette (Tab / BackTab)
     pub fn cycle_slash_category(&mut self, forward: bool) {
         let total = CommandCategory::all().len();
-        if total == 0 {
-            return;
-        }
-        if forward {
-            self.slash_category_idx = (self.slash_category_idx + 1) % total;
-        } else if self.slash_category_idx == 0 {
-            self.slash_category_idx = total.saturating_sub(1);
-        } else {
-            self.slash_category_idx = self.slash_category_idx.saturating_sub(1);
+        match (total, forward, self.slash_category_idx) {
+            (0, _, _) => return,
+            (_, true, idx) => self.slash_category_idx = (idx + 1) % total,
+            (_, false, 0) => self.slash_category_idx = total.saturating_sub(1),
+            (_, false, idx) => self.slash_category_idx = idx.saturating_sub(1),
         }
         self.slash_selected_idx = 0;
     }
@@ -1198,4 +1217,3 @@ impl RatatuiApp {
 #[cfg(test)]
 #[path = "app_tests.rs"]
 mod tests;
-

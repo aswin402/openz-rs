@@ -3,9 +3,27 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph},
     Frame,
 };
+
+fn build_selectable_list_item<'a>(
+    label: String,
+    is_selected: bool,
+    theme: &super::theme::Theme,
+) -> ListItem<'a> {
+    let (prefix, style) = match is_selected {
+        true => (
+            " › ",
+            Style::default()
+                .fg(theme.bg_primary)
+                .bg(theme.brand_accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        false => ("   ", Style::default().fg(theme.text_primary)),
+    };
+    ListItem::new(format!("{}{}", prefix, label)).style(style)
+}
 
 pub(crate) fn render_modal_overlay(f: &mut Frame, app: &RatatuiApp, area: Rect) {
     let theme = &app.theme;
@@ -40,17 +58,7 @@ pub(crate) fn render_modal_overlay(f: &mut Frame, app: &RatatuiApp, area: Rect) 
                 .iter()
                 .enumerate()
                 .map(|(i, (_name, display))| {
-                    let is_selected = i == *selected_idx;
-                    let prefix = if is_selected { " › " } else { "   " };
-                    let style = if is_selected {
-                        Style::default()
-                            .fg(theme.bg_primary)
-                            .bg(theme.brand_accent)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(theme.text_primary)
-                    };
-                    ListItem::new(format!("{}{}", prefix, display)).style(style)
+                    build_selectable_list_item(display.clone(), i == *selected_idx, theme)
                 })
                 .collect();
 
@@ -79,65 +87,58 @@ pub(crate) fn render_modal_overlay(f: &mut Frame, app: &RatatuiApp, area: Rect) 
             let inner_area = outer_block.inner(popup_area);
             f.render_widget(outer_block, popup_area);
 
-            if *loading {
-                let loading_p =
-                    Paragraph::new(format!("Fetching live models from {}...", provider_display))
-                        .style(Style::default().fg(theme.warning))
-                        .alignment(Alignment::Center);
-                f.render_widget(loading_p, inner_area);
-                return;
-            }
+            match *loading {
+                true => {
+                    let loading_p =
+                        Paragraph::new(format!("Fetching live models from {}...", provider_display))
+                            .style(Style::default().fg(theme.warning))
+                            .alignment(Alignment::Center);
+                    f.render_widget(loading_p, inner_area);
+                }
+                false => {
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(3), // Search box
+                            Constraint::Min(5),    // Model list
+                            Constraint::Length(1), // Help hints
+                        ])
+                        .split(inner_area);
 
-            let chunks = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(3), // Search box
-                    Constraint::Min(5),    // Model list
-                    Constraint::Length(1), // Help hints
-                ])
-                .split(inner_area);
+                    let search_text = format!(" Search: {}█", filter);
+                    let search_box = Paragraph::new(search_text)
+                        .block(
+                            Block::default()
+                                .borders(Borders::ALL)
+                                .border_style(Style::default().fg(theme.border))
+                                .title(" Filter Models "),
+                        )
+                        .style(Style::default().fg(theme.text_primary));
+                    f.render_widget(search_box, chunks[0]);
 
-            // Search filter box
-            let search_text = format!(" Search: {}█", filter);
-            let search_box = Paragraph::new(search_text)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(theme.border))
-                        .title(" Filter Models "),
-                )
-                .style(Style::default().fg(theme.text_primary));
-            f.render_widget(search_box, chunks[0]);
+                    let items: Vec<ListItem> = filtered_indices
+                        .iter()
+                        .enumerate()
+                        .map(|(visual_idx, &real_idx)| {
+                            build_selectable_list_item(
+                                models[real_idx].clone(),
+                                visual_idx == *selected_idx,
+                                theme,
+                            )
+                        })
+                        .collect();
 
-            // Model list items
-            let items: Vec<ListItem> = filtered_indices
-                .iter()
-                .enumerate()
-                .map(|(visual_idx, &real_idx)| {
-                    let m = &models[real_idx];
-                    let is_selected = visual_idx == *selected_idx;
-                    let prefix = if is_selected { " › " } else { "   " };
+                    let list = List::new(items).block(Block::default().borders(Borders::NONE));
+                    f.render_widget(list, chunks[1]);
 
-                    let style = if is_selected {
-                        Style::default()
-                            .fg(theme.bg_primary)
-                            .bg(theme.brand_accent)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(theme.text_primary)
-                    };
-                    ListItem::new(format!("{}{}", prefix, m)).style(style)
-                })
-                .collect();
-
-            let list = List::new(items).block(Block::default().borders(Borders::NONE));
-            f.render_widget(list, chunks[1]);
-
-            let hints =
-                Paragraph::new(" ↑/↓ Navigate · enter Select · type to Filter · esc Cancel")
+                    let hints = Paragraph::new(
+                        " ↑/↓ Navigate · enter Select · type to Filter · esc Cancel",
+                    )
                     .style(Style::default().fg(theme.muted))
                     .alignment(Alignment::Center);
-            f.render_widget(hints, chunks[2]);
+                    f.render_widget(hints, chunks[2]);
+                }
+            }
         }
         ModalState::Help => {
             let popup_area = centered_rect(65, 60, area);
@@ -260,8 +261,7 @@ pub(crate) fn render_modal_overlay(f: &mut Frame, app: &RatatuiApp, area: Rect) 
                 ]),
             ];
 
-            let p = Paragraph::new(help_text);
-            f.render_widget(p, inner);
+            f.render_widget(Paragraph::new(help_text), inner);
         }
         ModalState::History {
             sessions,
@@ -281,18 +281,11 @@ pub(crate) fn render_modal_overlay(f: &mut Frame, app: &RatatuiApp, area: Rect) 
                 .iter()
                 .enumerate()
                 .map(|(i, (key, title, time))| {
-                    let is_selected = i == *selected_idx;
-                    let prefix = if is_selected { " › " } else { "   " };
-                    let style = if is_selected {
-                        Style::default()
-                            .fg(theme.bg_primary)
-                            .bg(theme.brand_accent)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(theme.text_primary)
-                    };
-                    ListItem::new(format!("{}{:<25} {:<20} ({})", prefix, title, key, time))
-                        .style(style)
+                    build_selectable_list_item(
+                        format!("{:<25} {:<20} ({})", title, key, time),
+                        i == *selected_idx,
+                        theme,
+                    )
                 })
                 .collect();
 
@@ -320,7 +313,7 @@ pub(crate) fn render_modal_overlay(f: &mut Frame, app: &RatatuiApp, area: Rect) 
                 )]))
                 .title_alignment(Alignment::Left)
                 .borders(Borders::ALL)
-                .border_type(ratatui::widgets::BorderType::Rounded)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(theme.brand_accent))
                 .style(Style::default().bg(theme.bg_elevated));
 
@@ -334,58 +327,60 @@ pub(crate) fn render_modal_overlay(f: &mut Frame, app: &RatatuiApp, area: Rect) 
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Length(1), // Tool line
-                    Constraint::Length(reason_height), // Reason lines (1 or 2 lines)
-                    Constraint::Length(1), // Divider
+                    Constraint::Length(1),                   // Tool line
+                    Constraint::Length(reason_height),       // Reason lines (1 or 2 lines)
+                    Constraint::Length(1),                   // Divider
                     Constraint::Length(options.len() as u16), // Options
-                    Constraint::Min(0),    // Spacer
-                    Constraint::Length(1), // Hint line
+                    Constraint::Min(0),                      // Spacer
+                    Constraint::Length(1),                   // Hint line
                 ])
                 .split(inner);
 
-            // Tool header
             let tool_line = Line::from(vec![
                 Span::styled(" Tool: ", Style::default().fg(theme.muted)),
                 Span::styled(
                     tool_name.as_str(),
-                    Style::default().fg(theme.brand_white).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme.brand_white)
+                        .add_modifier(Modifier::BOLD),
                 ),
             ]);
             f.render_widget(Paragraph::new(tool_line), chunks[0]);
-
-            // Formatted reason lines (at least 2 lines fully if needed, ending with .... if >2 lines)
             f.render_widget(Paragraph::new(reason_lines), chunks[1]);
 
-            // Subtle divider
             let div_line = Line::from(vec![Span::styled(
                 "─".repeat(inner.width as usize),
                 Style::default().fg(theme.border),
             )]);
             f.render_widget(Paragraph::new(div_line), chunks[2]);
 
-            // Options styled with OpenZ Aura theme
             let items: Vec<ListItem> = options
                 .iter()
                 .enumerate()
                 .map(|(i, opt)| {
                     let is_selected = i == *selected_idx;
-                    let prefix = if is_selected { " › " } else { "   " };
-                    let style = if is_selected {
-                        let fg = if i == 2 { theme.destructive } else { theme.brand_accent };
-                        Style::default()
-                            .fg(fg)
-                            .bg(theme.bg_input)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(theme.text_primary)
+                    let (prefix, style) = match (is_selected, i == 2) {
+                        (true, true) => (
+                            " › ",
+                            Style::default()
+                                .fg(theme.destructive)
+                                .bg(theme.bg_input)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        (true, false) => (
+                            " › ",
+                            Style::default()
+                                .fg(theme.brand_accent)
+                                .bg(theme.bg_input)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        (false, _) => ("   ", Style::default().fg(theme.text_primary)),
                     };
                     ListItem::new(format!("{}{}", prefix, opt)).style(style)
                 })
                 .collect();
-            let list = List::new(items);
-            f.render_widget(list, chunks[3]);
+            f.render_widget(List::new(items), chunks[3]);
 
-            // Hint
             let hint = Line::from(vec![
                 Span::styled("↑/↓ Navigate · ", Style::default().fg(theme.muted)),
                 Span::styled("Enter Confirm · ", Style::default().fg(theme.brand_accent)),
@@ -414,7 +409,7 @@ pub fn render_exit_confirm(
         )]))
         .title_alignment(Alignment::Left)
         .borders(Borders::ALL)
-        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.brand_accent))
         .style(Style::default().bg(theme.bg_elevated));
 
@@ -424,15 +419,14 @@ pub fn render_exit_confirm(
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // Spacer
-            Constraint::Length(1), // Question
-            Constraint::Length(1), // Spacer
-            Constraint::Length(1), // Buttons row
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
             Constraint::Min(0),
         ])
         .split(inner_area);
 
-    // Question
     let question_p = Paragraph::new(Line::from(vec![Span::styled(
         "Are you sure you want to quit OpenZ?",
         Style::default()
@@ -442,43 +436,37 @@ pub fn render_exit_confirm(
     .alignment(Alignment::Center);
     f.render_widget(question_p, chunks[1]);
 
-    // Buttons
-    let yep_style = if selected_yes {
-        Style::default()
-            .bg(theme.destructive)
-            .fg(theme.bg_primary)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().bg(theme.bg_primary).fg(theme.text_primary)
-    };
-
-    let nope_style = if !selected_yes {
-        Style::default()
-            .bg(theme.brand_accent)
-            .fg(theme.bg_primary)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().bg(theme.bg_primary).fg(theme.text_primary)
-    };
-
-    let yep_spans = if selected_yes {
-        vec![Span::styled("  ✖ Yep, Quit (Y)  ", yep_style)]
-    } else {
-        vec![
-            Span::styled("  ✖ ", yep_style),
-            Span::styled("Y", yep_style.add_modifier(Modifier::UNDERLINED)),
-            Span::styled("ep, Quit  ", yep_style),
-        ]
-    };
-
-    let nope_spans = if !selected_yes {
-        vec![Span::styled("  ✔ Stay in Session (N)  ", nope_style)]
-    } else {
-        vec![
-            Span::styled("  ✔ Stay in Session (", nope_style),
-            Span::styled("N", nope_style.add_modifier(Modifier::UNDERLINED)),
-            Span::styled(")  ", nope_style),
-        ]
+    let (yep_spans, nope_spans) = match selected_yes {
+        true => {
+            let yep_style = Style::default()
+                .bg(theme.destructive)
+                .fg(theme.bg_primary)
+                .add_modifier(Modifier::BOLD);
+            let nope_style = Style::default().bg(theme.bg_primary).fg(theme.text_primary);
+            (
+                vec![Span::styled("  ✖ Yep, Quit (Y)  ", yep_style)],
+                vec![
+                    Span::styled("  ✔ Stay in Session (", nope_style),
+                    Span::styled("N", nope_style.add_modifier(Modifier::UNDERLINED)),
+                    Span::styled(")  ", nope_style),
+                ],
+            )
+        }
+        false => {
+            let yep_style = Style::default().bg(theme.bg_primary).fg(theme.text_primary);
+            let nope_style = Style::default()
+                .bg(theme.brand_accent)
+                .fg(theme.bg_primary)
+                .add_modifier(Modifier::BOLD);
+            (
+                vec![
+                    Span::styled("  ✖ ", yep_style),
+                    Span::styled("Y", yep_style.add_modifier(Modifier::UNDERLINED)),
+                    Span::styled("ep, Quit  ", yep_style),
+                ],
+                vec![Span::styled("  ✔ Stay in Session (N)  ", nope_style)],
+            )
+        }
     };
 
     let mut buttons_line = Vec::new();
@@ -486,8 +474,10 @@ pub fn render_exit_confirm(
     buttons_line.push(Span::raw("   "));
     buttons_line.extend(nope_spans);
 
-    let buttons_p = Paragraph::new(Line::from(buttons_line)).alignment(Alignment::Center);
-    f.render_widget(buttons_p, chunks[3]);
+    f.render_widget(
+        Paragraph::new(Line::from(buttons_line)).alignment(Alignment::Center),
+        chunks[3],
+    );
 }
 
 pub fn render_command_catalog(
@@ -505,7 +495,7 @@ pub fn render_command_catalog(
         .title(" 🧭 OpenZ Slash Commands & Capabilities Catalog ")
         .title_alignment(Alignment::Center)
         .borders(Borders::ALL)
-        .border_type(ratatui::widgets::BorderType::Rounded)
+        .border_type(BorderType::Rounded)
         .border_style(Style::default().fg(theme.brand_accent))
         .style(Style::default().bg(theme.bg_elevated));
 
@@ -520,16 +510,11 @@ pub fn render_command_catalog(
         ])
         .split(inner_area);
 
-    // Search bar
-    let count_badge = format!(
-        " [{}/{}] ",
-        if filtered_indices.is_empty() {
-            0
-        } else {
-            selected_index + 1
-        },
-        filtered_indices.len()
-    );
+    let active_display_index = match filtered_indices.is_empty() {
+        true => 0,
+        false => selected_index + 1,
+    };
+    let count_badge = format!(" [{}/{}] ", active_display_index, filtered_indices.len());
 
     let search_block = Block::default()
         .title(" 🔍 Filter Commands ")
@@ -563,13 +548,9 @@ pub fn render_command_catalog(
     .block(search_block);
     f.render_widget(search_p, v_chunks[0]);
 
-    // Split [Left List (42%), Right Details (58%)]
     let h_chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(42),
-            Constraint::Percentage(58),
-        ])
+        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
         .split(v_chunks[1]);
 
     let list_block = Block::default()
@@ -591,17 +572,21 @@ pub fn render_command_catalog(
         let item = &super::app::PALETTE_COMMANDS[item_idx];
         let is_selected = real_idx == selected_index;
 
-        let cursor = if is_selected { "▶ " } else { "  " };
-        let name_style = if is_selected {
-            Style::default()
-                .fg(theme.brand_accent)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(theme.text_primary)
+        let (cursor, name_style) = match is_selected {
+            true => (
+                "▶ ",
+                Style::default()
+                    .fg(theme.brand_accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            false => ("  ", Style::default().fg(theme.text_primary)),
         };
 
         let shortcut_style = Style::default().fg(theme.warning);
-        let shortcut_str = item.shortcut.map(|s| format!(" [{}]", s)).unwrap_or_default();
+        let shortcut_str = item
+            .shortcut
+            .map(|s| format!(" [{}]", s))
+            .unwrap_or_default();
 
         list_lines.push(Line::from(vec![
             Span::styled(
@@ -610,100 +595,104 @@ pub fn render_command_catalog(
                     .fg(theme.brand_accent)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled(
-                format!("{:<15}", item.slash_name),
-                name_style,
-            ),
+            Span::styled(format!("{:<15}", item.slash_name), name_style),
             Span::styled(shortcut_str, shortcut_style),
         ]));
     }
 
-    if filtered_indices.is_empty() {
-        list_lines.push(Line::from(Span::styled(
-            "  No matching commands found",
-            Style::default().fg(theme.muted),
-        )));
+    match filtered_indices.is_empty() {
+        true => {
+            list_lines.push(Line::from(Span::styled(
+                "  No matching commands found",
+                Style::default().fg(theme.muted),
+            )));
+        }
+        false => {}
     }
 
-    let left_p = Paragraph::new(list_lines).block(list_block);
-    f.render_widget(left_p, h_chunks[0]);
+    f.render_widget(Paragraph::new(list_lines).block(list_block), h_chunks[0]);
 
     // Right Details Pane
     let mut detail_lines = Vec::new();
-    if let Some(&selected_item_idx) = filtered_indices.get(selected_index) {
-        let cmd = &super::app::PALETTE_COMMANDS[selected_item_idx];
+    match filtered_indices.get(selected_index) {
+        Some(&selected_item_idx) => {
+            let cmd = &super::app::PALETTE_COMMANDS[selected_item_idx];
 
-        detail_lines.push(Line::from(vec![
-            Span::styled(
-                cmd.slash_name,
+            detail_lines.push(Line::from(vec![
+                Span::styled(
+                    cmd.slash_name,
+                    Style::default()
+                        .fg(theme.brand_accent)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("  •  {} ({})", cmd.title, cmd.category.label()),
+                    Style::default().fg(theme.muted),
+                ),
+            ]));
+            detail_lines.push(Line::from(""));
+
+            match cmd.shortcut {
+                Some(shortcut) => {
+                    detail_lines.push(Line::from(vec![
+                        Span::styled(
+                            "⚡ Shortcut: ",
+                            Style::default()
+                                .fg(theme.warning)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(shortcut, Style::default().fg(theme.text_primary)),
+                    ]));
+                    detail_lines.push(Line::from(""));
+                }
+                None => {}
+            }
+
+            detail_lines.push(Line::from(vec![Span::styled(
+                "📖 Description:",
+                Style::default()
+                    .fg(theme.success)
+                    .add_modifier(Modifier::BOLD),
+            )]));
+            detail_lines.push(Line::from(vec![Span::styled(
+                format!("  {}", cmd.description),
+                Style::default().fg(theme.text_primary),
+            )]));
+            detail_lines.push(Line::from(""));
+
+            detail_lines.push(Line::from(vec![Span::styled(
+                "💡 Usage Example:",
                 Style::default()
                     .fg(theme.brand_accent)
                     .add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                format!("  •  {} ({})", cmd.title, cmd.category.label()),
-                Style::default().fg(theme.muted),
-            ),
-        ]));
-        detail_lines.push(Line::from(""));
-
-        if let Some(shortcut) = cmd.shortcut {
-            detail_lines.push(Line::from(vec![
-                Span::styled(
-                    "⚡ Shortcut: ",
-                    Style::default()
-                        .fg(theme.warning)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(shortcut, Style::default().fg(theme.text_primary)),
-            ]));
+            )]));
+            detail_lines.push(Line::from(vec![Span::styled(
+                format!("  {}", cmd.example),
+                Style::default()
+                    .fg(theme.muted)
+                    .add_modifier(Modifier::ITALIC),
+            )]));
             detail_lines.push(Line::from(""));
+
+            detail_lines.push(Line::from(vec![Span::styled(
+                "🤖 Autonomous Intent Routing:",
+                Style::default()
+                    .fg(theme.brand_accent)
+                    .add_modifier(Modifier::BOLD),
+            )]));
+            detail_lines.push(Line::from(vec![Span::styled(
+                "  You can type natural language in the input prompt. OpenZ's",
+                Style::default().fg(theme.muted),
+            )]));
+            detail_lines.push(Line::from(vec![Span::styled(
+                "  intent router will recognize and trigger this workflow automatically.",
+                Style::default().fg(theme.muted),
+            )]));
         }
-
-        detail_lines.push(Line::from(vec![Span::styled(
-            "📖 Description:",
-            Style::default()
-                .fg(theme.success)
-                .add_modifier(Modifier::BOLD),
-        )]));
-        detail_lines.push(Line::from(vec![Span::styled(
-            format!("  {}", cmd.description),
-            Style::default().fg(theme.text_primary),
-        )]));
-        detail_lines.push(Line::from(""));
-
-        detail_lines.push(Line::from(vec![Span::styled(
-            "💡 Usage Example:",
-            Style::default()
-                .fg(theme.brand_accent)
-                .add_modifier(Modifier::BOLD),
-        )]));
-        detail_lines.push(Line::from(vec![Span::styled(
-            format!("  {}", cmd.example),
-            Style::default()
-                .fg(theme.muted)
-                .add_modifier(Modifier::ITALIC),
-        )]));
-        detail_lines.push(Line::from(""));
-
-        detail_lines.push(Line::from(vec![Span::styled(
-            "🤖 Autonomous Intent Routing:",
-            Style::default()
-                .fg(theme.brand_accent)
-                .add_modifier(Modifier::BOLD),
-        )]));
-        detail_lines.push(Line::from(vec![Span::styled(
-            "  You can type natural language in the input prompt. OpenZ's",
-            Style::default().fg(theme.muted),
-        )]));
-        detail_lines.push(Line::from(vec![Span::styled(
-            "  intent router will recognize and trigger this workflow automatically.",
-            Style::default().fg(theme.muted),
-        )]));
+        None => {}
     }
 
-    let right_p = Paragraph::new(detail_lines);
-    f.render_widget(right_p, h_chunks[1]);
+    f.render_widget(Paragraph::new(detail_lines), h_chunks[1]);
 }
 
 /// Helper function to create a centered Rect for modals using percentage constraints
@@ -743,35 +732,29 @@ pub fn centered_rect_exact(width: u16, height: u16, r: Rect) -> Rect {
 
 /// Computes the scroll offset for a list widget so that the selected item remains visible.
 pub fn compute_scroll_offset(selected_index: usize, max_visible: usize) -> usize {
-    if max_visible == 0 {
-        return 0;
-    }
-    if selected_index < max_visible {
-        0
-    } else {
-        selected_index.saturating_sub(max_visible - 1)
+    match max_visible {
+        0 => 0,
+        _ => match selected_index < max_visible {
+            true => 0,
+            false => selected_index.saturating_sub(max_visible - 1),
+        },
     }
 }
 
 /// Formats the security approval reason into up to 2 wrapped lines.
-/// If the reason fits on 1 line, returns 1 line.
-/// If it fits on 2 lines, returns 2 full lines.
-/// If it exceeds 2 lines, returns 2 lines with the second line truncated and ending with `....`.
 pub fn format_security_reason_lines(
     description: &str,
     max_text_width: usize,
     theme: &super::theme::Theme,
 ) -> Vec<Line<'static>> {
     let raw_desc = description.trim();
-    let concise_desc = if let Some(idx) = raw_desc.find(", arguments:") {
-        &raw_desc[..idx]
-    } else {
-        raw_desc
+    let concise_desc = match raw_desc.find(", arguments:") {
+        Some(idx) => &raw_desc[..idx],
+        None => raw_desc,
     };
-    let concise_desc = if let Some(stripped) = concise_desc.strip_prefix("resource_policy_reason:") {
-        stripped.trim()
-    } else {
-        concise_desc
+    let concise_desc = match concise_desc.strip_prefix("resource_policy_reason:") {
+        Some(stripped) => stripped.trim(),
+        None => concise_desc,
     };
     let clean_desc = concise_desc.trim().trim_matches('"').trim();
     let flat_desc: String = clean_desc
@@ -784,54 +767,58 @@ pub fn format_security_reason_lines(
     let safe_width = max_text_width.max(10);
     let wrapped = crate::agent::style::wrap_line(&flat_desc, safe_width);
 
-    let mut lines = Vec::new();
-    if wrapped.is_empty() {
-        lines.push(Line::from(vec![
+    match wrapped.as_slice() {
+        [] => vec![Line::from(vec![
             Span::styled(" Reason: ", Style::default().fg(theme.muted)),
             Span::styled(
                 "Sensitive operation requires approval",
                 Style::default().fg(theme.warning),
             ),
-        ]));
-    } else if wrapped.len() == 1 {
-        lines.push(Line::from(vec![
+        ])],
+        [single] => vec![Line::from(vec![
             Span::styled(" Reason: ", Style::default().fg(theme.muted)),
-            Span::styled(wrapped[0].clone(), Style::default().fg(theme.warning)),
-        ]));
-    } else {
-        // Line 1: fully displayed
-        lines.push(Line::from(vec![
-            Span::styled(" Reason: ", Style::default().fg(theme.muted)),
-            Span::styled(wrapped[0].clone(), Style::default().fg(theme.warning)),
-        ]));
-
-        // Line 2: fully displayed if exactly 2 lines, or truncated with "...." if > 2 lines
-        let line2_text = if wrapped.len() == 2 {
-            wrapped[1].clone()
-        } else {
-            let mut l2 = wrapped[1].clone();
-            if l2.chars().count() + 4 > safe_width {
-                let take_count = safe_width.saturating_sub(4);
-                l2 = l2
-                    .chars()
-                    .take(take_count)
-                    .collect::<String>()
-                    .trim_end()
-                    .to_string();
-            }
-            format!("{}....", l2)
-        };
-
-        lines.push(Line::from(vec![
-            Span::styled("         ", Style::default().fg(theme.muted)),
-            Span::styled(line2_text, Style::default().fg(theme.warning)),
-        ]));
+            Span::styled(single.clone(), Style::default().fg(theme.warning)),
+        ])],
+        [first, second] => vec![
+            Line::from(vec![
+                Span::styled(" Reason: ", Style::default().fg(theme.muted)),
+                Span::styled(first.clone(), Style::default().fg(theme.warning)),
+            ]),
+            Line::from(vec![
+                Span::styled("         ", Style::default().fg(theme.muted)),
+                Span::styled(second.clone(), Style::default().fg(theme.warning)),
+            ]),
+        ],
+        [first, second, ..] => {
+            let truncated_l2 = match second.chars().count() + 4 > safe_width {
+                true => {
+                    let take_count = safe_width.saturating_sub(4);
+                    second
+                        .chars()
+                        .take(take_count)
+                        .collect::<String>()
+                        .trim_end()
+                        .to_string()
+                }
+                false => second.clone(),
+            };
+            vec![
+                Line::from(vec![
+                    Span::styled(" Reason: ", Style::default().fg(theme.muted)),
+                    Span::styled(first.clone(), Style::default().fg(theme.warning)),
+                ]),
+                Line::from(vec![
+                    Span::styled("         ", Style::default().fg(theme.muted)),
+                    Span::styled(
+                        format!("{}....", truncated_l2),
+                        Style::default().fg(theme.warning),
+                    ),
+                ]),
+            ]
+        }
     }
-    lines
 }
 
 #[cfg(test)]
 #[path = "modals_tests.rs"]
 mod tests;
-
-

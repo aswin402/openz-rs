@@ -100,232 +100,275 @@ pub enum AgentActivity {
     CompactingContext,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum ToolCategory {
+    DeepResearch,
+    InternetResearch,
+    DocumentProcessing,
+    MediaGenerating,
+    Writing,
+    EditingFile,
+    CommandExec,
+    Planning,
+    SubagentWorking,
+    RepoResearch,
+    CompactingContext,
+    Working,
+}
+
+fn classify_tool_category(tool_lower: &str) -> ToolCategory {
+    const DEEP_RESEARCH_PATTERNS: &[&str] = &["deep_research", "deep research"];
+    const INTERNET_EXACT: &[&str] = &[
+        "search_web",
+        "web_fetch",
+        "fetch_or_browse",
+        "browser_navigate",
+    ];
+    const INTERNET_CONTAINS: &[&str] = &["searchxyz", "crawl", "web", "fetch", "browse"];
+    const DOC_CONTAINS: &[&str] = &["opendoc", "read_doc", "doc_reader"];
+    const MEDIA_CONTAINS: &[&str] = &[
+        "openmedia",
+        "generate_video",
+        "generate_image",
+        "svg_animator",
+        "html_video",
+        "video",
+        "image",
+    ];
+    const WRITE_EXACT: &[&str] = &["write_file", "write_to_file", "create_file"];
+    const EDIT_EXACT: &[&str] = &[
+        "patch_file",
+        "replace_file_content",
+        "multi_replace_file_content",
+        "edit_file",
+        "replace_lines",
+        "ast_replace_node",
+    ];
+    const EDIT_CONTAINS: &[&str] = &["patch", "edit", "replace"];
+    const EXEC_EXACT: &[&str] = &["exec_cmd", "sandbox_exec", "run_command", "exec_command"];
+    const EXEC_CONTAINS: &[&str] = &["exec", "cmd", "command", "bash", "terminal", "cargo"];
+    const PLAN_CONTAINS: &[&str] = &["sequentialthinking", "reasoning", "think", "plan"];
+    const SUBAGENT_CONTAINS: &[&str] = &["subagent", "orchestrat", "delegate", "sop", "swarm"];
+    const REPO_EXACT: &[&str] = &[
+        "read_file",
+        "find_files",
+        "grep_search",
+        "code_graph",
+        "semantic_search",
+        "ast_grep",
+        "code_outline",
+        "recall_query",
+        "explore_codebase",
+    ];
+    const REPO_CONTAINS: &[&str] = &["graph", "search", "explore", "read", "find"];
+    const COMPACT_CONTAINS: &[&str] = &["compact", "headroom"];
+
+    let matches_any = |patterns: &[&str]| patterns.iter().any(|p| tool_lower.contains(p));
+    let equals_any = |patterns: &[&str]| patterns.contains(&tool_lower);
+    let is_write = equals_any(WRITE_EXACT)
+        || (tool_lower.contains("write") && !tool_lower.contains("db_write"));
+
+    let candidates: &[(bool, ToolCategory)] = &[
+        (matches_any(DEEP_RESEARCH_PATTERNS), ToolCategory::DeepResearch),
+        (
+            equals_any(INTERNET_EXACT) || matches_any(INTERNET_CONTAINS),
+            ToolCategory::InternetResearch,
+        ),
+        (matches_any(DOC_CONTAINS), ToolCategory::DocumentProcessing),
+        (matches_any(MEDIA_CONTAINS), ToolCategory::MediaGenerating),
+        (is_write, ToolCategory::Writing),
+        (
+            equals_any(EDIT_EXACT) || matches_any(EDIT_CONTAINS),
+            ToolCategory::EditingFile,
+        ),
+        (
+            equals_any(EXEC_EXACT) || matches_any(EXEC_CONTAINS),
+            ToolCategory::CommandExec,
+        ),
+        (matches_any(PLAN_CONTAINS), ToolCategory::Planning),
+        (matches_any(SUBAGENT_CONTAINS), ToolCategory::SubagentWorking),
+        (
+            equals_any(REPO_EXACT) || matches_any(REPO_CONTAINS),
+            ToolCategory::RepoResearch,
+        ),
+        (
+            matches_any(COMPACT_CONTAINS),
+            ToolCategory::CompactingContext,
+        ),
+    ];
+
+    candidates
+        .iter()
+        .find_map(|(matched, cat)| match *matched {
+            true => Some(*cat),
+            false => None,
+        })
+        .unwrap_or(ToolCategory::Working)
+}
+
+fn truncate_summary_text(s: &str) -> String {
+    match s.len() > 36 {
+        true => format!("{}…", &s[..35]),
+        false => s.to_string(),
+    }
+}
+
 impl AgentActivity {
     /// Classifies a tool call and its arguments into an activity
     pub fn from_tool_call(tool: &str, args_str: &str) -> Self {
         let tool_lower = tool.to_ascii_lowercase();
-
-        // 1. Deep Research
-        if tool_lower.contains("deep_research") || tool_lower.contains("deep research") {
-            let query = Self::extract_arg_or_default(args_str, &["query", "topic", "prompt", "target"], "research topic");
-            return AgentActivity::DeepResearch { query };
-        }
-
-        // 2. Internet / Web Research
-        if tool_lower == "search_web"
-            || tool_lower == "web_fetch"
-            || tool_lower == "fetch_or_browse"
-            || tool_lower == "browser_navigate"
-            || tool_lower.contains("searchxyz")
-            || tool_lower.contains("crawl")
-            || tool_lower.contains("web")
-            || tool_lower.contains("fetch")
-            || tool_lower.contains("browse")
-        {
-            let query = Self::extract_arg_or_default(args_str, &["query", "url", "target"], "web query");
-            return AgentActivity::InternetResearch { query };
-        }
-
-        // 3. Document Processing (DOCX, XLSX, PPTX, PDF)
-        if tool_lower.contains("opendoc") || tool_lower.contains("read_doc") || tool_lower.contains("doc_reader") {
-            let task = Self::extract_arg_or_default(args_str, &["file_path", "path", "title"], "document");
-            return AgentActivity::DocumentProcessing { task };
-        }
-
-        // 4. Media & Creative Generation (Video, SVG, Chart, Diagram, Image)
-        if tool_lower.contains("openmedia")
-            || tool_lower.contains("generate_video")
-            || tool_lower.contains("generate_image")
-            || tool_lower.contains("svg_animator")
-            || tool_lower.contains("html_video")
-            || tool_lower.contains("video")
-            || tool_lower.contains("image")
-        {
-            let task = Self::extract_arg_or_default(args_str, &["title", "output_path", "prompt", "diagram_type"], "media asset");
-            return AgentActivity::MediaGenerating { task };
-        }
-
-        // 5. File Writing (write_file, write_to_file, create_file)
-        if tool_lower == "write_file"
-            || tool_lower == "write_to_file"
-            || tool_lower == "create_file"
-            || (tool_lower.contains("write") && !tool_lower.contains("db_write"))
-        {
-            let target =
-                Self::extract_arg_or_default(args_str, &["target_file", "path", "file_path", "target"], "file");
-            return AgentActivity::Writing { target };
-        }
-
-        // 6. Code Edits & File Patching
-        if tool_lower == "patch_file"
-            || tool_lower == "replace_file_content"
-            || tool_lower == "multi_replace_file_content"
-            || tool_lower == "edit_file"
-            || tool_lower == "replace_lines"
-            || tool_lower == "ast_replace_node"
-            || tool_lower.contains("patch")
-            || tool_lower.contains("edit")
-            || tool_lower.contains("replace")
-        {
-            let path =
-                Self::extract_arg_or_default(args_str, &["target_file", "path", "file_path", "target"], "file");
-            return AgentActivity::EditingFile { path };
-        }
-
-        // 7. Command Execution & Debugging / Verification
-        if tool_lower == "exec_cmd"
-            || tool_lower == "sandbox_exec"
-            || tool_lower == "run_command"
-            || tool_lower == "exec_command"
-            || tool_lower.contains("exec")
-            || tool_lower.contains("cmd")
-            || tool_lower.contains("command")
-            || tool_lower.contains("bash")
-            || tool_lower.contains("terminal")
-            || tool_lower.contains("cargo")
-        {
-            let cmd = Self::extract_arg_or_default(
-                args_str,
-                &["command", "command_line", "cmd"],
-                "command",
-            );
-            let cmd_lower = cmd.to_ascii_lowercase();
-            if cmd_lower.contains("check")
-                || cmd_lower.contains("test")
-                || cmd_lower.contains("lint")
-                || cmd_lower.contains("clippy")
-                || cmd_lower.contains("tsc")
-                || cmd_lower.contains("pytest")
-                || cmd_lower.contains("vitest")
-                || cmd_lower.contains("diff")
-            {
-                return AgentActivity::Debugging { step: cmd };
-            } else {
-                return AgentActivity::ExecutingCommand { command: cmd };
+        match classify_tool_category(&tool_lower) {
+            ToolCategory::DeepResearch => {
+                let query = Self::extract_arg_or_default(
+                    args_str,
+                    &["query", "topic", "prompt", "target"],
+                    "research topic",
+                );
+                AgentActivity::DeepResearch { query }
             }
+            ToolCategory::InternetResearch => {
+                let query = Self::extract_arg_or_default(
+                    args_str,
+                    &["query", "url", "target"],
+                    "web query",
+                );
+                AgentActivity::InternetResearch { query }
+            }
+            ToolCategory::DocumentProcessing => {
+                let task = Self::extract_arg_or_default(
+                    args_str,
+                    &["file_path", "path", "title"],
+                    "document",
+                );
+                AgentActivity::DocumentProcessing { task }
+            }
+            ToolCategory::MediaGenerating => {
+                let task = Self::extract_arg_or_default(
+                    args_str,
+                    &["title", "output_path", "prompt", "diagram_type"],
+                    "media asset",
+                );
+                AgentActivity::MediaGenerating { task }
+            }
+            ToolCategory::Writing => {
+                let target = Self::extract_arg_or_default(
+                    args_str,
+                    &["target_file", "path", "file_path", "target"],
+                    "file",
+                );
+                AgentActivity::Writing { target }
+            }
+            ToolCategory::EditingFile => {
+                let path = Self::extract_arg_or_default(
+                    args_str,
+                    &["target_file", "path", "file_path", "target"],
+                    "file",
+                );
+                AgentActivity::EditingFile { path }
+            }
+            ToolCategory::CommandExec => {
+                let cmd = Self::extract_arg_or_default(
+                    args_str,
+                    &["command", "command_line", "cmd"],
+                    "command",
+                );
+                let cmd_lower = cmd.to_ascii_lowercase();
+                const DEBUG_KEYWORDS: &[&str] = &[
+                    "check", "test", "lint", "clippy", "tsc", "pytest", "vitest", "diff",
+                ];
+                match DEBUG_KEYWORDS.iter().any(|k| cmd_lower.contains(k)) {
+                    true => AgentActivity::Debugging { step: cmd },
+                    false => AgentActivity::ExecutingCommand { command: cmd },
+                }
+            }
+            ToolCategory::Planning => AgentActivity::Planning,
+            ToolCategory::SubagentWorking => {
+                let role = Self::extract_arg_or_default(
+                    args_str,
+                    &["role", "name", "profile", "task"],
+                    "agent task",
+                );
+                AgentActivity::SubagentWorking { role }
+            }
+            ToolCategory::RepoResearch => {
+                let target = Self::extract_arg_or_default(
+                    args_str,
+                    &["query", "path", "symbol", "name", "pattern", "target"],
+                    "codebase",
+                );
+                AgentActivity::RepoResearch { target }
+            }
+            ToolCategory::CompactingContext => AgentActivity::CompactingContext,
+            ToolCategory::Working => AgentActivity::Working,
         }
-
-        // 8. Planning & Structured Reasoning
-        if tool_lower.contains("sequentialthinking")
-            || tool_lower.contains("reasoning")
-            || tool_lower.contains("think")
-            || tool_lower.contains("plan")
-        {
-            return AgentActivity::Planning;
-        }
-
-        // 9. Subagents & Orchestrator
-        if tool_lower.contains("subagent")
-            || tool_lower.contains("orchestrat")
-            || tool_lower.contains("delegate")
-            || tool_lower.contains("sop")
-            || tool_lower.contains("swarm")
-        {
-            let role =
-                Self::extract_arg_or_default(args_str, &["role", "name", "profile", "task"], "agent task");
-            return AgentActivity::SubagentWorking { role };
-        }
-
-        // 10. Codebase & Repo Research
-        if tool_lower == "read_file"
-            || tool_lower == "find_files"
-            || tool_lower == "grep_search"
-            || tool_lower == "code_graph"
-            || tool_lower == "semantic_search"
-            || tool_lower == "ast_grep"
-            || tool_lower == "code_outline"
-            || tool_lower == "recall_query"
-            || tool_lower == "explore_codebase"
-            || tool_lower.contains("graph")
-            || tool_lower.contains("search")
-            || tool_lower.contains("explore")
-            || tool_lower.contains("read")
-            || tool_lower.contains("find")
-        {
-            let target = Self::extract_arg_or_default(
-                args_str,
-                &["query", "path", "symbol", "name", "pattern", "target"],
-                "codebase",
-            );
-            return AgentActivity::RepoResearch { target };
-        }
-
-        // 11. Context Compaction
-        if tool_lower.contains("compact") || tool_lower.contains("headroom") {
-            return AgentActivity::CompactingContext;
-        }
-
-        // Default to working for any other tool
-        AgentActivity::Working
     }
 
     fn extract_arg_or_default(args_str: &str, keys: &[&str], default: &str) -> String {
         let trimmed = args_str.trim();
-        if trimmed.is_empty() {
-            return default.to_string();
+        match trimmed.is_empty() {
+            true => return default.to_string(),
+            false => {}
         }
 
         // 1. Try JSON parsing
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            for key in keys {
-                if let Some(val) = v.get(*key).and_then(|val| val.as_str()) {
-                    let s = val.trim();
-                    if !s.is_empty() {
-                        return if s.len() > 36 {
-                            format!("{}…", &s[..35])
-                        } else {
-                            s.to_string()
-                        };
+        match serde_json::from_str::<serde_json::Value>(trimmed) {
+            Ok(v) => {
+                for key in keys {
+                    match v.get(*key).and_then(|val| val.as_str()).map(str::trim) {
+                        Some(s) => match s.is_empty() {
+                            false => return truncate_summary_text(s),
+                            true => {}
+                        },
+                        None => {}
                     }
                 }
             }
+            Err(_) => {}
         }
 
         // 2. Try parsing key: "value" from formatted strings
         for key in keys {
             let pattern = format!("{}:", key);
-            if let Some(pos) = trimmed.find(&pattern) {
-                let rest = trimmed[pos + pattern.len()..].trim();
-                let extracted = if let Some(stripped) = rest.strip_prefix('"') {
-                    if let Some(end_quote) = stripped.find('"') {
-                        &stripped[..end_quote]
-                    } else {
-                        stripped
-                    }
-                } else {
-                    rest.split(',').next().unwrap_or(rest).trim()
-                };
-                let clean = extracted.trim();
-                if !clean.is_empty() {
-                    return if clean.len() > 36 {
-                        format!("{}…", &clean[..35])
-                    } else {
-                        clean.to_string()
+            match trimmed.find(&pattern) {
+                Some(pos) => {
+                    let rest = trimmed[pos + pattern.len()..].trim();
+                    let extracted = match rest.strip_prefix('"') {
+                        Some(stripped) => match stripped.find('"') {
+                            Some(end_quote) => &stripped[..end_quote],
+                            None => stripped,
+                        },
+                        None => rest.split(',').next().unwrap_or(rest).trim(),
                     };
+                    let clean = extracted.trim();
+                    match clean.is_empty() {
+                        false => return truncate_summary_text(clean),
+                        true => {}
+                    }
                 }
+                None => {}
             }
         }
 
         // 3. If it starts with quotes, extract quoted content
-        if let Some(stripped) = trimmed.strip_prefix('"') {
-            if let Some(end_quote) = stripped.find('"') {
-                let clean = &stripped[..end_quote];
-                if !clean.is_empty() {
-                    return if clean.len() > 36 {
-                        format!("{}…", &clean[..35])
-                    } else {
-                        clean.to_string()
-                    };
+        match trimmed.strip_prefix('"') {
+            Some(stripped) => match stripped.find('"') {
+                Some(end_quote) => {
+                    let clean = &stripped[..end_quote];
+                    match clean.is_empty() {
+                        false => return truncate_summary_text(clean),
+                        true => {}
+                    }
                 }
-            }
+                None => {}
+            },
+            None => {}
         }
 
-        // 4. If arguments is just a simple non-empty string under 36 chars without commas/colons
-        if !trimmed.contains(':') && !trimmed.contains('{') && trimmed.len() <= 36 {
-            return trimmed.trim_matches('"').to_string();
+        // 4. Simple non-empty string under 36 chars without commas/colons
+        match !trimmed.contains(':') && !trimmed.contains('{') && trimmed.len() <= 36 {
+            true => trimmed.trim_matches('"').to_string(),
+            false => default.to_string(),
         }
-
-        default.to_string()
     }
 
     /// Derives an initial context-aware activity from the user's prompt text
@@ -333,70 +376,54 @@ impl AgentActivity {
         let trimmed = prompt.trim();
         let lower = trimmed.to_ascii_lowercase();
 
-        // 1. Research / Web queries
-        if lower.starts_with("search ")
-            || lower.starts_with("find ")
-            || lower.starts_with("look up ")
-            || lower.starts_with("what is ")
-            || lower.starts_with("who is ")
+        const RESEARCH_PREFIXES: &[&str] =
+            &["search ", "find ", "look up ", "what is ", "who is "];
+        const WRITE_PREFIXES: &[&str] = &[
+            "write ",
+            "create ",
+            "implement ",
+            "build ",
+            "code ",
+            "generate ",
+            "add ",
+        ];
+        const DEBUG_PREFIXES: &[&str] =
+            &["test ", "check ", "debug ", "fix ", "verify ", "run "];
+        const ANALYZE_PREFIXES: &[&str] =
+            &["analyze ", "explain ", "review ", "why ", "how ", "audit "];
+        const PLAN_PREFIXES: &[&str] = &["plan ", "design ", "outline ", "architect "];
+
+        let starts_any = |prefixes: &[&str]| prefixes.iter().any(|p| lower.starts_with(p));
+        let is_research = starts_any(RESEARCH_PREFIXES)
             || lower.contains("deep research")
-            || lower.contains("research ")
-        {
-            let query = Self::extract_prompt_summary(trimmed);
-            if lower.contains("deep research") {
-                return AgentActivity::DeepResearch { query };
-            }
-            return AgentActivity::InternetResearch { query };
-        }
+            || lower.contains("research ");
 
-        // 2. Writing / Creating code or files
-        if lower.starts_with("write ")
-            || lower.starts_with("create ")
-            || lower.starts_with("implement ")
-            || lower.starts_with("build ")
-            || lower.starts_with("code ")
-            || lower.starts_with("generate ")
-            || lower.starts_with("add ")
-        {
-            let target = Self::extract_prompt_summary(trimmed);
-            return AgentActivity::Writing { target };
+        match (
+            is_research,
+            lower.contains("deep research"),
+            starts_any(WRITE_PREFIXES),
+            starts_any(DEBUG_PREFIXES),
+            starts_any(ANALYZE_PREFIXES),
+            starts_any(PLAN_PREFIXES),
+        ) {
+            (true, true, _, _, _, _) => AgentActivity::DeepResearch {
+                query: Self::extract_prompt_summary(trimmed),
+            },
+            (true, false, _, _, _, _) => AgentActivity::InternetResearch {
+                query: Self::extract_prompt_summary(trimmed),
+            },
+            (false, _, true, _, _, _) => AgentActivity::Writing {
+                target: Self::extract_prompt_summary(trimmed),
+            },
+            (false, _, false, true, _, _) => AgentActivity::Debugging {
+                step: Self::extract_prompt_summary(trimmed),
+            },
+            (false, _, false, false, true, _) => AgentActivity::Analyzing {
+                task: Self::extract_prompt_summary(trimmed),
+            },
+            (false, _, false, false, false, true) => AgentActivity::Planning,
+            _ => AgentActivity::Thinking,
         }
-
-        // 3. Testing / Debugging / Checking
-        if lower.starts_with("test ")
-            || lower.starts_with("check ")
-            || lower.starts_with("debug ")
-            || lower.starts_with("fix ")
-            || lower.starts_with("verify ")
-            || lower.starts_with("run ")
-        {
-            let step = Self::extract_prompt_summary(trimmed);
-            return AgentActivity::Debugging { step };
-        }
-
-        // 4. Analysis / Review / Explanations
-        if lower.starts_with("analyze ")
-            || lower.starts_with("explain ")
-            || lower.starts_with("review ")
-            || lower.starts_with("why ")
-            || lower.starts_with("how ")
-            || lower.starts_with("audit ")
-        {
-            let task = Self::extract_prompt_summary(trimmed);
-            return AgentActivity::Analyzing { task };
-        }
-
-        // 5. Planning
-        if lower.starts_with("plan ")
-            || lower.starts_with("design ")
-            || lower.starts_with("outline ")
-            || lower.starts_with("architect ")
-        {
-            return AgentActivity::Planning;
-        }
-
-        // Default to Thinking
-        AgentActivity::Thinking
     }
 
     fn extract_prompt_summary(prompt: &str) -> String {
@@ -408,11 +435,7 @@ impl AgentActivity {
             .or_else(|| first_line.strip_prefix("Can you "))
             .unwrap_or(first_line);
 
-        if cleaned.len() > 36 {
-            format!("{}…", &cleaned[..35])
-        } else {
-            cleaned.to_string()
-        }
+        truncate_summary_text(cleaned)
     }
 }
 
@@ -490,15 +513,13 @@ pub fn render_spinner_spans(
         SpinnerStyle::DualPillars => {
             let spinner_idx = ((millis / 120) as usize) % BRAND_SPINNER_FRAMES.len();
             let (left_glyph, right_glyph) = BRAND_SPINNER_FRAMES[spinner_idx];
-            let left_color = if left_glyph == "▰" {
-                theme.brand_accent
-            } else {
-                theme.muted
+            let left_color = match left_glyph {
+                "▰" => theme.brand_accent,
+                _ => theme.muted,
             };
-            let right_color = if right_glyph == "▰" {
-                theme.info
-            } else {
-                theme.muted
+            let right_color = match right_glyph {
+                "▰" => theme.info,
+                _ => theme.muted,
             };
             vec![
                 Span::styled(
@@ -538,7 +559,9 @@ pub fn render_spinner_spans(
             let idx = ((millis / 80) as usize) % BRAILLE_SPINNER_FRAMES.len();
             vec![Span::styled(
                 format!("{}  ", BRAILLE_SPINNER_FRAMES[idx]),
-                Style::default().fg(theme.brand_accent).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.brand_accent)
+                    .add_modifier(Modifier::BOLD),
             )]
         }
         SpinnerStyle::CornerAngles => {
@@ -580,10 +603,26 @@ pub fn render_live_activity_line(
             theme.brand_accent,
             theme.brand_white,
         ),
-        AgentActivity::Working => ("Working...".to_string(), theme.brand_accent, theme.brand_white),
-        AgentActivity::Responding => ("Generating response...".to_string(), theme.info, theme.brand_white),
-        AgentActivity::Generating => ("Generating response...".to_string(), theme.info, theme.brand_white),
-        AgentActivity::Planning => ("Planning next steps...".to_string(), theme.highlight, theme.brand_white),
+        AgentActivity::Working => (
+            "Working...".to_string(),
+            theme.brand_accent,
+            theme.brand_white,
+        ),
+        AgentActivity::Responding => (
+            "Generating response...".to_string(),
+            theme.info,
+            theme.brand_white,
+        ),
+        AgentActivity::Generating => (
+            "Generating response...".to_string(),
+            theme.info,
+            theme.brand_white,
+        ),
+        AgentActivity::Planning => (
+            "Planning next steps...".to_string(),
+            theme.highlight,
+            theme.brand_white,
+        ),
         AgentActivity::Writing { target } => (
             format!("Writing {}...", target),
             theme.success,
@@ -594,12 +633,16 @@ pub fn render_live_activity_line(
             theme.warning,
             theme.brand_white,
         ),
-        AgentActivity::InternetResearch { query } => {
-            (format!("Searching web: \"{}\"...", query), theme.info, theme.brand_white)
-        }
-        AgentActivity::DeepResearch { query } => {
-            (format!("Deep research: \"{}\"...", query), theme.info, theme.brand_white)
-        }
+        AgentActivity::InternetResearch { query } => (
+            format!("Searching web: \"{}\"...", query),
+            theme.info,
+            theme.brand_white,
+        ),
+        AgentActivity::DeepResearch { query } => (
+            format!("Deep research: \"{}\"...", query),
+            theme.info,
+            theme.brand_white,
+        ),
         AgentActivity::RepoResearch { target } => (
             format!("Searching codebase: {}...", target),
             theme.info,
