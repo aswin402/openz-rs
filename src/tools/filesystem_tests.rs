@@ -514,3 +514,70 @@ async fn test_post_edit_hashline_window_and_structural_diagnostics() -> Result<(
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())
 }
+
+#[tokio::test]
+async fn test_replace_lines_atomic_multi_hunk_bottom_up_and_patch_hashline_strip() -> Result<()> {
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_multi_hunk_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir)?;
+    let file_path = temp_dir.join("ledger.rs");
+
+    let initial = "pub struct Ledger {\n    pub balance: i64,\n    pub fee_bps: u16,\n}\n\nimpl Ledger {\n    pub fn apply(&mut self, amount: i64) -> i64 {\n        let fee = (amount * self.fee_bps as i64) / 10_000;\n        self.balance += amount - fee;\n        self.balance\n    }\n}\n";
+    std::fs::write(&file_path, initial)?;
+
+    let hash_line_8 = line_content_hash("        let fee = (amount * self.fee_bps as i64) / 10_000;");
+    let hash_line_9 = line_content_hash("        self.balance += amount - fee;");
+
+    // Apply two hunks in top-to-bottom order where hunk 1 expands 1 line into 2 lines;
+    // hunk 2 still uses pre-edit line 9 and hash_line_9 and must not shift!
+    let res = ReplaceLinesTool
+        .call(&serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "edits": [
+                {
+                    "start_line": 8,
+                    "end_line": 8,
+                    "expected_hash": hash_line_8,
+                    "replacement": "        // fee in hundred-thousandths\n        let fee = (amount * self.fee_bps as i64) / 100_000;"
+                },
+                {
+                    "start_line": 9,
+                    "end_line": 9,
+                    "expected_hash": hash_line_9,
+                    "replacement": "        // apply net amount\n        self.balance += amount - fee;"
+                }
+            ]
+        }))
+        .await?;
+    assert_eq!(res["status"], "success");
+    assert_eq!(res["hunks_applied"], 2);
+    assert_eq!(res["diagnostics"]["balanced_delimiters"], true);
+    let updated = std::fs::read_to_string(&file_path)?;
+    assert!(updated.contains("// fee in hundred-thousandths\n        let fee = (amount * self.fee_bps as i64) / 100_000;\n        // apply net amount\n        self.balance += amount - fee;"));
+
+    // Overlapping hunks are rejected before writing
+    let overlap_err = ReplaceLinesTool
+        .call(&serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "edits": [
+                { "start_line": 2, "end_line": 4, "replacement": "// a" },
+                { "start_line": 3, "end_line": 5, "replacement": "// b" }
+            ]
+        }))
+        .await;
+    assert!(overlap_err.is_err());
+
+    // patch_file exact search-replace strips accidental LINE:HASH| prefix from replacement
+    let patch_res = PatchFileTool
+        .call(&serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "target": "    pub fee_bps: u16,",
+            "replacement": "3:cb25|     pub fee_bps: u32,"
+        }))
+        .await?;
+    assert_eq!(patch_res["status"], "success");
+    assert!(std::fs::read_to_string(&file_path)?.contains("    pub fee_bps: u32,"));
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(())
+}

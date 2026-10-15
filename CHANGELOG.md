@@ -1,5 +1,36 @@
-## [0.0.257] - 2026-10-15
-### v0.0.257 (Latest Release)
+## [0.0.258] - 2026-10-15
+### v0.0.258 (Latest Release)
+
+#### Added
+- **Lean Batch-Only Envelope in `ToolCatalogTool` ([`src/tools/self_management/catalog.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog.rs))**: When `tool_catalog` is invoked purely for `batch_execute` without discovery filters (`query`, `domain`, `risk`, `only_exposed`, `include_schema`), the full 260-tool `"tools"` array is omitted (`"tools_omitted": true`), keeping `batch_results` inline without triggering the `>4,000` char context compactor.
+- **Zero-Noise `scope_context` Auto-Scoping Before Edits ([`src/agent/agent_loop/run/artifacts.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/artifacts.rs), [`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs))**: Added `should_record_auto_scope_result()` and canonical parent directory deduplication in `auto_scope_context_before_edit()` (`0` `if/else`, `0` `regex`) so sibling file edits in the same directory share the scope check and `"status": "empty"` scope checks are never injected into the session transcript.
+- **Atomic Bottom-Up Multi-Hunk Edits in `ReplaceLinesTool` & Hashline Prefix Cleaning in `PatchFileTool` ([`src/tools/filesystem.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem.rs))**: Added `ReplaceLinesEdit` and `resolve_replace_lines_hunk()` (`0` `if/else`, `0` `regex`) so `replace_lines` accepts an `edits` array resolved against pre-edit line coordinates and applied atomically bottom-up (with overlap detection and `"hunks_applied"` reporting), and stripped accidental `LINE:HASH| ` prefixes from `replacement` in `apply_single_search_replace()` exact and fallback branches.
+
+#### Documentation
+- **Synchronized Release Manifests**: Updated [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md), and [`CHANGELOG.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/CHANGELOG.md) to `0.0.258`.
+
+### Sources & Inspirations
+- **[Inspiration]**: Oh My Pi (`omp`) atomic multi-hunk `Hashline` editing, Claude Code / Codex zero-noise pre-edit context scoping, and Prime Agent compact batch execution envelopes.
+
+- **Ideas**:
+  - Lean Batch Execution Envelopes, Zero-Noise Pre-Edit Context Scoping, and Atomic Bottom-Up Multi-Hunk Line Replacements.
+- **Inspirations**:
+  - Oh My Pi (`omp`), Claude Code, OpenAI Codex CLI, and Prime Agent (`0` `if/else`, `0` `regex`).
+- **Sources & References**:
+  - [`src/tools/self_management/catalog.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog.rs), [`src/tools/self_management/catalog_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog_tests.rs)
+  - [`src/agent/agent_loop/run/artifacts.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/artifacts.rs), [`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs), [`src/agent/agent_loop/run/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/tests.rs)
+  - [`src/tools/filesystem.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem.rs), [`src/tools/filesystem_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem_tests.rs)
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Synchronous SemVer increment to `0.0.258`.
+- **Details & Metrics**:
+  - Achieved `0` `if/else` statements and `0` `regex` across all added/modified lines in `catalog.rs`, `artifacts.rs`, `run/mod.rs`, and `filesystem.rs`.
+  - Maintained the 260 registered native tools invariant (`test_native_tool_registration_names`).
+- **Verification**:
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 2 -- test_replace_lines_atomic_multi_hunk_bottom_up_and_patch_hashline_strip`: PASS (1/1).
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 2 -- sibling_files_share_directory_scope_and_empty_scope_is_suppressed`: PASS (1/1).
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 2 -- test_tool_catalog_batch_execute_concurrent_read_only_mode`: PASS (1/1).
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 2 -- release_version_surfaces_match_cargo_package_version`: PASS (1/1).
+
+### v0.0.257 — 2026-10-15
 
 #### Added
 - **Post-Edit `Hashline` Window & Structural Diagnostics in `write_file`, `patch_file`, and `replace_lines` ([`src/tools/filesystem.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem.rs))**: Added `format_hashline_window()`, `changed_line_bounds()`, and `compute_structural_diagnostics()` (`0` `if/else`, `0` `regex`) to return fresh `LINE:HASH| ` anchors (`updated_window`) around modified lines along with immediate delimiter-balance (`brace_delta`, `paren_delta`, `bracket_delta`, ignoring comments and string literals) and conflict-marker checks (`diagnostics`). Also stripped copied `Hashline` prefixes inside `ReplaceLinesTool` `replacement` lines.

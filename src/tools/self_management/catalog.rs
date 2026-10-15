@@ -508,6 +508,12 @@ impl Tool for ToolCatalogTool {
             });
         }
 
+        let is_pure_batch_call = !batch_results.is_empty()
+            && query_str.is_none()
+            && domain_filter.is_none()
+            && risk_filter.is_none()
+            && !only_exposed
+            && !include_schema;
         let mut response = serde_json::json!({
             "success": true,
             "tool_count": entries.len(),
@@ -515,8 +521,15 @@ impl Tool for ToolCatalogTool {
             "selected_domains": self.registry.selected_domains_for_prompt(prompt),
             "domains": domains,
             "risks": risks,
-            "tools": entries
         });
+        match is_pure_batch_call {
+            true => {
+                response["tools_omitted"] = serde_json::json!(true);
+            }
+            false => {
+                response["tools"] = serde_json::json!(entries);
+            }
+        }
         (!mounted_tools.is_empty()).then(|| {
             response["mounted"] = serde_json::json!(true);
             response["mounted_tools"] = serde_json::json!(mounted_tools);

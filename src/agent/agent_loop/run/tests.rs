@@ -615,3 +615,31 @@ async fn parallel_safe_read_only_tools_prefetch_concurrently_while_write_tools_e
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
 
+#[test]
+fn sibling_files_share_directory_scope_and_empty_scope_is_suppressed() {
+    let mut scoped = std::collections::HashSet::new();
+    let first_call = crate::providers::ToolCallRequest {
+        id: "call_main".to_string(),
+        name: "patch_file".to_string(),
+        arguments: json!({ "path": "src/main.rs", "patch": "---" }),
+    };
+    let first_normalized = auto_scope_context_before_edit(first_call, &mut scoped);
+    assert_eq!(first_normalized.name, "scope_context");
+
+    let sibling_call = crate::providers::ToolCallRequest {
+        id: "call_session".to_string(),
+        name: "replace_lines".to_string(),
+        arguments: json!({ "path": "src/session.rs", "start_line": 1, "end_line": 1, "replacement": "// ok" }),
+    };
+    let sibling_normalized = auto_scope_context_before_edit(sibling_call, &mut scoped);
+    assert_eq!(sibling_normalized.name, "replace_lines");
+
+    assert!(!should_record_auto_scope_result(&json!({
+        "status": "empty",
+        "content": "No context files found"
+    })));
+    assert!(should_record_auto_scope_result(&json!({
+        "status": "success",
+        "content": "# AGENTS.md"
+    })));
+}

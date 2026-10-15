@@ -20,6 +20,7 @@ mod tests;
 use self::artifacts::{
     auto_adjust_tool_call_for_user_intent, auto_device_inventory_suggest_call_after_open_failure,
     auto_open_artifact_call_after_tool, auto_scope_context_before_edit,
+    should_record_auto_scope_result,
 };
 use self::research::{
     direct_research_url, fresh_research_brief_blocks_lookup, is_research_lookup_tool,
@@ -674,13 +675,15 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     .await
                     {
                         Some(scope_result) => {
-                            ctx.tools_used.push(pre_scope_call.name.clone());
-                            super::transcript::append_auto_tool_result(
-                                &mut tool_results,
-                                &mut assistant_tool_calls_json,
-                                &pre_scope_call,
-                                scope_result,
-                            );
+                            should_record_auto_scope_result(&scope_result).then(|| {
+                                ctx.tools_used.push(pre_scope_call.name.clone());
+                                super::transcript::append_auto_tool_result(
+                                    &mut tool_results,
+                                    &mut assistant_tool_calls_json,
+                                    &pre_scope_call,
+                                    scope_result,
+                                );
+                            });
                         }
                         None => {}
                     }

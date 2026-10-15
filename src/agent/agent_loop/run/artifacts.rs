@@ -101,40 +101,57 @@ pub(super) fn scope_context_target_for_edit_path(target_path: &str) -> String {
     trimmed.to_string()
 }
 
+pub(super) fn should_record_auto_scope_result(scope_result: &serde_json::Value) -> bool {
+    scope_result.get("status").and_then(|v| v.as_str()) != Some("empty")
+}
+
 pub(super) fn auto_scope_context_before_edit(
     call: crate::providers::ToolCallRequest,
     scoped_edit_paths: &mut std::collections::HashSet<String>,
 ) -> crate::providers::ToolCallRequest {
-    let Some(edit_path) = edit_tool_target_path(&call.name, &call.arguments) else {
-        return call;
-    };
-    let target_path = scope_context_target_for_edit_path(&edit_path);
-    let canonical_target = std::fs::canonicalize(&target_path)
-        .map(|p| p.to_string_lossy().to_string())
-        .unwrap_or_else(|_| {
-            crate::config::path_policy::canonicalize_with_missing_leaf(
-                &crate::config::loader::resolve_path(&target_path),
-            )
-            .to_string_lossy()
-            .to_string()
-        });
+    match edit_tool_target_path(&call.name, &call.arguments) {
+        None => call,
+        Some(edit_path) => {
+            let target_path = scope_context_target_for_edit_path(&edit_path);
+            let canonical_target = std::fs::canonicalize(&target_path)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| {
+                    crate::config::path_policy::canonicalize_with_missing_leaf(
+                        &crate::config::loader::resolve_path(&target_path),
+                    )
+                    .to_string_lossy()
+                    .to_string()
+                });
+            let canonical_dir = (!std::path::Path::new(&canonical_target).is_dir())
+                .then(|| {
+                    std::path::Path::new(&canonical_target)
+                        .parent()
+                        .map(|p| p.to_string_lossy().to_string())
+                })
+                .flatten()
+                .filter(|s| !s.is_empty());
 
-    let already_scoped = scoped_edit_paths.contains(&target_path)
-        || scoped_edit_paths.contains(&canonical_target);
-    scoped_edit_paths.insert(target_path.clone());
-    scoped_edit_paths.insert(canonical_target);
+            let already_scoped = scoped_edit_paths.contains(&target_path)
+                || scoped_edit_paths.contains(&canonical_target)
+                || canonical_dir
+                    .as_ref()
+                    .is_some_and(|dir| scoped_edit_paths.contains(dir));
+            scoped_edit_paths.insert(target_path.clone());
+            scoped_edit_paths.insert(canonical_target);
+            canonical_dir.map(|dir| scoped_edit_paths.insert(dir));
 
-    if already_scoped {
-        return call;
-    }
-
-    crate::providers::ToolCallRequest {
-        id: call.id,
-        name: "scope_context".to_string(),
-        arguments: serde_json::json!({
-            "target_path": target_path,
-            "auto_reason": "before_edit"
-        }),
+            match already_scoped {
+                true => call,
+                false => crate::providers::ToolCallRequest {
+                    id: call.id,
+                    name: "scope_context".to_string(),
+                    arguments: serde_json::json!({
+                        "target_path": target_path,
+                        "auto_reason": "before_edit"
+                    }),
+                },
+            }
+        }
     }
 }
 

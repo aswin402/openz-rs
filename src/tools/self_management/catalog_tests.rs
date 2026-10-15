@@ -281,11 +281,29 @@ async fn test_tool_catalog_batch_execute_concurrent_read_only_mode() {
     assert_eq!(res["success"].as_bool(), Some(true));
     assert_eq!(res["batch_executed_count"].as_u64(), Some(2));
     assert_eq!(res["batch_execution_mode"], "concurrent");
+    assert_eq!(res["tools_omitted"].as_bool(), Some(true));
+    assert!(res.get("tools").is_none());
     let batch_results = res["batch_results"].as_array().unwrap();
     assert_eq!(batch_results[0]["tool"], "read_file");
     assert_eq!(batch_results[0]["status"], "success");
     assert_eq!(batch_results[1]["tool"], "list_dir");
     assert_eq!(batch_results[1]["status"], "success");
+
+    let combined = catalog
+        .call(&serde_json::json!({
+            "query": "read file",
+            "batch_execute": [
+                {
+                    "tool": "read_file",
+                    "arguments": {
+                        "path": sample_file.to_str().unwrap()
+                    }
+                }
+            ]
+        }))
+        .await
+        .unwrap();
+    assert!(combined.get("tools").and_then(|v| v.as_array()).is_some());
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }

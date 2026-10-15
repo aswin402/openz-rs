@@ -233,13 +233,22 @@ fn parse_conflict_marker_edits(patch_text: &str) -> Vec<SearchReplaceEdit> {
 }
 
 fn apply_single_search_replace(content: &str, edit: &SearchReplaceEdit) -> Result<String> {
+    let mut cleaned_replacement = edit
+        .replacement
+        .lines()
+        .map(strip_hashline_line_prefix)
+        .collect::<Vec<&str>>()
+        .join("\n");
+    (edit.replacement.ends_with('\n') && !cleaned_replacement.ends_with('\n'))
+        .then(|| cleaned_replacement.push('\n'));
+
     let exact_replaced = (!edit.target.is_empty())
         .then(|| content.find(&edit.target))
         .flatten()
         .map(|pos| {
-            let mut out = String::with_capacity(content.len() + edit.replacement.len());
+            let mut out = String::with_capacity(content.len() + cleaned_replacement.len());
             out.push_str(&content[..pos]);
-            out.push_str(&edit.replacement);
+            out.push_str(&cleaned_replacement);
             out.push_str(&content[pos + edit.target.len()..]);
             out
         });
@@ -513,16 +522,8 @@ struct PatchFileArgs {
     edits: Option<Vec<SearchReplaceEdit>>,
 }
 
-#[derive(Deserialize)]
-struct ReplaceLinesArgs {
-    #[serde(
-        alias = "file_path",
-        alias = "filePath",
-        alias = "target_file",
-        alias = "targetFile",
-        alias = "file"
-    )]
-    path: String,
+#[derive(Deserialize, Clone)]
+struct ReplaceLinesEdit {
     #[serde(
         deserialize_with = "deserialize_flexible_usize",
         alias = "startLine",
@@ -562,6 +563,62 @@ struct ReplaceLinesArgs {
         alias = "oldText"
     )]
     anchor_text: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ReplaceLinesArgs {
+    #[serde(
+        alias = "file_path",
+        alias = "filePath",
+        alias = "target_file",
+        alias = "targetFile",
+        alias = "file"
+    )]
+    path: String,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_flexible_opt_usize",
+        alias = "startLine",
+        alias = "start",
+        alias = "from_line"
+    )]
+    start_line: Option<usize>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_flexible_opt_usize",
+        alias = "endLine",
+        alias = "end",
+        alias = "to_line"
+    )]
+    end_line: Option<usize>,
+    #[serde(
+        default,
+        alias = "content",
+        alias = "new_content",
+        alias = "newContent",
+        alias = "text",
+        alias = "code"
+    )]
+    replacement: Option<String>,
+    #[serde(
+        default,
+        alias = "expectedHash",
+        alias = "start_hash",
+        alias = "startHash",
+        alias = "hash"
+    )]
+    expected_hash: Option<String>,
+    #[serde(
+        default,
+        alias = "anchorText",
+        alias = "target_text",
+        alias = "targetText",
+        alias = "old_text",
+        alias = "oldText"
+    )]
+    anchor_text: Option<String>,
+    #[serde(default, alias = "hunks", alias = "replacements")]
+    edits: Option<Vec<ReplaceLinesEdit>>,
 }
 
 #[derive(Deserialize)]
@@ -1280,6 +1337,86 @@ impl Tool for PatchFileTool {
     }
 }
 
+fn resolve_replace_lines_hunk(
+    lines: &[String],
+    path: &std::path::Path,
+    edit: &ReplaceLinesEdit,
+) -> Result<(usize, usize, bool, Vec<String>)> {
+    let start_line = edit.start_line.max(1);
+    let end_line = edit.end_line.max(1);
+
+    (start_line <= end_line).then_some(()).ok_or_else(|| {
+        anyhow!(
+            "Invalid line range: {} to {} (start_line cannot be greater than end_line)",
+            start_line,
+            end_line
+        )
+    })?;
+
+    let requested_start_idx = start_line - 1;
+    let requested_span = end_line - start_line + 1;
+
+    let anchor_resolved = match edit.anchor_text.as_deref().filter(|s| !s.is_empty()) {
+        Some(anchor) => Some(
+            find_line_span_by_anchor(lines, requested_start_idx, anchor).ok_or_else(|| {
+                anyhow!(
+                    "anchor_text not found near line {} in {:?}",
+                    start_line,
+                    path
+                )
+            })?,
+        ),
+        None => None,
+    };
+
+    let hash_resolved = match (
+        anchor_resolved,
+        edit.expected_hash.as_deref().filter(|s| !s.is_empty()),
+    ) {
+        (Some(span), _) => Some(span),
+        (None, Some(expected_hash)) => Some(
+            find_line_span_by_hash(lines, requested_start_idx, requested_span, expected_hash)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "expected_hash '{}' did not match line {} or nearby lines in {:?}",
+                        expected_hash,
+                        start_line,
+                        path
+                    )
+                })?,
+        ),
+        (None, None) => None,
+    };
+
+    let (start_idx, end_idx, relocated) = match hash_resolved {
+        Some((resolved_start, resolved_end)) => (
+            resolved_start,
+            resolved_end,
+            resolved_start != requested_start_idx,
+        ),
+        None => {
+            (start_line <= lines.len() + 1)
+                .then_some(())
+                .ok_or_else(|| {
+                    anyhow!(
+                        "start_line {} is beyond file line count {}",
+                        start_line,
+                        lines.len()
+                    )
+                })?;
+            (requested_start_idx, end_line.min(lines.len()), false)
+        }
+    };
+
+    let cleaned_replacement_lines: Vec<String> = edit
+        .replacement
+        .lines()
+        .map(|s| strip_hashline_line_prefix(s).to_string())
+        .collect();
+
+    Ok((start_idx, end_idx, relocated, cleaned_replacement_lines))
+}
+
 pub struct ReplaceLinesTool;
 
 #[async_trait::async_trait]
@@ -1289,7 +1426,7 @@ impl Tool for ReplaceLinesTool {
     }
 
     fn description(&self) -> &str {
-        "Replace a specific range of lines (1-indexed, inclusive) in a file with new content. Supports optional expected_hash (from read_file include_hashes) or anchor_text to automatically relocate drifted line numbers."
+        "Replace one or more specific ranges of lines (1-indexed, inclusive) in a file with new content. Supports optional expected_hash (from read_file include_hashes) or anchor_text to automatically relocate drifted line numbers, and optional 'edits' array for atomic bottom-up multi-hunk replacements."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -1297,13 +1434,28 @@ impl Tool for ReplaceLinesTool {
             "type": "object",
             "properties": {
                 "path": { "type": "string", "description": "Absolute or relative path to the file to edit. Aliases accepted: file_path, filePath." },
-                "start_line": { "type": "integer", "description": "Start line number (1-indexed, inclusive). Alias accepted: startLine." },
-                "end_line": { "type": "integer", "description": "End line number (1-indexed, inclusive). Alias accepted: endLine." },
-                "replacement": { "type": "string", "description": "The new replacement text content. Alias accepted: content." },
+                "start_line": { "type": "integer", "description": "Start line number (1-indexed, inclusive) for single-hunk mode. Alias accepted: startLine." },
+                "end_line": { "type": "integer", "description": "End line number (1-indexed, inclusive) for single-hunk mode. Alias accepted: endLine." },
+                "replacement": { "type": "string", "description": "The new replacement text content for single-hunk mode. Alias accepted: content." },
                 "expected_hash": { "type": "string", "description": "Optional 4-char FNV-1a hex hash of start_line (from read_file with include_hashes=true) to verify content and auto-relocate drifted line numbers." },
-                "anchor_text": { "type": "string", "description": "Optional expected original line(s) at the target range to verify content and auto-relocate drifted line numbers." }
+                "anchor_text": { "type": "string", "description": "Optional expected original line(s) at the target range to verify content and auto-relocate drifted line numbers." },
+                "edits": {
+                    "type": "array",
+                    "description": "Optional list of line-range edit hunks [{start_line, end_line, replacement, expected_hash, anchor_text}] resolved against pre-edit line numbers and applied atomically bottom-up.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "start_line": { "type": "integer" },
+                            "end_line": { "type": "integer" },
+                            "replacement": { "type": "string" },
+                            "expected_hash": { "type": "string" },
+                            "anchor_text": { "type": "string" }
+                        },
+                        "required": ["start_line", "end_line", "replacement"]
+                    }
+                }
             },
-            "required": ["path", "start_line", "end_line", "replacement"]
+            "required": ["path"]
         })
     }
 
@@ -1311,15 +1463,23 @@ impl Tool for ReplaceLinesTool {
         let collapsed = collapse_alias_groups(arguments, REPLACE_LINES_GROUPS);
         let args: ReplaceLinesArgs = serde_json::from_value(collapsed)
             .map_err(|e| anyhow!("Invalid replace_lines arguments: {}", e))?;
-        let start_line = args.start_line.max(1);
-        let end_line = args.end_line.max(1);
-        let replacement = args.replacement;
 
-        (start_line <= end_line).then_some(()).ok_or_else(|| {
+        let mut raw_edits: Vec<ReplaceLinesEdit> = args.edits.unwrap_or_default();
+        args.start_line
+            .zip(args.end_line)
+            .zip(args.replacement)
+            .map(|((start_line, end_line), replacement)| {
+                raw_edits.push(ReplaceLinesEdit {
+                    start_line,
+                    end_line,
+                    replacement,
+                    expected_hash: args.expected_hash,
+                    anchor_text: args.anchor_text,
+                });
+            });
+        (!raw_edits.is_empty()).then_some(()).ok_or_else(|| {
             anyhow!(
-                "Invalid line range: {} to {} (start_line cannot be greater than end_line)",
-                start_line,
-                end_line
+                "replace_lines requires either (start_line, end_line, replacement) or a non-empty 'edits' array"
             )
         })?;
 
@@ -1331,73 +1491,46 @@ impl Tool for ReplaceLinesTool {
 
         let lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
 
-        let requested_start_idx = start_line - 1;
-        let requested_span = end_line - start_line + 1;
+        let mut resolved_hunks: Vec<(usize, usize, bool, Vec<String>)> = raw_edits
+            .iter()
+            .map(|edit| resolve_replace_lines_hunk(&lines, &path, edit))
+            .collect::<Result<Vec<_>>>()?;
 
-        let anchor_resolved = match args.anchor_text.as_deref().filter(|s| !s.is_empty()) {
-            Some(anchor) => Some(
-                find_line_span_by_anchor(&lines, requested_start_idx, anchor).ok_or_else(|| {
-                    anyhow!(
-                        "anchor_text not found near line {} in {:?}",
-                        start_line,
-                        path
-                    )
-                })?,
-            ),
-            None => None,
-        };
+        resolved_hunks.sort_by_key(|hunk| (hunk.0, hunk.1));
+        let has_overlap = resolved_hunks
+            .windows(2)
+            .any(|pair| pair[0].1 > pair[1].0);
+        (!has_overlap).then_some(()).ok_or_else(|| {
+            anyhow!(
+                "Overlapping line ranges in replace_lines 'edits' array; merge overlapping ranges into a single hunk"
+            )
+        })?;
 
-        let hash_resolved = match (
-            anchor_resolved,
-            args.expected_hash.as_deref().filter(|s| !s.is_empty()),
-        ) {
-            (Some(span), _) => Some(span),
-            (None, Some(expected_hash)) => Some(
-                find_line_span_by_hash(&lines, requested_start_idx, requested_span, expected_hash)
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "expected_hash '{}' did not match line {} or nearby lines in {:?}",
-                            expected_hash,
-                            start_line,
-                            path
-                        )
-                    })?,
-            ),
-            (None, None) => None,
-        };
+        let first_start_idx = resolved_hunks.first().map(|h| h.0).unwrap_or(0);
+        let last_end_idx = resolved_hunks.last().map(|h| h.1).unwrap_or(0);
+        let any_relocated = resolved_hunks.iter().any(|h| h.2);
+        let total_lines_modified: usize = resolved_hunks.iter().map(|h| h.1 - h.0).sum();
+        let hunks_applied = resolved_hunks.len();
+        let single_replacement_len = resolved_hunks
+            .first()
+            .map(|h| h.3.len())
+            .unwrap_or(0);
 
-        let (start_idx, end_idx, relocated) = match hash_resolved {
-            Some((resolved_start, resolved_end)) => (
-                resolved_start,
-                resolved_end,
-                resolved_start != requested_start_idx,
-            ),
-            None => {
-                (start_line <= lines.len() + 1)
-                    .then_some(())
-                    .ok_or_else(|| {
-                        anyhow!(
-                            "start_line {} is beyond file line count {}",
-                            start_line,
-                            lines.len()
-                        )
-                    })?;
-                (requested_start_idx, end_line.min(lines.len()), false)
-            }
-        };
-
-        let cleaned_replacement_lines: Vec<String> = replacement
-            .lines()
-            .map(|s| strip_hashline_line_prefix(s).to_string())
-            .collect();
-        let replacement_line_count = cleaned_replacement_lines.len();
-
-        let mut new_lines = Vec::new();
-        new_lines.extend(lines[..start_idx].iter().cloned());
-        new_lines.extend(cleaned_replacement_lines);
-        (end_idx < lines.len()).then(|| {
-            new_lines.extend(lines[end_idx..].iter().cloned());
-        });
+        let new_lines = resolved_hunks.iter().rev().fold(
+            lines.clone(),
+            |current_lines, (start_idx, end_idx, _, replacement_lines)| {
+                let mut updated = Vec::with_capacity(
+                    current_lines.len().saturating_sub(end_idx - start_idx)
+                        + replacement_lines.len(),
+                );
+                updated.extend(current_lines[..*start_idx].iter().cloned());
+                updated.extend(replacement_lines.iter().cloned());
+                (*end_idx < current_lines.len()).then(|| {
+                    updated.extend(current_lines[*end_idx..].iter().cloned());
+                });
+                updated
+            },
+        );
 
         let mut new_content = new_lines.join("\n");
         let preserve_trailing_newline = content.ends_with('\n') && !new_content.ends_with('\n');
@@ -1406,22 +1539,21 @@ impl Tool for ReplaceLinesTool {
         fs::write(&path, &new_content)
             .with_context(|| format!("Failed to write to file at {:?}", path))?;
 
-        let updated_window = format_hashline_window(
-            &new_lines,
-            start_idx,
-            start_idx + replacement_line_count,
-            8,
-            48,
-        );
+        let (win_start, win_end) = match hunks_applied == 1 {
+            true => (first_start_idx, first_start_idx + single_replacement_len),
+            false => changed_line_bounds(&content, &new_content),
+        };
+        let updated_window = format_hashline_window(&new_lines, win_start, win_end, 8, 48);
         let diagnostics = compute_structural_diagnostics(&new_content);
 
         Ok(serde_json::json!({
             "status": "success",
             "path": path.to_string_lossy(),
-            "applied_start_line": start_idx + 1,
-            "applied_end_line": end_idx,
-            "relocated": relocated,
-            "lines_modified": end_idx - start_idx,
+            "applied_start_line": first_start_idx + 1,
+            "applied_end_line": last_end_idx,
+            "relocated": any_relocated,
+            "lines_modified": total_lines_modified,
+            "hunks_applied": hunks_applied,
             "new_line_count": new_lines.len(),
             "updated_window": updated_window,
             "diagnostics": diagnostics
