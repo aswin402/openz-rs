@@ -44,15 +44,14 @@ impl DiskItem {
     }
 
     fn status(&self) -> DiskStatus {
-        let Some(size) = self.size_bytes else {
-            return DiskStatus::Missing;
+        let size = match self.size_bytes {
+            Some(size) => size,
+            None => return DiskStatus::Missing,
         };
-        if size >= self.critical_bytes {
-            DiskStatus::Critical
-        } else if size >= self.warn_bytes {
-            DiskStatus::Warn
-        } else {
-            DiskStatus::Ok
+        match (size >= self.critical_bytes, size >= self.warn_bytes) {
+            (true, _) => DiskStatus::Critical,
+            (false, true) => DiskStatus::Warn,
+            (false, false) => DiskStatus::Ok,
         }
     }
 }
@@ -69,10 +68,9 @@ fn format_bytes(bytes: u64) -> String {
         value /= 1024.0;
         unit += 1;
     }
-    if unit == 0 {
-        format!("{} {}", bytes, UNITS[unit])
-    } else {
-        format!("{value:.1} {}", UNITS[unit])
+    match unit {
+        0 => format!("{} {}", bytes, UNITS[unit]),
+        _ => format!("{value:.1} {}", UNITS[unit]),
     }
 }
 
@@ -162,30 +160,38 @@ fn scrub_secrets_in_runtime_state(data_dir: &Path) -> Result<SecretScrubReport> 
     let mut report = SecretScrubReport::default();
     let mut stack = scrub_secret_roots(data_dir);
     while let Some(path) = stack.pop() {
-        let Ok(meta) = std::fs::symlink_metadata(&path) else {
-            continue;
+        let meta = match std::fs::symlink_metadata(&path) {
+            Ok(meta) => meta,
+            Err(_) => continue,
         };
-        if meta.file_type().is_symlink() {
-            continue;
-        }
-        if meta.is_dir() {
-            let Ok(entries) = std::fs::read_dir(&path) else {
+        match (
+            meta.file_type().is_symlink(),
+            meta.is_dir(),
+            meta.is_file(),
+        ) {
+            (true, _, _) => continue,
+            (false, true, _) => {
+                let entries = match std::fs::read_dir(&path) {
+                    Ok(entries) => entries,
+                    Err(_) => continue,
+                };
+                for entry in entries.flatten() {
+                    stack.push(entry.path());
+                }
                 continue;
-            };
-            for entry in entries.flatten() {
-                stack.push(entry.path());
             }
-            continue;
-        }
-        if !meta.is_file() {
-            continue;
+            (false, false, false) => continue,
+            (false, false, true) => {}
         }
 
         report.files_scanned = report.files_scanned.saturating_add(1);
         let result = scrub_secret_file(&path)?;
-        if result.replacements > 0 {
-            report.files_changed = report.files_changed.saturating_add(1);
-            report.replacements = report.replacements.saturating_add(result.replacements);
+        match result.replacements > 0 {
+            true => {
+                report.files_changed = report.files_changed.saturating_add(1);
+                report.replacements = report.replacements.saturating_add(result.replacements);
+            }
+            false => {}
         }
     }
     Ok(report)
@@ -193,28 +199,29 @@ fn scrub_secrets_in_runtime_state(data_dir: &Path) -> Result<SecretScrubReport> 
 
 fn path_size_bytes(path: &Path) -> Option<u64> {
     let metadata = std::fs::symlink_metadata(path).ok()?;
-    if metadata.is_file() {
-        return Some(metadata.len());
-    }
-    if !metadata.is_dir() {
-        return Some(0);
+    match (metadata.is_file(), metadata.is_dir()) {
+        (true, _) => return Some(metadata.len()),
+        (false, false) => return Some(0),
+        (false, true) => {}
     }
 
     let mut total = 0u64;
     let mut stack = vec![path.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            let Ok(meta) = std::fs::symlink_metadata(&path) else {
-                continue;
+            let meta = match std::fs::symlink_metadata(&path) {
+                Ok(meta) => meta,
+                Err(_) => continue,
             };
-            if meta.is_dir() {
-                stack.push(path);
-            } else if meta.is_file() {
-                total = total.saturating_add(meta.len());
+            match (meta.is_dir(), meta.is_file()) {
+                (true, _) => stack.push(path),
+                (false, true) => total = total.saturating_add(meta.len()),
+                (false, false) => {}
             }
         }
     }
@@ -227,11 +234,13 @@ fn available_bytes(path: &Path) -> Option<u64> {
     let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
     let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
     let rc = unsafe { libc::statvfs(c_path.as_ptr(), stat.as_mut_ptr()) };
-    if rc != 0 {
-        return None;
+    match rc == 0 {
+        true => {
+            let stat = unsafe { stat.assume_init() };
+            Some(stat.f_bavail.saturating_mul(stat.f_frsize))
+        }
+        false => None,
     }
-    let stat = unsafe { stat.assume_init() };
-    Some(stat.f_bavail.saturating_mul(stat.f_frsize))
 }
 
 #[cfg(not(unix))]
@@ -242,8 +251,9 @@ fn available_bytes(_path: &Path) -> Option<u64> {
 fn nearest_existing_path(path: &Path) -> &Path {
     let mut current = path;
     while !current.exists() {
-        let Some(parent) = current.parent() else {
-            return path;
+        let parent = match current.parent() {
+            Some(parent) => parent,
+            None => return path,
         };
         current = parent;
     }
@@ -331,10 +341,11 @@ fn print_disk_report(data_dir: &Path) {
     let mut worst = DiskStatus::Ok;
     for item in items.into_iter().map(DiskItem::measure) {
         let status = item.status();
-        if matches!(status, DiskStatus::Critical)
-            || (matches!(status, DiskStatus::Warn) && matches!(worst, DiskStatus::Ok))
-        {
-            worst = status;
+        let should_promote = matches!(status, DiskStatus::Critical)
+            || (matches!(status, DiskStatus::Warn) && matches!(worst, DiskStatus::Ok));
+        match should_promote {
+            true => worst = status,
+            false => {}
         }
         let size = item
             .size_bytes
@@ -347,10 +358,12 @@ fn print_disk_report(data_dir: &Path) {
             size,
             item.path.display()
         );
-        if matches!(status, DiskStatus::Warn | DiskStatus::Critical) {
-            if let Some(cleanup) = item.cleanup {
-                println!("      ↳ {cleanup}");
-            }
+        match (
+            matches!(status, DiskStatus::Warn | DiskStatus::Critical),
+            item.cleanup,
+        ) {
+            (true, Some(cleanup)) => println!("      ↳ {cleanup}"),
+            _ => {}
         }
     }
 
@@ -361,14 +374,18 @@ fn print_disk_report(data_dir: &Path) {
                 "   • Free space on current filesystem: {}",
                 format_bytes(bytes)
             );
-            if bytes < gib(5) {
-                println!(
-                    "🚨 Critical: less than 5 GiB free. Clean target/ or archive caches before running large builds/media tools."
-                );
-            } else if bytes < gib(20) {
-                println!(
-                    "⚠️  Warning: less than 20 GiB free. Large builds, video renders, and crawls may fail."
-                );
+            match (bytes < gib(5), bytes < gib(20)) {
+                (true, _) => {
+                    println!(
+                        "🚨 Critical: less than 5 GiB free. Clean target/ or archive caches before running large builds/media tools."
+                    );
+                }
+                (false, true) => {
+                    println!(
+                        "⚠️  Warning: less than 20 GiB free. Large builds, video renders, and crawls may fail."
+                    );
+                }
+                (false, false) => {}
             }
         }
         None => println!("   • Free space on current filesystem: unavailable on this platform"),
@@ -389,32 +406,39 @@ fn archive_stale_graph_branches(data_dir: &Path) -> usize {
     let archive_dir = data_dir.join(format!("legacy-root-backup/pruned-branches-{}", stamp));
     let mut count = 0;
 
-    if let Ok(entries) = std::fs::read_dir(data_dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if entry.path().is_file() && name.starts_with("graph_memory.db.branch") {
-                let src = entry.path();
-                let dst = archive_dir.join(&name);
-                let _ = std::fs::create_dir_all(&archive_dir);
-                if std::fs::rename(&src, &dst).is_ok() {
-                    count += 1;
+    match std::fs::read_dir(data_dir) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                match entry.path().is_file() && name.starts_with("graph_memory.db.branch") {
+                    true => {
+                        let src = entry.path();
+                        let dst = archive_dir.join(&name);
+                        let _ = std::fs::create_dir_all(&archive_dir);
+                        match std::fs::rename(&src, &dst) {
+                            Ok(()) => count += 1,
+                            Err(_) => {}
+                        }
+                    }
+                    false => {}
                 }
             }
         }
+        Err(_) => {}
     }
     count
 }
 
 /// Purges the target build cache at `target_path` and returns reclaimed bytes.
 pub fn clean_target_cache_at(target_path: &Path) -> Result<u64> {
-    if !target_path.exists() {
-        return Ok(0);
+    match target_path.exists() {
+        false => return Ok(0),
+        true => {}
     }
     let size = path_size_bytes(target_path).unwrap_or(0);
-    if target_path.is_file() {
-        std::fs::remove_file(target_path)?;
-    } else {
-        std::fs::remove_dir_all(target_path)?;
+    match target_path.is_file() {
+        true => std::fs::remove_file(target_path)?,
+        false => std::fs::remove_dir_all(target_path)?,
     }
     Ok(size)
 }
@@ -440,29 +464,35 @@ pub async fn handle_doctor(scrub_secrets: bool, clean_target: bool) -> Result<()
     // ── Step 1: Check for stray runtime DBs in the working directory ──
     let diag = loader::check_root_runtime_dbs();
 
-    if !diag.has_root_runtime_dbs() {
-        println!("✅ No stray runtime databases found in the working directory.");
-    } else {
-        println!("⚠️  Found runtime DB artifacts in the working directory:");
-        for p in &diag.found {
-            println!("   • {}", p.display());
+    match diag.has_root_runtime_dbs() {
+        false => {
+            println!("✅ No stray runtime databases found in the working directory.");
         }
-        println!();
-        println!("🔧 Relocating artifacts to the global data dir...");
-
-        let moves = loader::migrate_root_runtime_dbs();
-        if moves.is_empty() {
-            println!("ℹ️  No files were moved (already relocated or still open).");
-        } else {
-            for (from, to) in &moves {
-                println!("   ↳ {}  →  {}", from.display(), to.display());
+        true => {
+            println!("⚠️  Found runtime DB artifacts in the working directory:");
+            for p in &diag.found {
+                println!("   • {}", p.display());
             }
             println!();
-            println!(
-                "✅ Relocated {} file(s). Archived under {}/legacy-root-backup/.",
-                moves.len(),
-                data_dir.display()
-            );
+            println!("🔧 Relocating artifacts to the global data dir...");
+
+            let moves = loader::migrate_root_runtime_dbs();
+            match moves.is_empty() {
+                true => {
+                    println!("ℹ️  No files were moved (already relocated or still open).");
+                }
+                false => {
+                    for (from, to) in &moves {
+                        println!("   ↳ {}  →  {}", from.display(), to.display());
+                    }
+                    println!();
+                    println!(
+                        "✅ Relocated {} file(s). Archived under {}/legacy-root-backup/.",
+                        moves.len(),
+                        data_dir.display()
+                    );
+                }
+            }
         }
     }
     println!();
@@ -470,63 +500,68 @@ pub async fn handle_doctor(scrub_secrets: bool, clean_target: bool) -> Result<()
     // ── Step 2: Prune stale graph-memory branch databases ──
     println!("🔍 Checking for stale graph-memory branch databases...");
     let pruned = archive_stale_graph_branches(&data_dir);
-    if pruned > 0 {
-        println!(
+    match pruned {
+        0 => println!("✅ No stale graph-memory branch databases found."),
+        _ => println!(
             "✅ Archived {} stale branch database(s) to {}/legacy-root-backup/pruned-branches-*/.",
             pruned,
             data_dir.display()
-        );
-    } else {
-        println!("✅ No stale graph-memory branch databases found.");
+        ),
     }
     println!();
 
     // ── Step 3: Repair research-memory topic aliases ──
     println!("🔍 Checking research brief topic aliases...");
     match crate::tools::shared_memory::repair_research_brief_topics().await {
-        Ok(repaired) if repaired > 0 => {
+        Ok(0) => println!("✅ No research brief topic aliases needed repair."),
+        Ok(repaired) => {
             println!(
                 "✅ Repaired {} research brief topic alias(es) using saved source evidence.",
                 repaired
             );
         }
-        Ok(_) => println!("✅ No research brief topic aliases needed repair."),
         Err(err) => println!("⚠️  Research brief topic repair skipped: {err}"),
     }
     println!();
 
     // ── Step 4: Optional historical secret scrub ──
-    if scrub_secrets {
-        println!("🔐 Scrubbing historical secrets from runtime transcripts...");
-        match scrub_secrets_in_runtime_state(&data_dir) {
-            Ok(report) => {
-                println!(
-                    "✅ Secret scrub complete: {} replacement(s) across {} changed file(s), {} file(s) scanned.",
-                    report.replacements, report.files_changed, report.files_scanned
-                );
-                println!("   Config files and backups are not scanned by this action.");
+    match scrub_secrets {
+        true => {
+            println!("🔐 Scrubbing historical secrets from runtime transcripts...");
+            match scrub_secrets_in_runtime_state(&data_dir) {
+                Ok(report) => {
+                    println!(
+                        "✅ Secret scrub complete: {} replacement(s) across {} changed file(s), {} file(s) scanned.",
+                        report.replacements, report.files_changed, report.files_scanned
+                    );
+                    println!("   Config files and backups are not scanned by this action.");
+                }
+                Err(err) => println!("⚠️  Secret scrub failed: {err}"),
             }
-            Err(err) => println!("⚠️  Secret scrub failed: {err}"),
+            println!();
         }
-        println!();
+        false => {}
     }
 
     // ── Step 5: Optional target build cache cleanup ──
-    if clean_target {
-        let cwd = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
-        let target_dir = cwd.join("target");
-        println!("🧹 Cleaning build cache at {}...", target_dir.display());
-        match clean_target_cache_at(&target_dir) {
-            Ok(reclaimed) if reclaimed > 0 => {
-                println!(
-                    "✅ Cleaned target build cache: reclaimed {}.",
-                    format_bytes(reclaimed)
-                );
+    match clean_target {
+        true => {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
+            let target_dir = cwd.join("target");
+            println!("🧹 Cleaning build cache at {}...", target_dir.display());
+            match clean_target_cache_at(&target_dir) {
+                Ok(0) => println!("ℹ️  No build cache found to clean."),
+                Ok(reclaimed) => {
+                    println!(
+                        "✅ Cleaned target build cache: reclaimed {}.",
+                        format_bytes(reclaimed)
+                    );
+                }
+                Err(err) => println!("⚠️  Failed to clean build cache: {err}"),
             }
-            Ok(_) => println!("ℹ️  No build cache found to clean."),
-            Err(err) => println!("⚠️  Failed to clean build cache: {err}"),
+            println!();
         }
-        println!();
+        false => {}
     }
 
     // ── Step 6: Disk/cache pressure report ──
@@ -546,8 +581,12 @@ pub async fn handle_doctor(scrub_secrets: bool, clean_target: bool) -> Result<()
                 summary.categories.len()
             );
             for cat in &summary.categories {
-                if cat.item_count > 0 {
-                    println!("   • {}/{}: {} item(s)", config.vault.name, cat.name, cat.item_count);
+                match cat.item_count > 0 {
+                    true => println!(
+                        "   • {}/{}: {} item(s)",
+                        config.vault.name, cat.name, cat.item_count
+                    ),
+                    false => {}
                 }
             }
         }

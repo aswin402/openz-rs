@@ -1,10 +1,8 @@
-use async_trait::async_trait;
 use crate::config::provider_catalog;
+use async_trait::async_trait;
 use std::time::Duration;
 
-use self::notifications::{
-    build_external_notification_requests,
-};
+use self::notifications::build_external_notification_requests;
 use self::transport::send_external_notification;
 
 #[async_trait]
@@ -46,7 +44,6 @@ pub use crate::providers::model_prefs::{
 
 pub use crate::providers::risk::{classify_model_risk, ModelRisk};
 
-
 #[derive(Debug, Clone)]
 pub struct ChannelSessionItem {
     pub key: String,
@@ -80,35 +77,41 @@ pub fn list_channel_sessions(
 }
 
 pub fn render_resume_list(items: &[ChannelSessionItem], command_name: &str) -> String {
-    if items.is_empty() {
-        return "No previous sessions found for this channel.".to_string();
+    match items.is_empty() {
+        true => "No previous sessions found for this channel.".to_string(),
+        false => {
+            let mut out = String::from("Previous sessions:\n");
+            for (idx, item) in items.iter().enumerate() {
+                out.push_str(&format!(
+                    "{}. {} | {} msgs | {}\n",
+                    idx + 1,
+                    item.updated_at.format("%Y-%m-%d %H:%M"),
+                    item.message_count,
+                    item.display_title
+                ));
+            }
+            out.push_str(&format!(
+                "\nUse `{command_name} <number>` to resume, for example `{command_name} 1`."
+            ));
+            out
+        }
     }
-    let mut out = String::from("Previous sessions:\n");
-    for (idx, item) in items.iter().enumerate() {
-        out.push_str(&format!(
-            "{}. {} | {} msgs | {}\n",
-            idx + 1,
-            item.updated_at.format("%Y-%m-%d %H:%M"),
-            item.message_count,
-            item.display_title
-        ));
-    }
-    out.push_str(&format!(
-        "\nUse `{command_name} <number>` to resume, for example `{command_name} 1`."
-    ));
-    out
 }
 
 pub async fn start_new_channel_session(
     session_manager: &crate::session::SessionManager,
     active_key: &str,
 ) -> anyhow::Result<bool> {
-    if let Ok(mut current_session) = session_manager.load(active_key) {
-        if !current_session.messages.is_empty() {
-            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
-            current_session.key = format!("{}:history_{}", active_key, timestamp);
-            session_manager.save(&current_session).await?;
-        }
+    match session_manager.load(active_key) {
+        Ok(mut current_session) => match current_session.messages.is_empty() {
+            false => {
+                let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+                current_session.key = format!("{}:history_{}", active_key, timestamp);
+                session_manager.save(&current_session).await?;
+            }
+            true => {}
+        },
+        Err(_) => {}
     }
     let empty_session = crate::session::Session::new(active_key);
     session_manager.save(&empty_session).await?;
@@ -120,8 +123,9 @@ pub async fn resume_channel_session(
     active_key: &str,
     selected_key: &str,
 ) -> anyhow::Result<String> {
-    if selected_key == active_key {
-        return Ok("Already using that session.".to_string());
+    match selected_key == active_key {
+        true => return Ok("Already using that session.".to_string()),
+        false => {}
     }
     let mut selected = session_manager.load(selected_key)?;
     start_new_channel_session(session_manager, active_key).await?;
@@ -138,40 +142,43 @@ pub async fn session_command_text_response(
 ) -> Option<String> {
     let trimmed = text.trim();
     let cmd = trimmed.split_whitespace().next().unwrap_or("");
-    if cmd != "/new-session" && cmd != "/resume" {
-        return None;
-    }
-    if cmd == "/new-session" {
-        return Some(
+    match cmd {
+        "/new-session" => Some(
             match start_new_channel_session(session_manager, active_key).await {
                 Ok(_) => "Session reset. Starting a new session.".to_string(),
                 Err(e) => format!("Failed to start new session: {e}"),
             },
-        );
-    }
-
-    let args: Vec<&str> = trimmed.split_whitespace().collect();
-    let sessions = list_channel_sessions(&session_manager.dir, active_key, 10);
-    if args.len() == 1 {
-        return Some(render_resume_list(&sessions, "/resume"));
-    }
-    Some(if let Ok(index) = args[1].parse::<usize>() {
-        if index == 0 || index > sessions.len() {
-            format!(
-                "Invalid session number. Use /resume to list 1..{}.",
-                sessions.len()
-            )
-        } else {
-            match resume_channel_session(session_manager, active_key, &sessions[index - 1].key)
-                .await
-            {
-                Ok(msg) => msg,
-                Err(e) => format!("Failed to resume session: {e}"),
+        ),
+        "/resume" => {
+            let args: Vec<&str> = trimmed.split_whitespace().collect();
+            let sessions = list_channel_sessions(&session_manager.dir, active_key, 10);
+            match args.get(1) {
+                None => Some(render_resume_list(&sessions, "/resume")),
+                Some(raw_idx) => Some(match raw_idx.parse::<usize>() {
+                    Ok(index) => match index == 0 || index > sessions.len() {
+                        true => format!(
+                            "Invalid session number. Use /resume to list 1..{}.",
+                            sessions.len()
+                        ),
+                        false => {
+                            match resume_channel_session(
+                                session_manager,
+                                active_key,
+                                &sessions[index - 1].key,
+                            )
+                            .await
+                            {
+                                Ok(msg) => msg,
+                                Err(e) => format!("Failed to resume session: {e}"),
+                            }
+                        }
+                    },
+                    Err(_) => "Usage: /resume or /resume <number>".to_string(),
+                }),
             }
         }
-    } else {
-        "Usage: /resume or /resume <number>".to_string()
-    })
+        _ => None,
+    }
 }
 
 pub const OFFLINE_MESSAGES: &[&str] = &[
@@ -189,41 +196,46 @@ pub const OFFLINE_MESSAGES: &[&str] = &[
 
 pub fn get_active_session_targets(session_dir: &std::path::Path, prefix: &str) -> Vec<String> {
     let mut targets = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(session_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-                    if filename.starts_with(prefix) && filename.ends_with(".json") {
-                        if let Some(target_str) = filename
-                            .strip_prefix(prefix)
-                            .and_then(|s| s.strip_suffix(".json"))
-                        {
-                            if !target_str.contains("history") && !target_str.contains("direct") {
-                                targets.push(target_str.to_string());
-                            }
-                        }
-                    }
+    match std::fs::read_dir(session_dir) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let target_opt = path
+                    .is_file()
+                    .then(|| path.file_name().and_then(|f| f.to_str()))
+                    .flatten()
+                    .and_then(|filename| filename.strip_prefix(prefix))
+                    .and_then(|s| s.strip_suffix(".json"))
+                    .filter(|target_str| {
+                        !target_str.contains("history") && !target_str.contains("direct")
+                    });
+                match target_opt {
+                    Some(target_str) => targets.push(target_str.to_string()),
+                    None => {}
                 }
             }
         }
+        Err(_) => {}
     }
     targets
 }
 
 pub fn select_random_message(messages: &[&str]) -> String {
-    if messages.is_empty() {
-        return String::new();
+    match messages.is_empty() {
+        true => String::new(),
+        false => {
+            use rand::Rng;
+            let idx = rand::thread_rng().gen_range(0..messages.len());
+            messages[idx].to_string()
+        }
     }
-    use rand::Rng;
-    let idx = rand::thread_rng().gen_range(0..messages.len());
-    messages[idx].to_string()
 }
 
 pub async fn shutdown_gateways(config: &crate::config::schema::Config) {
     let silent = std::env::var("OPENZ_SILENT").is_ok();
-    if !silent {
-        crate::tui_println!("Shutting down gateways...");
+    match silent {
+        false => crate::tui_println!("Shutting down gateways..."),
+        true => {}
     }
 
     let sessions_dir = crate::config::loader::sessions_dir();
@@ -270,14 +282,19 @@ pub fn build_configured_providers(config: &crate::config::schema::Config) -> Vec
         .collect();
 
     for name in config.custom_provider_names() {
-        if config.is_provider_available(&name) && !configured.iter().any(|(n, _)| n == &name) {
-            let default_model = config.custom_provider_default_model(&name);
-            let display = format!(
-                "Custom: {} ({})",
-                name,
-                default_model.as_deref().unwrap_or("custom model")
-            );
-            configured.push((name, display));
+        let should_include =
+            config.is_provider_available(&name) && !configured.iter().any(|(n, _)| n == &name);
+        match should_include {
+            true => {
+                let default_model = config.custom_provider_default_model(&name);
+                let display = format!(
+                    "Custom: {} ({})",
+                    name,
+                    default_model.as_deref().unwrap_or("custom model")
+                );
+                configured.push((name, display));
+            }
+            false => {}
         }
     }
 
@@ -285,14 +302,16 @@ pub fn build_configured_providers(config: &crate::config::schema::Config) -> Vec
 }
 
 pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
+    match a.len() == b.len() {
+        false => false,
+        true => {
+            let mut accum = 0;
+            for (x, y) in a.iter().zip(b.iter()) {
+                accum |= x ^ y;
+            }
+            accum == 0
+        }
     }
-    let mut accum = 0;
-    for (x, y) in a.iter().zip(b.iter()) {
-        accum |= x ^ y;
-    }
-    accum == 0
 }
 
 pub fn secure_compare(a: &str, b: &str) -> bool {
@@ -321,8 +340,7 @@ pub use model_catalog::{
     configured_provider_model_options, configured_provider_models, curated_models_for,
     fetch_provider_models, preview_models_for_provider, provider_model_catalog,
     provider_model_catalog_options, provider_model_option_by_name, provider_models_by_name,
-    resolved_provider_models_for_webui, ProviderModels, ProviderModelsOption,
-    PROVIDER_REGISTRY,
+    resolved_provider_models_for_webui, ProviderModels, ProviderModelsOption, PROVIDER_REGISTRY,
 };
 pub use model_switch::*;
 pub use ratatui::handle_ratatui_tui;
@@ -356,42 +374,50 @@ pub fn send_notification(msg: &str) {
     // 2. Broadcast to other active channels in the background
     let msg_str = msg.to_string();
     tokio::spawn(async move {
-        // Broadcast to WebSocket WebUI clients
-        let ws_senders = if let Ok(senders) = get_active_ws_senders().lock() {
-            senders
+        let ws_senders = match get_active_ws_senders().lock() {
+            Ok(senders) => senders
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
-                .collect::<Vec<_>>()
-        } else {
-            Vec::new()
+                .collect::<Vec<_>>(),
+            Err(_) => Vec::new(),
         };
 
         let evt = crate::channels::websocket::protocol::notification(msg_str.clone());
-        if let Ok(evt_str) = serde_json::to_string(&evt) {
-            for (id, tx) in ws_senders {
-                if tx.send(Message::Text(evt_str.clone())).await.is_err() {
-                    if let Ok(mut senders) = get_active_ws_senders().lock() {
-                        senders.remove(&id);
+        match serde_json::to_string(&evt) {
+            Ok(evt_str) => {
+                for (id, tx) in ws_senders {
+                    match tx.send(Message::Text(evt_str.clone())).await {
+                        Ok(()) => {}
+                        Err(_) => match get_active_ws_senders().lock() {
+                            Ok(mut senders) => {
+                                senders.remove(&id);
+                            }
+                            Err(_) => {}
+                        },
                     }
                 }
             }
+            Err(_) => {}
         }
 
-        // Load config to check if external channels (Telegram, Discord, WhatsApp) are enabled.
-        if let Ok(config) = crate::config::loader::load_config() {
-            let sessions_dir = crate::config::loader::sessions_dir();
-            let client = crate::core::http::custom_http_client(
-                SHUTDOWN_HTTP_TIMEOUT,
-                SHUTDOWN_HTTP_TIMEOUT,
-            );
+        match crate::config::loader::load_config() {
+            Ok(config) => {
+                let sessions_dir = crate::config::loader::sessions_dir();
+                let client = crate::core::http::custom_http_client(
+                    SHUTDOWN_HTTP_TIMEOUT,
+                    SHUTDOWN_HTTP_TIMEOUT,
+                );
 
-            for request in build_external_notification_requests(&config, &sessions_dir, &msg_str) {
-                send_external_notification(&client, &request).await;
+                for request in
+                    build_external_notification_requests(&config, &sessions_dir, &msg_str)
+                {
+                    send_external_notification(&client, &request).await;
+                }
             }
+            Err(_) => {}
         }
     });
 }
 
 #[cfg(test)]
 mod tests;
-

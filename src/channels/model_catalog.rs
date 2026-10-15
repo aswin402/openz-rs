@@ -239,10 +239,7 @@ pub fn provider_model_catalog_options(
         .iter()
         .filter_map(|provider| {
             let available = config.is_provider_available(provider.name);
-            if configured_only && !available {
-                return None;
-            }
-            Some(ProviderModelsOption {
+            (!(configured_only && !available)).then(|| ProviderModelsOption {
                 name: provider.name.to_string(),
                 display: provider.display.to_string(),
                 models: provider
@@ -257,8 +254,9 @@ pub fn provider_model_catalog_options(
 
     for name in config.custom_provider_names() {
         let available = config.is_provider_available(&name);
-        if configured_only && !available {
-            continue;
+        match configured_only && !available {
+            true => continue,
+            false => {}
         }
         let default_model = config.custom_provider_default_model(&name);
         let models = default_model.clone().into_iter().collect::<Vec<_>>();
@@ -290,19 +288,18 @@ pub fn provider_model_option_by_name(
             available: config.is_provider_available(provider.name),
         })
         .or_else(|| {
-            if !config.is_custom_provider(name) {
-                return None;
-            }
-            let default_model = config.custom_provider_default_model(name);
-            Some(ProviderModelsOption {
-                name: name.to_string(),
-                display: format!(
-                    "Custom: {} ({})",
-                    name,
-                    default_model.as_deref().unwrap_or("custom model")
-                ),
-                models: default_model.into_iter().collect(),
-                available: config.is_provider_available(name),
+            config.is_custom_provider(name).then(|| {
+                let default_model = config.custom_provider_default_model(name);
+                ProviderModelsOption {
+                    name: name.to_string(),
+                    display: format!(
+                        "Custom: {} ({})",
+                        name,
+                        default_model.as_deref().unwrap_or("custom model")
+                    ),
+                    models: default_model.into_iter().collect(),
+                    available: config.is_provider_available(name),
+                }
             })
         })
 }
@@ -317,24 +314,37 @@ pub fn curated_models_for(provider_name: &str) -> Vec<String> {
         .unwrap_or_else(|| vec!["default".to_string()])
 }
 
+fn configured_default_model_for(
+    config: &crate::config::schema::Config,
+    provider_name: &str,
+) -> Option<String> {
+    config
+        .get_provider_config(provider_name)
+        .and_then(|provider| provider.default_model.clone())
+        .or_else(|| config.custom_provider_default_model(provider_name))
+        .filter(|model| !model.trim().is_empty())
+}
+
+fn insert_unique_case_insensitive(models: &mut Vec<String>, candidate: String, front: bool) {
+    let exists = models
+        .iter()
+        .any(|existing| existing.eq_ignore_ascii_case(&candidate));
+    match (exists, front) {
+        (true, _) => {}
+        (false, true) => models.insert(0, candidate),
+        (false, false) => models.push(candidate),
+    }
+}
+
 pub fn preview_models_for_provider(
     provider: &ProviderModelsOption,
     config: &crate::config::schema::Config,
     limit: usize,
 ) -> Vec<String> {
     let mut models = provider.models.clone();
-    if let Some(default_model) = config
-        .get_provider_config(&provider.name)
-        .and_then(|provider| provider.default_model.clone())
-        .or_else(|| config.custom_provider_default_model(&provider.name))
-        .filter(|model| !model.trim().is_empty())
-    {
-        if !models
-            .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(&default_model))
-        {
-            models.insert(0, default_model);
-        }
+    match configured_default_model_for(config, &provider.name) {
+        Some(default_model) => insert_unique_case_insensitive(&mut models, default_model, true),
+        None => {}
     }
     models.truncate(limit);
     models
@@ -349,26 +359,12 @@ pub async fn resolved_provider_models_for_webui(
         .unwrap_or_default();
 
     for model in &provider.models {
-        if !models
-            .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(model))
-        {
-            models.push(model.clone());
-        }
+        insert_unique_case_insensitive(&mut models, model.clone(), false);
     }
 
-    if let Some(default_model) = config
-        .get_provider_config(&provider.name)
-        .and_then(|provider| provider.default_model.clone())
-        .or_else(|| config.custom_provider_default_model(&provider.name))
-        .filter(|model| !model.trim().is_empty())
-    {
-        if !models
-            .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(&default_model))
-        {
-            models.push(default_model);
-        }
+    match configured_default_model_for(config, &provider.name) {
+        Some(default_model) => insert_unique_case_insensitive(&mut models, default_model, false),
+        None => {}
     }
 
     models.sort();
@@ -391,55 +387,61 @@ pub async fn fetch_provider_models(
 
     let (api_key, api_base) = config.resolve_provider_config(provider_name);
 
-    if provider_name != "ollama"
+    let requires_key = provider_name != "ollama"
         && provider_name != "ollama_local"
-        && api_key.is_empty()
-        && !config.custom_provider_allows_empty_key(provider_name)
-    {
-        return None;
+        && !config.custom_provider_allows_empty_key(provider_name);
+    match requires_key && api_key.is_empty() {
+        true => return None,
+        false => {}
     }
 
-    let url = if api_base.ends_with('/') {
-        format!("{}models", api_base)
-    } else {
-        format!("{}/models", api_base)
+    let url = match api_base.ends_with('/') {
+        true => format!("{}models", api_base),
+        false => format!("{}/models", api_base),
     };
 
-    let mut request = client.get(&url);
-    if provider_name == "anthropic" {
-        request = request
+    let request = match (provider_name == "anthropic", api_key.is_empty()) {
+        (true, _) => client
+            .get(&url)
             .header("x-api-key", &api_key)
-            .header("anthropic-version", "2023-06-01");
-    } else if !api_key.is_empty() {
-        request = request.bearer_auth(&api_key);
-    }
+            .header("anthropic-version", "2023-06-01"),
+        (false, false) => client.get(&url).bearer_auth(&api_key),
+        (false, true) => client.get(&url),
+    };
 
     let response = request.send().await.ok()?;
-    if !response.status().is_success() {
-        return None;
+    match response.status().is_success() {
+        false => return None,
+        true => {}
     }
 
     let json: serde_json::Value = response.json().await.ok()?;
-    let mut models = Vec::new();
+    let mut models = match (
+        json.get("data").and_then(|value| value.as_array()),
+        json.get("models").and_then(|value| value.as_array()),
+    ) {
+        (Some(data), _) => data
+            .iter()
+            .filter_map(|model| model.get("id").and_then(|id| id.as_str()).map(str::to_string))
+            .collect::<Vec<_>>(),
+        (None, Some(data)) => data
+            .iter()
+            .filter_map(|model| {
+                model
+                    .get("name")
+                    .and_then(|name| name.as_str())
+                    .map(|name| name.strip_prefix("models/").unwrap_or(name).to_string())
+            })
+            .collect::<Vec<_>>(),
+        (None, None) => Vec::new(),
+    };
 
-    if let Some(data) = json.get("data").and_then(|value| value.as_array()) {
-        for model in data {
-            if let Some(id) = model.get("id").and_then(|id| id.as_str()) {
-                models.push(id.to_string());
-            }
+    match models.is_empty() {
+        true => None,
+        false => {
+            models.sort();
+            Some(models)
         }
-    } else if let Some(data) = json.get("models").and_then(|value| value.as_array()) {
-        for model in data {
-            if let Some(name) = model.get("name").and_then(|name| name.as_str()) {
-                models.push(name.strip_prefix("models/").unwrap_or(name).to_string());
-            }
-        }
-    }
-
-    if models.is_empty() {
-        None
-    } else {
-        models.sort();
-        Some(models)
     }
 }
+

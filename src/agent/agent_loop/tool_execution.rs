@@ -1,9 +1,9 @@
 use crate::agent::style::*;
-use crate::providers::ToolCallRequest;
 use crate::channels::notifications::{
     discord_message_url, send_external_notification, telegram_api_url, whatsapp_message_url,
     NotificationAuth, NotificationRequest, NotificationTarget,
 };
+use crate::providers::ToolCallRequest;
 use crate::tools::arguments::{COMMAND_KEYS, OUTPUT_KEYS, PATH_KEYS, QUERY_KEYS, URL_KEYS};
 
 #[derive(Debug, Clone)]
@@ -25,23 +25,17 @@ fn string_arg<'a>(
 }
 
 fn filename_arg(map: &serde_json::Map<String, serde_json::Value>, keys: &[&str]) -> Option<String> {
-    string_arg(map, keys).map(|path| {
-        std::path::Path::new(path)
-            .file_name()
-            .map(|filename| filename.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.to_string())
-    })
+    string_arg(map, keys).map(file_name_of)
 }
 
 /// Truncate to at most `max` characters with a trailing ellipsis.
 fn clip(s: &str, max: usize) -> String {
-    if s.chars().count() > max {
-        format!(
+    match s.chars().count() > max {
+        true => format!(
             "{}...",
             s.chars().take(max.saturating_sub(3)).collect::<String>()
-        )
-    } else {
-        s.to_string()
+        ),
+        false => s.to_string(),
     }
 }
 
@@ -52,12 +46,49 @@ fn file_name_of(path: &str) -> String {
         .unwrap_or_else(|| path.to_string())
 }
 
+fn format_browser_action(
+    map: &serde_json::Map<String, serde_json::Value>,
+    default_action: &str,
+) -> String {
+    let action = map
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or(default_action);
+    let url = string_arg(map, URL_KEYS).unwrap_or("");
+    match url.is_empty() {
+        true => format!("action: {}", action),
+        false => format!("action: {}, url: \"{}\"", action, clip(url, 30)),
+    }
+}
+
+fn format_action_with_optional_field(
+    map: &serde_json::Map<String, serde_json::Value>,
+    action_keys: &[&str],
+    default_action: &str,
+    field_keys: &[&str],
+    field_label: &str,
+    clip_len: Option<usize>,
+) -> String {
+    let action = string_arg(map, action_keys).unwrap_or(default_action);
+    let field_val = string_arg(map, field_keys).unwrap_or("");
+    match field_val.is_empty() {
+        true => format!("action: {}", action),
+        false => {
+            let rendered = match clip_len {
+                Some(max) => clip(field_val, max),
+                None => field_val.to_string(),
+            };
+            format!("action: {}, {}: \"{}\"", action, field_label, rendered)
+        }
+    }
+}
+
 pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> String {
     let args = raw_args.clone();
     let friendly_name = crate::tools::compact_presentation_name(name);
 
-    let details = if let serde_json::Value::Object(map) = &args {
-        match name {
+    let details = match &args {
+        serde_json::Value::Object(map) => match name {
             // Query-style tools
             "grep_search" | "web_search" | "semantic_search" => string_arg(map, QUERY_KEYS)
                 .map(|q| format!("query: \"{}\"", clip(q, 35)))
@@ -99,32 +130,9 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                 .and_then(|v| v.as_str())
                 .map(|url| format!("url: \"{}\"", clip(url, 30)))
                 .unwrap_or_default(),
-            "obscura_browser" | "obscura" => {
-                let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("render");
-                let url = string_arg(map, URL_KEYS).unwrap_or("");
-                if url.is_empty() {
-                    format!("action: {}", action)
-                } else {
-                    format!("action: {}, url: \"{}\"", action, clip(url, 30))
-                }
-            }
-            "gsd_browser" | "gsd" => {
-                let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("navigate");
-                let url = string_arg(map, URL_KEYS).unwrap_or("");
-                if url.is_empty() {
-                    format!("action: {}", action)
-                } else {
-                    format!("action: {}, url: \"{}\"", action, clip(url, 30))
-                }
-            }
-            "firefox_browser" | "firefox" => {
-                let action = map.get("action").and_then(|v| v.as_str()).unwrap_or("navigate");
-                let url = string_arg(map, URL_KEYS).unwrap_or("");
-                if url.is_empty() {
-                    format!("action: {}", action)
-                } else {
-                    format!("action: {}, url: \"{}\"", action, clip(url, 30))
-                }
+            "obscura_browser" | "obscura" => format_browser_action(map, "render"),
+            "gsd_browser" | "gsd" | "firefox_browser" | "firefox" => {
+                format_browser_action(map, "navigate")
             }
             "inspect_browsers" => "check health".to_string(),
             "generate_image" => {
@@ -135,10 +143,9 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                     .and_then(|v| v.as_array())
                     .map(|a| a.len())
                     .unwrap_or(0);
-                if shapes_count > 0 {
-                    format!("output: \"{}\", shapes: {}", filename, shapes_count)
-                } else {
-                    format!("output: \"{}\"", filename)
+                match shapes_count > 0 {
+                    true => format!("output: \"{}\", shapes: {}", filename, shapes_count),
+                    false => format!("output: \"{}\"", filename),
                 }
             }
             "generate_video" => {
@@ -147,12 +154,12 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
             }
             "html_to_video" => {
                 let html_path = string_arg(map, &["html_path", "htmlPath"]).unwrap_or("");
-                let html_filename =
-                    if html_path.starts_with("http://") || html_path.starts_with("https://") {
-                        clip(html_path, 30)
-                    } else {
-                        file_name_of(html_path)
-                    };
+                let is_remote =
+                    html_path.starts_with("http://") || html_path.starts_with("https://");
+                let html_filename = match is_remote {
+                    true => clip(html_path, 30),
+                    false => file_name_of(html_path),
+                };
                 let out_path = string_arg(map, OUTPUT_KEYS).unwrap_or("output.mp4");
                 let duration = map
                     .get("duration_seconds")
@@ -160,10 +167,9 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                     .unwrap_or(5.0);
                 let fps = map.get("fps").and_then(|v| v.as_i64()).unwrap_or(30);
                 let frames = (duration * fps as f64).round() as usize;
-                let duration_display = if duration.fract() == 0.0 {
-                    format!("{:.0}", duration)
-                } else {
-                    format!("{:.1}", duration)
+                let duration_display = match duration.fract() == 0.0 {
+                    true => format!("{:.0}", duration),
+                    false => format!("{:.1}", duration),
                 };
                 format!(
                     "html: \"{}\", output: \"{}\", duration: {}s, fps: {}, frames: {}",
@@ -197,13 +203,12 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                             .sum()
                     })
                     .unwrap_or(0);
-                if elem_count > 0 {
-                    format!(
+                match elem_count > 0 {
+                    true => format!(
                         "output: \"{}\", elements: {}, animations: {}",
                         filename, elem_count, anim_count
-                    )
-                } else {
-                    format!("output: \"{}\"", filename)
+                    ),
+                    false => format!("output: \"{}\"", filename),
                 }
             }
             "doc_reader" | "read_doc" => string_arg(map, PATH_KEYS)
@@ -225,11 +230,19 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
             | "opendoc_ocr_document"
             | "opendoc_split_pdf"
             | "opendoc_merge_pdfs"
-            | "opendoc_extract_archive_digest" => {
-                string_arg(map, &["file_path", "source", "output_path", "archive_path", "path", "file"])
-                    .map(|path| format!("file: \"{}\"", file_name_of(path)))
-                    .unwrap_or_default()
-            }
+            | "opendoc_extract_archive_digest" => string_arg(
+                map,
+                &[
+                    "file_path",
+                    "source",
+                    "output_path",
+                    "archive_path",
+                    "path",
+                    "file",
+                ],
+            )
+            .map(|path| format!("file: \"{}\"", file_name_of(path)))
+            .unwrap_or_default(),
             "wasm_sandbox" => string_arg(map, &["wasm_path", "wasmPath"])
                 .map(|path| format!("wasm: \"{}\"", file_name_of(path)))
                 .unwrap_or_default(),
@@ -243,30 +256,38 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                 let schedule = string_arg(map, &["schedule", "cron", "interval"]).unwrap_or("");
                 format!("id: \"{}\", schedule: \"{}\"", id, schedule)
             }
-            "get_job" | "remove_job" | "pause_job" | "resume_job" | "run_job_now" | "get_job_logs" => {
+            "get_job" | "remove_job" | "pause_job" | "resume_job" | "run_job_now"
+            | "get_job_logs" => {
                 let id = string_arg(map, &["id", "job_id", "jobId", "name"]).unwrap_or("");
                 format!("id: \"{}\"", id)
             }
             "db_inspector" | "db_write" => {
-                let db_path = string_arg(map, &["db_path", "dbPath", "path", "database", "db", "file"]).unwrap_or("memory.db");
+                let db_path = string_arg(
+                    map,
+                    &["db_path", "dbPath", "path", "database", "db", "file"],
+                )
+                .unwrap_or("memory.db");
                 let db_filename = file_name_of(db_path);
-                let sql = string_arg(map, &["sql", "query", "statement", "select", "mutation"]).unwrap_or("");
-                if !sql.is_empty() {
-                    format!("db: \"{}\", sql: \"{}\"", db_filename, clip(sql, 35))
-                } else {
-                    let action = string_arg(map, &["action", "command", "cmd"]).unwrap_or("schema");
-                    format!("db: \"{}\", action: \"{}\"", db_filename, action)
+                let sql =
+                    string_arg(map, &["sql", "query", "statement", "select", "mutation"])
+                        .unwrap_or("");
+                match sql.is_empty() {
+                    false => format!("db: \"{}\", sql: \"{}\"", db_filename, clip(sql, 35)),
+                    true => {
+                        let action =
+                            string_arg(map, &["action", "command", "cmd"]).unwrap_or("schema");
+                        format!("db: \"{}\", action: \"{}\"", db_filename, action)
+                    }
                 }
             }
-            "knowledge_source" => {
-                let action = string_arg(map, &["action", "act", "op"]).unwrap_or("search");
-                let target = string_arg(map, &["uri", "url", "link", "query", "q", "id"]).unwrap_or("");
-                if target.is_empty() {
-                    format!("action: {}", action)
-                } else {
-                    format!("action: {}, target: \"{}\"", action, clip(target, 35))
-                }
-            }
+            "knowledge_source" => format_action_with_optional_field(
+                map,
+                &["action", "act", "op"],
+                "search",
+                &["uri", "url", "link", "query", "q", "id"],
+                "target",
+                Some(35),
+            ),
             "store_memory" => {
                 let text = string_arg(map, &["text", "content", "memory", "fact"]).unwrap_or("");
                 format!("fact: \"{}\"", clip(text, 40))
@@ -275,81 +296,83 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                 let query = string_arg(map, &["query", "q", "search", "term"]).unwrap_or("");
                 format!("query: \"{}\"", clip(query, 40))
             }
-            "curate_skill" => {
-                let action = string_arg(map, &["action", "act", "op"]).unwrap_or("list");
-                let skill = string_arg(map, &["skill_name", "name", "skill"]).unwrap_or("");
-                if skill.is_empty() {
-                    format!("action: {}", action)
-                } else {
-                    format!("action: {}, skill: \"{}\"", action, skill)
-                }
-            }
+            "curate_skill" => format_action_with_optional_field(
+                map,
+                &["action", "act", "op"],
+                "list",
+                &["skill_name", "name", "skill"],
+                "skill",
+                None,
+            ),
             "openz_inventory" => "runtime identity".to_string(),
             "tool_catalog" => {
                 let domain = string_arg(map, &["domain", "category", "cat"]).unwrap_or("all");
                 format!("domain: \"{}\"", domain)
             }
-            // Generic fallback — renders any tool's arguments without special casing.
-            // New tools only need an arm above if they want custom truncation.
             _ => {
-                let mut parts = Vec::new();
-                for (k, v) in map {
-                    if k == "session_key" || k == "session_id" {
-                        continue;
-                    }
-                    let val_str = match v {
-                        serde_json::Value::String(s) => format!("\"{}\"", clip(s, 20)),
-                        other => clip(&other.to_string(), 20),
-                    };
-                    parts.push(format!("{}: {}", k, val_str));
-                }
+                let parts: Vec<String> = map
+                    .iter()
+                    .filter(|(k, _)| k.as_str() != "session_key" && k.as_str() != "session_id")
+                    .map(|(k, v)| {
+                        let val_str = match v {
+                            serde_json::Value::String(s) => format!("\"{}\"", clip(s, 20)),
+                            other => clip(&other.to_string(), 20),
+                        };
+                        format!("{}: {}", k, val_str)
+                    })
+                    .collect();
                 clip(&parts.join(", "), 50)
             }
-        }
-    } else {
-        clip(&args.to_string(), 50)
+        },
+        _ => clip(&args.to_string(), 50),
     };
 
-    if details.is_empty() {
-        format!("{}{}{}", COLOR_BOLD, friendly_name, COLOR_RESET)
-    } else {
-        format!(
+    match details.is_empty() {
+        true => format!("{}{}{}", COLOR_BOLD, friendly_name, COLOR_RESET),
+        false => format!(
             "{}{}{}({})",
             COLOR_BOLD, friendly_name, COLOR_RESET, details
-        )
+        ),
     }
 }
 
 pub(crate) async fn send_progress_update(session_key: &str, text: &str) {
     let actual_session = crate::agent::style::spinner::get_current_session_key()
         .unwrap_or_else(|| session_key.to_string());
-    if let Some(chat_id) = crate::channels::websocket::ws_chat_id(&actual_session)
+    match crate::channels::websocket::ws_chat_id(&actual_session)
         .or_else(|| crate::channels::websocket::ws_chat_id(session_key))
     {
-        // 1. Emit typed tool_progress event for modern WebUI clients
-        crate::channels::websocket::publish_ws_event(
-            crate::channels::websocket::protocol::tool_progress(
-                chat_id,
-                crate::agent::agent_loop::current_turn_id(),
-                "",
-                "",
+        Some(chat_id) => {
+            crate::channels::websocket::publish_ws_event(
+                crate::channels::websocket::protocol::tool_progress(
+                    chat_id,
+                    crate::agent::agent_loop::current_turn_id(),
+                    "",
+                    "",
+                    text,
+                ),
+            );
+            crate::channels::websocket::publish_activity_notice(
+                &actual_session,
+                "progress",
+                "Progress",
                 text,
-            ),
-        );
-        // 2. Dual-dispatch activity_notice so all WebUI clients immediately display progress
-        crate::channels::websocket::publish_activity_notice(
-            &actual_session,
-            "progress",
-            "Progress",
-            text,
-        );
+            );
+        }
+        None => {}
     }
-    if actual_session.starts_with("telegram:") {
-        if let Some(chat_id_str) = actual_session.strip_prefix("telegram:") {
-            if let Ok(chat_id) = chat_id_str.parse::<i64>() {
-                if let Some((bot_token, client)) =
-                    crate::channels::telegram::get_telegram_bot_info()
-                {
+
+    match (
+        actual_session.strip_prefix("telegram:"),
+        actual_session.strip_prefix("discord:"),
+        actual_session.strip_prefix("whatsapp:"),
+    ) {
+        (Some(chat_id_str), _, _) => {
+            match (
+                chat_id_str.parse::<i64>(),
+                crate::channels::telegram::get_telegram_bot_info(),
+            ) {
+                (Ok(chat_id), Some((bot_token, client))) => {
                     let request = NotificationRequest {
                         target: NotificationTarget::Telegram {
                             chat_id: chat_id.to_string(),
@@ -364,11 +387,11 @@ pub(crate) async fn send_progress_update(session_key: &str, text: &str) {
                     };
                     send_external_notification(&client, &request).await;
                 }
+                _ => {}
             }
         }
-    } else if actual_session.starts_with("discord:") {
-        if let Some(channel_id) = actual_session.strip_prefix("discord:") {
-            if let Some((bot_token, client)) = crate::channels::discord::get_discord_bot_info() {
+        (None, Some(channel_id), _) => match crate::channels::discord::get_discord_bot_info() {
+            Some((bot_token, client)) => {
                 let request = NotificationRequest {
                     target: NotificationTarget::Discord {
                         channel_id: channel_id.to_string(),
@@ -382,29 +405,31 @@ pub(crate) async fn send_progress_update(session_key: &str, text: &str) {
                 };
                 send_external_notification(&client, &request).await;
             }
-        }
-    } else if actual_session.starts_with("whatsapp:") {
-        if let Some(phone_number) = actual_session.strip_prefix("whatsapp:") {
-            if let Some((api_key, phone_number_id, client)) =
-                crate::channels::whatsapp::get_whatsapp_bot_info()
-            {
-                let request = NotificationRequest {
-                    target: NotificationTarget::WhatsApp {
-                        recipient: phone_number.to_string(),
-                    },
-                    url: whatsapp_message_url(&phone_number_id),
-                    payload: serde_json::json!({
-                        "messaging_product": "whatsapp",
-                        "recipient_type": "individual",
-                        "to": phone_number,
-                        "type": "text",
-                        "text": { "body": text }
-                    }),
-                    auth: NotificationAuth::Bearer(api_key),
-                };
-                send_external_notification(&client, &request).await;
+            None => {}
+        },
+        (None, None, Some(phone_number)) => {
+            match crate::channels::whatsapp::get_whatsapp_bot_info() {
+                Some((api_key, phone_number_id, client)) => {
+                    let request = NotificationRequest {
+                        target: NotificationTarget::WhatsApp {
+                            recipient: phone_number.to_string(),
+                        },
+                        url: whatsapp_message_url(&phone_number_id),
+                        payload: serde_json::json!({
+                            "messaging_product": "whatsapp",
+                            "recipient_type": "individual",
+                            "to": phone_number,
+                            "type": "text",
+                            "text": { "body": text }
+                        }),
+                        auth: NotificationAuth::Bearer(api_key),
+                    };
+                    send_external_notification(&client, &request).await;
+                }
+                None => {}
             }
         }
+        (None, None, None) => {}
     }
 }
 
@@ -417,30 +442,39 @@ pub(crate) async fn render_tool_success(
 ) -> serde_json::Value {
     let success_msg = format!("✓ *{}*", formatted_args);
     send_progress_update(session_key, &success_msg).await;
-    if !silent
+    let should_print = !silent
         && !crate::agent::style::is_profile_subagent(&call.name)
-        && call.name != "parallel_research"
-    {
-        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-        let summary =
-            crate::agent::style::format_tool_outcome_summary(&call.name, &call.arguments, &result);
-        if call.name == "write_file"
-            || call.name == "patch_file"
-            || call.name == "replace_lines"
-            || summary.contains('\u{2713}')
-            || summary.contains('\u{2715}')
-        {
-            crate::tui_println!("{}{}{}{}", AURA_SLATE, leaf_prefix, COLOR_RESET, summary);
-        } else {
-            crate::tui_println!(
-                "{}{}{}✓ {}{}",
-                AURA_SLATE,
-                leaf_prefix,
-                AURA_GREEN,
-                summary,
-                COLOR_RESET
+        && call.name != "parallel_research";
+    match should_print {
+        true => {
+            let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+            let summary = crate::agent::style::format_tool_outcome_summary(
+                &call.name,
+                &call.arguments,
+                &result,
             );
+            let has_own_badge = call.name == "write_file"
+                || call.name == "patch_file"
+                || call.name == "replace_lines"
+                || summary.contains('\u{2713}')
+                || summary.contains('\u{2715}');
+            match has_own_badge {
+                true => {
+                    crate::tui_println!("{}{}{}{}", AURA_SLATE, leaf_prefix, COLOR_RESET, summary);
+                }
+                false => {
+                    crate::tui_println!(
+                        "{}{}{}✓ {}{}",
+                        AURA_SLATE,
+                        leaf_prefix,
+                        AURA_GREEN,
+                        summary,
+                        COLOR_RESET
+                    );
+                }
+            }
         }
+        false => {}
     }
     tracing::info!(
         session = %session_key,
@@ -466,19 +500,22 @@ pub(crate) async fn render_tool_failure(
 ) -> serde_json::Value {
     let fail_msg = format!("✕ *{}* - Failed: {}", formatted_args, error_str);
     send_progress_update(session_key, &fail_msg).await;
-    if !silent
+    let should_print = !silent
         && !crate::agent::style::is_profile_subagent(&call.name)
-        && call.name != "parallel_research"
-    {
-        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-        crate::tui_println!(
-            "{}{}{}✕ {}{}",
-            AURA_SLATE,
-            leaf_prefix,
-            AURA_ROSE,
-            error_str,
-            COLOR_RESET
-        );
+        && call.name != "parallel_research";
+    match should_print {
+        true => {
+            let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+            crate::tui_println!(
+                "{}{}{}✕ {}{}",
+                AURA_SLATE,
+                leaf_prefix,
+                AURA_ROSE,
+                error_str,
+                COLOR_RESET
+            );
+        }
+        false => {}
     }
     tracing::error!(
         session = %session_key,
@@ -498,44 +535,44 @@ pub(crate) async fn render_tool_not_found(
     let error_str = format!("Tool '{}' not found", call.name);
     let fail_msg = format!("✕ *{}* - Failed: {}", formatted_args, error_str);
     send_progress_update(session_key, &fail_msg).await;
-    if !silent {
-        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-        crate::tui_println!(
-            "{}{}{}✗{} {} - Failed: {}{}",
-            AURA_SLATE,
-            leaf_prefix,
-            COLOR_RESET,
-            AURA_ROSE,
-            formatted_args,
-            error_str,
-            COLOR_RESET
-        );
+    match silent {
+        false => {
+            let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+            crate::tui_println!(
+                "{}{}{}✗{} {} - Failed: {}{}",
+                AURA_SLATE,
+                leaf_prefix,
+                COLOR_RESET,
+                AURA_ROSE,
+                formatted_args,
+                error_str,
+                COLOR_RESET
+            );
+        }
+        true => {}
     }
     error_value_with_hint(&call.name, &error_str)
 }
 
 fn error_value_with_hint(tool_name: &str, error_str: &str) -> serde_json::Value {
     let hint = super::loop_control::generate_self_healing_hint(tool_name, error_str);
-    if let Ok(mut json_err) = serde_json::from_str::<serde_json::Value>(error_str) {
-        if let serde_json::Value::Object(ref mut map) = json_err {
-            if !map.contains_key("self_healing_suggestion") && !map.contains_key("suggestion") {
-                map.insert(
-                    "self_healing_suggestion".to_string(),
-                    serde_json::Value::String(hint),
-                );
+    match serde_json::from_str::<serde_json::Value>(error_str) {
+        Ok(serde_json::Value::Object(mut map)) => {
+            match !map.contains_key("self_healing_suggestion") && !map.contains_key("suggestion") {
+                true => {
+                    map.insert(
+                        "self_healing_suggestion".to_string(),
+                        serde_json::Value::String(hint),
+                    );
+                }
+                false => {}
             }
-            json_err
-        } else {
-            serde_json::json!({
-                "error": error_str,
-                "self_healing_suggestion": hint
-            })
+            serde_json::Value::Object(map)
         }
-    } else {
-        serde_json::json!({
+        _ => serde_json::json!({
             "error": error_str,
             "self_healing_suggestion": hint
-        })
+        }),
     }
 }
 

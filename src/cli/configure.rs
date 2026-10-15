@@ -1,9 +1,40 @@
 use crate::agent::style::*;
+use crate::channels::provider_model_catalog;
 use crate::config::loader::{load_config, save_config};
 use crate::config::schema::{Config, ProviderConfig};
 use crate::println;
 use anyhow::{anyhow, Result};
 use inquire::{Confirm, Password, PasswordDisplayMode, Text};
+
+fn non_empty_trimmed_or(input: &str, default: &str) -> String {
+    let trimmed = input.trim();
+    match trimmed.is_empty() {
+        true => default.to_string(),
+        false => trimmed.to_string(),
+    }
+}
+
+fn apply_non_empty_input(target: &mut String, input: &str) {
+    let trimmed = input.trim();
+    match trimmed.is_empty() {
+        true => {}
+        false => *target = trimmed.to_string(),
+    }
+}
+
+fn apply_parsed_input<T: std::str::FromStr>(target: &mut T, input: &str) {
+    match input.trim().parse::<T>() {
+        Ok(parsed) => *target = parsed,
+        Err(_) => {}
+    }
+}
+
+fn status_label(base: &str, active: bool, suffix: &str) -> String {
+    match active {
+        true => format!("{base} ({suffix})"),
+        false => base.to_string(),
+    }
+}
 
 pub fn update_provider_key(config: &mut Config, provider_name: &str, api_key: String) {
     let mut p_config = config
@@ -19,11 +50,14 @@ pub fn update_provider_key(config: &mut Config, provider_name: &str, api_key: St
         });
     p_config.api_key = Some(api_key);
 
-    if p_config.api_base.is_none() {
-        p_config.api_base = Some(
-            crate::config::provider_catalog::default_api_base_for_provider(provider_name)
-                .to_string(),
-        );
+    match p_config.api_base.is_none() {
+        true => {
+            p_config.api_base = Some(
+                crate::config::provider_catalog::default_api_base_for_provider(provider_name)
+                    .to_string(),
+            );
+        }
+        false => {}
     }
 
     config.set_provider_config(provider_name, p_config);
@@ -46,27 +80,33 @@ async fn handle_custom_provider_form(
         None => {
             let input = Text::new("Custom provider name (letters, numbers, _, -, .):").prompt()?;
             let name = input.trim().to_string();
-            if !Config::is_custom_provider_name_valid(&name) {
-                return Err(anyhow!(
-                    "invalid custom provider name `{}`; use a unique name with letters, numbers, _, -, or .",
-                    name
-                ));
+            match Config::is_custom_provider_name_valid(&name) {
+                true => name,
+                false => {
+                    return Err(anyhow!(
+                        "invalid custom provider name `{}`; use a unique name with letters, numbers, _, -, or .",
+                        name
+                    ));
+                }
             }
-            name
         }
     };
 
     let existing = config.get_provider_config(&provider_name).cloned();
-    if existing.is_some() {
-        let reconfigure = Confirm::new(&format!(
-            "Custom provider `{}` already exists. Reconfigure?",
-            provider_name
-        ))
-        .with_default(false)
-        .prompt()?;
-        if !reconfigure {
-            return Ok(());
+    match existing.is_some() {
+        true => {
+            let reconfigure = Confirm::new(&format!(
+                "Custom provider `{}` already exists. Reconfigure?",
+                provider_name
+            ))
+            .with_default(false)
+            .prompt()?;
+            match reconfigure {
+                true => {}
+                false => return Ok(()),
+            }
         }
+        false => {}
     }
 
     let existing_base = existing
@@ -78,11 +118,7 @@ async fn handle_custom_provider_form(
         existing_base
     ))
     .prompt()?;
-    let api_base = if base_input.trim().is_empty() {
-        existing_base.to_string()
-    } else {
-        base_input.trim().to_string()
-    };
+    let api_base = non_empty_trimmed_or(&base_input, existing_base);
 
     let key = Password::new(&format!(
         "API key for `{}` (leave empty only for local/no-key providers):",
@@ -91,21 +127,23 @@ async fn handle_custom_provider_form(
     .without_confirmation()
     .with_display_mode(PasswordDisplayMode::Masked)
     .prompt()?;
-    let api_key = if key.trim().is_empty() {
-        existing
+    let api_key = match key.trim().is_empty() {
+        true => existing
             .as_ref()
-            .and_then(|provider| provider.api_key.clone())
-    } else {
-        Some(key.trim().to_string())
+            .and_then(|provider| provider.api_key.clone()),
+        false => Some(key.trim().to_string()),
     };
 
-    if api_key.as_deref().unwrap_or_default().trim().is_empty() && !is_local_base(&api_base) {
-        println!(
-            "{}⚠️ No API key set. You can also set {}.{}",
-            AURA_GOLD,
-            Config::custom_provider_env_var(&provider_name),
-            COLOR_RESET
-        );
+    match api_key.as_deref().unwrap_or_default().trim().is_empty() && !is_local_base(&api_base) {
+        true => {
+            println!(
+                "{}⚠️ No API key set. You can also set {}.{}",
+                AURA_GOLD,
+                Config::custom_provider_env_var(&provider_name),
+                COLOR_RESET
+            );
+        }
+        false => {}
     }
 
     let existing_model = existing
@@ -117,11 +155,7 @@ async fn handle_custom_provider_form(
         provider_name, existing_model
     ))
     .prompt()?;
-    let default_model = if model_input.trim().is_empty() {
-        existing_model.to_string()
-    } else {
-        model_input.trim().to_string()
-    };
+    let default_model = non_empty_trimmed_or(&model_input, existing_model);
 
     config.set_provider_config(
         &provider_name,
@@ -138,9 +172,12 @@ async fn handle_custom_provider_form(
     let use_now = Confirm::new("Use this provider/model as the active default now?")
         .with_default(true)
         .prompt()?;
-    if use_now {
-        config.agents.defaults.provider = provider_name.clone();
-        config.agents.defaults.model = default_model.clone();
+    match use_now {
+        true => {
+            config.agents.defaults.provider = provider_name.clone();
+            config.agents.defaults.model = default_model.clone();
+        }
+        false => {}
     }
 
     save_config(config)?;
@@ -152,19 +189,43 @@ async fn handle_custom_provider_form(
 }
 
 fn is_telegram_configured(config: &Config) -> bool {
-    if let Some(ref tg) = config.channels.telegram {
-        !tg.bot_token.is_empty()
-    } else {
-        false
-    }
+    config
+        .channels
+        .telegram
+        .as_ref()
+        .is_some_and(|tg| !tg.bot_token.is_empty())
+}
+
+fn is_discord_configured(config: &Config) -> bool {
+    config
+        .channels
+        .discord
+        .as_ref()
+        .is_some_and(|dc| dc.enabled && !dc.bot_token.trim().is_empty())
+}
+
+fn is_whatsapp_configured(config: &Config) -> bool {
+    config
+        .channels
+        .whatsapp
+        .as_ref()
+        .is_some_and(|wa| wa.enabled && !wa.api_key.trim().is_empty())
 }
 
 fn is_email_configured(config: &Config) -> bool {
-    if let Some(ref em) = config.channels.email {
-        em.enabled && !em.imap_server.is_empty() && !em.username.is_empty()
-    } else {
-        false
-    }
+    config
+        .channels
+        .email
+        .as_ref()
+        .is_some_and(|em| em.enabled && !em.imap_server.is_empty() && !em.username.is_empty())
+}
+
+fn is_gateway_enabled(config: &Config) -> bool {
+    config
+        .channels
+        .websocket
+        .as_ref()
+        .is_some_and(|ws| ws.enabled)
 }
 
 pub async fn handle_configure() -> Result<()> {
@@ -176,63 +237,26 @@ pub async fn handle_configure() -> Result<()> {
     loop {
         let mut config = load_config()?;
 
-        let mut configure_options = vec!["Providers".to_string()];
+        let sandbox_status = match config.agents.defaults.enable_sandbox {
+            true => "enabled",
+            false => "disabled",
+        };
 
-        if let Some(ref ws) = config.channels.websocket {
-            if ws.enabled {
-                configure_options.push("Gateway (WebSocket) (enabled)".to_string());
-            } else {
-                configure_options.push("Gateway (WebSocket)".to_string());
-            }
-        } else {
-            configure_options.push("Gateway (WebSocket)".to_string());
-        }
-
-        if is_telegram_configured(&config) {
-            configure_options.push("Telegram (configured)".to_string());
-        } else {
-            configure_options.push("Telegram".to_string());
-        }
-
-        if let Some(ref dc) = config.channels.discord {
-            if dc.enabled && !dc.bot_token.trim().is_empty() {
-                configure_options.push("Discord (configured)".to_string());
-            } else {
-                configure_options.push("Discord".to_string());
-            }
-        } else {
-            configure_options.push("Discord".to_string());
-        }
-
-        if let Some(ref wa) = config.channels.whatsapp {
-            if wa.enabled && !wa.api_key.trim().is_empty() {
-                configure_options.push("WhatsApp (configured)".to_string());
-            } else {
-                configure_options.push("WhatsApp".to_string());
-            }
-        } else {
-            configure_options.push("WhatsApp".to_string());
-        }
-
-        if is_email_configured(&config) {
-            configure_options.push("Email (configured)".to_string());
-        } else {
-            configure_options.push("Email".to_string());
-        }
-
-        configure_options.push(format!(
-            "TUI (thoughts: {})",
-            config.agents.defaults.tui_thought_display
-        ));
-
-        if config.agents.defaults.enable_sandbox {
-            configure_options.push("Sandbox (seccomp) (enabled)".to_string());
-        } else {
-            configure_options.push("Sandbox (seccomp) (disabled)".to_string());
-        }
-
-        configure_options.push("Browser (Firefox)".to_string());
-        configure_options.push("Exit".to_string());
+        let configure_options = vec![
+            "Providers".to_string(),
+            status_label("Gateway (WebSocket)", is_gateway_enabled(&config), "enabled"),
+            status_label("Telegram", is_telegram_configured(&config), "configured"),
+            status_label("Discord", is_discord_configured(&config), "configured"),
+            status_label("WhatsApp", is_whatsapp_configured(&config), "configured"),
+            status_label("Email", is_email_configured(&config), "configured"),
+            format!(
+                "TUI (thoughts: {})",
+                config.agents.defaults.tui_thought_display
+            ),
+            format!("Sandbox (seccomp) ({sandbox_status})"),
+            "Browser (Firefox)".to_string(),
+            "Exit".to_string(),
+        ];
 
         let choice_idx = match select_menu_custom(
             "Choose configure category:",
@@ -242,48 +266,31 @@ pub async fn handle_configure() -> Result<()> {
             true,
         ) {
             Ok(Some(idx)) => idx,
-            _ => break, // Exit on Esc
+            _ => break,
         };
 
         match choice_idx {
-            0 => {
-                handle_providers_submenu(&mut config, &active_mdl).await?;
-            }
-            1 => {
-                handle_gateway_submenu(&mut config).await?;
-            }
+            0 => handle_providers_submenu(&mut config, &active_mdl).await?,
+            1 => handle_gateway_submenu(&mut config).await?,
             2 => {
-                if is_telegram_configured(&config) {
-                    let reconfigure = Confirm::new("Telegram is already configured. Reconfigure?")
+                let should_proceed = match is_telegram_configured(&config) {
+                    true => Confirm::new("Telegram is already configured. Reconfigure?")
                         .with_default(false)
-                        .prompt()?;
-                    if !reconfigure {
-                        continue;
-                    }
+                        .prompt()?,
+                    false => true,
+                };
+                match should_proceed {
+                    true => handle_telegram_submenu(&mut config).await?,
+                    false => continue,
                 }
-                handle_telegram_submenu(&mut config).await?;
             }
-            3 => {
-                handle_discord_submenu(&mut config).await?;
-            }
-            4 => {
-                handle_whatsapp_submenu(&mut config).await?;
-            }
-            5 => {
-                handle_email_submenu(&mut config).await?;
-            }
-            6 => {
-                handle_tui_submenu(&mut config).await?;
-            }
-            7 => {
-                handle_sandbox_submenu(&mut config).await?;
-            }
-            8 => {
-                handle_browser_submenu(&mut config).await?;
-            }
-            _ => {
-                break;
-            }
+            3 => handle_discord_submenu(&mut config).await?,
+            4 => handle_whatsapp_submenu(&mut config).await?,
+            5 => handle_email_submenu(&mut config).await?,
+            6 => handle_tui_submenu(&mut config).await?,
+            7 => handle_sandbox_submenu(&mut config).await?,
+            8 => handle_browser_submenu(&mut config).await?,
+            _ => break,
         }
 
         save_config(&config)?;
@@ -297,96 +304,13 @@ pub async fn handle_configure() -> Result<()> {
 }
 
 async fn handle_providers_submenu(config: &mut Config, active_mdl: &str) -> Result<()> {
-    struct ProviderInfo {
-        name: &'static str,
-        display: &'static str,
-    }
-    let provider_list = vec![
-        ProviderInfo {
-            name: "anthropic",
-            display: "Anthropic (Claude)",
-        },
-        ProviderInfo {
-            name: "openai",
-            display: "OpenAI",
-        },
-        ProviderInfo {
-            name: "mivi",
-            display: "MIVI Local",
-        },
-        ProviderInfo {
-            name: "openrouter",
-            display: "OpenRouter",
-        },
-        ProviderInfo {
-            name: "deepseek",
-            display: "DeepSeek",
-        },
-        ProviderInfo {
-            name: "groq",
-            display: "Groq",
-        },
-        ProviderInfo {
-            name: "ollama",
-            display: "Ollama",
-        },
-        ProviderInfo {
-            name: "minimax",
-            display: "MiniMax",
-        },
-        ProviderInfo {
-            name: "mistral",
-            display: "Mistral AI",
-        },
-        ProviderInfo {
-            name: "z.ai",
-            display: "z.ai (Zhipu GLM)",
-        },
-        ProviderInfo {
-            name: "nvidia",
-            display: "NVIDIA NIM",
-        },
-        ProviderInfo {
-            name: "opencode_zen",
-            display: "OpenCode Zen",
-        },
-        ProviderInfo {
-            name: "cerebras",
-            display: "Cerebras",
-        },
-        ProviderInfo {
-            name: "google_ai_studio",
-            display: "Google AI Studio (Gemini)",
-        },
-        ProviderInfo {
-            name: "cohere",
-            display: "Cohere",
-        },
-        ProviderInfo {
-            name: "llm7",
-            display: "LLM7 (token.llm7.io)",
-        },
-        ProviderInfo {
-            name: "sambanova",
-            display: "SambaNova",
-        },
-        ProviderInfo {
-            name: "huggingface",
-            display: "Hugging Face Inference",
-        },
-    ];
+    let provider_list = provider_model_catalog();
 
     loop {
         let custom_names = config.custom_provider_names();
         let mut prov_options: Vec<String> = provider_list
             .iter()
-            .map(|p| {
-                if config.is_provider_configured(p.name) {
-                    format!("{} (configured)", p.display)
-                } else {
-                    p.display.to_string()
-                }
-            })
+            .map(|p| status_label(p.display, config.is_provider_configured(p.name), "configured"))
             .collect();
         for name in &custom_names {
             let model = config
@@ -405,49 +329,62 @@ async fn handle_providers_submenu(config: &mut Config, active_mdl: &str) -> Resu
             true,
         ) {
             Ok(Some(idx)) => idx,
-            _ => break, // Go back on Esc
+            _ => break,
         };
 
-        if choice_idx == provider_list.len() + custom_names.len() + 1 {
-            break; // Back option
-        }
-        if choice_idx == provider_list.len() + custom_names.len() {
-            handle_custom_provider_form(config, None).await?;
-            continue;
-        }
-        if choice_idx >= provider_list.len() {
-            let custom_idx = choice_idx - provider_list.len();
-            handle_custom_provider_form(config, Some(custom_names[custom_idx].clone())).await?;
-            continue;
+        let builtin_len = provider_list.len();
+        let add_custom_idx = builtin_len + custom_names.len();
+        let back_idx = add_custom_idx + 1;
+
+        match (
+            choice_idx == back_idx,
+            choice_idx == add_custom_idx,
+            choice_idx >= builtin_len,
+        ) {
+            (true, _, _) => break,
+            (false, true, _) => {
+                handle_custom_provider_form(config, None).await?;
+                continue;
+            }
+            (false, false, true) => {
+                let custom_idx = choice_idx - builtin_len;
+                handle_custom_provider_form(config, Some(custom_names[custom_idx].clone())).await?;
+                continue;
+            }
+            (false, false, false) => {}
         }
 
         let prov_info = &provider_list[choice_idx];
 
-        if config.is_provider_configured(prov_info.name) {
-            let reconfigure = Confirm::new(&format!(
+        let should_configure = match config.is_provider_configured(prov_info.name) {
+            true => Confirm::new(&format!(
                 "{} is already configured. Reconfigure?",
                 prov_info.display
             ))
             .with_default(false)
-            .prompt()?;
-            if !reconfigure {
-                continue;
-            }
+            .prompt()?,
+            false => true,
+        };
+        match should_configure {
+            true => {}
+            false => continue,
         }
 
         let key = Password::new(&format!("Enter API Key for {}:", prov_info.display))
             .without_confirmation()
             .with_display_mode(PasswordDisplayMode::Masked)
             .prompt()?;
-        if !key.trim().is_empty() {
-            update_provider_key(config, prov_info.name, key.trim().to_string());
-            save_config(config)?;
-            println!(
-                "{}✓ API Key updated for {}!{}",
-                EMERALD_GREEN, prov_info.display, COLOR_RESET
-            );
-        } else {
-            println!("{}⚠️ API Key unchanged.{}", AURA_GOLD, COLOR_RESET);
+        let trimmed_key = key.trim();
+        match trimmed_key.is_empty() {
+            true => println!("{}⚠️ API Key unchanged.{}", AURA_GOLD, COLOR_RESET),
+            false => {
+                update_provider_key(config, prov_info.name, trimmed_key.to_string());
+                save_config(config)?;
+                println!(
+                    "{}✓ API Key updated for {}!{}",
+                    EMERALD_GREEN, prov_info.display, COLOR_RESET
+                );
+            }
         }
     }
     Ok(())
@@ -477,18 +414,20 @@ async fn handle_telegram_submenu(config: &mut Config) -> Result<()> {
         .without_confirmation()
         .with_display_mode(PasswordDisplayMode::Masked)
         .prompt()?;
-    if !token.trim().is_empty() {
-        let mut tg = config.channels.telegram.clone().unwrap_or_default();
-        tg.enabled = true;
-        tg.bot_token = token.trim().to_string();
-        config.channels.telegram = Some(tg);
-        save_config(config)?;
-        println!(
-            "{}✓ Telegram bot configured successfully!{}",
-            EMERALD_GREEN, COLOR_RESET
-        );
-    } else {
-        println!("{}⚠️ Token unchanged.{}", AURA_GOLD, COLOR_RESET);
+    let trimmed = token.trim();
+    match trimmed.is_empty() {
+        true => println!("{}⚠️ Token unchanged.{}", AURA_GOLD, COLOR_RESET),
+        false => {
+            let mut tg = config.channels.telegram.clone().unwrap_or_default();
+            tg.enabled = true;
+            tg.bot_token = trimmed.to_string();
+            config.channels.telegram = Some(tg);
+            save_config(config)?;
+            println!(
+                "{}✓ Telegram bot configured successfully!{}",
+                EMERALD_GREEN, COLOR_RESET
+            );
+        }
     }
     println!(
         "{}────────────────────────────────────────────────────────────{}",
@@ -565,65 +504,67 @@ async fn handle_gateway_submenu(config: &mut Config) -> Result<()> {
         .prompt()?;
     ws.enabled = enabled;
 
-    if enabled {
-        let port_input = Text::new(&format!("WebSocket Port [default: {}]:", ws.port)).prompt()?;
-        if !port_input.trim().is_empty() {
-            if let Ok(p) = port_input.trim().parse::<u16>() {
-                ws.port = p;
-            }
-        }
+    match enabled {
+        true => {
+            let port_input =
+                Text::new(&format!("WebSocket Port [default: {}]:", ws.port)).prompt()?;
+            apply_parsed_input(&mut ws.port, &port_input);
 
-        let host_input = Text::new(&format!("WebSocket Host [default: {}]:", ws.host)).prompt()?;
-        if !host_input.trim().is_empty() {
-            ws.host = host_input.trim().to_string();
-        }
+            let host_input =
+                Text::new(&format!("WebSocket Host [default: {}]:", ws.host)).prompt()?;
+            apply_non_empty_input(&mut ws.host, &host_input);
 
-        let auto_start_options = vec![
-            "None (Manual launch only)".to_string(),
-            "Auto-start on TUI launch (TUI background thread)".to_string(),
-            "System Boot Daemon (Installs systemd user service)".to_string(),
-        ];
+            let auto_start_options = vec![
+                "None (Manual launch only)".to_string(),
+                "Auto-start on TUI launch (TUI background thread)".to_string(),
+                "System Boot Daemon (Installs systemd user service)".to_string(),
+            ];
 
-        let auto_choice = select_menu_custom(
-            "Choose Gateway Auto-Start Preference:",
-            &auto_start_options,
-            "None (Manual launch only)",
-            None,
-            false,
-        )?;
+            let auto_choice = select_menu_custom(
+                "Choose Gateway Auto-Start Preference:",
+                &auto_start_options,
+                "None (Manual launch only)",
+                None,
+                false,
+            )?;
 
-        match auto_choice {
-            Some(2) => {
-                ws.start_on_boot = true;
-                ws.start_on_tui = false;
-                println!("Installing and enabling systemd user service...");
-                if let Err(e) = setup_systemd_service() {
-                    eprintln!(
-                        "{}✕ Failed to setup systemd service: {}{}",
-                        ERROR_RED, e, COLOR_RESET
-                    );
-                } else {
-                    println!(
-                        "{}✓ systemd service openz-gateway.service installed and enabled successfully!{}",
-                        EMERALD_GREEN, COLOR_RESET
-                    );
+            match auto_choice {
+                Some(2) => {
+                    ws.start_on_boot = true;
+                    ws.start_on_tui = false;
+                    println!("Installing and enabling systemd user service...");
+                    match setup_systemd_service() {
+                        Ok(()) => {
+                            println!(
+                                "{}✓ systemd service openz-gateway.service installed and enabled successfully!{}",
+                                EMERALD_GREEN, COLOR_RESET
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "{}✕ Failed to setup systemd service: {}{}",
+                                ERROR_RED, e, COLOR_RESET
+                            );
+                        }
+                    }
+                }
+                Some(1) => {
+                    ws.start_on_boot = false;
+                    ws.start_on_tui = true;
+                    let _ = disable_systemd_service();
+                    println!("Gateway configured to auto-start when terminal client launches.");
+                }
+                _ => {
+                    ws.start_on_boot = false;
+                    ws.start_on_tui = false;
+                    let _ = disable_systemd_service();
+                    println!("Gateway auto-start disabled (manual launch only).");
                 }
             }
-            Some(1) => {
-                ws.start_on_boot = false;
-                ws.start_on_tui = true;
-                let _ = disable_systemd_service();
-                println!("Gateway configured to auto-start when terminal client launches.");
-            }
-            _ => {
-                ws.start_on_boot = false;
-                ws.start_on_tui = false;
-                let _ = disable_systemd_service();
-                println!("Gateway auto-start disabled (manual launch only).");
-            }
         }
-    } else {
-        let _ = disable_systemd_service();
+        false => {
+            let _ = disable_systemd_service();
+        }
     }
 
     config.channels.websocket = Some(ws);
@@ -656,14 +597,15 @@ async fn handle_discord_submenu(config: &mut Config) -> Result<()> {
         .prompt()?;
     dc.enabled = enabled;
 
-    if enabled {
-        let token = Password::new("Paste Discord Bot Token: ")
-            .without_confirmation()
-            .with_display_mode(PasswordDisplayMode::Masked)
-            .prompt()?;
-        if !token.trim().is_empty() {
-            dc.bot_token = token.trim().to_string();
+    match enabled {
+        true => {
+            let token = Password::new("Paste Discord Bot Token: ")
+                .without_confirmation()
+                .with_display_mode(PasswordDisplayMode::Masked)
+                .prompt()?;
+            apply_non_empty_input(&mut dc.bot_token, &token);
         }
+        false => {}
     }
 
     config.channels.discord = Some(dc);
@@ -696,33 +638,28 @@ async fn handle_whatsapp_submenu(config: &mut Config) -> Result<()> {
         .prompt()?;
     wa.enabled = enabled;
 
-    if enabled {
-        let key = Password::new("Paste WhatsApp API Key: ")
-            .without_confirmation()
-            .with_display_mode(PasswordDisplayMode::Masked)
-            .prompt()?;
-        if !key.trim().is_empty() {
-            wa.api_key = key.trim().to_string();
-        }
+    match enabled {
+        true => {
+            let key = Password::new("Paste WhatsApp API Key: ")
+                .without_confirmation()
+                .with_display_mode(PasswordDisplayMode::Masked)
+                .prompt()?;
+            apply_non_empty_input(&mut wa.api_key, &key);
 
-        let phone_id = Text::new("Enter WhatsApp Phone Number ID: ").prompt()?;
-        if !phone_id.trim().is_empty() {
-            wa.phone_number_id = phone_id.trim().to_string();
-        }
+            let phone_id = Text::new("Enter WhatsApp Phone Number ID: ").prompt()?;
+            apply_non_empty_input(&mut wa.phone_number_id, &phone_id);
 
-        let port_str = Text::new("Enter WhatsApp Webhook Port: ")
-            .with_default(&wa.webhook_port.to_string())
-            .prompt()?;
-        if let Ok(p) = port_str.trim().parse::<u16>() {
-            wa.webhook_port = p;
-        }
+            let port_str = Text::new("Enter WhatsApp Webhook Port: ")
+                .with_default(&wa.webhook_port.to_string())
+                .prompt()?;
+            apply_parsed_input(&mut wa.webhook_port, &port_str);
 
-        let token = Text::new("Enter WhatsApp Webhook Verification Token: ")
-            .with_default(&wa.verify_token)
-            .prompt()?;
-        if !token.trim().is_empty() {
-            wa.verify_token = token.trim().to_string();
+            let token = Text::new("Enter WhatsApp Webhook Verification Token: ")
+                .with_default(&wa.verify_token)
+                .prompt()?;
+            apply_non_empty_input(&mut wa.verify_token, &token);
         }
+        false => {}
     }
 
     config.channels.whatsapp = Some(wa);
@@ -755,56 +692,45 @@ async fn handle_email_submenu(config: &mut Config) -> Result<()> {
         .prompt()?;
     em.enabled = enabled;
 
-    if enabled {
-        let imap_server = Text::new("Enter IMAP Server (e.g. imap.gmail.com): ")
-            .with_default(&em.imap_server)
-            .prompt()?;
-        if !imap_server.trim().is_empty() {
-            em.imap_server = imap_server.trim().to_string();
-        }
+    match enabled {
+        true => {
+            let imap_server = Text::new("Enter IMAP Server (e.g. imap.gmail.com): ")
+                .with_default(&em.imap_server)
+                .prompt()?;
+            apply_non_empty_input(&mut em.imap_server, &imap_server);
 
-        let imap_port_str = Text::new("Enter IMAP Port: ")
-            .with_default(&em.imap_port.to_string())
-            .prompt()?;
-        if let Ok(p) = imap_port_str.trim().parse::<u16>() {
-            em.imap_port = p;
-        }
+            let imap_port_str = Text::new("Enter IMAP Port: ")
+                .with_default(&em.imap_port.to_string())
+                .prompt()?;
+            apply_parsed_input(&mut em.imap_port, &imap_port_str);
 
-        let smtp_server = Text::new("Enter SMTP Server (e.g. smtp.gmail.com): ")
-            .with_default(&em.smtp_server)
-            .prompt()?;
-        if !smtp_server.trim().is_empty() {
-            em.smtp_server = smtp_server.trim().to_string();
-        }
+            let smtp_server = Text::new("Enter SMTP Server (e.g. smtp.gmail.com): ")
+                .with_default(&em.smtp_server)
+                .prompt()?;
+            apply_non_empty_input(&mut em.smtp_server, &smtp_server);
 
-        let smtp_port_str = Text::new("Enter SMTP Port: ")
-            .with_default(&em.smtp_port.to_string())
-            .prompt()?;
-        if let Ok(p) = smtp_port_str.trim().parse::<u16>() {
-            em.smtp_port = p;
-        }
+            let smtp_port_str = Text::new("Enter SMTP Port: ")
+                .with_default(&em.smtp_port.to_string())
+                .prompt()?;
+            apply_parsed_input(&mut em.smtp_port, &smtp_port_str);
 
-        let username = Text::new("Enter Username / Email: ")
-            .with_default(&em.username)
-            .prompt()?;
-        if !username.trim().is_empty() {
-            em.username = username.trim().to_string();
-        }
+            let username = Text::new("Enter Username / Email: ")
+                .with_default(&em.username)
+                .prompt()?;
+            apply_non_empty_input(&mut em.username, &username);
 
-        let password = Password::new("Enter Password / App Password: ")
-            .without_confirmation()
-            .with_display_mode(PasswordDisplayMode::Masked)
-            .prompt()?;
-        if !password.trim().is_empty() {
-            em.password = password.trim().to_string();
-        }
+            let password = Password::new("Enter Password / App Password: ")
+                .without_confirmation()
+                .with_display_mode(PasswordDisplayMode::Masked)
+                .prompt()?;
+            apply_non_empty_input(&mut em.password, &password);
 
-        let poll_str = Text::new("Enter Email Poll Interval (seconds): ")
-            .with_default(&em.poll_interval_secs.to_string())
-            .prompt()?;
-        if let Ok(s) = poll_str.trim().parse::<u64>() {
-            em.poll_interval_secs = s;
+            let poll_str = Text::new("Enter Email Poll Interval (seconds): ")
+                .with_default(&em.poll_interval_secs.to_string())
+                .prompt()?;
+            apply_parsed_input(&mut em.poll_interval_secs, &poll_str);
         }
+        false => {}
     }
 
     config.channels.email = Some(em);
@@ -888,10 +814,10 @@ async fn handle_browser_submenu(config: &mut Config) -> Result<()> {
             .trim()
             .parse::<u16>()
             .map_err(|_| anyhow!("{} must be a valid integer port", name))?;
-        if !(1024..=65535).contains(&port) {
-            return Err(anyhow!("{} must be between 1024 and 65535", name));
+        match (1024..=65535).contains(&port) {
+            true => Ok(port),
+            false => Err(anyhow!("{} must be between 1024 and 65535", name)),
         }
-        Ok(port)
     };
 
     config.browser.firefox_webdriver_port = parse_port(&webdriver_input, "Firefox WebDriver port")?;
@@ -930,23 +856,25 @@ async fn handle_sandbox_submenu(config: &mut Config) -> Result<()> {
     config.agents.defaults.enable_sandbox = enable;
     save_config(config)?;
 
-    if enable {
-        println!(
-            "{}✓ Sandbox enabled successfully!{}",
-            EMERALD_GREEN, COLOR_RESET
-        );
-    } else {
-        println!(
-            "{}✓ Sandbox disabled successfully! (Highly recommended for browser tools and developer shells){}",
-            EMERALD_GREEN, COLOR_RESET
-        );
+    match enable {
+        true => {
+            println!(
+                "{}✓ Sandbox enabled successfully!{}",
+                EMERALD_GREEN, COLOR_RESET
+            );
+        }
+        false => {
+            println!(
+                "{}✓ Sandbox disabled successfully! (Highly recommended for browser tools and developer shells){}",
+                EMERALD_GREEN, COLOR_RESET
+            );
+        }
     }
     println!(
         "{}────────────────────────────────────────────────────────────{}",
         LIGHT_WHITE, COLOR_RESET
     );
 
-    // Give the user a moment to see the success message
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
 
     Ok(())

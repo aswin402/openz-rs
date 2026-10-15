@@ -1,105 +1,86 @@
 use anyhow::Result;
 use inquire::{Password, PasswordDisplayMode, Select, Text};
 
+use crate::channels::{provider_model_catalog, provider_models_by_name};
 use crate::config::loader::{load_config, resolve_path, save_config};
+use crate::config::provider_catalog;
 use crate::config::schema::{Config, ProviderConfig};
 use crate::println;
+
+fn non_empty_trimmed_or(input: &str, default: &str) -> String {
+    let trimmed = input.trim();
+    match trimmed.is_empty() {
+        true => default.to_string(),
+        false => trimmed.to_string(),
+    }
+}
+
+pub fn onboard_provider_names() -> Vec<&'static str> {
+    provider_model_catalog()
+        .iter()
+        .map(|provider| provider.name)
+        .collect()
+}
+
+pub fn default_onboard_model(provider_name: &str) -> &'static str {
+    provider_models_by_name(provider_name)
+        .and_then(|provider| provider.models.first().copied())
+        .unwrap_or("default")
+}
 
 pub async fn handle_onboard() -> Result<()> {
     println!("=== Welcome to the OpenZ Setup Wizard ===");
 
-    let providers = vec![
-        "anthropic",
-        "openai",
-        "mivi",
-        "openrouter",
-        "deepseek",
-        "groq",
-        "ollama",
-        "minimax",
-    ];
+    let providers = onboard_provider_names();
     let provider_name = Select::new("Choose an LLM provider:", providers).prompt()?;
 
-    let mut api_key = None;
-    if provider_name != "ollama" && provider_name != "mivi" {
-        let key = Password::new(&format!("Enter API Key for {}:", provider_name))
-            .without_confirmation()
-            .with_display_mode(PasswordDisplayMode::Masked)
-            .prompt()?;
-        if !key.trim().is_empty() {
-            api_key = Some(key.trim().to_string());
+    let is_local = provider_catalog::find_provider(provider_name)
+        .is_some_and(|descriptor| descriptor.local);
+
+    let api_key = match is_local {
+        true => None,
+        false => {
+            let key = Password::new(&format!("Enter API Key for {}:", provider_name))
+                .without_confirmation()
+                .with_display_mode(PasswordDisplayMode::Masked)
+                .prompt()?;
+            let trimmed = key.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
         }
-    }
+    };
 
-    let default_base = crate::config::provider_catalog::default_api_base_for_provider(provider_name);
-
+    let default_base = provider_catalog::default_api_base_for_provider(provider_name);
     let api_base_input =
         Text::new(&format!("Enter API Base URL [default: {}]:", default_base)).prompt()?;
-    let api_base = if api_base_input.trim().is_empty() {
-        Some(default_base.to_string())
-    } else {
-        Some(api_base_input.trim().to_string())
-    };
+    let api_base = Some(non_empty_trimmed_or(&api_base_input, default_base));
 
-    let default_model = match provider_name {
-        "anthropic" => "claude-3-5-sonnet-20241022",
-        "openai" => "gpt-4o",
-        "mivi" => "mivi",
-        "openrouter" => "google/gemini-2.5-pro",
-        "deepseek" => "deepseek-chat",
-        "groq" => "llama3-70b-8192",
-        "ollama" => "llama3",
-        "minimax" => "MiniMax-M3",
-        _ => "",
-    };
-
+    let default_model = default_onboard_model(provider_name);
     let model_input = Text::new(&format!(
         "Enter LLM Model Name [default: {}]:",
         default_model
     ))
     .prompt()?;
-    let model = if model_input.trim().is_empty() {
-        default_model.to_string()
-    } else {
-        model_input.trim().to_string()
-    };
+    let model = non_empty_trimmed_or(&model_input, default_model);
 
-    let bot_name = Text::new("Enter Bot Name [default: openz]:").prompt()?;
-    let bot_name = if bot_name.trim().is_empty() {
-        "openz".to_string()
-    } else {
-        bot_name.trim().to_string()
-    };
+    let bot_name_input = Text::new("Enter Bot Name [default: openz]:").prompt()?;
+    let bot_name = non_empty_trimmed_or(&bot_name_input, "openz");
 
-    let bot_icon = Text::new("Enter Bot Icon (Emoji/text) [default: ⚡]:").prompt()?;
-    let bot_icon = if bot_icon.trim().is_empty() {
-        "⚡".to_string()
-    } else {
-        bot_icon.trim().to_string()
-    };
+    let bot_icon_input = Text::new("Enter Bot Icon (Emoji/text) [default: ⚡]:").prompt()?;
+    let bot_icon = non_empty_trimmed_or(&bot_icon_input, "⚡");
 
     let mut config = load_config().unwrap_or_else(|_| Config::default());
 
-    let p_config = Some(ProviderConfig {
-        api_key,
-        api_key_env: None,
-        api_key_file: None,
-        api_base,
-        default_model: Some(model.clone()),
-        extra: std::collections::HashMap::new(),
-    });
-
-    match provider_name {
-        "anthropic" => config.providers.anthropic = p_config,
-        "openai" => config.providers.openai = p_config,
-        "mivi" => config.providers.mivi = p_config,
-        "openrouter" => config.providers.openrouter = p_config,
-        "deepseek" => config.providers.deepseek = p_config,
-        "groq" => config.providers.groq = p_config,
-        "ollama" => config.providers.ollama = p_config,
-        "minimax" => config.providers.minimax = p_config,
-        _ => {}
-    }
+    config.set_provider_config(
+        provider_name,
+        ProviderConfig {
+            api_key,
+            api_key_env: None,
+            api_key_file: None,
+            api_base,
+            default_model: Some(model.clone()),
+            extra: std::collections::HashMap::new(),
+        },
+    );
 
     config.agents.defaults.provider = provider_name.to_string();
     config.agents.defaults.model = model;
@@ -109,8 +90,9 @@ pub async fn handle_onboard() -> Result<()> {
     save_config(&config)?;
 
     let workspace = resolve_path(&config.agents.defaults.workspace);
-    if !workspace.exists() {
-        std::fs::create_dir_all(&workspace)?;
+    match workspace.exists() {
+        true => {}
+        false => std::fs::create_dir_all(&workspace)?,
     }
 
     println!(
@@ -121,3 +103,4 @@ pub async fn handle_onboard() -> Result<()> {
 
     Ok(())
 }
+

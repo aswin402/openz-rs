@@ -4,6 +4,29 @@ use crate::config::loader::load_config;
 use crate::println;
 use anyhow::Result;
 
+fn parse_sop_payload(payload: Option<String>) -> Result<serde_json::Value> {
+    let raw = match payload {
+        Some(raw) => raw,
+        None => return Ok(serde_json::json!({})),
+    };
+    let trimmed = raw.trim();
+    match trimmed.starts_with('{') || trimmed.starts_with('[') {
+        true => Ok(serde_json::from_str(trimmed)?),
+        false => {
+            let path = std::path::Path::new(trimmed);
+            match path.exists() {
+                true => {
+                    let content = std::fs::read_to_string(path)?;
+                    Ok(serde_json::from_str(&content)?)
+                }
+                false => {
+                    anyhow::bail!("Payload must be a valid JSON string or path to a JSON file")
+                }
+            }
+        }
+    }
+}
+
 pub async fn handle_sop(action: SopAction) -> Result<()> {
     match action {
         SopAction::List => {
@@ -12,32 +35,32 @@ pub async fn handle_sop(action: SopAction) -> Result<()> {
                 "\n{}📋 Available Standard Operating Procedures (SOPs):{}\n",
                 COLOR_BOLD, COLOR_RESET
             );
-            if defs.is_empty() {
-                println!("No SOP definitions found.");
-            } else {
-                for def in defs {
-                    println!("{}• ID:{} {}", RED_ORANGE, COLOR_RESET, def.id);
-                    println!("  {}Name:{} {}", COLOR_BOLD, COLOR_RESET, def.name);
-                    println!(
-                        "  {}Description:{} {}",
-                        COLOR_BOLD, COLOR_RESET, def.description
-                    );
-                    println!("  {}Steps:{}", COLOR_BOLD, COLOR_RESET);
-                    for (i, step) in def.steps.iter().enumerate() {
-                        let deps_str = if step.depends_on.is_empty() {
-                            String::new()
-                        } else {
-                            format!(" [Depends on: {}]", step.depends_on.join(", "))
-                        };
+            match defs.is_empty() {
+                true => println!("No SOP definitions found."),
+                false => {
+                    for def in defs {
+                        println!("{}• ID:{} {}", RED_ORANGE, COLOR_RESET, def.id);
+                        println!("  {}Name:{} {}", COLOR_BOLD, COLOR_RESET, def.name);
                         println!(
-                            "    {}. {}{}: {}",
-                            i + 1,
-                            step.name,
-                            deps_str,
-                            step.description
+                            "  {}Description:{} {}",
+                            COLOR_BOLD, COLOR_RESET, def.description
                         );
+                        println!("  {}Steps:{}", COLOR_BOLD, COLOR_RESET);
+                        for (i, step) in def.steps.iter().enumerate() {
+                            let deps_str = match step.depends_on.is_empty() {
+                                true => String::new(),
+                                false => format!(" [Depends on: {}]", step.depends_on.join(", ")),
+                            };
+                            println!(
+                                "    {}. {}{}: {}",
+                                i + 1,
+                                step.name,
+                                deps_str,
+                                step.description
+                            );
+                        }
+                        println!();
                     }
-                    println!();
                 }
             }
         }
@@ -47,94 +70,101 @@ pub async fn handle_sop(action: SopAction) -> Result<()> {
                 "\n{}📋 SOP Execution Instances:{}\n",
                 COLOR_BOLD, COLOR_RESET
             );
-            if instances.is_empty() {
-                println!("No SOP instances executed yet.");
-            } else {
-                for inst in instances {
-                    let status_color = match inst.status {
-                        crate::sop::SopStatus::Completed => EMERALD_GREEN,
-                        crate::sop::SopStatus::Failed => ERROR_RED,
-                        crate::sop::SopStatus::Running => LIGHT_WHITE,
-                        _ => COLOR_RESET,
-                    };
-                    let completed_count = inst.steps.iter().filter(|s| s.status == "Completed").count();
-                    let display_step = if inst.current_step_index > 0 {
-                        inst.current_step_index
-                    } else {
-                        completed_count
-                    };
-                    println!("{}• Instance ID:{} {}", RED_ORANGE, COLOR_RESET, inst.id);
-                    println!("  {}SOP ID:{} {}", COLOR_BOLD, COLOR_RESET, inst.sop_id);
-                    println!(
-                        "  {}Status:{} {:?}{}",
-                        COLOR_BOLD, status_color, inst.status, COLOR_RESET
-                    );
-                    println!(
-                        "  {}Steps Completed:{} {}/{}",
-                        COLOR_BOLD,
-                        COLOR_RESET,
-                        display_step,
-                        inst.steps.len()
-                    );
-                    println!(
-                        "  {}Started At:{} {}",
-                        COLOR_BOLD, COLOR_RESET, inst.started_at
-                    );
-                    if let Some(ref completed) = inst.completed_at {
-                        println!("  {}Completed At:{} {}", COLOR_BOLD, COLOR_RESET, completed);
+            match instances.is_empty() {
+                true => println!("No SOP instances executed yet."),
+                false => {
+                    for inst in instances {
+                        let status_color = match inst.status {
+                            crate::sop::SopStatus::Completed => EMERALD_GREEN,
+                            crate::sop::SopStatus::Failed => ERROR_RED,
+                            crate::sop::SopStatus::Running => LIGHT_WHITE,
+                            _ => COLOR_RESET,
+                        };
+                        let completed_count = inst
+                            .steps
+                            .iter()
+                            .filter(|s| s.status == "Completed")
+                            .count();
+                        let display_step = match inst.current_step_index > 0 {
+                            true => inst.current_step_index,
+                            false => completed_count,
+                        };
+                        println!("{}• Instance ID:{} {}", RED_ORANGE, COLOR_RESET, inst.id);
+                        println!("  {}SOP ID:{} {}", COLOR_BOLD, COLOR_RESET, inst.sop_id);
+                        println!(
+                            "  {}Status:{} {:?}{}",
+                            COLOR_BOLD, status_color, inst.status, COLOR_RESET
+                        );
+                        println!(
+                            "  {}Steps Completed:{} {}/{}",
+                            COLOR_BOLD,
+                            COLOR_RESET,
+                            display_step,
+                            inst.steps.len()
+                        );
+                        println!(
+                            "  {}Started At:{} {}",
+                            COLOR_BOLD, COLOR_RESET, inst.started_at
+                        );
+                        match inst.completed_at {
+                            Some(ref completed) => {
+                                println!("  {}Completed At:{} {}", COLOR_BOLD, COLOR_RESET, completed);
+                            }
+                            None => {}
+                        }
+                        println!();
                     }
-                    println!();
                 }
             }
         }
-        SopAction::Trigger { sop_id, payload, wait } => {
+        SopAction::Trigger {
+            sop_id,
+            payload,
+            wait,
+        } => {
             let config = load_config()?;
-            let payload_value = if let Some(p) = payload {
-                let p_trimmed = p.trim();
-                if p_trimmed.starts_with('{') || p_trimmed.starts_with('[') {
-                    serde_json::from_str(p_trimmed)?
-                } else {
-                    // Try parsing as file path
-                    let path = std::path::Path::new(p_trimmed);
-                    if path.exists() {
-                        let content = std::fs::read_to_string(path)?;
-                        serde_json::from_str(&content)?
-                    } else {
-                        anyhow::bail!("Payload must be a valid JSON string or path to a JSON file");
-                    }
-                }
-            } else {
-                serde_json::json!({})
-            };
+            let payload_value = parse_sop_payload(payload)?;
 
-            if wait {
-                println!("Executing SOP '{}' synchronously...", sop_id);
-            } else {
-                println!("Triggering SOP '{}' in background...", sop_id);
+            match wait {
+                true => println!("Executing SOP '{}' synchronously...", sop_id),
+                false => println!("Triggering SOP '{}' in background...", sop_id),
             }
 
-            match crate::sop::engine::trigger_sop_with_options(config, sop_id.clone(), payload_value, wait).await {
-                Ok(instance_id) => {
-                    if wait {
+            match crate::sop::engine::trigger_sop_with_options(
+                config,
+                sop_id.clone(),
+                payload_value,
+                wait,
+            )
+            .await
+            {
+                Ok(instance_id) => match wait {
+                    true => {
                         println!(
                             "{}✓ SOP execution finished!{}",
                             EMERALD_GREEN, COLOR_RESET
                         );
-                        if let Ok(inst) = crate::sop::load_instance(&instance_id) {
-                            println!("Instance ID: {}", instance_id);
-                            println!("Status: {:?}", inst.status);
-                            println!("Steps completed: {}/{}", inst.current_step_index, inst.steps.len());
-                        } else {
-                            println!("Instance ID: {}", instance_id);
+                        println!("Instance ID: {}", instance_id);
+                        match crate::sop::load_instance(&instance_id) {
+                            Ok(inst) => {
+                                println!("Status: {:?}", inst.status);
+                                println!(
+                                    "Steps completed: {}/{}",
+                                    inst.current_step_index,
+                                    inst.steps.len()
+                                );
+                            }
+                            Err(_) => {}
                         }
-                    } else {
+                    }
+                    false => {
                         println!(
                             "{}✓ SOP successfully triggered!{}",
                             EMERALD_GREEN, COLOR_RESET
                         );
                         println!("Instance ID: {}", instance_id);
                     }
-                }
+                },
                 Err(e) => {
                     eprintln!(
                         "{}❌ Failed to execute SOP: {}{}",
@@ -145,30 +175,39 @@ pub async fn handle_sop(action: SopAction) -> Result<()> {
         }
         SopAction::Resume { instance_id, wait } => {
             let config = load_config()?;
-            if wait {
-                println!("Resuming SOP instance '{}' synchronously...", instance_id);
-            } else {
-                println!("Resuming SOP instance '{}' in background...", instance_id);
+            match wait {
+                true => println!("Resuming SOP instance '{}' synchronously...", instance_id),
+                false => println!("Resuming SOP instance '{}' in background...", instance_id),
             }
 
-            match crate::sop::engine::resume_sop_with_options(config, instance_id.clone(), wait).await {
-                Ok(_) => {
-                    if wait {
+            match crate::sop::engine::resume_sop_with_options(config, instance_id.clone(), wait)
+                .await
+            {
+                Ok(_) => match wait {
+                    true => {
                         println!(
                             "{}✓ SOP instance resumed and execution completed!{}",
                             EMERALD_GREEN, COLOR_RESET
                         );
-                        if let Ok(inst) = crate::sop::load_instance(&instance_id) {
-                            println!("Status: {:?}", inst.status);
-                            println!("Steps completed: {}/{}", inst.current_step_index, inst.steps.len());
+                        match crate::sop::load_instance(&instance_id) {
+                            Ok(inst) => {
+                                println!("Status: {:?}", inst.status);
+                                println!(
+                                    "Steps completed: {}/{}",
+                                    inst.current_step_index,
+                                    inst.steps.len()
+                                );
+                            }
+                            Err(_) => {}
                         }
-                    } else {
+                    }
+                    false => {
                         println!(
                             "{}✓ SOP instance resume initiated successfully!{}",
                             EMERALD_GREEN, COLOR_RESET
                         );
                     }
-                }
+                },
                 Err(e) => {
                     eprintln!("{}❌ Failed to resume SOP: {}{}", ERROR_RED, e, COLOR_RESET);
                 }
@@ -176,22 +215,7 @@ pub async fn handle_sop(action: SopAction) -> Result<()> {
         }
         SopAction::Simulate { sop_id, payload } => {
             let config = load_config()?;
-            let payload_value = if let Some(p) = payload {
-                let p_trimmed = p.trim();
-                if p_trimmed.starts_with('{') || p_trimmed.starts_with('[') {
-                    serde_json::from_str(p_trimmed)?
-                } else {
-                    let path = std::path::Path::new(p_trimmed);
-                    if path.exists() {
-                        let content = std::fs::read_to_string(path)?;
-                        serde_json::from_str(&content)?
-                    } else {
-                        anyhow::bail!("Payload must be a valid JSON string or path to a JSON file");
-                    }
-                }
-            } else {
-                serde_json::json!({})
-            };
+            let payload_value = parse_sop_payload(payload)?;
 
             println!("Simulating SOP '{}'...", sop_id);
             match crate::sop::engine::trigger_sop_simulation(config, sop_id.clone(), payload_value)
@@ -215,3 +239,4 @@ pub async fn handle_sop(action: SopAction) -> Result<()> {
     }
     Ok(())
 }
+

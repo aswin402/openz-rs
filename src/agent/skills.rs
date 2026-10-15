@@ -28,47 +28,49 @@ pub struct SkillView {
 
 impl Skill {
     pub fn description(&self) -> String {
-        if let Some(desc) = extract_frontmatter_field(&self.content, "description") {
-            return desc;
-        }
-        for line in self.content.lines() {
-            let trimmed = line.trim();
-            if !trimmed.starts_with('#') && !trimmed.starts_with("---") && !trimmed.is_empty() {
-                let clean: String = trimmed.chars().take(160).collect();
-                return clean;
-            }
-        }
-        format!("Procedural guidelines for {}", self.name.replace('_', " "))
+        extract_frontmatter_field(&self.content, "description")
+            .or_else(|| {
+                self.content
+                    .lines()
+                    .map(str::trim)
+                    .find(|trimmed| {
+                        !trimmed.starts_with('#')
+                            && !trimmed.starts_with("---")
+                            && !trimmed.is_empty()
+                    })
+                    .map(|trimmed| trimmed.chars().take(160).collect::<String>())
+            })
+            .unwrap_or_else(|| {
+                format!("Procedural guidelines for {}", self.name.replace('_', " "))
+            })
     }
 
     pub fn triggers(&self) -> Vec<String> {
-        let mut triggers = Vec::new();
-        if let Some(trig_str) = extract_frontmatter_field(&self.content, "triggers") {
-            let cleaned_str = trig_str.trim();
-            if cleaned_str.starts_with('[') && cleaned_str.ends_with(']') {
-                let inner = &cleaned_str[1..cleaned_str.len() - 1];
-                for part in inner.split(',') {
-                    let cleaned = part.trim().trim_matches(['"', '\'']).to_lowercase();
-                    if !cleaned.is_empty() {
-                        triggers.push(cleaned);
-                    }
-                }
-            } else {
-                for part in cleaned_str.split(',') {
-                    let cleaned = part.trim().trim_matches(['"', '\'']).to_lowercase();
-                    if !cleaned.is_empty() {
-                        triggers.push(cleaned);
-                    }
-                }
+        let mut triggers: Vec<String> = extract_frontmatter_field(&self.content, "triggers")
+            .map(|trig_str| {
+                let cleaned_str = trig_str.trim();
+                let inner = cleaned_str
+                    .strip_prefix('[')
+                    .and_then(|s| s.strip_suffix(']'))
+                    .unwrap_or(cleaned_str);
+                inner
+                    .split(',')
+                    .map(|part| part.trim().trim_matches(['"', '\'']).to_lowercase())
+                    .filter(|cleaned| !cleaned.is_empty())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        match triggers.is_empty() {
+            true => {
+                triggers.extend(
+                    self.name
+                        .split('_')
+                        .filter(|w| w.len() > 2)
+                        .map(|w| w.to_lowercase()),
+                );
             }
-        }
-        if triggers.is_empty() {
-            triggers.extend(
-                self.name
-                    .split('_')
-                    .filter(|w| w.len() > 2)
-                    .map(|w| w.to_lowercase()),
-            );
+            false => {}
         }
         triggers
     }
@@ -81,21 +83,15 @@ impl Skill {
 
 pub fn extract_frontmatter_field(content: &str, field: &str) -> Option<String> {
     let trimmed = content.trim_start();
-    if !trimmed.starts_with("---") {
-        return None;
-    }
-    let rest = &trimmed[3..];
+    let rest = trimmed.strip_prefix("---")?;
     let end_idx = rest.find("---")?;
     let yaml_block = &rest[..end_idx];
     let field_prefix = format!("{}:", field);
-    for line in yaml_block.lines() {
-        let line_trimmed = line.trim();
-        if line_trimmed.starts_with(&field_prefix) {
-            let val = line_trimmed[field_prefix.len()..].trim();
-            return Some(val.trim_matches(['"', '\'']).to_string());
-        }
-    }
-    None
+    yaml_block.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix(&field_prefix)
+            .map(|val| val.trim().trim_matches(['"', '\'']).to_string())
+    })
 }
 
 pub fn get_user_profile_path() -> PathBuf {
@@ -104,65 +100,67 @@ pub fn get_user_profile_path() -> PathBuf {
 
 pub fn load_user_profile() -> String {
     let path = get_user_profile_path();
-    if path.is_file() {
-        fs::read_to_string(path).unwrap_or_default()
-    } else {
-        String::new()
+    match path.is_file() {
+        true => fs::read_to_string(path).unwrap_or_default(),
+        false => String::new(),
+    }
+}
+
+fn clean_bullet_line(line: &str) -> Option<&str> {
+    let l = line.trim();
+    match l.starts_with('-') || l.starts_with('*') {
+        true => Some(
+            l[1..]
+                .trim()
+                .trim_start_matches("**")
+                .trim_end_matches("**")
+                .trim(),
+        ),
+        false => None,
     }
 }
 
 pub fn update_user_profile(new_preferences: &str) -> Result<()> {
     let trimmed_input = new_preferences.trim();
-    if trimmed_input.is_empty() {
-        return Ok(());
+    match trimmed_input.is_empty() {
+        true => return Ok(()),
+        false => {}
     }
 
     let path = get_user_profile_path();
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
+    match path.parent() {
+        Some(parent) => {
+            let _ = fs::create_dir_all(parent);
+        }
+        None => {}
     }
 
-    let existing = if path.is_file() {
-        fs::read_to_string(&path).unwrap_or_default()
-    } else {
-        String::new()
+    let existing = match path.is_file() {
+        true => fs::read_to_string(&path).unwrap_or_default(),
+        false => String::new(),
     };
 
     let mut existing_bullets: Vec<String> = Vec::new();
-    for line in existing.lines() {
-        let l = line.trim();
-        if l.starts_with('-') || l.starts_with('*') {
-            let text = l[1..]
-                .trim()
-                .trim_start_matches("**")
-                .trim_end_matches("**")
-                .trim()
-                .to_string();
-            if !text.is_empty()
-                && !existing_bullets
-                    .iter()
-                    .any(|b| b.eq_ignore_ascii_case(&text))
-            {
-                existing_bullets.push(text);
-            }
+    for text in existing.lines().filter_map(clean_bullet_line) {
+        let should_add = !text.is_empty()
+            && !existing_bullets
+                .iter()
+                .any(|b| b.eq_ignore_ascii_case(text));
+        match should_add {
+            true => existing_bullets.push(text.to_string()),
+            false => {}
         }
     }
 
     for line in trimmed_input.lines() {
-        let l = line.trim();
-        let text = if l.starts_with('-') || l.starts_with('*') {
-            l[1..].trim().trim_start_matches("**").trim_end_matches("**").trim()
-        } else {
-            l
-        };
-        if text.len() > 3
+        let text = clean_bullet_line(line).unwrap_or_else(|| line.trim());
+        let should_add = text.len() > 3
             && !existing_bullets.iter().any(|b| {
-                b.eq_ignore_ascii_case(text)
-                    || b.contains(text)
-                    || text.contains(b.as_str())
-            })
-        {
-            existing_bullets.push(text.to_string());
+                b.eq_ignore_ascii_case(text) || b.contains(text) || text.contains(b.as_str())
+            });
+        match should_add {
+            true => existing_bullets.push(text.to_string()),
+            false => {}
         }
     }
 
@@ -177,26 +175,29 @@ pub fn update_user_profile(new_preferences: &str) -> Result<()> {
 
 pub fn validate_skill_metadata(name: &str, content: &str) -> Vec<String> {
     let mut errors = Vec::new();
-    if name.trim().is_empty() {
-        errors.push("Skill name is required.".to_string());
-    }
-    if name
-        .chars()
-        .any(|c| !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '_' && c != '-')
-    {
-        errors.push(
-            "Skill name must use lowercase letters, numbers, dashes, or underscores.".to_string(),
-        );
-    }
-    if content.trim().is_empty() {
-        errors.push("Skill content is required.".to_string());
-    }
     let trimmed = content.trim_start();
-    if !trimmed.starts_with('#') && !trimmed.starts_with("---") {
-        errors.push("Skill content should start with a Markdown heading or YAML frontmatter.".to_string());
-    }
-    if !scan_skill_content(content).unwrap_or(false) {
-        errors.push("Skill content contains potentially unsafe commands or patterns.".to_string());
+    let checks: [(bool, &str); 5] = [
+        (name.trim().is_empty(), "Skill name is required."),
+        (
+            name.chars()
+                .any(|c| !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '_' && c != '-'),
+            "Skill name must use lowercase letters, numbers, dashes, or underscores.",
+        ),
+        (content.trim().is_empty(), "Skill content is required."),
+        (
+            !trimmed.starts_with('#') && !trimmed.starts_with("---"),
+            "Skill content should start with a Markdown heading or YAML frontmatter.",
+        ),
+        (
+            !scan_skill_content(content).unwrap_or(false),
+            "Skill content contains potentially unsafe commands or patterns.",
+        ),
+    ];
+    for (failed, msg) in checks {
+        match failed {
+            true => errors.push(msg.to_string()),
+            false => {}
+        }
     }
     errors
 }
@@ -213,45 +214,59 @@ pub fn get_workspace_skills_dir() -> PathBuf {
     crate::config::resolve_path(".openz/skills")
 }
 
-fn load_skill_files_from_dir(
-    dir: &std::path::Path,
-    skills_map: &mut std::collections::HashMap<String, Skill>,
-) -> Result<()> {
-    if !dir.exists() || !dir.is_dir() {
-        return Ok(());
-    }
-
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
+fn discover_skill_entry(path: PathBuf) -> Option<(String, PathBuf)> {
+    match (
+        path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md"),
+        path.is_dir(),
+    ) {
+        (true, _) => {
             let name = path
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_string();
-            if name.is_empty() || name == "INDEX" || name.ends_with(".bak") {
-                continue;
-            }
-            let content = fs::read_to_string(&path)?;
-            skills_map.insert(name.clone(), Skill { name, content });
-        } else if path.is_dir() {
+            let valid = !name.is_empty() && name != "INDEX" && !name.ends_with(".bak");
+            valid.then_some((name, path))
+        }
+        (false, true) => {
             let skill_file = path.join("SKILL.md");
-            if skill_file.exists() && skill_file.is_file() {
-                let name = path
-                    .file_name()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("")
-                    .to_string();
-                if name.is_empty() {
-                    continue;
+            let name = path
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            let valid = skill_file.exists() && skill_file.is_file() && !name.is_empty();
+            valid.then_some((name, skill_file))
+        }
+        (false, false) => None,
+    }
+}
+
+fn discover_skill_files_in_dir(dir: &std::path::Path) -> Result<Vec<(String, PathBuf)>> {
+    match dir.exists() && dir.is_dir() {
+        false => Ok(Vec::new()),
+        true => {
+            let mut items = Vec::new();
+            for entry in fs::read_dir(dir)? {
+                let entry = entry?;
+                match discover_skill_entry(entry.path()) {
+                    Some(pair) => items.push(pair),
+                    None => {}
                 }
-                let content = fs::read_to_string(&skill_file)?;
-                skills_map.insert(name.clone(), Skill { name, content });
             }
+            Ok(items)
         }
     }
+}
 
+fn load_skill_files_from_dir(
+    dir: &std::path::Path,
+    skills_map: &mut std::collections::HashMap<String, Skill>,
+) -> Result<()> {
+    for (name, skill_path) in discover_skill_files_in_dir(dir)? {
+        let content = fs::read_to_string(&skill_path)?;
+        skills_map.insert(name.clone(), Skill { name, content });
+    }
     Ok(())
 }
 
@@ -365,32 +380,40 @@ pub fn get_connection() -> Result<Connection> {
 
 fn migrate_old_skills_to_db(conn: &Connection) -> Result<()> {
     let global_dir = get_skills_dir();
-    if global_dir.exists() && global_dir.is_dir() {
-        for entry in fs::read_dir(&global_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
+    match global_dir.exists() && global_dir.is_dir() {
+        false => {}
+        true => {
+            for entry in fs::read_dir(&global_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                let is_md =
+                    path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md");
                 let name = path
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .unwrap_or("")
                     .to_string();
-                if name.is_empty() || name == "INDEX" || name.ends_with(".bak") {
-                    continue;
-                }
-                if let Ok(content) = fs::read_to_string(&path) {
-                    let now = chrono::Utc::now().to_rfc3339();
-                    let _ = conn.execute(
-                        "INSERT OR IGNORE INTO skills (name, content, profile, created_at, last_used)
-                         VALUES (?1, ?2, NULL, ?3, ?3)",
-                        params![name, content, now],
-                    );
+                let valid = is_md && !name.is_empty() && name != "INDEX" && !name.ends_with(".bak");
+                match valid {
+                    false => continue,
+                    true => match fs::read_to_string(&path) {
+                        Ok(content) => {
+                            let now = chrono::Utc::now().to_rfc3339();
+                            let _ = conn.execute(
+                                "INSERT OR IGNORE INTO skills (name, content, profile, created_at, last_used)
+                                 VALUES (?1, ?2, NULL, ?3, ?3)",
+                                params![name, content, now],
+                            );
+                        }
+                        Err(_) => {}
+                    },
                 }
             }
         }
     }
     Ok(())
 }
+
 
 fn initialize_default_subagent_skills(conn: &Connection) -> Result<()> {
     let now = chrono::Utc::now().to_rfc3339();
@@ -699,125 +722,93 @@ pub fn load_skills() -> Result<Vec<Skill>> {
     load_skills_with_profile(None)
 }
 
+fn add_file_skill_views(
+    dir: &std::path::Path,
+    source: &str,
+    views: &mut std::collections::HashMap<String, SkillView>,
+) -> Result<()> {
+    for (name, skill_path) in discover_skill_files_in_dir(dir)? {
+        let content = fs::read_to_string(&skill_path)?;
+        views.insert(
+            name.clone(),
+            SkillView {
+                validation_errors: validate_skill_metadata(&name, &content),
+                name,
+                content,
+                scope: source.to_string(),
+                profile: None,
+                source: source.to_string(),
+                path: Some(skill_path.display().to_string()),
+                enabled: true,
+                is_protected: true,
+                use_count: 0,
+                created_at: None,
+                last_used: None,
+            },
+        );
+    }
+    Ok(())
+}
+
 pub fn load_skill_views() -> Result<Vec<SkillView>> {
     let mut views = std::collections::HashMap::<String, SkillView>::new();
 
-    if let Ok(conn) = get_connection() {
-        let mut stmt = conn.prepare(
-            "SELECT name, content, profile, use_count, created_at, last_used FROM skills",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, i64>(3).unwrap_or(0),
-                row.get::<_, Option<String>>(4).unwrap_or(None),
-                row.get::<_, Option<String>>(5).unwrap_or(None),
-            ))
-        })?;
+    match get_connection() {
+        Ok(conn) => {
+            let mut stmt = conn.prepare(
+                "SELECT name, content, profile, use_count, created_at, last_used FROM skills",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, i64>(3).unwrap_or(0),
+                    row.get::<_, Option<String>>(4).unwrap_or(None),
+                    row.get::<_, Option<String>>(5).unwrap_or(None),
+                ))
+            })?;
 
-        let db_path = get_db_path().display().to_string();
-        for row in rows.flatten() {
-            let (name, content, profile, use_count, created_at, last_used) = row;
-            let scope = profile
-                .as_ref()
-                .map(|p| format!("subagent:{p}"))
-                .unwrap_or_else(|| "global".to_string());
-            let key = profile
-                .as_ref()
-                .map(|p| format!("{p}/{name}"))
-                .unwrap_or_else(|| name.clone());
-            let is_protected = profile.is_some();
-            views.insert(
-                key,
-                SkillView {
-                    validation_errors: validate_skill_metadata(&name, &content),
-                    name,
-                    content,
-                    scope,
-                    profile,
-                    source: "database".to_string(),
-                    path: Some(db_path.clone()),
-                    enabled: true,
-                    is_protected,
-                    use_count,
-                    created_at,
-                    last_used,
-                },
-            );
+            let db_path = get_db_path().display().to_string();
+            for row in rows.flatten() {
+                let (name, content, profile, use_count, created_at, last_used) = row;
+                let scope = profile
+                    .as_ref()
+                    .map(|p| format!("subagent:{p}"))
+                    .unwrap_or_else(|| "global".to_string());
+                let key = profile
+                    .as_ref()
+                    .map(|p| format!("{p}/{name}"))
+                    .unwrap_or_else(|| name.clone());
+                let is_protected = profile.is_some();
+                views.insert(
+                    key,
+                    SkillView {
+                        validation_errors: validate_skill_metadata(&name, &content),
+                        name,
+                        content,
+                        scope,
+                        profile,
+                        source: "database".to_string(),
+                        path: Some(db_path.clone()),
+                        enabled: true,
+                        is_protected,
+                        use_count,
+                        created_at,
+                        last_used,
+                    },
+                );
+            }
         }
-    }
-
-    fn add_file_skill_views(
-        dir: &std::path::Path,
-        source: &str,
-        views: &mut std::collections::HashMap<String, SkillView>,
-    ) -> Result<()> {
-        if !dir.exists() || !dir.is_dir() {
-            return Ok(());
-        }
-
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            let (name, skill_path) =
-                if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
-                    let name = path
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("")
-                        .to_string();
-                    if name.is_empty() || name == "INDEX" || name.ends_with(".bak") {
-                        continue;
-                    }
-                    (name, path)
-                } else if path.is_dir() {
-                    let skill_file = path.join("SKILL.md");
-                    if !skill_file.exists() || !skill_file.is_file() {
-                        continue;
-                    }
-                    let name = path
-                        .file_name()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("")
-                        .to_string();
-                    if name.is_empty() {
-                        continue;
-                    }
-                    (name, skill_file)
-                } else {
-                    continue;
-                };
-
-            let content = fs::read_to_string(&skill_path)?;
-            views.insert(
-                name.clone(),
-                SkillView {
-                    validation_errors: validate_skill_metadata(&name, &content),
-                    name,
-                    content,
-                    scope: source.to_string(),
-                    profile: None,
-                    source: source.to_string(),
-                    path: Some(skill_path.display().to_string()),
-                    enabled: true,
-                    is_protected: true,
-                    use_count: 0,
-                    created_at: None,
-                    last_used: None,
-                },
-            );
-        }
-
-        Ok(())
+        Err(_) => {}
     }
 
     let skills_config = crate::config::loader::load_config()
         .map(|config| config.skills)
         .unwrap_or_default();
-    if skills_config.workspace_skills_enabled {
-        add_file_skill_views(&get_workspace_skills_dir(), "workspace", &mut views)?;
+    match skills_config.workspace_skills_enabled {
+        true => add_file_skill_views(&get_workspace_skills_dir(), "workspace", &mut views)?,
+        false => {}
     }
     for external_dir in skills_config.external_dirs {
         let dir = crate::config::resolve_path(&external_dir);
@@ -830,41 +821,43 @@ pub fn load_skill_views() -> Result<Vec<SkillView>> {
 pub fn load_skills_with_profile(profile_name: Option<&str>) -> Result<Vec<Skill>> {
     let mut skills_map = std::collections::HashMap::new();
 
-    // 1. Load from SQLite database (global and profile-specific)
-    if let Ok(conn) = get_connection() {
-        let mut stmt =
-            conn.prepare("SELECT name, content FROM skills WHERE profile IS NULL OR profile = ?")?;
-        let profile_str = profile_name.unwrap_or("");
-        let rows = stmt.query_map(params![profile_str], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?;
+    match get_connection() {
+        Ok(conn) => {
+            let mut stmt = conn.prepare(
+                "SELECT name, content FROM skills WHERE profile IS NULL OR profile = ?",
+            )?;
+            let profile_str = profile_name.unwrap_or("");
+            let rows = stmt.query_map(params![profile_str], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
 
-        for r in rows.flatten() {
-            let (name, content) = r;
-            skills_map.insert(name.clone(), Skill { name, content });
+            for (name, content) in rows.flatten() {
+                skills_map.insert(name.clone(), Skill { name, content });
+            }
         }
+        Err(_) => {}
     }
 
-    // 2. Load global disk skills from ~/.openz/skills/
     let global_skills_dir = get_skills_dir();
     let _ = load_skill_files_from_dir(&global_skills_dir, &mut skills_map);
 
-    // If profile specified, load from ~/.openz/subagents/<profile>/skills/
-    if let Some(prof) = profile_name {
-        let profile_skills_dir = crate::config::runtime_data_dir()
-            .join("subagents")
-            .join(prof)
-            .join("skills");
-        let _ = load_skill_files_from_dir(&profile_skills_dir, &mut skills_map);
+    match profile_name {
+        Some(prof) => {
+            let profile_skills_dir = crate::config::runtime_data_dir()
+                .join("subagents")
+                .join(prof)
+                .join("skills");
+            let _ = load_skill_files_from_dir(&profile_skills_dir, &mut skills_map);
+        }
+        None => {}
     }
 
-    // 3. Load explicit workspace skills from .openz/skills. This avoids treating a
-    // project-level ./skills directory as writable agent memory.
     let skills_config = crate::config::loader::load_config()
         .map(|config| config.skills)
         .unwrap_or_default();
-    if skills_config.workspace_skills_enabled {
-        load_skill_files_from_dir(&get_workspace_skills_dir(), &mut skills_map)?;
+    match skills_config.workspace_skills_enabled {
+        true => load_skill_files_from_dir(&get_workspace_skills_dir(), &mut skills_map)?,
+        false => {}
     }
     for external_dir in skills_config.external_dirs {
         let dir = crate::config::resolve_path(&external_dir);
@@ -874,72 +867,86 @@ pub fn load_skills_with_profile(profile_name: Option<&str>) -> Result<Vec<Skill>
     Ok(skills_map.into_values().collect())
 }
 
+fn checked_within_last_24h(check_path: &std::path::Path) -> bool {
+    check_path
+        .exists()
+        .then(|| fs::read_to_string(check_path).ok())
+        .flatten()
+        .and_then(|content| serde_json::from_str::<String>(&content).ok())
+        .and_then(|timestamp_str| chrono::DateTime::parse_from_rfc3339(&timestamp_str).ok())
+        .is_some_and(|last_checked| {
+            let last_checked_utc = last_checked.with_timezone(&chrono::Utc);
+            chrono::Utc::now().signed_duration_since(last_checked_utc)
+                < chrono::Duration::hours(24)
+        })
+}
+
 pub fn archive_stale_skills() -> Result<()> {
     let check_path = crate::config::runtime_data_dir().join("last_stale_skills_check.json");
-    if check_path.exists() {
-        if let Ok(content) = fs::read_to_string(&check_path) {
-            if let Ok(timestamp_str) = serde_json::from_str::<String>(&content) {
-                if let Ok(last_checked) = chrono::DateTime::parse_from_rfc3339(&timestamp_str) {
-                    let last_checked_utc = last_checked.with_timezone(&chrono::Utc);
-                    let now = chrono::Utc::now();
-                    if now.signed_duration_since(last_checked_utc) < chrono::Duration::hours(24) {
-                        return Ok(());
-                    }
-                }
-            }
-        }
+    match checked_within_last_24h(&check_path) {
+        true => return Ok(()),
+        false => {}
     }
 
-    if let Ok(conn) = get_connection() {
-        let now = chrono::Utc::now();
-        let stale_duration = chrono::Duration::days(30);
+    match get_connection() {
+        Ok(conn) => {
+            let now = chrono::Utc::now();
+            let stale_duration = chrono::Duration::days(30);
 
-        let mut stmt = conn.prepare("SELECT name, profile, last_used, content FROM skills")?;
-        let rows = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, Option<String>>(1)?,
-                row.get::<_, Option<String>>(2)?,
-                row.get::<_, String>(3)?,
-            ))
-        })?;
+            let mut stmt = conn.prepare("SELECT name, profile, last_used, content FROM skills")?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            })?;
 
-        let mut to_delete = Vec::new();
-        for r in rows.flatten() {
-            let (name, profile, last_used_opt, content) = r;
-            if let Some(last_used_str) = last_used_opt {
-                if let Ok(last_used_date) = chrono::DateTime::parse_from_rfc3339(&last_used_str) {
-                    let last_used_utc = last_used_date.with_timezone(&chrono::Utc);
-                    if now.signed_duration_since(last_used_utc) > stale_duration {
+            let mut to_delete = Vec::new();
+            for (name, profile, last_used_opt, content) in rows.flatten() {
+                let is_stale = last_used_opt
+                    .as_deref()
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .is_some_and(|last_used_date| {
+                        let last_used_utc = last_used_date.with_timezone(&chrono::Utc);
+                        now.signed_duration_since(last_used_utc) > stale_duration
+                    });
+                match is_stale {
+                    true => {
                         let archive_dir = get_skills_dir().join("archive");
                         fs::create_dir_all(&archive_dir)?;
                         let dest_path = archive_dir.join(format!("{}.md", name));
                         let _ = fs::write(dest_path, content);
-
                         to_delete.push((name, profile));
                     }
+                    false => {}
                 }
             }
-        }
 
-        for (name, profile) in to_delete {
-            let _ = conn.execute(
-                "DELETE FROM skills WHERE name = ?1 AND profile IS ?2",
-                params![name, profile],
-            );
+            for (name, profile) in to_delete {
+                let _ = conn.execute(
+                    "DELETE FROM skills WHERE name = ?1 AND profile IS ?2",
+                    params![name, profile],
+                );
 
-            let aura_blue = "\x1b[38;2;96;165;250m";
-            let color_reset = "\x1b[0m";
-            crate::channels::cli::send_notification(&format!(
-                "{}◇ [Self-Improvement] Skill '{}' archived to filesystem due to 30 days of database inactivity.{}",
-                aura_blue, name, color_reset
-            ));
-        }
+                let aura_blue = "\x1b[38;2;96;165;250m";
+                let color_reset = "\x1b[0m";
+                crate::channels::cli::send_notification(&format!(
+                    "{}◇ [Self-Improvement] Skill '{}' archived to filesystem due to 30 days of database inactivity.{}",
+                    aura_blue, name, color_reset
+                ));
+            }
 
-        let now_str = chrono::Utc::now().to_rfc3339();
-        if let Ok(serialized) = serde_json::to_string(&now_str) {
-            let _ = fs::write(&check_path, serialized);
+            let now_str = chrono::Utc::now().to_rfc3339();
+            match serde_json::to_string(&now_str) {
+                Ok(serialized) => {
+                    let _ = fs::write(&check_path, serialized);
+                }
+                Err(_) => {}
+            }
         }
+        Err(_) => {}
     }
     Ok(())
 }
@@ -1008,28 +1015,42 @@ fn is_stop_word(w: &str) -> bool {
     )
 }
 
+fn load_profile_skill_names(profile_name: Option<&str>) -> std::collections::HashSet<String> {
+    let mut profile_skills = std::collections::HashSet::new();
+    let prof = match profile_name {
+        Some(prof) => prof,
+        None => return profile_skills,
+    };
+    let conn = match get_connection() {
+        Ok(conn) => conn,
+        Err(_) => return profile_skills,
+    };
+    let mut stmt = match conn.prepare("SELECT name FROM skills WHERE profile = ?") {
+        Ok(stmt) => stmt,
+        Err(_) => return profile_skills,
+    };
+    let rows = match stmt.query_map(params![prof], |r| r.get::<_, String>(0)) {
+        Ok(rows) => rows,
+        Err(_) => return profile_skills,
+    };
+    for name in rows.flatten() {
+        profile_skills.insert(name);
+    }
+    profile_skills
+}
+
 pub fn load_relevant_skills_with_profile(
     user_content: &str,
     session_messages: &[crate::session::Message],
     profile_name: Option<&str>,
 ) -> Result<Vec<Skill>> {
     let all_skills = load_skills_with_profile(profile_name)?;
-    if all_skills.is_empty() {
-        return Ok(Vec::new());
+    match all_skills.is_empty() {
+        true => return Ok(Vec::new()),
+        false => {}
     }
 
-    let mut profile_skills = std::collections::HashSet::new();
-    if let Some(prof) = profile_name {
-        if let Ok(conn) = get_connection() {
-            if let Ok(mut stmt) = conn.prepare("SELECT name FROM skills WHERE profile = ?") {
-                if let Ok(rows) = stmt.query_map(params![prof], |r| r.get::<_, String>(0)) {
-                    for name in rows.flatten() {
-                        profile_skills.insert(name);
-                    }
-                }
-            }
-        }
-    }
+    let profile_skills = load_profile_skill_names(profile_name);
 
     let mut search_context = user_content.to_lowercase();
     for msg in session_messages.iter().rev().take(3) {
@@ -1037,129 +1058,162 @@ pub fn load_relevant_skills_with_profile(
         search_context.push_str(&msg.content.to_lowercase());
     }
 
+    let search_words: Vec<&str> = search_context
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() > 3 && !is_stop_word(w))
+        .collect();
+
     let mut relevant_scored = Vec::new();
     for skill in all_skills {
         let is_profile_specific = profile_skills.contains(&skill.name);
-
         let triggers = skill.triggers();
         let trigger_match = triggers
             .iter()
             .any(|t| !t.trim().is_empty() && search_context.contains(&t.to_lowercase()));
-
         let name_exact_match = search_context.contains(&skill.name.to_lowercase());
-
-        let name_words: Vec<&str> = skill.name.split('_').collect();
-        let name_match = name_words
-            .iter()
+        let name_match = skill
+            .name
+            .split('_')
             .any(|word| word.len() > 2 && search_context.contains(word));
 
-        let mut content_match = false;
         let desc_sample = skill
             .content
             .chars()
             .take(500)
             .collect::<String>()
             .to_lowercase();
-        let search_words: Vec<&str> = search_context
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|w| w.len() > 3 && !is_stop_word(w))
-            .collect();
-        for word in search_words {
-            if desc_sample.contains(word) {
-                content_match = true;
-                break;
-            }
-        }
+        let content_match = search_words.iter().any(|word| desc_sample.contains(*word));
 
-        let mut score = 0.0f32;
-        if trigger_match {
-            score += 10.0;
-        }
-        if name_exact_match {
-            score += 8.0;
-        }
-        if is_profile_specific {
-            score += 5.0;
-        }
-        if name_match {
-            score += 3.0;
-        }
-        if content_match {
-            score += 1.0;
-        }
+        let score = [
+            (trigger_match, 10.0f32),
+            (name_exact_match, 8.0f32),
+            (is_profile_specific, 5.0f32),
+            (name_match, 3.0f32),
+            (content_match, 1.0f32),
+        ]
+        .into_iter()
+        .fold(0.0f32, |acc, (matched, weight)| match matched {
+            true => acc + weight,
+            false => acc,
+        });
 
-        if score > 0.0 {
-            relevant_scored.push((score, skill));
+        match score > 0.0 {
+            true => relevant_scored.push((score, skill)),
+            false => {}
         }
     }
 
     relevant_scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     let relevant: Vec<Skill> = relevant_scored.into_iter().map(|(_, s)| s).collect();
 
-    if !relevant.is_empty() {
-        if let Ok(conn) = get_connection() {
+    match (!relevant.is_empty(), get_connection()) {
+        (true, Ok(conn)) => {
             let now = chrono::Utc::now().to_rfc3339();
             for skill in &relevant {
-                if profile_skills.contains(&skill.name) {
-                    let _ = conn.execute(
-                        "UPDATE skills SET use_count = use_count + 1, last_used = ?1 WHERE name = ?2 AND profile = ?3",
-                        params![now, skill.name, profile_name.unwrap_or("")],
-                    );
-                } else {
-                    let _ = conn.execute(
-                        "UPDATE skills SET use_count = use_count + 1, last_used = ?1 WHERE name = ?2 AND profile IS NULL",
-                        params![now, skill.name],
-                    );
+                match profile_skills.contains(&skill.name) {
+                    true => {
+                        let _ = conn.execute(
+                            "UPDATE skills SET use_count = use_count + 1, last_used = ?1 WHERE name = ?2 AND profile = ?3",
+                            params![now, skill.name, profile_name.unwrap_or("")],
+                        );
+                    }
+                    false => {
+                        let _ = conn.execute(
+                            "UPDATE skills SET use_count = use_count + 1, last_used = ?1 WHERE name = ?2 AND profile IS NULL",
+                            params![now, skill.name],
+                        );
+                    }
                 }
             }
         }
+        _ => {}
     }
 
     Ok(relevant)
 }
 
+fn is_shell_name(tok: &str) -> bool {
+    matches!(tok, "bash" | "sh" | "zsh" | "dash")
+}
+
+fn line_has_unsafe_skill_pattern(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    let trimmed = lower.trim();
+    let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+
+    let has_fetcher = tokens
+        .iter()
+        .any(|t| matches!(*t, "curl" | "wget") || t.ends_with("/curl") || t.ends_with("/wget"));
+
+    let pipes_to_shell = lower
+        .split(['|', ';'])
+        .skip(1)
+        .filter_map(|seg| seg.split_whitespace().next())
+        .any(is_shell_name);
+
+    let ends_with_pipe_shell = lower
+        .rsplit_once('|')
+        .is_some_and(|(_, rhs)| is_shell_name(rhs.trim()));
+
+    let has_exfil_keyword = ["evil.com", "leak", "steal", "exfiltrat"]
+        .iter()
+        .any(|kw| lower.contains(kw));
+
+    let has_rm_rf_root = tokens
+        .windows(3)
+        .any(|w| w[0] == "rm" && w[1] == "-rf" && w[2].starts_with('/'));
+
+    let has_chmod_777 = tokens.windows(2).any(|w| w[0] == "chmod" && w[1] == "777");
+
+    let has_dev_tcp = lower
+        .split_once("/dev/tcp/")
+        .is_some_and(|(_, rest)| rest.chars().next().is_some_and(|c| c.is_ascii_digit()));
+
+    let has_nc_exec = tokens
+        .windows(3)
+        .any(|w| w[0] == "nc" && w[1] == "-e" && w[2].starts_with('/'));
+
+    let has_bash_reverse = tokens
+        .windows(3)
+        .any(|w| w[0] == "bash" && w[1] == "-i" && w[2].starts_with(">&"));
+
+    (has_fetcher && (pipes_to_shell || has_exfil_keyword))
+        || ends_with_pipe_shell
+        || has_rm_rf_root
+        || has_chmod_777
+        || has_dev_tcp
+        || has_nc_exec
+        || has_bash_reverse
+}
+
 pub fn scan_skill_content(content: &str) -> Result<bool> {
-    static BLACKLIST_RE: std::sync::OnceLock<Vec<regex::Regex>> = std::sync::OnceLock::new();
-    let regexes = BLACKLIST_RE.get_or_init(|| {
-        let patterns = [
-            r"(?i)(?:curl|wget)\s+[^\n|;]+(?:\|\s*(?:bash|sh|zsh|dash)|;\s*(?:bash|sh|zsh))",
-            r"(?i)(?:curl|wget)\s+[^\n|;]+(?:evil\.com|leak|steal|exfiltrat)",
-            r"(?i)\|\s*(?:bash|sh|zsh|dash)\s*$",
-            r"(?i)rm\s+-rf\s+/",
-            r"(?i)chmod\s+777",
-            r"(?i)/dev/tcp/\d",
-            r"(?i)nc\s+-e\s+/",
-            r"(?i)bash\s+-i\s+>&",
-        ];
-        patterns
-            .iter()
-            .map(|p| regex::Regex::new(p).expect("invalid skill content validation pattern"))
-            .collect()
-    });
-    for re in regexes {
-        if re.is_match(content) {
-            return Ok(false);
-        }
+    Ok(!content.lines().any(line_has_unsafe_skill_pattern))
+}
+
+fn sanitize_skill_name(name: &str) -> String {
+    name.to_lowercase()
+        .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_")
+}
+
+fn normalize_and_validate_skill(name: &str, content: &str) -> Result<(String, String)> {
+    let safe_name = sanitize_skill_name(name);
+    let trimmed = content.trim_start();
+    let has_header = trimmed.starts_with('#') || trimmed.starts_with("---");
+    let normalized_content = match has_header {
+        true => content.to_string(),
+        false => format!("# {}\n\n{}", safe_name.replace('_', " "), content.trim()),
+    };
+
+    match scan_skill_content(&normalized_content).unwrap_or(false) {
+        true => Ok((safe_name, normalized_content)),
+        false => anyhow::bail!(
+            "Skill validation failed: content contains potentially unsafe commands or patterns."
+        ),
     }
-    Ok(true)
 }
 
 pub fn save_skill(name: &str, content: &str) -> Result<()> {
-    let safe_name = name
-        .to_lowercase()
-        .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
-
-    let normalized_content = if !content.trim_start().starts_with('#') && !content.trim_start().starts_with("---") {
-        format!("# {}\n\n{}", safe_name.replace('_', " "), content.trim())
-    } else {
-        content.to_string()
-    };
-
-    if !scan_skill_content(&normalized_content).unwrap_or(false) {
-        anyhow::bail!(
-            "Skill validation failed: content contains potentially unsafe commands or patterns."
-        );
-    }
+    let (safe_name, normalized_content) = normalize_and_validate_skill(name, content)?;
 
     let conn = get_connection()?;
     let now = chrono::Utc::now().to_rfc3339();
@@ -1170,7 +1224,6 @@ pub fn save_skill(name: &str, content: &str) -> Result<()> {
         params![safe_name, normalized_content, now],
     )?;
 
-    // Persist as readable Markdown file in ~/.openz/skills/
     let global_skills_dir = get_skills_dir();
     let _ = fs::create_dir_all(&global_skills_dir);
     let skill_file = global_skills_dir.join(format!("{}.md", safe_name));
@@ -1184,32 +1237,36 @@ pub fn delete_skill(name: &str) -> Result<()> {
 }
 
 pub fn delete_skill_with_profile(name: &str, profile_name: Option<&str>) -> Result<()> {
-    let safe_name = name
-        .to_lowercase()
-        .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
-
+    let safe_name = sanitize_skill_name(name);
     let conn = get_connection()?;
-    if let Some(prof) = profile_name {
-        conn.execute(
-            "DELETE FROM skills WHERE name = ?1 AND profile = ?2",
-            params![safe_name, prof],
-        )?;
-        let file_path = crate::config::runtime_data_dir()
-            .join("subagents")
-            .join(prof)
-            .join("skills")
-            .join(format!("{}.md", safe_name));
-        let _ = fs::remove_file(&file_path);
-    } else {
-        conn.execute(
-            "DELETE FROM skills WHERE name = ?1 AND profile IS NULL",
-            params![safe_name],
-        )?;
-        let file_path = get_skills_dir().join(format!("{}.md", safe_name));
-        let _ = fs::remove_file(&file_path);
-        let dir_path = get_skills_dir().join(&safe_name);
-        if dir_path.is_dir() {
-            let _ = fs::remove_dir_all(&dir_path);
+
+    match profile_name {
+        Some(prof) => {
+            conn.execute(
+                "DELETE FROM skills WHERE name = ?1 AND profile = ?2",
+                params![safe_name, prof],
+            )?;
+            let file_path = crate::config::runtime_data_dir()
+                .join("subagents")
+                .join(prof)
+                .join("skills")
+                .join(format!("{}.md", safe_name));
+            let _ = fs::remove_file(&file_path);
+        }
+        None => {
+            conn.execute(
+                "DELETE FROM skills WHERE name = ?1 AND profile IS NULL",
+                params![safe_name],
+            )?;
+            let file_path = get_skills_dir().join(format!("{}.md", safe_name));
+            let _ = fs::remove_file(&file_path);
+            let dir_path = get_skills_dir().join(&safe_name);
+            match dir_path.is_dir() {
+                true => {
+                    let _ = fs::remove_dir_all(&dir_path);
+                }
+                false => {}
+            }
         }
     }
 
@@ -1221,36 +1278,28 @@ pub fn clear_skills() -> Result<()> {
     conn.execute("DELETE FROM skills", [])?;
 
     let skills_dir = get_skills_dir();
-    if skills_dir.is_dir() {
-        if let Ok(entries) = fs::read_dir(&skills_dir) {
+    match (skills_dir.is_dir(), fs::read_dir(&skills_dir)) {
+        (true, Ok(entries)) => {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
-                    let _ = fs::remove_file(path);
+                let is_md =
+                    path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md");
+                match is_md {
+                    true => {
+                        let _ = fs::remove_file(path);
+                    }
+                    false => {}
                 }
             }
         }
+        _ => {}
     }
 
     Ok(())
 }
 
 pub fn save_subagent_skill(profile: &str, name: &str, content: &str) -> Result<()> {
-    let safe_name = name
-        .to_lowercase()
-        .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
-
-    let normalized_content = if !content.trim_start().starts_with('#') && !content.trim_start().starts_with("---") {
-        format!("# {}\n\n{}", safe_name.replace('_', " "), content.trim())
-    } else {
-        content.to_string()
-    };
-
-    if !scan_skill_content(&normalized_content).unwrap_or(false) {
-        anyhow::bail!(
-            "Skill validation failed: content contains potentially unsafe commands or patterns."
-        );
-    }
+    let (safe_name, normalized_content) = normalize_and_validate_skill(name, content)?;
 
     let conn = get_connection()?;
     let now = chrono::Utc::now().to_rfc3339();
@@ -1261,7 +1310,6 @@ pub fn save_subagent_skill(profile: &str, name: &str, content: &str) -> Result<(
         params![safe_name, normalized_content, profile, now],
     )?;
 
-    // Persist as readable Markdown file in ~/.openz/subagents/<profile>/skills/<safe_name>.md
     let profile_skills_dir = crate::config::runtime_data_dir()
         .join("subagents")
         .join(profile)
