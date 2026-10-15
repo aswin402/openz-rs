@@ -108,7 +108,7 @@ fn assistant_msg(text: impl Into<String>) -> SlashResult {
 pub async fn handle_slash_command(
     trimmed: &str,
     app: &mut RatatuiApp,
-    agent_loop: &tokio::sync::Mutex<crate::agent::AgentLoop>,
+    agent_loop: &crate::agent::AgentLoop,
     session_key: &str,
     session_manager: &crate::session::SessionManager,
     config: &crate::config::schema::Config,
@@ -148,43 +148,48 @@ pub async fn handle_slash_command(
                 Some(idx) => (&arg[..idx], &arg[idx + 1..]),
                 None => ("auto", arg),
             };
-            match crate::config::loader::load_config() {
-                Ok(mut new_config) => {
-                    new_config.agents.defaults.provider = prov.to_string();
-                    new_config.agents.defaults.model = mdl.to_string();
-                    let _ = crate::config::loader::save_config(&new_config);
-
-                    match crate::providers::resolver::resolve_provider_full(&new_config, mdl) {
-                        Ok(resolved) => {
-                            match agent_loop.try_lock() {
-                                Ok(mut loop_lock) => loop_lock
-                                    .update_model_and_provider(new_config.clone(), resolved.instance),
-                                Err(_) => {}
-                            }
-                            app.model = mdl.to_string();
-                            app.provider = prov.to_string();
-                            assistant_msg(format!(
-                                "✓ Active model switched to `{}` (provider: `{}`).",
-                                mdl, prov
-                            ))
-                        }
-                        Err(_) => assistant_msg(format!(
-                            "✕ Failed to resolve model `{}` for provider `{}`.",
-                            mdl, prov
-                        )),
-                    }
+            let marker_dir = super::session::tui_marker_dir();
+            match super::session::apply_session_model_selection(
+                session_manager,
+                session_key,
+                &marker_dir,
+                prov,
+                mdl,
+            )
+            .await
+            {
+                Ok(()) => {
+                    app.model = mdl.to_string();
+                    app.provider = prov.to_string();
+                    assistant_msg(format!(
+                        "✓ Active session model switched to `{}` (provider: `{}`).",
+                        mdl, prov
+                    ))
                 }
-                Err(e) => assistant_msg(format!("✕ Failed to load configuration: {}", e)),
+                Err(_) => assistant_msg(format!(
+                    "✕ Failed to resolve model `{}` for provider `{}`.",
+                    mdl, prov
+                )),
             }
         }
         RatatuiSlashCommand::NewSession => SlashResult::NewSession,
         RatatuiSlashCommand::Settings => {
-            let loop_guard = agent_loop.try_lock();
-            let current_cfg = loop_guard.as_ref().map(|l| &l.config).unwrap_or(config);
-            let defaults = &current_cfg.agents.defaults;
+            let mut effective_cfg = crate::config::loader::load_config()
+                .unwrap_or_else(|_| agent_loop.config.clone());
+            match session_manager.load(session_key) {
+                Ok(session) => {
+                    crate::agent::agent_loop::apply_session_overrides(
+                        &mut effective_cfg,
+                        &session.metadata,
+                    );
+                }
+                Err(_) => {}
+            }
+            let defaults = &effective_cfg.agents.defaults;
 
             let mut lines = vec![
-                "**Active Settings:**".to_string(),
+                "**Active Session Settings:**".to_string(),
+                format!("• **Session Key:** `{}`", session_key),
                 format!("• **Model:** `{}`", defaults.model),
                 format!("• **Provider:** `{}`", defaults.provider),
                 format!("• **Security Mode:** `{}`", defaults.security_mode),
@@ -240,12 +245,7 @@ pub async fn handle_slash_command(
                 .load(session_key)
                 .ok()
                 .and_then(|session| session.metadata.get("streaming").and_then(|v| v.as_bool()))
-                .unwrap_or_else(|| {
-                    agent_loop
-                        .try_lock()
-                        .map(|l| l.config.agents.defaults.streaming)
-                        .unwrap_or(config.agents.defaults.streaming)
-                });
+                .unwrap_or(agent_loop.config.agents.defaults.streaming);
             let next_streaming = !current_streaming;
             let _ = super::session::save_session_streaming_override(
                 session_manager,
@@ -369,11 +369,11 @@ pub async fn handle_slash_command(
             Err(e) => assistant_msg(format!("✕ Error loading skills: {}", e)),
         },
         RatatuiSlashCommand::Mcps => {
-            let loop_guard = agent_loop.try_lock();
-            let servers = loop_guard
+            let latest_cfg = crate::config::loader::load_config().ok();
+            let servers = latest_cfg
                 .as_ref()
-                .map(|l| &l.config.mcp_servers)
-                .unwrap_or(&config.mcp_servers);
+                .map(|c| &c.mcp_servers)
+                .unwrap_or(&agent_loop.config.mcp_servers);
 
             match servers.is_empty() {
                 true => assistant_msg(

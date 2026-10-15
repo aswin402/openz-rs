@@ -23,15 +23,21 @@ pub fn get_telegram_bot_info() -> Option<(String, Client)> {
 
 pub fn register_approval(req_id: &str, tx: oneshot::Sender<bool>) {
     let map = APPROVAL_CALLBACKS.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(mut guard) = map.lock() {
-        guard.insert(req_id.to_string(), tx);
+    match map.lock() {
+        Ok(mut guard) => {
+            guard.insert(req_id.to_string(), tx);
+        }
+        Err(_) => {}
     }
 }
 
 pub fn unregister_approval(req_id: &str) {
     let map = APPROVAL_CALLBACKS.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(mut guard) = map.lock() {
-        guard.remove(req_id);
+    match map.lock() {
+        Ok(mut guard) => {
+            guard.remove(req_id);
+        }
+        Err(_) => {}
     }
 }
 
@@ -39,66 +45,81 @@ pub fn start_typing_indicator(chat_id: i64, token: String, client: Client) {
     let map = ACTIVE_TYPING_LOOPS.get_or_init(|| Mutex::new(HashMap::new()));
     let (tx, rx) = oneshot::channel::<()>();
 
-    let mut got_inserted = false;
-    if let Ok(mut guard) = map.lock() {
-        if let Some(old_tx) = guard.remove(&chat_id) {
-            let _ = old_tx.send(());
+    let got_inserted = match map.lock() {
+        Ok(mut guard) => {
+            match guard.remove(&chat_id) {
+                Some(old_tx) => {
+                    let _ = old_tx.send(());
+                }
+                None => {}
+            }
+            guard.insert(chat_id, tx);
+            true
         }
-        guard.insert(chat_id, tx);
-        got_inserted = true;
-    }
+        Err(_) => false,
+    };
     REMOTE_TYPING_HEARTBEATS
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
         .ok()
         .map(|mut guard| guard.insert(chat_id, Instant::now()));
 
-    if got_inserted {
-        tokio::spawn(async move {
-            let send_action_url = telegram_api_url(&token, "sendChatAction");
-            let payload = serde_json::json!({
-                "chat_id": chat_id,
-                "action": "typing"
-            });
-            let _ = client.post(&send_action_url).json(&payload).send().await;
+    match got_inserted {
+        true => {
+            tokio::spawn(async move {
+                let send_action_url = telegram_api_url(&token, "sendChatAction");
+                let payload = serde_json::json!({
+                    "chat_id": chat_id,
+                    "action": "typing"
+                });
+                let _ = client.post(&send_action_url).json(&payload).send().await;
 
-            let mut rx = rx;
-            loop {
-                tokio::select! {
-                    biased;
-                    _ = &mut rx => {
-                        break;
-                    }
-                    _ = tokio::time::sleep(Duration::from_secs(4)) => {
-                        let _ = client.post(&send_action_url).json(&payload).send().await;
+                let mut rx = rx;
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = &mut rx => {
+                            break;
+                        }
+                        _ = tokio::time::sleep(Duration::from_secs(4)) => {
+                            let _ = client.post(&send_action_url).json(&payload).send().await;
+                        }
                     }
                 }
-            }
-        });
+            });
+        }
+        false => {}
     }
 }
 
 pub fn stop_typing_indicator(chat_id: i64) {
     let map = ACTIVE_TYPING_LOOPS.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(mut guard) = map.lock() {
-        if let Some(tx) = guard.remove(&chat_id) {
-            let _ = tx.send(());
-        }
+    match map.lock() {
+        Ok(mut guard) => match guard.remove(&chat_id) {
+            Some(tx) => {
+                let _ = tx.send(());
+            }
+            None => {}
+        },
+        Err(_) => {}
     }
-    if let Some(heartbeats) = REMOTE_TYPING_HEARTBEATS.get() {
-        if let Ok(mut guard) = heartbeats.lock() {
+    match REMOTE_TYPING_HEARTBEATS.get().and_then(|h| h.lock().ok()) {
+        Some(mut guard) => {
             guard.remove(&chat_id);
         }
+        None => {}
     }
 }
 
 pub fn refresh_remote_typing_indicator(chat_id: i64) {
-    if let Some(heartbeats) = REMOTE_TYPING_HEARTBEATS.get() {
-        if let Ok(mut guard) = heartbeats.lock() {
-            if guard.contains_key(&chat_id) {
+    match REMOTE_TYPING_HEARTBEATS.get().and_then(|h| h.lock().ok()) {
+        Some(mut guard) => match guard.contains_key(&chat_id) {
+            true => {
                 guard.insert(chat_id, Instant::now());
             }
-        }
+            false => {}
+        },
+        None => {}
     }
 }
 
@@ -115,8 +136,9 @@ pub(crate) fn spawn_remote_typing_watchdog(chat_id: i64, token: String, client: 
         let timeout = Duration::from_secs(super::messages::remote_timeout_secs());
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
-            if !typing_indicator_active(chat_id) {
-                return;
+            match typing_indicator_active(chat_id) {
+                false => return,
+                true => {}
             }
 
             let stale = REMOTE_TYPING_HEARTBEATS
@@ -125,8 +147,9 @@ pub(crate) fn spawn_remote_typing_watchdog(chat_id: i64, token: String, client: 
                 .and_then(|guard| guard.get(&chat_id).copied())
                 .map(|last_seen| last_seen.elapsed() >= timeout)
                 .unwrap_or(true);
-            if !stale {
-                continue;
+            match stale {
+                false => continue,
+                true => {}
             }
 
             stop_typing_indicator(chat_id);
@@ -150,19 +173,27 @@ pub(crate) fn selected_remote_session(chat_id: i64) -> Option<String> {
 
 pub(crate) fn set_remote_session(chat_id: i64, session_key: String) {
     let map = REMOTE_CONTROL_TARGETS.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(mut guard) = map.lock() {
-        guard.insert(chat_id, session_key);
+    match map.lock() {
+        Ok(mut guard) => {
+            guard.insert(chat_id, session_key);
+        }
+        Err(_) => {}
     }
 }
 
 pub(crate) fn clear_remote_session(chat_id: i64) {
     let map = REMOTE_CONTROL_TARGETS.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Ok(mut guard) = map.lock() {
-        guard.remove(&chat_id);
+    match map.lock() {
+        Ok(mut guard) => {
+            guard.remove(&chat_id);
+        }
+        Err(_) => {}
     }
 }
 
-pub(crate) fn remote_session_button_label(session: &crate::agent::activity::ActiveTuiSession) -> String {
+pub(crate) fn remote_session_button_label(
+    session: &crate::agent::activity::ActiveTuiSession,
+) -> String {
     let cwd_name = std::path::Path::new(&session.cwd)
         .file_name()
         .and_then(|name| name.to_str())
@@ -174,10 +205,9 @@ pub(crate) fn remote_session_button_label(session: &crate::agent::activity::Acti
                 .to_string()
         })
         .unwrap_or_else(|_| "unknown time".to_string());
-    let preview = if session.preview.trim().is_empty() {
-        "new session".to_string()
-    } else {
-        session.preview.clone()
+    let preview = match session.preview.trim().is_empty() {
+        true => "new session".to_string(),
+        false => session.preview.clone(),
     };
     format!("{} | {} | {}", cwd_name, started, preview)
 }
@@ -185,4 +215,3 @@ pub(crate) fn remote_session_button_label(session: &crate::agent::activity::Acti
 #[cfg(test)]
 #[path = "state_tests.rs"]
 mod tests;
-

@@ -109,13 +109,14 @@ async fn websocket_set_config_updates_live_config_and_broadcasts() {
             let other_client_id = format!("other-client-{}", uuid::Uuid::new_v4());
             let other_chat_id = format!("other-chat-{}", uuid::Uuid::new_v4());
 
-            // Register another client in active senders to verify broadcast
-            if let Ok(mut senders) = crate::channels::get_active_ws_senders().lock() {
-                senders.insert(other_client_id.clone(), other_tx);
-            }
-            if let Ok(mut client_chats) = crate::channels::get_active_ws_client_chats().lock() {
-                client_chats.insert(other_client_id.clone(), other_chat_id);
-            }
+            crate::channels::get_active_ws_senders()
+                .lock()
+                .unwrap()
+                .insert(other_client_id.clone(), other_tx);
+            crate::channels::get_active_ws_client_chats()
+                .lock()
+                .unwrap()
+                .insert(other_client_id.clone(), other_chat_id);
 
             let update_envelope = serde_json::json!({
                 "defaults": {
@@ -137,23 +138,26 @@ async fn websocket_set_config_updates_live_config_and_broadcasts() {
             assert!(handled);
             assert_eq!(live_config.read().unwrap().agents.defaults.model, "gpt-4o-mini");
 
-            // Calling client receives the update
-            let msg = rx.recv().await.expect("calling client should receive update event");
+            let msg = rx
+                .recv()
+                .await
+                .expect("calling client should receive update event");
             let text = match msg {
                 axum::extract::ws::Message::Text(t) => t,
                 _ => panic!("expected text message"),
             };
             assert!(text.contains("config_updated"));
 
-            // Other client also receives the broadcast
-            let other_msg = other_rx.recv().await.expect("other client should receive broadcast");
+            let other_msg = other_rx
+                .recv()
+                .await
+                .expect("other client should receive broadcast");
             let other_text = match other_msg {
                 axum::extract::ws::Message::Text(t) => t,
                 _ => panic!("expected text message"),
             };
             assert!(other_text.contains("config_updated"));
 
-            // Clean up sender and client chat
             crate::channels::websocket::events::remove_active_ws_sender(&other_client_id);
         })
         .await;

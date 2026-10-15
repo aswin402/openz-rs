@@ -80,7 +80,7 @@ fn fallback_models_for_turn_limits_configured_fallbacks_by_default() {
     ];
     std::env::remove_var("OPENZ_MAX_FALLBACK_ATTEMPTS");
 
-    let fallbacks = fallback_models_for_turn(&config);
+    let fallbacks = fallback_models_for_turn(&config, None);
 
     assert_eq!(fallbacks.len(), 2);
     assert_eq!(fallbacks[0], "groq/llama-3.3-70b-versatile");

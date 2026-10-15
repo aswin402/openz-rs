@@ -13,13 +13,13 @@ pub(crate) async fn models_list_event(
         .filter(|value| !value.is_empty());
     let mut providers = Vec::new();
     for opt in crate::channels::configured_provider_model_options(config) {
-        if requested_provider.is_some_and(|provider| provider != opt.name) {
-            continue;
+        match requested_provider.is_some_and(|provider| provider != opt.name) {
+            true => continue,
+            false => {}
         }
-        let models = if requested_provider.is_some() {
-            crate::channels::resolved_provider_models_for_webui(&opt, config).await
-        } else {
-            crate::channels::preview_models_for_provider(&opt, config, 4)
+        let models = match requested_provider.is_some() {
+            true => crate::channels::resolved_provider_models_for_webui(&opt, config).await,
+            false => crate::channels::preview_models_for_provider(&opt, config, 4),
         };
         providers.push(super::super::protocol::model_provider(
             opt.name,

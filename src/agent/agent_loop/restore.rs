@@ -21,20 +21,27 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 
     let provider_changed = ctx.config.agents.defaults.provider != old_provider
         || ctx.config.agents.defaults.model != old_model;
-    if provider_changed {
-        if let Ok(resolved) = crate::providers::resolver::resolve_provider_full(
+    match provider_changed {
+        true => match crate::providers::resolver::resolve_provider_full(
             &ctx.config,
             &ctx.config.agents.defaults.model,
         ) {
-            ctx.active_provider = resolved.instance;
-        }
+            Ok(resolved) => {
+                ctx.active_provider = resolved.instance;
+            }
+            Err(_) => {}
+        },
+        false => {}
     }
 
-    if !ctx.user_content.starts_with('/') {
-        ctx.interaction_id =
-            crate::tools::shared_memory::log_interaction(ctx.session_key, ctx.user_content)
-                .await
-                .ok();
+    match ctx.user_content.starts_with('/') {
+        false => {
+            ctx.interaction_id =
+                crate::tools::shared_memory::log_interaction(ctx.session_key, ctx.user_content)
+                    .await
+                    .ok();
+        }
+        true => {}
     }
     ctx.session.add_message("user", ctx.user_content);
     tracing::info!(session = %ctx.session_key, "Restored session history ({} messages). User prompt: {:?}", ctx.session.messages.len(), ctx.user_content);
@@ -46,17 +53,23 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     let supports_vision =
         crate::providers::model_supports_vision(&ctx.config.agents.defaults.model);
     let silent = crate::agent::style::spinner::is_silent();
-    if has_images && !supports_vision && !silent {
-        crate::tui_println!(
-            "{}▲ Image unsupported: The active model '{}' does not support images. Images will be ignored.{}",
-            crate::agent::style::AURA_GOLD,
-            ctx.config.agents.defaults.model,
-            crate::agent::style::COLOR_RESET
-        );
+    match has_images && !supports_vision && !silent {
+        true => {
+            crate::tui_println!(
+                "{}▲ Image unsupported: The active model '{}' does not support images. Images will be ignored.{}",
+                crate::agent::style::AURA_GOLD,
+                ctx.config.agents.defaults.model,
+                crate::agent::style::COLOR_RESET
+            );
+        }
+        false => {}
     }
 
-    if let Err(e) = loop_ref.session_manager.save(&ctx.session).await {
-        tracing::warn!("Failed to save session incrementally in Restore: {}", e);
+    match loop_ref.session_manager.save(&ctx.session).await {
+        Ok(()) => {}
+        Err(e) => {
+            tracing::warn!("Failed to save session incrementally in Restore: {}", e);
+        }
     }
 
     Ok(TurnState::Compact)

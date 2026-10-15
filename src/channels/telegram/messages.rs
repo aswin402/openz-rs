@@ -33,12 +33,7 @@ pub(crate) fn escape_markdown(s: &str) -> String {
     res
 }
 
-pub(crate) fn spawn_telegram_msg(
-    client: Client,
-    token: String,
-    chat_id: i64,
-    text: String,
-) {
+pub(crate) fn spawn_telegram_msg(client: Client, token: String, chat_id: i64, text: String) {
     tokio::spawn(async move {
         let send_url = telegram_api_url(&token, "sendMessage");
         let payload = serde_json::json!({
@@ -49,12 +44,7 @@ pub(crate) fn spawn_telegram_msg(
     });
 }
 
-pub(crate) fn spawn_telegram_markdown(
-    client: Client,
-    token: String,
-    chat_id: i64,
-    text: String,
-) {
+pub(crate) fn spawn_telegram_markdown(client: Client, token: String, chat_id: i64, text: String) {
     tokio::spawn(async move {
         let send_url = telegram_api_url(&token, "sendMessage");
         let payload = serde_json::json!({
@@ -112,33 +102,44 @@ pub async fn send_text_message_to_target(target: &str, text: &str) -> anyhow::Re
                 Ok(response) => response,
                 Err(error) => {
                     last_error = Some(error.to_string());
-                    if attempt < 2 {
-                        tokio::time::sleep(Duration::from_millis(250 * (attempt + 1) as u64)).await;
-                        continue;
+                    match attempt < 2 {
+                        true => {
+                            tokio::time::sleep(Duration::from_millis(250 * (attempt + 1) as u64))
+                                .await;
+                            continue;
+                        }
+                        false => break,
                     }
-                    break;
                 }
             };
             let api = serde_json::from_str::<super::types::TelegramApiResponse>(&response.body).ok();
-            if response.status.is_success() && api.as_ref().is_some_and(|result| result.ok) {
-                last_error = None;
-                break;
+            let is_ok =
+                response.status.is_success() && api.as_ref().is_some_and(|result| result.ok);
+            match is_ok {
+                true => {
+                    last_error = None;
+                    break;
+                }
+                false => {}
             }
 
             let description = api
                 .and_then(|result| result.description)
                 .unwrap_or_else(|| response.body.clone());
             last_error = Some(format!("HTTP {}: {}", response.status, description));
-            if !(response.status.is_server_error() || response.status.as_u16() == 429)
-                || attempt == 2
-            {
-                break;
+            let retryable =
+                (response.status.is_server_error() || response.status.as_u16() == 429) && attempt < 2;
+            match retryable {
+                true => {
+                    tokio::time::sleep(Duration::from_millis(250 * (attempt + 1) as u64)).await;
+                }
+                false => break,
             }
-            tokio::time::sleep(Duration::from_millis(250 * (attempt + 1) as u64)).await;
         }
 
-        if let Some(error) = last_error {
-            return Err(anyhow::anyhow!("Telegram sendMessage failed: {}", error));
+        match last_error {
+            Some(error) => return Err(anyhow::anyhow!("Telegram sendMessage failed: {}", error)),
+            None => {}
         }
     }
     Ok(())

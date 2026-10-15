@@ -13,6 +13,10 @@ pub(crate) fn subagent_profile_events() -> Vec<Value> {
                 .split_once('/')
                 .map(|(provider, _)| provider.to_string())
                 .unwrap_or_else(|| "auto".to_string());
+            let source = match is_core {
+                true => "core",
+                false => "user",
+            };
             json!({
                 "name": profile.name,
                 "description": profile.description,
@@ -22,7 +26,7 @@ pub(crate) fn subagent_profile_events() -> Vec<Value> {
                 "fallbacks": profile.fallbacks.unwrap_or_default(),
                 "isCore": is_core,
                 "isProtected": is_core,
-                "source": if is_core { "core" } else { "user" },
+                "source": source,
                 "fallbackLimit": crate::subagents::MAX_SUBAGENT_FALLBACKS,
             })
         })
@@ -39,10 +43,9 @@ pub(crate) fn save_skill_event(envelope: &Value) -> Value {
         .get("content")
         .and_then(Value::as_str)
         .unwrap_or("");
-    if name.is_empty() {
-        super::super::protocol::event_error("Skill name is required.")
-    } else {
-        match crate::agent::skills::save_skill(name, content) {
+    match name.is_empty() {
+        true => super::super::protocol::event_error("Skill name is required."),
+        false => match crate::agent::skills::save_skill(name, content) {
             Ok(()) => super::super::protocol::skills_updated(
                 crate::agent::skills::load_skill_views().unwrap_or_default(),
                 "saved",
@@ -52,7 +55,7 @@ pub(crate) fn save_skill_event(envelope: &Value) -> Value {
                 "Failed to save skill: {}",
                 err
             )),
-        }
+        },
     }
 }
 
@@ -62,10 +65,9 @@ pub(crate) fn delete_skill_event(envelope: &Value) -> Value {
         .and_then(Value::as_str)
         .unwrap_or("")
         .trim();
-    if name.is_empty() {
-        super::super::protocol::event_error("Skill name is required.")
-    } else {
-        match crate::agent::skills::delete_skill(name) {
+    match name.is_empty() {
+        true => super::super::protocol::event_error("Skill name is required."),
+        false => match crate::agent::skills::delete_skill(name) {
             Ok(()) => super::super::protocol::skills_updated(
                 crate::agent::skills::load_skill_views().unwrap_or_default(),
                 "deleted",
@@ -75,7 +77,7 @@ pub(crate) fn delete_skill_event(envelope: &Value) -> Value {
                 "Failed to delete skill: {}",
                 err
             )),
-        }
+        },
     }
 }
 
@@ -118,10 +120,13 @@ pub(crate) async fn save_subagent_event(
         })
         .unwrap_or_default();
 
-    if name.is_empty() || description.is_empty() || system_prompt.is_empty() {
-        return super::super::protocol::event_error(
-            "Subagent name, description, and system prompt are required.",
-        );
+    match name.is_empty() || description.is_empty() || system_prompt.is_empty() {
+        true => {
+            return super::super::protocol::event_error(
+                "Subagent name, description, and system prompt are required.",
+            );
+        }
+        false => {}
     }
 
     let args = json!({
@@ -156,16 +161,19 @@ pub(crate) async fn update_subagent_settings_event(
         .and_then(Value::as_str)
         .unwrap_or("")
         .trim();
-    if name.is_empty() {
-        return super::super::protocol::event_error("Subagent name is required.");
+    match name.is_empty() {
+        true => return super::super::protocol::event_error("Subagent name is required."),
+        false => {}
     }
 
     let mut args = json!({ "name": name });
-    if let Some(value) = envelope.get("model") {
-        args["model"] = value.clone();
+    match envelope.get("model") {
+        Some(value) => args["model"] = value.clone(),
+        None => {}
     }
-    if let Some(value) = envelope.get("fallbacks") {
-        args["fallbacks"] = value.clone();
+    match envelope.get("fallbacks") {
+        Some(value) => args["fallbacks"] = value.clone(),
+        None => {}
     }
     let tool = crate::tools::subagent::UpdateSubagentSettingsTool {
         config: config.clone(),
@@ -189,8 +197,9 @@ pub(crate) async fn delete_subagent_event(envelope: &Value) -> Value {
         .and_then(Value::as_str)
         .unwrap_or("")
         .trim();
-    if name.is_empty() {
-        return super::super::protocol::event_error("Subagent name is required.");
+    match name.is_empty() {
+        true => return super::super::protocol::event_error("Subagent name is required."),
+        false => {}
     }
 
     let args = json!({ "name": name });

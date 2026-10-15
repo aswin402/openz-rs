@@ -9,30 +9,38 @@ use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
+const KNOWN_WS_CHAT_PREFIXES: &[&str] = &["cli_", "subagent_", "telegram_", "ws_"];
+
 /// Broadcast a JSON event to every connected WebSocket client.
 pub fn publish_ws_event(event: Value) {
-    if let Ok(senders) = crate::channels::get_active_ws_senders().lock() {
-        if let Ok(evt_str) = serde_json::to_string(&event) {
+    match (
+        crate::channels::get_active_ws_senders().lock().ok(),
+        serde_json::to_string(&event).ok(),
+    ) {
+        (Some(senders), Some(evt_str)) => {
             for sender in senders.values() {
                 let _ = sender.try_send(Message::Text(evt_str.clone()));
             }
         }
+        _ => {}
     }
 }
 
 /// Broadcast a JSON event to every connected WebSocket client except the specified client ID.
 pub fn publish_ws_event_except(except_client_id: &str, event: Value) {
-    if let Ok(senders) = crate::channels::get_active_ws_senders().lock() {
-        if let Ok(evt_str) = serde_json::to_string(&event) {
-            for (id, sender) in senders.iter() {
-                if id != except_client_id {
-                    let _ = sender.try_send(Message::Text(evt_str.clone()));
-                }
+    match (
+        crate::channels::get_active_ws_senders().lock().ok(),
+        serde_json::to_string(&event).ok(),
+    ) {
+        (Some(senders), Some(evt_str)) => {
+            for (id, sender) in senders.iter().filter(|(id, _)| id.as_str() != except_client_id) {
+                let _ = id;
+                let _ = sender.try_send(Message::Text(evt_str.clone()));
             }
         }
+        _ => {}
     }
 }
-
 
 pub(crate) fn active_ws_sender_snapshot_for_chat(
     chat_id: Option<&str>,
@@ -62,25 +70,30 @@ pub(crate) fn active_ws_sender_snapshot_for_chat(
 }
 
 pub(crate) fn normalize_ws_chat_id(chat_id: &str) -> String {
-    if chat_id.contains(':') {
-        ws_chat_id(chat_id).unwrap_or_else(|| chat_id.to_string())
-    } else if chat_id.starts_with("cli_")
-        || chat_id.starts_with("subagent_")
-        || chat_id.starts_with("telegram_")
-        || chat_id.starts_with("ws_")
-    {
-        chat_id.to_string()
-    } else {
-        format!("ws_{chat_id}")
+    match chat_id.contains(':') {
+        true => ws_chat_id(chat_id).unwrap_or_else(|| chat_id.to_string()),
+        false => match KNOWN_WS_CHAT_PREFIXES
+            .iter()
+            .any(|prefix| chat_id.starts_with(prefix))
+        {
+            true => chat_id.to_string(),
+            false => format!("ws_{chat_id}"),
+        },
     }
 }
 
 pub(crate) fn remove_active_ws_sender(client_id: &str) {
-    if let Ok(mut senders) = crate::channels::get_active_ws_senders().lock() {
-        senders.remove(client_id);
+    match crate::channels::get_active_ws_senders().lock() {
+        Ok(mut senders) => {
+            senders.remove(client_id);
+        }
+        Err(_) => {}
     }
-    if let Ok(mut client_chats) = crate::channels::get_active_ws_client_chats().lock() {
-        client_chats.remove(client_id);
+    match crate::channels::get_active_ws_client_chats().lock() {
+        Ok(mut client_chats) => {
+            client_chats.remove(client_id);
+        }
+        Err(_) => {}
     }
 }
 
@@ -118,59 +131,82 @@ fn enqueue_orchestration_event(
     broker: &OrchestrationEventBroker,
     event: Value,
 ) -> Option<Value> {
-    let Ok(mut queue) = broker.queue.lock() else {
-        return None;
+    let mut queue = match broker.queue.lock() {
+        Ok(queue) => queue,
+        Err(_) => return None,
     };
 
-    if queue.len() >= ORCHESTRATION_EVENT_QUEUE_CAPACITY {
-        if !is_critical_orchestration_event(&event) {
-            return None;
+    match queue.len() >= ORCHESTRATION_EVENT_QUEUE_CAPACITY {
+        false => {
+            queue.push_back(event);
+            broker.notify.notify_one();
+            None
         }
-
-        let event_type = orchestration_event_type(&event);
-        let event_run_id = orchestration_event_run_id(&event);
-
-        if let Some(index) = queue
-            .iter()
-            .position(|queued| !is_critical_orchestration_event(queued))
-        {
-            queue.remove(index);
-        } else if event_type == Some("run_finished") {
-            if let Some(index) = queue
-                .iter()
-                .position(|queued| orchestration_event_run_id(queued) == event_run_id)
-            {
-                queue[index] = event;
-                broker.notify.notify_one();
-                return None;
+        true => {
+            match is_critical_orchestration_event(&event) {
+                false => return None,
+                true => {}
             }
 
-            if let Some(index) = queue
+            let event_type = orchestration_event_type(&event);
+            let event_run_id = orchestration_event_run_id(&event);
+            let non_critical_index = queue
                 .iter()
-                .position(|queued| orchestration_event_type(queued) == Some("run_started"))
-            {
-                queue.remove(index);
-            } else {
-                return Some(event);
+                .position(|queued| !is_critical_orchestration_event(queued));
+
+            match non_critical_index {
+                Some(index) => {
+                    queue.remove(index);
+                    queue.push_back(event);
+                    broker.notify.notify_one();
+                    None
+                }
+                None => match event_type == Some("run_finished") {
+                    true => {
+                        let matching_run_index = queue
+                            .iter()
+                            .position(|queued| orchestration_event_run_id(queued) == event_run_id);
+                        match matching_run_index {
+                            Some(index) => {
+                                queue[index] = event;
+                                broker.notify.notify_one();
+                                None
+                            }
+                            None => {
+                                let started_index = queue.iter().position(|queued| {
+                                    orchestration_event_type(queued) == Some("run_started")
+                                });
+                                match started_index {
+                                    Some(index) => {
+                                        queue.remove(index);
+                                        queue.push_back(event);
+                                        broker.notify.notify_one();
+                                        None
+                                    }
+                                    None => Some(event),
+                                }
+                            }
+                        }
+                    }
+                    false => {
+                        let duplicate_run = queue
+                            .iter()
+                            .any(|queued| orchestration_event_run_id(queued) == event_run_id);
+                        match duplicate_run {
+                            true => None,
+                            false => Some(event),
+                        }
+                    }
+                },
             }
-        } else if queue
-            .iter()
-            .any(|queued| orchestration_event_run_id(queued) == event_run_id)
-        {
-            return None;
-        } else {
-            return Some(event);
         }
     }
-
-    queue.push_back(event);
-    broker.notify.notify_one();
-    None
 }
 
 async fn publish_ws_event_with_timeout(event: Value) {
-    let Ok(evt_str) = serde_json::to_string(&event) else {
-        return;
+    let evt_str = match serde_json::to_string(&event) {
+        Ok(s) => s,
+        Err(_) => return,
     };
 
     let chat_id = event.get("chat_id").and_then(Value::as_str);
@@ -185,8 +221,9 @@ async fn publish_ws_event_with_timeout(event: Value) {
                 )
                 .await;
 
-                if !matches!(send_result, Ok(Ok(()))) {
-                    remove_active_ws_sender(&client_id);
+                match send_result {
+                    Ok(Ok(())) => {}
+                    _ => remove_active_ws_sender(&client_id),
                 }
             }
         })
@@ -213,50 +250,48 @@ async fn run_orchestration_event_broker(broker: Arc<OrchestrationEventBroker>) {
 fn orchestration_event_broker() -> Option<Arc<OrchestrationEventBroker>> {
     static BROKER: std::sync::OnceLock<Arc<OrchestrationEventBroker>> = std::sync::OnceLock::new();
 
-    if let Some(broker) = BROKER.get() {
-        return Some(broker.clone());
+    match BROKER.get() {
+        Some(broker) => Some(broker.clone()),
+        None => {
+            let handle = tokio::runtime::Handle::try_current().ok()?;
+            Some(
+                BROKER
+                    .get_or_init(|| {
+                        let broker = Arc::new(OrchestrationEventBroker {
+                            queue: std::sync::Mutex::new(std::collections::VecDeque::new()),
+                            notify: tokio::sync::Notify::new(),
+                        });
+                        handle.spawn(run_orchestration_event_broker(broker.clone()));
+                        broker
+                    })
+                    .clone(),
+            )
+        }
     }
-
-    let handle = tokio::runtime::Handle::try_current().ok()?;
-    Some(
-        BROKER
-            .get_or_init(|| {
-                let broker = Arc::new(OrchestrationEventBroker {
-                    queue: std::sync::Mutex::new(std::collections::VecDeque::new()),
-                    notify: tokio::sync::Notify::new(),
-                });
-                handle.spawn(run_orchestration_event_broker(broker.clone()));
-                broker
-            })
-            .clone(),
-    )
 }
 
 /// Publish a lifecycle event without dropping it when a client queue is full.
-///
-/// Progress broadcasts remain best-effort; workflow lifecycle events are
-/// routed through one ordered bounded broker. Under saturation, run-finished
-/// events coalesce queued lifecycle state; uncoalescable critical events bypass
-/// the broker with timeout delivery; non-critical step progress may be dropped.
 fn publish_reliable_ws_event(event: Value) {
-    let Some(broker) = orchestration_event_broker() else {
-        return;
+    let broker = match orchestration_event_broker() {
+        Some(broker) => broker,
+        None => return,
     };
 
-    if let Some(overflow_event) = enqueue_orchestration_event(&broker, event) {
-        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+    match (
+        enqueue_orchestration_event(&broker, event),
+        tokio::runtime::Handle::try_current().ok(),
+    ) {
+        (Some(overflow_event), Some(handle)) => {
             handle.spawn(publish_ws_event_with_timeout(overflow_event));
         }
+        _ => {}
     }
 }
 
 /// Extract the chat id from a session key (mapping colons to underscores to
 /// match WebUI format).
 pub fn ws_chat_id(session_key: &str) -> Option<String> {
-    if session_key.is_empty() {
-        return None;
-    }
-    Some(session_key.replace(':', "_"))
+    (!session_key.is_empty()).then(|| session_key.replace(':', "_"))
 }
 
 /// Publish a structured activity notice to WebUI clients for a chat/session.
@@ -266,14 +301,17 @@ pub fn publish_activity_notice(
     title: impl Into<String>,
     detail: impl Into<String>,
 ) {
-    if let Some(chat_id) = ws_chat_id(session_key) {
-        publish_ws_event(crate::channels::websocket::protocol::activity_notice(
-            chat_id,
-            kind,
-            title,
-            detail,
-            chrono::Utc::now().timestamp_millis(),
-        ));
+    match ws_chat_id(session_key) {
+        Some(chat_id) => {
+            publish_ws_event(crate::channels::websocket::protocol::activity_notice(
+                chat_id,
+                kind,
+                title,
+                detail,
+                chrono::Utc::now().timestamp_millis(),
+            ));
+        }
+        None => {}
     }
 }
 

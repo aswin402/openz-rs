@@ -11,7 +11,8 @@ pub(crate) const MAX_WS_MESSAGE_SIZE: usize = 40 * 1024 * 1024;
 pub(crate) const MAX_ATTACHMENT_COUNT: usize = 8;
 pub(crate) const MAX_ATTACHMENT_BYTES: usize = 8 * 1024 * 1024;
 pub(crate) const MAX_ATTACHMENT_TOTAL_BYTES: usize = 24 * 1024 * 1024;
-pub(crate) const ATTACHMENT_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+pub(crate) const ATTACHMENT_TTL: std::time::Duration =
+    std::time::Duration::from_secs(24 * 60 * 60);
 pub(crate) const ATTACHMENT_ALLOWED_MIME_TYPES: &[&str] = &[
     "image/png",
     "image/jpeg",
@@ -36,10 +37,10 @@ pub(crate) const ATTACHMENT_ALLOWED_MIME_TYPES: &[&str] = &[
 
 pub(crate) fn attachment_mime_allowed(mime: &str) -> bool {
     let mime = mime.trim().to_ascii_lowercase();
-    if mime.is_empty() || mime.len() > 128 || mime.chars().any(char::is_control) {
-        return false;
-    }
-    ATTACHMENT_ALLOWED_MIME_TYPES.contains(&mime.as_str())
+    !mime.is_empty()
+        && mime.len() <= 128
+        && !mime.chars().any(char::is_control)
+        && ATTACHMENT_ALLOWED_MIME_TYPES.contains(&mime.as_str())
 }
 
 pub(crate) fn attachment_total_within_quota(current: usize, next: usize) -> bool {
@@ -55,30 +56,33 @@ pub(crate) fn sanitize_attachment_name(raw_name: &str) -> Option<String> {
         .collect::<String>()
         .trim()
         .to_string();
-    if clean_name.is_empty() || clean_name == "." || clean_name == ".." {
-        None
-    } else {
-        Some(clean_name)
-    }
+    (!clean_name.is_empty() && clean_name != "." && clean_name != "..").then_some(clean_name)
 }
 
 async fn cleanup_stale_attachments(attach_dir: &Path) {
-    let Ok(mut entries) = tokio::fs::read_dir(attach_dir).await else {
-        return;
+    let mut entries = match tokio::fs::read_dir(attach_dir).await {
+        Ok(entries) => entries,
+        Err(_) => return,
     };
     let now = std::time::SystemTime::now();
     while let Ok(Some(entry)) = entries.next_entry().await {
-        let Ok(metadata) = entry.metadata().await else {
-            continue;
+        let metadata = match entry.metadata().await {
+            Ok(metadata) => metadata,
+            Err(_) => continue,
         };
-        if !metadata.is_file() {
-            continue;
+        match metadata.is_file() {
+            false => continue,
+            true => {}
         }
-        let Ok(modified) = metadata.modified() else {
-            continue;
+        let modified = match metadata.modified() {
+            Ok(modified) => modified,
+            Err(_) => continue,
         };
-        if now.duration_since(modified).unwrap_or_default() > ATTACHMENT_TTL {
-            let _ = tokio::fs::remove_file(entry.path()).await;
+        match now.duration_since(modified).unwrap_or_default() > ATTACHMENT_TTL {
+            true => {
+                let _ = tokio::fs::remove_file(entry.path()).await;
+            }
+            false => {}
         }
     }
 }
@@ -87,62 +91,66 @@ async fn cleanup_stale_attachments(attach_dir: &Path) {
 /// markdown references for the outgoing agent message.
 pub(crate) async fn persist_attachments(attachments: &Value) -> Vec<String> {
     let mut refs = Vec::new();
-    let Some(arr) = attachments.as_array() else {
-        return refs;
+    let arr = match attachments.as_array() {
+        Some(arr) => arr,
+        None => return refs,
     };
-    if arr.is_empty() {
-        return refs;
+    match arr.is_empty() {
+        true => return refs,
+        false => {}
     }
     let attach_dir = crate::config::loader::config_dir().join("attachments");
-    if tokio::fs::create_dir_all(&attach_dir).await.is_err() {
-        return refs;
+    match tokio::fs::create_dir_all(&attach_dir).await {
+        Ok(()) => {}
+        Err(_) => return refs,
     }
     cleanup_stale_attachments(&attach_dir).await;
     use base64::{engine::general_purpose, Engine as _};
     let mut total_bytes = 0usize;
     for att in arr.iter().take(MAX_ATTACHMENT_COUNT) {
-        let Some(data_b64) = att.get("data").and_then(|v| v.as_str()) else {
-            continue;
+        let data_b64 = match att.get("data").and_then(|v| v.as_str()) {
+            Some(data) => data,
+            None => continue,
         };
-        if data_b64.len() > (MAX_ATTACHMENT_BYTES * 4 / 3 + 4) {
-            continue;
+        match data_b64.len() > (MAX_ATTACHMENT_BYTES * 4 / 3 + 4) {
+            true => continue,
+            false => {}
         }
-        let Ok(bytes) = general_purpose::STANDARD.decode(data_b64) else {
-            continue;
+        let bytes = match general_purpose::STANDARD.decode(data_b64) {
+            Ok(bytes) => bytes,
+            Err(_) => continue,
         };
-        if bytes.is_empty()
-            || bytes.len() > MAX_ATTACHMENT_BYTES
-            || !attachment_total_within_quota(total_bytes, bytes.len())
-        {
-            continue;
+        let within_limits = !bytes.is_empty()
+            && bytes.len() <= MAX_ATTACHMENT_BYTES
+            && attachment_total_within_quota(total_bytes, bytes.len());
+        match within_limits {
+            false => continue,
+            true => {}
         }
-        let mime = att
-            .get("mime")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        if !attachment_mime_allowed(mime) {
-            continue;
+        let mime = att.get("mime").and_then(|v| v.as_str()).unwrap_or("");
+        match attachment_mime_allowed(mime) {
+            false => continue,
+            true => {}
         }
-        let raw_name = att
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let Some(clean_name) = sanitize_attachment_name(raw_name) else {
-            continue;
+        let raw_name = att.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let clean_name = match sanitize_attachment_name(raw_name) {
+            Some(name) => name,
+            None => continue,
         };
         let mime = mime.trim().to_ascii_lowercase();
         let file_name = format!("{}_{}", &uuid::Uuid::new_v4().to_string()[..8], clean_name);
         let path = attach_dir.join(&file_name);
-        if tokio::fs::write(&path, &bytes).await.is_err() {
-            continue;
+        match tokio::fs::write(&path, &bytes).await {
+            Ok(()) => {}
+            Err(_) => continue,
         }
         total_bytes += bytes.len();
         let link = format!("file://{}", path.to_string_lossy());
-        if mime.starts_with("image/") {
-            refs.push(format!("![]({link})"));
-        } else {
-            refs.push(format!("📎 [{}]({link})", clean_name));
-        }
+        let formatted_ref = match mime.starts_with("image/") {
+            true => format!("![]({link})"),
+            false => format!("📎 [{}]({link})", clean_name),
+        };
+        refs.push(formatted_ref);
     }
     refs
 }

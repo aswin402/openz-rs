@@ -44,8 +44,11 @@ pub fn register_ws_approval(
     tx: tokio::sync::oneshot::Sender<bool>,
 ) {
     let map = WS_APPROVALS.get_or_init(std::sync::Mutex::default);
-    if let Ok(mut approvals) = map.lock() {
-        approvals.insert(req_id, PendingWsApproval { context, tx });
+    match map.lock() {
+        Ok(mut approvals) => {
+            approvals.insert(req_id, PendingWsApproval { context, tx });
+        }
+        Err(_) => {}
     }
 }
 
@@ -56,11 +59,7 @@ pub fn resolve_ws_approval(req_id: &str, client_id: &str, chat_id: &str, approve
         let matches = approvals.get(req_id).is_some_and(|pending| {
             pending.context.client_id == client_id && pending.context.chat_id == chat_id
         });
-        if matches {
-            approvals.remove(req_id)
-        } else {
-            None
-        }
+        matches.then(|| approvals.remove(req_id)).flatten()
     });
 
     pending

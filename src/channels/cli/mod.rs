@@ -134,9 +134,12 @@ fn parse_telegram_chat_id(remote_sender: Option<&str>) -> Option<i64> {
 
 impl CliChannel {
     async fn start_inner(&self) -> anyhow::Result<()> {
-        // Derive a unique session key per workspace directory so multiple
-        // `openz agent` instances can run in different directories.
-        let session_key = crate::config::loader::get_cli_session_key();
+        let default_key = crate::config::loader::get_cli_session_key();
+        let session_key = crate::channels::ratatui::allocate_tui_session_key_in_dir(
+            &crate::channels::ratatui::tui_marker_dir(),
+            std::process::id(),
+            &default_key,
+        );
         let workspace = crate::config::loader::active_workspace_or_current_dir();
         crate::shutdown::set_cli_active(true);
         let _guard = CliActiveGuard;

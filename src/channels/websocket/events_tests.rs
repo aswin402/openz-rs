@@ -31,11 +31,15 @@ async fn orchestration_lifecycle_events_survive_queue_pressure() {
             .await
             .expect("event delivery timed out")
             .expect("sender closed");
-        if let axum::extract::ws::Message::Text(text) = message {
-            let event: serde_json::Value = serde_json::from_str(&text).unwrap();
-            if event["event"] == "orchestration_event" {
-                types.push(event["payload"]["type"].as_str().unwrap().to_string());
+        match message {
+            axum::extract::ws::Message::Text(text) => {
+                let event: serde_json::Value = serde_json::from_str(&text).unwrap();
+                match event["event"] == "orchestration_event" {
+                    true => types.push(event["payload"]["type"].as_str().unwrap().to_string()),
+                    false => {}
+                }
             }
+            _ => {}
         }
     }
 
@@ -101,16 +105,27 @@ async fn test_send_progress_update_dual_dispatches_events() {
         .unwrap()
         .insert(client_id.clone(), tx);
 
-    crate::agent::agent_loop::tool_execution::send_progress_update(&session_key, "Processing chunk 1/3...").await;
+    crate::agent::agent_loop::tool_execution::send_progress_update(
+        &session_key,
+        "Processing chunk 1/3...",
+    )
+    .await;
 
     let mut events = Vec::new();
     while let Ok(msg) = rx.try_recv() {
-        if let axum::extract::ws::Message::Text(text) = msg {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                if let Some(event_name) = v.get("event").and_then(|s| s.as_str()) {
-                    events.push((event_name.to_string(), v));
+        match msg {
+            axum::extract::ws::Message::Text(text) => {
+                let parsed = serde_json::from_str::<serde_json::Value>(&text).ok();
+                let event_entry = parsed.and_then(|v| {
+                    let name = v.get("event").and_then(|s| s.as_str())?.to_string();
+                    Some((name, v))
+                });
+                match event_entry {
+                    Some(entry) => events.push(entry),
+                    None => {}
                 }
             }
+            _ => {}
         }
     }
 
@@ -120,6 +135,11 @@ async fn test_send_progress_update_dual_dispatches_events() {
         .remove(&client_id);
 
     let expected_chat_id = ws_chat_id(&session_key).unwrap();
-    assert!(events.iter().any(|(ev, p)| ev == "tool_progress" && p["chat_id"] == expected_chat_id && p["message"] == "Processing chunk 1/3..."));
-    assert!(events.iter().any(|(ev, p)| ev == "activity_notice" && p["chat_id"] == expected_chat_id && p["kind"] == "progress" && p["detail"] == "Processing chunk 1/3..."));
+    assert!(events.iter().any(|(ev, p)| ev == "tool_progress"
+        && p["chat_id"] == expected_chat_id
+        && p["message"] == "Processing chunk 1/3..."));
+    assert!(events.iter().any(|(ev, p)| ev == "activity_notice"
+        && p["chat_id"] == expected_chat_id
+        && p["kind"] == "progress"
+        && p["detail"] == "Processing chunk 1/3..."));
 }

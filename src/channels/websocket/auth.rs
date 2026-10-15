@@ -9,12 +9,12 @@ use axum::http::{header, HeaderMap, HeaderValue};
 
 pub(crate) fn gateway_token_required_for_host(host: &str) -> bool {
     let normalized = host.trim().trim_start_matches('[').trim_end_matches(']');
-    if normalized.eq_ignore_ascii_case("localhost") {
-        return false;
-    }
-    match normalized.parse::<std::net::IpAddr>() {
-        Ok(ip) => !ip.is_loopback(),
-        Err(_) => true,
+    match normalized.eq_ignore_ascii_case("localhost") {
+        true => false,
+        false => match normalized.parse::<std::net::IpAddr>() {
+            Ok(ip) => !ip.is_loopback(),
+            Err(_) => true,
+        },
     }
 }
 
@@ -23,11 +23,10 @@ pub(crate) fn websocket_origin_allowed(
     config: &WebSocketChannelConfig,
     gateway_token_is_configured: bool,
 ) -> bool {
-    let Some(origin) = origin else {
-        return gateway_token_is_configured;
-    };
-
-    is_allowed_origin(origin, config)
+    match origin {
+        Some(origin) => is_allowed_origin(origin, config),
+        None => gateway_token_is_configured,
+    }
 }
 
 pub(crate) fn is_allowed_origin(origin: &str, config: &WebSocketChannelConfig) -> bool {
@@ -50,19 +49,23 @@ pub(crate) fn websocket_cors_origins(config: &WebSocketChannelConfig) -> Vec<Hea
     ];
 
     for custom in &config.cors_origins {
-        if let Ok(hv) = HeaderValue::from_str(custom) {
-            if !origins.contains(&hv) {
-                origins.push(hv);
-            }
+        match HeaderValue::from_str(custom) {
+            Ok(hv) => match origins.contains(&hv) {
+                true => {}
+                false => origins.push(hv),
+            },
+            Err(_) => {}
         }
     }
 
     for scheme in ["http", "https"] {
         let origin = format!("{scheme}://{}:{}", config.host, config.port);
-        if let Ok(header) = HeaderValue::try_from(origin) {
-            if !origins.contains(&header) {
-                origins.push(header);
-            }
+        match HeaderValue::try_from(origin) {
+            Ok(header) => match origins.contains(&header) {
+                true => {}
+                false => origins.push(header),
+            },
+            Err(_) => {}
         }
     }
 
@@ -77,26 +80,21 @@ pub(crate) fn gateway_token_configured() -> bool {
 
 pub(crate) fn is_authorized(headers: &HeaderMap, query_token: Option<&str>) -> bool {
     let expected = std::env::var("OPENZ_GATEWAY_TOKEN").unwrap_or_default();
-    // When no token is configured, allow all connections (open local access).
-    if expected.is_empty() {
-        return true;
-    }
-    // Token is configured — enforce it via query param or Authorization header.
-    if let Some(tok) = query_token {
-        if crate::channels::secure_compare(tok, &expected) {
-            return true;
+    match expected.is_empty() {
+        true => true,
+        false => {
+            let query_matches = query_token
+                .map(|tok| crate::channels::secure_compare(tok, &expected))
+                .unwrap_or(false);
+            let bearer_matches = headers
+                .get(header::AUTHORIZATION)
+                .and_then(|auth_header| auth_header.to_str().ok())
+                .and_then(|auth_str| auth_str.strip_prefix("Bearer "))
+                .map(|token| crate::channels::secure_compare(token.trim(), &expected))
+                .unwrap_or(false);
+            query_matches || bearer_matches
         }
     }
-    if let Some(auth_header) = headers.get(header::AUTHORIZATION) {
-        if let Ok(auth_str) = auth_header.to_str() {
-            if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                if crate::channels::secure_compare(token.trim(), &expected) {
-                    return true;
-                }
-            }
-        }
-    }
-    false
 }
 
 #[cfg(test)]

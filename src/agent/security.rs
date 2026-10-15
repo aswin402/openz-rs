@@ -647,68 +647,76 @@ impl SecurityGuard {
     /// Formats a concise, human-readable summary of tool arguments for permission prompts.
     pub fn summarize_arguments(arguments: &Value) -> String {
         match arguments {
-            Value::Object(map) => {
-                if map.is_empty() {
-                    return "(no arguments)".to_string();
-                }
-                let mut parts = Vec::new();
-                for (k, v) in map {
-                    let val_str = match v {
-                        Value::String(s) => {
-                            let char_count = s.chars().count();
-                            if char_count > 60 {
-                                let truncated: String = s.chars().take(60).collect();
-                                format!("\"{}...\"", truncated)
-                            } else {
-                                format!("\"{s}\"")
+            Value::Object(map) => match map.is_empty() {
+                true => "(no arguments)".to_string(),
+                false => {
+                    let mut parts = Vec::new();
+                    for (k, v) in map {
+                        let val_str = match v {
+                            Value::String(s) => {
+                                let char_count = s.chars().count();
+                                match char_count > 60 {
+                                    true => {
+                                        let truncated: String = s.chars().take(60).collect();
+                                        format!("\"{truncated}...\"")
+                                    }
+                                    false => format!("\"{s}\""),
+                                }
                             }
-                        }
-                        Value::Number(n) => n.to_string(),
-                        Value::Bool(b) => b.to_string(),
-                        Value::Array(arr) => {
-                            if arr.len() <= 3 && arr.iter().all(|x| x.is_string() || x.is_number()) {
-                                let items = arr
-                                    .iter()
-                                    .map(|x| match x {
-                                        Value::String(s) if s.chars().count() > 20 => {
-                                            let trunc: String = s.chars().take(20).collect();
-                                            format!("\"{}...\"", trunc)
-                                        }
-                                        _ => x.to_string(),
-                                    })
-                                    .collect::<Vec<_>>()
-                                    .join(", ");
-                                format!("[{items}]")
-                            } else {
-                                format!("[{} items]", arr.len())
+                            Value::Number(n) => n.to_string(),
+                            Value::Bool(b) => b.to_string(),
+                            Value::Array(arr) => {
+                                match arr.len() <= 3
+                                    && arr.iter().all(|x| x.is_string() || x.is_number())
+                                {
+                                    true => {
+                                        let items = arr
+                                            .iter()
+                                            .map(|x| match x {
+                                                Value::String(s) => match s.chars().count() > 20 {
+                                                    true => {
+                                                        let trunc: String =
+                                                            s.chars().take(20).collect();
+                                                        format!("\"{trunc}...\"")
+                                                    }
+                                                    false => x.to_string(),
+                                                },
+                                                _ => x.to_string(),
+                                            })
+                                            .collect::<Vec<_>>()
+                                            .join(", ");
+                                        format!("[{items}]")
+                                    }
+                                    false => format!("[{} items]", arr.len()),
+                                }
                             }
-                        }
-                        Value::Object(obj) => {
-                            format!("{{{} fields}}", obj.len())
-                        }
-                        Value::Null => "null".to_string(),
-                    };
-                    parts.push(format!("{k}: {val_str}"));
+                            Value::Object(obj) => format!("{{{} fields}}", obj.len()),
+                            Value::Null => "null".to_string(),
+                        };
+                        parts.push(format!("{k}: {val_str}"));
+                    }
+                    parts.join(", ")
                 }
-                parts.join(", ")
-            }
+            },
             Value::String(s) => {
                 let char_count = s.chars().count();
-                if char_count > 80 {
-                    let truncated: String = s.chars().take(80).collect();
-                    format!("\"{}...\"", truncated)
-                } else {
-                    format!("\"{s}\"")
+                match char_count > 80 {
+                    true => {
+                        let truncated: String = s.chars().take(80).collect();
+                        format!("\"{truncated}...\"")
+                    }
+                    false => format!("\"{s}\""),
                 }
             }
             other => {
                 let s = other.to_string();
                 let char_count = s.chars().count();
-                if char_count > 80 {
-                    let truncated: String = s.chars().take(80).collect();
-                    format!("{}...", truncated)
-                } else {
-                    s
+                match char_count > 80 {
+                    true => {
+                        let truncated: String = s.chars().take(80).collect();
+                        format!("{truncated}...")
+                    }
+                    false => s,
                 }
             }
         }
@@ -718,19 +726,25 @@ impl SecurityGuard {
     pub fn format_description(tool_name: &str, arguments: &Value) -> String {
         let canonical_name = crate::tools::canonical_tool_name(tool_name);
         let tool_name = canonical_name.as_str();
-        if tool_name == "exec_command" {
-            if let Some(cmd) = Self::tool_command_arg(arguments) {
-                return format!("$ {}", cmd);
+        match (
+            tool_name,
+            Self::tool_command_arg(arguments),
+            Self::path_edit_label(tool_name),
+        ) {
+            ("exec_command", Some(cmd), _) => format!("$ {cmd}"),
+            ("manage_config", _, _) => {
+                let redacted = Self::redacted_value(arguments);
+                format!("Manage Config -> {redacted}")
             }
-        } else if tool_name == "manage_config" {
-            let redacted = Self::redacted_value(arguments);
-            return format!("Manage Config -> {}", redacted);
-        } else if let Some(action_label) = Self::path_edit_label(tool_name) {
-            let path = Self::tool_path_arg(arguments).unwrap_or("unknown");
-            return format!("{} -> {}", action_label, path);
+            (_, _, Some(action_label)) => {
+                let path = Self::tool_path_arg(arguments).unwrap_or("unknown");
+                format!("{action_label} -> {path}")
+            }
+            _ => {
+                let redacted = Self::redacted_value(arguments);
+                Self::summarize_arguments(&redacted)
+            }
         }
-        let redacted = Self::redacted_value(arguments);
-        Self::summarize_arguments(&redacted)
     }
 }
 
@@ -747,179 +761,172 @@ pub(crate) fn compact_approval_description(description: &str, max_width: usize) 
         let wrapped_lines = crate::agent::style::wrap_line(line, max_width);
         for (sub_idx, sub_line) in wrapped_lines.iter().enumerate() {
             let remaining_chars = APPROVAL_DETAIL_MAX_CHARS.saturating_sub(consumed_chars);
-            if emitted_lines >= APPROVAL_DETAIL_MAX_LINES || remaining_chars == 0 {
-                truncated = true;
-                break 'outer;
+            match emitted_lines >= APPROVAL_DETAIL_MAX_LINES || remaining_chars == 0 {
+                true => {
+                    truncated = true;
+                    break 'outer;
+                }
+                false => {}
             }
 
             let sub_line_chars = sub_line.chars().count();
-            let rendered = if sub_line_chars > remaining_chars {
-                truncated = true;
-                sub_line.chars().take(remaining_chars).collect::<String>()
-            } else {
-                sub_line.clone()
+            let rendered = match sub_line_chars > remaining_chars {
+                true => {
+                    truncated = true;
+                    sub_line.chars().take(remaining_chars).collect::<String>()
+                }
+                false => sub_line.clone(),
             };
 
-            if line_idx == 0 && sub_idx == 0 && emitted_lines == 0 {
-                compact.push_str(&rendered);
-            } else {
-                compact.push_str("\n             ");
-                compact.push_str(&rendered);
+            match line_idx == 0 && sub_idx == 0 && emitted_lines == 0 {
+                true => compact.push_str(&rendered),
+                false => {
+                    compact.push_str("\n             ");
+                    compact.push_str(&rendered);
+                }
             }
             emitted_lines += 1;
             consumed_chars += rendered.chars().count();
 
-            if sub_line_chars > remaining_chars {
-                break 'outer;
+            match sub_line_chars > remaining_chars {
+                true => break 'outer,
+                false => {}
             }
         }
     }
 
-    if truncated {
-        compact.push_str("\n             ... (details truncated)");
+    match truncated {
+        true => compact.push_str("\n             ... (details truncated)"),
+        false => {}
     }
 
     compact
 }
 
 pub fn trust_tool_for_session(session_key: &str, tool_name: &str) {
-    let trust_key = format!("{}:{}", session_key, tool_name);
+    let trust_key = format!("{session_key}:{tool_name}");
     let map = TRUSTED_SESSION_TOOLS.get_or_init(|| Mutex::new(HashSet::new()));
-    if let Ok(mut guard) = map.lock() {
-        guard.insert(trust_key);
+    match map.lock() {
+        Ok(mut guard) => {
+            guard.insert(trust_key);
+        }
+        Err(_) => {}
     }
 }
 
 pub fn is_tool_trusted_for_session(session_key: &str, tool_name: &str) -> bool {
-    let trust_key = format!("{}:{}", session_key, tool_name);
+    let trust_key = format!("{session_key}:{tool_name}");
     let map = TRUSTED_SESSION_TOOLS.get_or_init(|| Mutex::new(HashSet::new()));
-    if let Ok(guard) = map.lock() {
-        guard.contains(&trust_key)
-    } else {
-        false
+    match map.lock() {
+        Ok(guard) => guard.contains(&trust_key),
+        Err(_) => false,
     }
 }
 
-/// Request approval for a sensitive tool call over TUI, Telegram, or the WebUI.
-pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value) -> Result<bool> {
-    if let Some(policy) = crate::cli::headless::current_headless_policy() {
-        let permitted = policy.is_tool_permitted(tool_name, true);
-        if !permitted {
-            policy.record_denial(tool_name);
-            tracing::warn!(
-                session = %session_key,
-                tool = %tool_name,
-                "Headless security policy denied execution of sensitive tool"
-            );
+async fn ask_telegram_approval(chat_id_str: &str, tool_name: &str, description: &str) -> Result<bool> {
+    let chat_id: i64 = chat_id_str.parse()?;
+    let (token, client) = match crate::channels::telegram::get_telegram_bot_info() {
+        Some(info) => info,
+        None => {
+            tracing::warn!("Telegram bot info not configured, rejecting sensitive action.");
+            return Ok(false);
         }
-        return Ok(permitted);
-    }
+    };
 
-    let description = SecurityGuard::format_description(tool_name, arguments);
+    let req_id = uuid::Uuid::new_v4().to_string();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    crate::channels::telegram::register_approval(&req_id, tx);
 
-    let actual_session = crate::agent::style::spinner::get_current_session_key()
-        .unwrap_or_else(|| session_key.to_string());
+    let send_url = telegram_api_url(&token, "sendMessage");
+    let escape_html = |s: &str| -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    };
+    let safe_tool_name = escape_html(tool_name);
+    let safe_description = escape_html(description);
 
-    if let Some(chat_id_str) = actual_session.strip_prefix("telegram:") {
-        // Telegram approval flow
-        let chat_id: i64 = chat_id_str.parse()?;
+    let text = format!(
+        "⚠️ <b>SECURITY ALERT</b>\nOpenZ is requesting to execute a sensitive tool <code>{safe_tool_name}</code>:\n<pre>{safe_description}</pre>\nDo you approve this action?"
+    );
+    let payload = serde_json::json!({
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "reply_markup": {
+            "inline_keyboard": [[
+                { "text": "Approve ✅", "callback_data": format!("approve:{req_id}") },
+                { "text": "Deny ❌", "callback_data": format!("deny:{req_id}") }
+            ]]
+        }
+    });
 
-        let (token, client) = match crate::channels::telegram::get_telegram_bot_info() {
-            Some(info) => info,
-            None => {
-                tracing::warn!("Telegram bot info not configured, rejecting sensitive action.");
-                return Ok(false);
-            }
-        };
-
-        let req_id = uuid::Uuid::new_v4().to_string();
-        let (tx, rx) = tokio::sync::oneshot::channel();
-
-        crate::channels::telegram::register_approval(&req_id, tx);
-
-        let send_url = telegram_api_url(&token, "sendMessage");
-        let escape_html = |s: &str| -> String {
-            s.replace("&", "&amp;")
-                .replace("<", "&lt;")
-                .replace(">", "&gt;")
-        };
-        let safe_tool_name = escape_html(tool_name);
-        let safe_description = escape_html(&description);
-
-        let text = format!(
-            "⚠️ <b>SECURITY ALERT</b>\nOpenZ is requesting to execute a sensitive tool <code>{}</code>:\n<pre>{}</pre>\nDo you approve this action?",
-            safe_tool_name, safe_description
-        );
-        let payload = serde_json::json!({
-            "chat_id": chat_id,
-            "text": text,
-            "parse_mode": "HTML",
-            "reply_markup": {
-                "inline_keyboard": [[
-                    { "text": "Approve ✅", "callback_data": format!("approve:{}", req_id) },
-                    { "text": "Deny ❌", "callback_data": format!("deny:{}", req_id) }
-                ]]
-            }
-        });
-
-        match client.post(&send_url).json(&payload).send().await {
-            Ok(resp) => {
-                let status = resp.status();
-                if !status.is_success() {
-                    if let Ok(body) = resp.text().await {
-                        tracing::error!(
-                            "Failed to send Telegram approval request: status {}, response: {}",
-                            status,
-                            body
-                        );
-                    } else {
-                        tracing::error!(
-                            "Failed to send Telegram approval request: status {}",
-                            status
-                        );
+    match client.post(&send_url).json(&payload).send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            match status.is_success() {
+                true => {}
+                false => {
+                    match resp.text().await {
+                        Ok(body) => tracing::error!(
+                            "Failed to send Telegram approval request: status {status}, response: {body}"
+                        ),
+                        Err(_) => tracing::error!(
+                            "Failed to send Telegram approval request: status {status}"
+                        ),
                     }
                     crate::channels::telegram::unregister_approval(&req_id);
                     return Ok(false);
                 }
             }
-            Err(e) => {
-                tracing::error!("Failed to send Telegram approval request: {:?}", e);
-                crate::channels::telegram::unregister_approval(&req_id);
-                return Ok(false);
-            }
         }
+        Err(e) => {
+            tracing::error!("Failed to send Telegram approval request: {:?}", e);
+            crate::channels::telegram::unregister_approval(&req_id);
+            return Ok(false);
+        }
+    }
 
-        // Wait for response from user
-        match rx.await {
-            Ok(approved) => Ok(approved),
-            Err(_) => Ok(false),
-        }
-    } else if crate::agent::style::spinner::is_websocket() || actual_session.starts_with("ws:") {
-        // WebUI approval flow: publish a security_request event to the socket
-        // that owns this turn and wait for a matching, authenticated response.
-        let Some(context) = crate::channels::websocket::current_ws_approval_context() else {
+    match rx.await {
+        Ok(approved) => Ok(approved),
+        Err(_) => Ok(false),
+    }
+}
+
+async fn ask_websocket_approval(
+    actual_session: &str,
+    tool_name: &str,
+    description: String,
+    arguments: &Value,
+) -> Result<bool> {
+    let context = match crate::channels::websocket::current_ws_approval_context() {
+        Some(ctx) => ctx,
+        None => {
             tracing::warn!(
                 session = %actual_session,
                 "WebSocket approval requested without an originating client context; denying"
             );
             return Ok(false);
-        };
-        let req_id = uuid::Uuid::new_v4().to_string();
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        crate::channels::websocket::register_ws_approval(req_id.clone(), context.clone(), tx);
+        }
+    };
+    let req_id = uuid::Uuid::new_v4().to_string();
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    crate::channels::websocket::register_ws_approval(req_id.clone(), context.clone(), tx);
 
-        let delivered = crate::channels::websocket::publish_ws_event_to_client(
-            &context.client_id,
-            crate::channels::websocket::protocol::security_request(
-                context.chat_id.clone(),
-                crate::agent::agent_loop::current_turn_id(),
-                req_id.clone(),
-                tool_name,
-                description,
-                SecurityGuard::redacted_approval_arguments(arguments),
-            ),
-        );
-        if !delivered {
+    let delivered = crate::channels::websocket::publish_ws_event_to_client(
+        &context.client_id,
+        crate::channels::websocket::protocol::security_request(
+            context.chat_id.clone(),
+            crate::agent::agent_loop::current_turn_id(),
+            req_id.clone(),
+            tool_name,
+            description,
+            SecurityGuard::redacted_approval_arguments(arguments),
+        ),
+    );
+    match delivered {
+        true => {}
+        false => {
             let _ = crate::channels::websocket::resolve_ws_approval(
                 &req_id,
                 &context.client_id,
@@ -928,9 +935,12 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
             );
             return Ok(false);
         }
+    }
 
-        let approval_result = tokio::time::timeout(std::time::Duration::from_secs(120), rx).await;
-        if !matches!(approval_result, Ok(Ok(_))) {
+    let approval_result = tokio::time::timeout(std::time::Duration::from_secs(120), rx).await;
+    match matches!(approval_result, Ok(Ok(_))) {
+        true => {}
+        false => {
             let _ = crate::channels::websocket::resolve_ws_approval(
                 &req_id,
                 &context.client_id,
@@ -938,77 +948,120 @@ pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value)
                 false,
             );
         }
-        match approval_result {
-            Ok(Ok(approved)) => Ok(approved),
-            _ => Ok(false),
-        }
-    } else if actual_session.starts_with("cli:") {
-        if is_tool_trusted_for_session(&actual_session, tool_name) {
-            return Ok(true); // Automatically approved per session trust decision
-        }
+    }
+    match approval_result {
+        Ok(Ok(approved)) => Ok(approved),
+        _ => Ok(false),
+    }
+}
 
-        if crate::channels::ratatui::IS_RATATUI_ACTIVE.load(std::sync::atomic::Ordering::SeqCst) {
+async fn ask_cli_approval(actual_session: &str, tool_name: &str, description: &str) -> Result<bool> {
+    match is_tool_trusted_for_session(actual_session, tool_name) {
+        true => return Ok(true),
+        false => {}
+    }
+
+    match crate::channels::ratatui::is_ratatui_session_active(Some(actual_session)) {
+        true => {
             return crate::channels::ratatui::request_ratatui_security_approval(
                 tool_name,
-                &description,
-                &actual_session,
+                description,
+                actual_session,
             )
             .await;
         }
+        false => {}
+    }
 
-        // CLI / TUI approval flow
-        let options = vec![
-            "Approve (Allow once)".to_string(),
-            "Approve & Trust for this session".to_string(),
-            "Deny (Abort tool)".to_string(),
-        ];
+    let options = vec![
+        "Approve (Allow once)".to_string(),
+        "Approve & Trust for this session".to_string(),
+        "Deny (Abort tool)".to_string(),
+    ];
 
-        let terminal_width = crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80) as usize;
-        let max_width = terminal_width.saturating_sub(13).max(10);
+    let terminal_width = crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80) as usize;
+    let max_width = terminal_width.saturating_sub(13).max(10);
+    let formatted_details = compact_approval_description(description, max_width);
 
-        let formatted_details = compact_approval_description(&description, max_width);
+    let header = format!(
+        "{}🔒 SECURITY SHIELD: Sensitive Action Requested{}\n  {}Tool:      {}{}\n  {}Details:   {}{}",
+        crate::agent::style::colors::AURA_GOLD,
+        crate::agent::style::colors::COLOR_RESET,
+        crate::agent::style::colors::AURA_SLATE,
+        crate::agent::style::colors::COLOR_BOLD,
+        tool_name,
+        crate::agent::style::colors::AURA_SLATE,
+        crate::agent::style::colors::AURA_BLUE,
+        formatted_details
+    );
 
-        let header = format!(
-            "{}🔒 SECURITY SHIELD: Sensitive Action Requested{}\n  {}Tool:      {}{}\n  {}Details:   {}{}",
-            crate::agent::style::colors::AURA_GOLD,
-            crate::agent::style::colors::COLOR_RESET,
-            crate::agent::style::colors::AURA_SLATE,
-            crate::agent::style::colors::COLOR_BOLD,
-            tool_name,
-            crate::agent::style::colors::AURA_SLATE,
-            crate::agent::style::colors::AURA_BLUE,
-            formatted_details
-        );
-
-        // Render minimal themed select menu custom matching the /model command menu
-        match crate::agent::style::select_menu_custom(
-            "Authorize execution?",
-            &options,
-            "Security Shield",
-            Some(&header),
-            false,
-        ) {
-            Ok(Some(0)) => Ok(true), // Approve once
-            Ok(Some(1)) => {
-                // Save to trusted set for this session
-                trust_tool_for_session(&actual_session, tool_name);
-                crate::tui_println!(
-                    "{}◇ [Security] Trusted '{}' for session {}.{}",
-                    crate::agent::style::colors::AURA_BLUE,
-                    tool_name,
-                    actual_session,
-                    crate::agent::style::colors::COLOR_RESET
-                );
-                Ok(true)
-            }
-            _ => Ok(false), // Deny or Cancel
+    match crate::agent::style::select_menu_custom(
+        "Authorize execution?",
+        &options,
+        "Security Shield",
+        Some(&header),
+        false,
+    ) {
+        Ok(Some(0)) => Ok(true),
+        Ok(Some(1)) => {
+            trust_tool_for_session(actual_session, tool_name);
+            crate::tui_println!(
+                "{}◇ [Security] Trusted '{}' for session {}.{}",
+                crate::agent::style::colors::AURA_BLUE,
+                tool_name,
+                actual_session,
+                crate::agent::style::colors::COLOR_RESET
+            );
+            Ok(true)
         }
-    } else {
-        tracing::warn!(
-            "Auto-rejecting sensitive action for background session: {}",
-            actual_session
-        );
-        Ok(false)
+        _ => Ok(false),
+    }
+}
+
+/// Request approval for a sensitive tool call over TUI, Telegram, or the WebUI.
+pub async fn ask_approval(session_key: &str, tool_name: &str, arguments: &Value) -> Result<bool> {
+    match crate::cli::headless::current_headless_policy() {
+        Some(policy) => {
+            let permitted = policy.is_tool_permitted(tool_name, true);
+            match permitted {
+                true => {}
+                false => {
+                    policy.record_denial(tool_name);
+                    tracing::warn!(
+                        session = %session_key,
+                        tool = %tool_name,
+                        "Headless security policy denied execution of sensitive tool"
+                    );
+                }
+            }
+            return Ok(permitted);
+        }
+        None => {}
+    }
+
+    let description = SecurityGuard::format_description(tool_name, arguments);
+    let actual_session = crate::agent::style::spinner::get_current_session_key()
+        .unwrap_or_else(|| session_key.to_string());
+
+    match (
+        actual_session.strip_prefix("telegram:"),
+        crate::agent::style::spinner::is_websocket() || actual_session.starts_with("ws:"),
+        actual_session.starts_with("cli:"),
+    ) {
+        (Some(chat_id_str), _, _) => {
+            ask_telegram_approval(chat_id_str, tool_name, &description).await
+        }
+        (None, true, _) => {
+            ask_websocket_approval(&actual_session, tool_name, description, arguments).await
+        }
+        (None, false, true) => ask_cli_approval(&actual_session, tool_name, &description).await,
+        (None, false, false) => {
+            tracing::warn!(
+                "Auto-rejecting sensitive action for background session: {}",
+                actual_session
+            );
+            Ok(false)
+        }
     }
 }
 

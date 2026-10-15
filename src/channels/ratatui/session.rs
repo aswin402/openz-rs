@@ -1,5 +1,4 @@
 use anyhow::Result;
-use std::sync::Arc;
 
 pub fn tui_marker_dir() -> std::path::PathBuf {
     crate::config::loader::runtime_data_dir().join("tui_instances")
@@ -87,23 +86,83 @@ pub fn is_last_live_tui_in_dir(dir: &std::path::Path, current_pid: u32) -> bool 
     !found_other_live
 }
 
+pub fn is_session_claimed_by_other_live_tui_in_dir(
+    dir: &std::path::Path,
+    current_pid: u32,
+    session_key: &str,
+) -> bool {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+
+    let mut claimed = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let pid = match path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .and_then(|stem| stem.parse::<u32>().ok())
+        {
+            Some(p) => p,
+            None => continue,
+        };
+        match pid == current_pid {
+            true => continue,
+            false => {}
+        }
+        match process_is_alive(pid) {
+            true => {
+                let matches_key = std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+                    .and_then(|val| {
+                        val.get("session_key")
+                            .and_then(|v| v.as_str())
+                            .map(|k| k == session_key)
+                    })
+                    .unwrap_or(false);
+                match matches_key {
+                    true => claimed = true,
+                    false => {}
+                }
+            }
+            false => {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+    claimed
+}
+
+pub fn allocate_tui_session_key_in_dir(
+    dir: &std::path::Path,
+    current_pid: u32,
+    default_base_key: &str,
+) -> String {
+    match is_session_claimed_by_other_live_tui_in_dir(dir, current_pid, default_base_key) {
+        false => default_base_key.to_string(),
+        true => format!("{default_base_key}_tab_{current_pid}"),
+    }
+}
+
 pub async fn save_session_model_override(
     session_manager: &crate::session::SessionManager,
     session_key: &str,
     provider: &str,
     model: &str,
 ) -> Result<()> {
-    let mut session = session_manager.get_or_create_async(session_key).await;
-    session.metadata.insert(
+    let mut overrides = serde_json::Map::new();
+    overrides.insert(
         "provider".to_string(),
         serde_json::Value::String(provider.to_string()),
     );
-    session.metadata.insert(
+    overrides.insert(
         "model".to_string(),
         serde_json::Value::String(model.to_string()),
     );
     crate::channels::record_recent_model(provider, model);
-    session_manager.save(&session).await
+    crate::agent::agent_loop::save_session_overrides(session_manager, session_key, &overrides).await
 }
 
 pub async fn save_session_streaming_override(
@@ -111,11 +170,9 @@ pub async fn save_session_streaming_override(
     session_key: &str,
     streaming: bool,
 ) -> Result<()> {
-    let mut session = session_manager.get_or_create_async(session_key).await;
-    session
-        .metadata
-        .insert("streaming".to_string(), serde_json::Value::Bool(streaming));
-    session_manager.save(&session).await
+    let mut overrides = serde_json::Map::new();
+    overrides.insert("streaming".to_string(), serde_json::Value::Bool(streaming));
+    crate::agent::agent_loop::save_session_overrides(session_manager, session_key, &overrides).await
 }
 
 pub fn save_default_model_selection(provider: &str, model: &str) -> Result<()> {
@@ -127,7 +184,6 @@ pub fn save_default_model_selection(provider: &str, model: &str) -> Result<()> {
 }
 
 pub async fn apply_session_model_selection(
-    agent_loop: &Arc<tokio::sync::Mutex<crate::agent::agent_loop::AgentLoop>>,
     session_manager: &crate::session::SessionManager,
     session_key: &str,
     marker_dir: &std::path::Path,
@@ -137,25 +193,26 @@ pub async fn apply_session_model_selection(
     let mut cfg = crate::config::loader::load_config()?;
     cfg.agents.defaults.provider = provider.to_string();
     cfg.agents.defaults.model = model.to_string();
-    let resolved = crate::providers::resolver::resolve_provider_full(&cfg, model)?;
+    let _resolved = crate::providers::resolver::resolve_provider_full(&cfg, model)?;
     save_session_model_override(session_manager, session_key, provider, model).await?;
     write_tui_marker_in_dir(marker_dir, std::process::id(), session_key, model, provider)?;
-    match agent_loop.try_lock() {
-        Ok(mut loop_lock) => loop_lock.update_model_and_provider(cfg, resolved.instance),
-        Err(_) => {}
-    }
     Ok(())
 }
 
-/// Archive the current session (unless already an archived history key) and
-/// switch the active session key to `base_key`.
+/// Archive the current session (unless already an archived history key or claimed
+/// by another live TUI instance) and switch the active session key to `base_key`.
 pub async fn reset_active_session(
     shared: &tokio::sync::RwLock<String>,
     session_manager: &crate::session::SessionManager,
     base_key: &str,
 ) {
     let cur = shared.read().await.clone();
-    match cur.starts_with("cli:history_") {
+    let claimed_by_other = is_session_claimed_by_other_live_tui_in_dir(
+        &tui_marker_dir(),
+        std::process::id(),
+        &cur,
+    );
+    match cur.starts_with("cli:history_") || claimed_by_other {
         true => {}
         false => {
             let _ = crate::cli::archive_current_session(session_manager, &cur).await;

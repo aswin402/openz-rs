@@ -25,36 +25,38 @@ pub fn register_ws_turn(
     token: crate::tools::subagent::CancellationToken,
 ) {
     let map = ACTIVE_WS_TURNS.get_or_init(Mutex::default);
-    if let Ok(mut turns) = map.lock() {
-        turns.insert(
-            turn_id,
-            ActiveWsTurn {
-                client_id,
-                chat_id,
-                token,
-            },
-        );
+    match map.lock() {
+        Ok(mut turns) => {
+            turns.insert(
+                turn_id,
+                ActiveWsTurn {
+                    client_id,
+                    chat_id,
+                    token,
+                },
+            );
+        }
+        Err(_) => {}
     }
 }
 
 pub fn remove_ws_turn(turn_id: &str) {
     let map = ACTIVE_WS_TURNS.get_or_init(Mutex::default);
-    if let Ok(mut turns) = map.lock() {
-        turns.remove(turn_id);
+    match map.lock() {
+        Ok(mut turns) => {
+            turns.remove(turn_id);
+        }
+        Err(_) => {}
     }
 }
 
 pub fn cancel_ws_turn(turn_id: &str, client_id: &str, chat_id: &str) -> bool {
     let map = ACTIVE_WS_TURNS.get_or_init(Mutex::default);
     let pending = map.lock().ok().and_then(|mut turns| {
-        let matches = turns.get(turn_id).is_some_and(|turn| {
-            turn.client_id == client_id && turn.chat_id == chat_id
-        });
-        if matches {
-            turns.remove(turn_id)
-        } else {
-            None
-        }
+        let matches = turns
+            .get(turn_id)
+            .is_some_and(|turn| turn.client_id == client_id && turn.chat_id == chat_id);
+        matches.then(|| turns.remove(turn_id)).flatten()
     });
 
     pending

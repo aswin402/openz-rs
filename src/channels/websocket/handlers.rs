@@ -9,6 +9,37 @@ use axum::{
     Json,
 };
 
+const MODEL_PREFIX_ROUTING_TABLE: &[(&str, &str)] = &[
+    ("gpt-", "openai"),
+    ("o1", "openai"),
+    ("o3-", "openai"),
+    ("claude-", "anthropic"),
+    ("deepseek-", "deepseek"),
+];
+
+const COMPLEX_PROMPT_KEYWORDS: &[&str] = &[
+    "fix",
+    "bug",
+    "error",
+    "implement",
+    "refactor",
+    "design",
+    "build",
+    "create",
+    "write",
+    "code",
+    "architect",
+    "schema",
+    "test",
+];
+
+const SIMPLE_FALLBACK_PROVIDER_MODELS: &[(&str, &str)] = &[
+    ("deepseek", "deepseek/deepseek-chat"),
+    ("groq", "groq/llama-3.3-70b-specdec"),
+    ("openai", "openai/gpt-4o-mini"),
+    ("openrouter", "openrouter/google/gemini-2.5-flash-lite"),
+];
+
 pub(crate) async fn hono_log_middleware(
     req: axum::http::Request<axum::body::Body>,
     next: axum::middleware::Next,
@@ -17,27 +48,27 @@ pub(crate) async fn hono_log_middleware(
     let method = req.method().clone();
     let path = req.uri().path().to_string();
     let query = redact_query_token(req.uri().query().unwrap_or(""));
-    let full_path = if query.is_empty() {
-        path.clone()
-    } else {
-        format!("{}?{}", path, query)
+    let full_path = match query.is_empty() {
+        true => path.clone(),
+        false => format!("{}?{}", path, query),
     };
 
     let method_str = method.as_str();
     let method_colored = match method_str {
-        "GET" => "\x1b[1;36mGET\x1b[0m",       // Cyan
-        "POST" => "\x1b[1;35mPOST\x1b[0m",     // Magenta
-        "PUT" => "\x1b[1;33mPUT\x1b[0m",       // Yellow
-        "DELETE" => "\x1b[1;31mDELETE\x1b[0m", // Red
+        "GET" => "\x1b[1;36mGET\x1b[0m",
+        "POST" => "\x1b[1;35mPOST\x1b[0m",
+        "PUT" => "\x1b[1;33mPUT\x1b[0m",
+        "DELETE" => "\x1b[1;31mDELETE\x1b[0m",
         _ => "\x1b[1;32mGET\x1b[0m",
     };
 
     let silent = std::env::var("OPENZ_SILENT").is_ok();
-    if !silent {
-        println!(
+    match silent {
+        false => println!(
             "  \x1b[1;30m-->\x1b[0m {} \x1b[37m{}\x1b[0m",
             method_colored, full_path
-        );
+        ),
+        true => {}
     }
 
     let response = next.run(req).await;
@@ -45,27 +76,24 @@ pub(crate) async fn hono_log_middleware(
     let duration = start.elapsed();
     let status = response.status().as_u16();
 
-    let status_colored = if (200..300).contains(&status) {
-        format!("\x1b[1;32m{}\x1b[0m", status) // Green
-    } else if (300..400).contains(&status) {
-        format!("\x1b[1;33m{}\x1b[0m", status) // Yellow
-    } else {
-        format!("\x1b[1;31m{}\x1b[0m", status) // Red
+    let status_colored = match status {
+        200..=299 => format!("\x1b[1;32m{}\x1b[0m", status),
+        300..=399 => format!("\x1b[1;33m{}\x1b[0m", status),
+        _ => format!("\x1b[1;31m{}\x1b[0m", status),
     };
 
-    let duration_str = if duration.as_secs() > 0 {
-        format!("{:.2}s", duration.as_secs_f64())
-    } else if duration.as_millis() > 0 {
-        format!("{}ms", duration.as_millis())
-    } else {
-        format!("{}μs", duration.as_micros())
+    let duration_str = match (duration.as_secs() > 0, duration.as_millis() > 0) {
+        (true, _) => format!("{:.2}s", duration.as_secs_f64()),
+        (false, true) => format!("{}ms", duration.as_millis()),
+        (false, false) => format!("{}μs", duration.as_micros()),
     };
 
-    if !silent {
-        println!(
+    match silent {
+        false => println!(
             "  \x1b[1;30m<--\x1b[0m {} \x1b[37m{}\x1b[0m {} \x1b[1;30m({})\x1b[0m",
             method_colored, path, status_colored, duration_str
-        );
+        ),
+        true => {}
     }
 
     response
@@ -74,15 +102,12 @@ pub(crate) async fn hono_log_middleware(
 pub(crate) fn redact_query_token(query: &str) -> String {
     query
         .split('&')
-        .map(|part| {
-            let Some((key, _value)) = part.split_once('=') else {
-                return part.to_string();
-            };
-            if key.eq_ignore_ascii_case("token") {
-                format!("{key}=<redacted>")
-            } else {
-                part.to_string()
-            }
+        .map(|part| match part.split_once('=') {
+            Some((key, _)) => match key.eq_ignore_ascii_case("token") {
+                true => format!("{key}=<redacted>"),
+                false => part.to_string(),
+            },
+            None => part.to_string(),
         })
         .collect::<Vec<_>>()
         .join("&")
@@ -94,12 +119,15 @@ pub(crate) async fn trigger_sop_handler(
     AxumPath(sop_id): AxumPath<String>,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    if !is_authorized(&headers, None) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "Unauthorized" })),
-        )
-            .into_response();
+    match is_authorized(&headers, None) {
+        false => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Unauthorized" })),
+            )
+                .into_response();
+        }
+        true => {}
     }
     let config = state.current_config();
     match crate::sop::engine::trigger_sop(config, sop_id, payload).await {
@@ -126,12 +154,15 @@ pub(crate) async fn resume_sop_handler(
     headers: axum::http::HeaderMap,
     AxumPath(instance_id): AxumPath<String>,
 ) -> impl IntoResponse {
-    if !is_authorized(&headers, None) {
-        return (
-            StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "Unauthorized" })),
-        )
-            .into_response();
+    match is_authorized(&headers, None) {
+        false => {
+            return (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "Unauthorized" })),
+            )
+                .into_response();
+        }
+        true => {}
     }
     let config = state.current_config();
     match crate::sop::engine::resume_sop(config, instance_id).await {
@@ -169,16 +200,13 @@ pub(crate) struct OpenAiMessage {
 
 pub(crate) fn normalize_model_name(model: &str) -> String {
     let lower = model.to_lowercase();
-    if lower.contains('/') {
-        model.to_string()
-    } else if lower.starts_with("gpt-") || lower.starts_with("o1") || lower.starts_with("o3-") {
-        format!("openai/{}", model)
-    } else if lower.starts_with("claude-") {
-        format!("anthropic/{}", model)
-    } else if lower.starts_with("deepseek-") {
-        format!("deepseek/{}", model)
-    } else {
-        model.to_string()
+    match lower.contains('/') {
+        true => model.to_string(),
+        false => MODEL_PREFIX_ROUTING_TABLE
+            .iter()
+            .find(|(prefix, _)| lower.starts_with(prefix))
+            .map(|(_, provider)| format!("{provider}/{model}"))
+            .unwrap_or_else(|| model.to_string()),
     }
 }
 
@@ -188,47 +216,41 @@ pub(crate) fn determine_routed_model(
     prompt: &str,
 ) -> String {
     let prompt_lower = prompt.to_lowercase();
-    let is_complex = prompt_lower.contains("fix")
-        || prompt_lower.contains("bug")
-        || prompt_lower.contains("error")
-        || prompt_lower.contains("implement")
-        || prompt_lower.contains("refactor")
-        || prompt_lower.contains("design")
-        || prompt_lower.contains("build")
-        || prompt_lower.contains("create")
-        || prompt_lower.contains("write")
-        || prompt_lower.contains("code")
-        || prompt_lower.contains("architect")
-        || prompt_lower.contains("schema")
-        || prompt_lower.contains("test")
-        || prompt.len() > 300;
+    let is_complex = prompt.len() > 300
+        || COMPLEX_PROMPT_KEYWORDS
+            .iter()
+            .any(|keyword| prompt_lower.contains(keyword));
 
-    if is_complex {
-        if request_model.contains('/')
-            || request_model.starts_with("gpt-")
-            || request_model.starts_with("claude-")
-        {
-            request_model.to_string()
-        } else {
-            config.agents.defaults.model.clone()
+    match is_complex {
+        true => {
+            let explicit_premium = request_model.contains('/')
+                || request_model.starts_with("gpt-")
+                || request_model.starts_with("claude-");
+            match explicit_premium {
+                true => request_model.to_string(),
+                false => config.agents.defaults.model.clone(),
+            }
         }
-    } else {
-        let has_key = |prov: &str| {
-            let (api_key, _) = config.resolve_provider_config(prov);
-            !api_key.trim().is_empty()
-        };
+        false => SIMPLE_FALLBACK_PROVIDER_MODELS
+            .iter()
+            .find(|(provider, _)| {
+                let (api_key, _) = config.resolve_provider_config(provider);
+                !api_key.trim().is_empty()
+            })
+            .map(|(_, model)| (*model).to_string())
+            .unwrap_or_else(|| request_model.to_string()),
+    }
+}
 
-        if has_key("deepseek") {
-            "deepseek/deepseek-chat".to_string()
-        } else if has_key("groq") {
-            "groq/llama-3.3-70b-specdec".to_string()
-        } else if has_key("openai") {
-            "openai/gpt-4o-mini".to_string()
-        } else if has_key("openrouter") {
-            "openrouter/google/gemini-2.5-flash-lite".to_string()
-        } else {
-            request_model.to_string()
-        }
+fn extract_openai_message_content(content: &serde_json::Value) -> String {
+    match (content.as_str(), content.as_array()) {
+        (Some(s), _) => s.to_string(),
+        (None, Some(arr)) => arr
+            .iter()
+            .filter_map(|item| item.get("text").and_then(|v| v.as_str()))
+            .collect::<Vec<_>>()
+            .join(""),
+        (None, None) => content.to_string(),
     }
 }
 
@@ -237,67 +259,55 @@ pub(crate) async fn openai_chat_completions(
     headers: axum::http::HeaderMap,
     Json(payload): Json<OpenAiChatCompletionRequest>,
 ) -> impl IntoResponse {
-    if !is_authorized(&headers, None) {
-        let err_json = serde_json::json!({
-            "error": {
-                "message": "Unauthorized: Invalid or missing gateway token.",
-                "type": "auth_error",
-                "param": null,
-                "code": "unauthorized"
-            }
-        });
-        return (StatusCode::UNAUTHORIZED, Json(err_json)).into_response();
+    match is_authorized(&headers, None) {
+        false => {
+            let err_json = serde_json::json!({
+                "error": {
+                    "message": "Unauthorized: Invalid or missing gateway token.",
+                    "type": "auth_error",
+                    "param": null,
+                    "code": "unauthorized"
+                }
+            });
+            return (StatusCode::UNAUTHORIZED, Json(err_json)).into_response();
+        }
+        true => {}
     }
+
     let last_user_content = payload
         .messages
         .iter()
         .rfind(|m| m.role == "user")
-        .map(|m| {
-            if let Some(s) = m.content.as_str() {
-                s.to_string()
-            } else if let Some(arr) = m.content.as_array() {
-                let mut text = String::new();
-                for item in arr {
-                    if let Some(txt) = item.get("text").and_then(|v| v.as_str()) {
-                        text.push_str(txt);
-                    }
-                }
-                text
-            } else {
-                m.content.to_string()
-            }
-        })
+        .map(|m| extract_openai_message_content(&m.content))
         .unwrap_or_default();
 
-    let mut config = state.current_config();
+    let config = state.current_config();
     let req_model = normalize_model_name(&payload.model);
     let routed_model = determine_routed_model(&config, &req_model, &last_user_content);
-
-    config.agents.defaults.model = routed_model.clone();
-
-    let agent_loop = match crate::cli::build_agent_loop(config).await {
-        Ok(al) => al,
-        Err(e) => {
-            let err_json = serde_json::json!({
-                "error": {
-                    "message": format!("Failed to build agent loop: {}", e),
-                    "type": "api_error",
-                    "param": null,
-                    "code": null
-                }
-            });
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(err_json)).into_response();
-        }
-    };
 
     let session_key = payload
         .user
         .unwrap_or_else(|| "openai_proxy_default".to_string());
 
-    let workspace = crate::config::loader::workspace_for_agent_turn(&agent_loop.config);
+    let mut overrides = serde_json::Map::new();
+    overrides.insert(
+        "model".to_string(),
+        serde_json::Value::String(routed_model.clone()),
+    );
+    let _ = crate::agent::agent_loop::save_session_overrides(
+        &state.agent_loop.session_manager,
+        &session_key,
+        &overrides,
+    )
+    .await;
+
+    let workspace = crate::config::loader::workspace_for_agent_turn(&config);
     let run_result = crate::config::loader::ACTIVE_WORKSPACE
         .scope(workspace, async {
-            agent_loop.run(&last_user_content, &session_key).await
+            state
+                .agent_loop
+                .run(&last_user_content, &session_key)
+                .await
         })
         .await;
 

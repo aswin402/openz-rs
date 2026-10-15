@@ -6,8 +6,8 @@
 
 pub(crate) mod config;
 pub(crate) mod cron;
-pub(crate) mod models;
 pub(crate) mod memory;
+pub(crate) mod models;
 pub(crate) mod observability;
 pub(crate) mod profiles;
 pub(crate) mod sessions;
@@ -33,17 +33,13 @@ pub(super) async fn handle_post_message_command(
                 .and_then(|value| value.as_bool())
                 .unwrap_or(false);
             let response_chat_id = super::normalize_ws_chat_id(chat_id);
-            if !super::resolve_ws_approval(
-                &req_id,
-                client_id,
-                &response_chat_id,
-                approved,
-            ) {
-                let rejection = super::security_response_rejected_event(
-                    &req_id,
-                    &response_chat_id,
-                );
-                let _ = super::publish_ws_event_to_client(client_id, rejection);
+            match super::resolve_ws_approval(&req_id, client_id, &response_chat_id, approved) {
+                true => {}
+                false => {
+                    let rejection =
+                        super::security_response_rejected_event(&req_id, &response_chat_id);
+                    let _ = super::publish_ws_event_to_client(client_id, rejection);
+                }
             }
         }
         "get_models" => {
@@ -61,22 +57,26 @@ pub(super) async fn handle_post_message_command(
             super::send_event(tx, event).await;
         }
         "set_config" => {
-            if config::config_update_requires_gateway_token(envelope)
-                && !super::gateway_token_configured()
-            {
-                let event = super::protocol::config_update_rejected(
-                    "OPENZ_GATEWAY_TOKEN is required for sensitive configuration updates",
-                    true,
-                );
-                super::send_event(tx, event).await;
-                return true;
+            let token_missing = config::config_update_requires_gateway_token(envelope)
+                && !super::gateway_token_configured();
+            match token_missing {
+                true => {
+                    let event = super::protocol::config_update_rejected(
+                        "OPENZ_GATEWAY_TOKEN is required for sensitive configuration updates",
+                        true,
+                    );
+                    super::send_event(tx, event).await;
+                    return true;
+                }
+                false => {}
             }
 
             let mut config = state.current_config();
             config::apply_config_update(&mut config, envelope);
             let _ = crate::config::loader::save_config(&config);
-            if let Ok(mut live) = state.live_config.write() {
-                *live = config.clone();
+            match state.live_config.write() {
+                Ok(mut live) => *live = config.clone(),
+                Err(_) => {}
             }
             let event = config::config_updated_event(&config);
             super::send_event(tx, event.clone()).await;
@@ -95,11 +95,8 @@ pub(super) async fn handle_post_message_command(
             super::send_event(tx, event).await;
         }
         "update_subagent_settings" => {
-            let event = profiles::update_subagent_settings_event(
-                &state.agent_loop.config,
-                envelope,
-            )
-            .await;
+            let event =
+                profiles::update_subagent_settings_event(&state.agent_loop.config, envelope).await;
             super::send_event(tx, event).await;
         }
         "delete_subagent" => {

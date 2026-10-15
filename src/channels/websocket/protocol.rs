@@ -566,10 +566,14 @@ pub(crate) fn channel_status(
     enabled: bool,
     token_configured: bool,
 ) -> WsChannelStatus {
+    let status = match enabled {
+        true => "configured",
+        false => "disabled",
+    };
     WsChannelStatus {
         name: name.into(),
         enabled,
-        status: if enabled { "configured" } else { "disabled" },
+        status,
         token_configured,
     }
 }

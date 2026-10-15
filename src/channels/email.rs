@@ -11,22 +11,32 @@ pub struct EmailChannel {
 
 impl EmailChannel {
     pub fn new(agent_loop: AgentLoop) -> Self {
-        EmailChannel {
-            agent_loop: Arc::new(agent_loop),
-        }
+        Self::with_shared_loop(Arc::new(agent_loop))
+    }
+
+    pub fn with_shared_loop(agent_loop: Arc<AgentLoop>) -> Self {
+        EmailChannel { agent_loop }
     }
 }
 
 fn extract_text_plain(part: &mailparse::ParsedMail) -> Option<String> {
-    if part.ctype.mimetype == "text/plain" {
-        return part.get_body().ok();
+    match part.ctype.mimetype == "text/plain" {
+        true => part.get_body().ok(),
+        false => part.subparts.iter().find_map(extract_text_plain),
     }
-    for subpart in &part.subparts {
-        if let Some(body) = extract_text_plain(subpart) {
-            return Some(body);
-        }
+}
+
+fn clean_email_sender(from_header: &str) -> String {
+    match from_header.contains('<') {
+        true => from_header
+            .split('<')
+            .nth(1)
+            .and_then(|s| s.split('>').next())
+            .unwrap_or(from_header)
+            .trim()
+            .to_string(),
+        false => from_header.trim().to_string(),
     }
-    None
 }
 
 fn fetch_unseen_emails(
@@ -35,8 +45,6 @@ fn fetch_unseen_emails(
     username: &str,
     password: &str,
 ) -> Result<Vec<(String, String, String)>> {
-    // Use TLS by default for IMAP (port 993 = implicit TLS, port 143 = STARTTLS)
-    // The imap crate with rustls-tls feature handles TLS automatically
     let client = imap::ClientBuilder::new(imap_server, imap_port).connect()?;
     let mut session = client
         .login(username, password)
@@ -48,42 +56,37 @@ fn fetch_unseen_emails(
 
     for uid in uids.iter() {
         let fetch_results = session.uid_fetch(uid.to_string(), "RFC822")?;
-        if let Some(msg) = fetch_results.iter().next() {
-            if let Some(body_bytes) = msg.body() {
-                if let Ok(parsed) = mailparse::parse_mail(body_bytes) {
-                    let from_header = parsed
-                        .headers
-                        .iter()
-                        .find(|h| h.get_key().eq_ignore_ascii_case("from"))
-                        .map(|h| h.get_value())
-                        .unwrap_or_default();
+        let parsed = fetch_results
+            .iter()
+            .next()
+            .and_then(|msg| msg.body())
+            .and_then(|body_bytes| mailparse::parse_mail(body_bytes).ok());
 
-                    let clean_from = if from_header.contains('<') {
-                        from_header
-                            .split('<')
-                            .nth(1)
-                            .and_then(|s| s.split('>').next())
-                            .unwrap_or(&from_header)
-                            .trim()
-                            .to_string()
-                    } else {
-                        from_header.trim().to_string()
-                    };
+        match parsed {
+            Some(parsed) => {
+                let from_header = parsed
+                    .headers
+                    .iter()
+                    .find(|h| h.get_key().eq_ignore_ascii_case("from"))
+                    .map(|h| h.get_value())
+                    .unwrap_or_default();
 
-                    let subject = parsed
-                        .headers
-                        .iter()
-                        .find(|h| h.get_key().eq_ignore_ascii_case("subject"))
-                        .map(|h| h.get_value())
-                        .unwrap_or_default()
-                        .trim()
-                        .to_string();
+                let clean_from = clean_email_sender(&from_header);
 
-                    let body = extract_text_plain(&parsed).unwrap_or_default();
+                let subject = parsed
+                    .headers
+                    .iter()
+                    .find(|h| h.get_key().eq_ignore_ascii_case("subject"))
+                    .map(|h| h.get_value())
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
 
-                    emails.push((clean_from, subject, body));
-                }
+                let body = extract_text_plain(&parsed).unwrap_or_default();
+
+                emails.push((clean_from, subject, body));
             }
+            None => {}
         }
     }
 
@@ -102,9 +105,12 @@ async fn send_reply_email(
 ) -> Result<()> {
     let mut builder = AsyncSmtpTransport::<Tokio1Executor>::relay(smtp_server)?.port(smtp_port);
 
-    if !password.is_empty() {
-        let creds = Credentials::new(username.to_string(), password.to_string());
-        builder = builder.credentials(creds);
+    match password.is_empty() {
+        true => {}
+        false => {
+            let creds = Credentials::new(username.to_string(), password.to_string());
+            builder = builder.credentials(creds);
+        }
     }
 
     let transport = builder.build();
@@ -119,6 +125,125 @@ async fn send_reply_email(
     Ok(())
 }
 
+async fn send_reply_and_log(
+    smtp_server: &str,
+    smtp_port: u16,
+    username: &str,
+    password: &str,
+    to: &str,
+    subject: &str,
+    body: &str,
+    context: &str,
+) {
+    match send_reply_email(smtp_server, smtp_port, username, password, to, subject, body).await {
+        Ok(()) => {}
+        Err(e) => {
+            tracing::error!("Failed to send {} email to {}: {:?}", context, to, e);
+        }
+    }
+}
+
+fn spawn_single_email_task(
+    agent_clone: Arc<AgentLoop>,
+    sem_clone: Arc<Semaphore>,
+    smtp_server: String,
+    smtp_port: u16,
+    user_clone: String,
+    pass_clone: String,
+    from: String,
+    subject: String,
+    body: String,
+) {
+    tokio::spawn(async move {
+        let _permit = sem_clone.acquire_owned().await;
+        let reply_subject = match subject.to_lowercase().starts_with("re:") {
+            true => subject.clone(),
+            false => format!("Re: {}", subject),
+        };
+
+        match crate::channels::is_stop_command(&body) {
+            true => {
+                crate::shutdown::trigger_cli_cancel();
+                send_reply_and_log(
+                    &smtp_server,
+                    smtp_port,
+                    &user_clone,
+                    &pass_clone,
+                    &from,
+                    &reply_subject,
+                    "Stop requested. Active OpenZ turn interrupted.",
+                    "stop reply",
+                )
+                .await;
+                return;
+            }
+            false => {}
+        }
+
+        let session_key = format!("email_{}", from);
+        match crate::channels::session_command_text_response(
+            &agent_clone.session_manager,
+            &session_key,
+            &body,
+        )
+        .await
+        {
+            Some(response_text) => {
+                send_reply_and_log(
+                    &smtp_server,
+                    smtp_port,
+                    &user_clone,
+                    &pass_clone,
+                    &from,
+                    &reply_subject,
+                    &response_text,
+                    "session-command reply",
+                )
+                .await;
+                return;
+            }
+            None => {}
+        }
+
+        match crate::channels::model_switch_text_response(&body) {
+            Some(response_text) => {
+                send_reply_and_log(
+                    &smtp_server,
+                    smtp_port,
+                    &user_clone,
+                    &pass_clone,
+                    &from,
+                    &reply_subject,
+                    &response_text,
+                    "model-switch reply",
+                )
+                .await;
+                return;
+            }
+            None => {}
+        }
+
+        match agent_clone.run(&body, &session_key).await {
+            Ok(res) => {
+                send_reply_and_log(
+                    &smtp_server,
+                    smtp_port,
+                    &user_clone,
+                    &pass_clone,
+                    &from,
+                    &reply_subject,
+                    &res.content,
+                    "reply",
+                )
+                .await;
+            }
+            Err(e) => {
+                tracing::error!("Agent failed for email from {}: {:?}", from, e);
+            }
+        }
+    });
+}
+
 #[async_trait::async_trait]
 impl super::Channel for EmailChannel {
     fn name(&self) -> &'static str {
@@ -127,32 +252,55 @@ impl super::Channel for EmailChannel {
 
     async fn start(&self) -> anyhow::Result<()> {
         let silent = std::env::var("OPENZ_SILENT").is_ok();
-        let email_config = match &self.agent_loop.config.channels.email {
-            Some(cfg) => cfg.clone(),
+        let email_config = match (&self.agent_loop.config.channels.email, silent) {
+            (Some(cfg), _) => cfg.clone(),
+            (None, false) => {
+                println!("⚠️ Email configuration not found. Email channel deactivated.");
+                return Ok(());
+            }
+            (None, true) => return Ok(()),
+        };
+
+        match (email_config.enabled, silent) {
+            (false, false) => {
+                println!("⚠️ Email channel is disabled in configuration.");
+                return Ok(());
+            }
+            (false, true) => return Ok(()),
+            (true, _) => {}
+        }
+
+        let lock_id = format!(
+            "{}@{}:{}",
+            email_config.username, email_config.imap_server, email_config.imap_port
+        );
+        let poll_lock = match crate::channels::telegram::lock::acquire_channel_singleton_lock(
+            "email", &lock_id,
+        )? {
+            Some(lock) => lock,
             None => {
-                if !silent {
-                    println!("⚠️ Email configuration not found. Email channel deactivated.");
+                match silent {
+                    false => {
+                        println!(
+                            "⚠️ Email polling is already active in another OpenZ process. Skipping duplicate poller."
+                        );
+                    }
+                    true => {}
                 }
+                tracing::warn!("Email polling already active; skipping duplicate poller");
                 return Ok(());
             }
         };
 
-        if !email_config.enabled {
-            if !silent {
-                println!("⚠️ Email channel is disabled in configuration.");
-            }
-            return Ok(());
-        }
-
-        if !silent {
-            println!(
+        match silent {
+            false => println!(
                 "🤖 Email Channel listening started (polling every {}s)...",
                 email_config.poll_interval_secs
-            );
+            ),
+            true => {}
         }
 
         let agent = self.agent_loop.clone();
-        // Limit concurrent email processing to prevent resource exhaustion
         let concurrency_limit = Arc::new(Semaphore::new(5));
 
         let mut shutdown_rx = match crate::shutdown::receiver() {
@@ -164,10 +312,12 @@ impl super::Channel for EmailChannel {
         };
 
         tokio::spawn(async move {
+            let _poll_lock = poll_lock;
             let poll_interval = std::time::Duration::from_secs(email_config.poll_interval_secs);
             loop {
-                if *shutdown_rx.borrow() {
-                    break;
+                match *shutdown_rx.borrow() {
+                    true => break,
+                    false => {}
                 }
 
                 let imap_server = email_config.imap_server.clone();
@@ -183,126 +333,17 @@ impl super::Channel for EmailChannel {
                 match fetched {
                     Ok(Ok(emails)) => {
                         for (from, subject, body) in emails {
-                            let agent_clone = agent.clone();
-                            let sem_clone = concurrency_limit.clone();
-                            let smtp_server = email_config.smtp_server.clone();
-                            let smtp_port = email_config.smtp_port;
-                            let user_clone = email_config.username.clone();
-                            let pass_clone = email_config.password.clone();
-
-                            tokio::spawn(async move {
-                                // Acquire semaphore permit to limit concurrency
-                                let _permit = sem_clone.acquire_owned().await;
-                                let reply_subject = if subject.to_lowercase().starts_with("re:") {
-                                    subject.clone()
-                                } else {
-                                    format!("Re: {}", subject)
-                                };
-
-                                if crate::channels::is_stop_command(&body) {
-                                    crate::shutdown::trigger_cli_cancel();
-                                    let reply_res = send_reply_email(
-                                        &smtp_server,
-                                        smtp_port,
-                                        &user_clone,
-                                        &pass_clone,
-                                        &from,
-                                        &reply_subject,
-                                        "Stop requested. Active OpenZ turn interrupted.",
-                                    )
-                                    .await;
-                                    if let Err(e) = reply_res {
-                                        tracing::error!(
-                                            "Failed to send stop reply email to {}: {:?}",
-                                            from,
-                                            e
-                                        );
-                                    }
-                                    return;
-                                }
-
-                                let session_key = format!("email_{}", from);
-                                if let Some(response_text) =
-                                    crate::channels::session_command_text_response(
-                                        &agent_clone.session_manager,
-                                        &session_key,
-                                        &body,
-                                    )
-                                    .await
-                                {
-                                    let reply_res = send_reply_email(
-                                        &smtp_server,
-                                        smtp_port,
-                                        &user_clone,
-                                        &pass_clone,
-                                        &from,
-                                        &reply_subject,
-                                        &response_text,
-                                    )
-                                    .await;
-                                    if let Err(e) = reply_res {
-                                        tracing::error!(
-                                            "Failed to send session-command reply email to {}: {:?}",
-                                            from,
-                                            e
-                                        );
-                                    }
-                                    return;
-                                }
-
-                                if let Some(response_text) =
-                                    crate::channels::model_switch_text_response(&body)
-                                {
-                                    let reply_res = send_reply_email(
-                                        &smtp_server,
-                                        smtp_port,
-                                        &user_clone,
-                                        &pass_clone,
-                                        &from,
-                                        &reply_subject,
-                                        &response_text,
-                                    )
-                                    .await;
-                                    if let Err(e) = reply_res {
-                                        tracing::error!(
-                                            "Failed to send model-switch reply email to {}: {:?}",
-                                            from,
-                                            e
-                                        );
-                                    }
-                                    return;
-                                }
-
-                                match agent_clone.run(&body, &session_key).await {
-                                    Ok(res) => {
-                                        let reply_res = send_reply_email(
-                                            &smtp_server,
-                                            smtp_port,
-                                            &user_clone,
-                                            &pass_clone,
-                                            &from,
-                                            &reply_subject,
-                                            &res.content,
-                                        )
-                                        .await;
-
-                                        if let Err(e) = reply_res {
-                                            tracing::error!(
-                                                "Failed to send reply email to {}: {:?}",
-                                                from,
-                                                e
-                                            );
-                                        }
-                                    }
-                                    Err(e) => {
-                                        tracing::error!(
-                                            "Agent failed for email from {}: {:?}",
-                                            from,
-                                            e
-                                        );
-                                    }
-                                }
-                            });
+                            spawn_single_email_task(
+                                agent.clone(),
+                                concurrency_limit.clone(),
+                                email_config.smtp_server.clone(),
+                                email_config.smtp_port,
+                                email_config.username.clone(),
+                                email_config.password.clone(),
+                                from,
+                                subject,
+                                body,
+                            );
                         }
                     }
                     Ok(Err(e)) => {

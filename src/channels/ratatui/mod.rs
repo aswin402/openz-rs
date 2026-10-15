@@ -46,6 +46,30 @@ pub enum TurnEvent {
     Error(String),
 }
 
+pub static ACTIVE_RATATUI_SESSION_KEY: std::sync::LazyLock<std::sync::RwLock<Option<String>>> =
+    std::sync::LazyLock::new(|| std::sync::RwLock::new(None));
+
+pub fn set_active_ratatui_session_key(session_key: Option<String>) {
+    match ACTIVE_RATATUI_SESSION_KEY.write() {
+        Ok(mut guard) => *guard = session_key,
+        Err(_) => {}
+    }
+}
+
+pub fn is_ratatui_session_active(session_key: Option<&str>) -> bool {
+    match IS_RATATUI_ACTIVE.load(Ordering::Relaxed) {
+        false => false,
+        true => match ACTIVE_RATATUI_SESSION_KEY.read() {
+            Ok(guard) => match (guard.as_deref(), session_key) {
+                (Some(active_key), Some(candidate)) => active_key == candidate,
+                (Some(_), None) => true,
+                (None, _) => true,
+            },
+            Err(_) => true,
+        },
+    }
+}
+
 pub static RATATUI_EVENT_CHANNEL: std::sync::LazyLock<(
     tokio::sync::mpsc::UnboundedSender<TurnEvent>,
     tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<TurnEvent>>,
@@ -55,7 +79,8 @@ pub static RATATUI_EVENT_CHANNEL: std::sync::LazyLock<(
 });
 
 pub fn send_ratatui_turn_event(event: TurnEvent) {
-    match IS_RATATUI_ACTIVE.load(Ordering::Relaxed) {
+    let current_session = crate::agent::style::spinner::get_current_session_key();
+    match is_ratatui_session_active(current_session.as_deref()) {
         true => {
             let _ = RATATUI_EVENT_CHANNEL.0.send(event);
         }
@@ -83,6 +108,10 @@ pub async fn request_ratatui_security_approval(
     description: &str,
     session_key: &str,
 ) -> anyhow::Result<bool> {
+    match is_ratatui_session_active(Some(session_key)) {
+        false => return Ok(false),
+        true => {}
+    }
     let (tx, rx) = tokio::sync::oneshot::channel();
     let req = SecurityApprovalRequest {
         tool_name: tool_name.to_string(),
@@ -101,17 +130,16 @@ pub async fn request_ratatui_security_approval(
 
 fn spawn_agent_turn(
     prompt: String,
-    agent_loop: Arc<tokio::sync::Mutex<crate::agent::AgentLoop>>,
+    agent_loop: Arc<crate::agent::AgentLoop>,
     session_key: String,
     session_manager: Arc<crate::session::SessionManager>,
     workspace: std::path::PathBuf,
     turn_tx: tokio::sync::mpsc::UnboundedSender<TurnEvent>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let loop_guard = agent_loop.lock().await;
         let run_result = crate::config::loader::ACTIVE_WORKSPACE
             .scope(workspace, async {
-                loop_guard.run(&prompt, &session_key).await
+                agent_loop.run(&prompt, &session_key).await
             })
             .await;
         match run_result {
@@ -163,21 +191,19 @@ fn send_approval_decision(
     }
 }
 
-fn spawn_background_channels(config: &crate::config::schema::Config) {
+fn spawn_background_channels(
+    config: &crate::config::schema::Config,
+    agent_loop: Arc<crate::agent::AgentLoop>,
+) {
     match &config.channels.websocket {
         Some(ws_config) => match ws_config.enabled && ws_config.start_on_tui {
             true => {
-                let config_clone = config.clone();
                 let ws_config_clone = ws_config.clone();
+                let shared_loop = agent_loop.clone();
                 tokio::spawn(async move {
-                    match crate::cli::builder::build_agent_loop(config_clone).await {
-                        Ok(agent_loop) => {
-                            let gateway =
-                                crate::channels::WsGateway::new(ws_config_clone, agent_loop);
-                            let _ = gateway.start().await;
-                        }
-                        Err(_) => {}
-                    }
+                    let gateway =
+                        crate::channels::WsGateway::with_shared_loop(ws_config_clone, shared_loop);
+                    let _ = gateway.start().await;
                 });
             }
             false => {}
@@ -194,17 +220,13 @@ fn spawn_background_channels(config: &crate::config::schema::Config) {
                 };
                 match token {
                     Some(token) => {
-                        let config_clone = config.clone();
+                        let shared_loop = agent_loop.clone();
                         tokio::spawn(async move {
-                            match crate::cli::builder::build_agent_loop(config_clone).await {
-                                Ok(agent_loop) => {
-                                    let channel = crate::channels::TelegramChannel::new(
-                                        token, agent_loop,
-                                    );
-                                    let _ = channel.start().await;
-                                }
-                                Err(_) => {}
-                            }
+                            let channel = crate::channels::TelegramChannel::with_shared_loop(
+                                token,
+                                shared_loop,
+                            );
+                            let _ = channel.start().await;
                         });
                     }
                     None => {}
@@ -224,16 +246,13 @@ fn spawn_background_channels(config: &crate::config::schema::Config) {
                 };
                 match token {
                     Some(token) => {
-                        let config_clone = config.clone();
+                        let shared_loop = agent_loop.clone();
                         tokio::spawn(async move {
-                            match crate::cli::builder::build_agent_loop(config_clone).await {
-                                Ok(agent_loop) => {
-                                    let channel =
-                                        crate::channels::DiscordChannel::new(token, agent_loop);
-                                    let _ = channel.start().await;
-                                }
-                                Err(_) => {}
-                            }
+                            let channel = crate::channels::DiscordChannel::with_shared_loop(
+                                token,
+                                shared_loop,
+                            );
+                            let _ = channel.start().await;
                         });
                     }
                     None => {}
@@ -247,20 +266,15 @@ fn spawn_background_channels(config: &crate::config::schema::Config) {
     match &config.channels.whatsapp {
         Some(wa_config) => match wa_config.enabled {
             true => {
-                let config_clone = config.clone();
                 let wa_config_clone = wa_config.clone();
+                let shared_loop = agent_loop.clone();
                 tokio::spawn(async move {
-                    match crate::cli::builder::build_agent_loop(config_clone).await {
-                        Ok(agent_loop) => {
-                            let channel = crate::channels::WhatsAppChannel::new(
-                                wa_config_clone.api_key,
-                                wa_config_clone.phone_number_id,
-                                agent_loop,
-                            );
-                            let _ = channel.start().await;
-                        }
-                        Err(_) => {}
-                    }
+                    let channel = crate::channels::WhatsAppChannel::with_shared_loop(
+                        wa_config_clone.api_key,
+                        wa_config_clone.phone_number_id,
+                        shared_loop,
+                    );
+                    let _ = channel.start().await;
                 });
             }
             false => {}
@@ -271,15 +285,10 @@ fn spawn_background_channels(config: &crate::config::schema::Config) {
     match &config.channels.email {
         Some(email_config) => match email_config.enabled {
             true => {
-                let config_clone = config.clone();
+                let shared_loop = agent_loop.clone();
                 tokio::spawn(async move {
-                    match crate::cli::builder::build_agent_loop(config_clone).await {
-                        Ok(agent_loop) => {
-                            let channel = crate::channels::EmailChannel::new(agent_loop);
-                            let _ = channel.start().await;
-                        }
-                        Err(_) => {}
-                    }
+                    let channel = crate::channels::EmailChannel::with_shared_loop(shared_loop);
+                    let _ = channel.start().await;
                 });
             }
             false => {}
@@ -309,6 +318,7 @@ impl Drop for RatatuiGuard {
         let _ = disable_raw_mode();
         let _ = stdout().execute(crossterm::cursor::Show);
         IS_RATATUI_ACTIVE.store(false, Ordering::SeqCst);
+        set_active_ratatui_session_key(None);
     }
 }
 
@@ -316,23 +326,35 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     let config = crate::config::loader::load_config().unwrap_or_default();
     let mut model = config.agents.defaults.model.clone();
     let mut provider = config.agents.defaults.provider.clone();
-    let base_session_key = crate::config::loader::get_cli_session_key();
+    let marker_dir = tui_marker_dir();
+    let current_pid = std::process::id();
+    let default_base_key = crate::config::loader::get_cli_session_key();
+    let base_session_key =
+        allocate_tui_session_key_in_dir(&marker_dir, current_pid, &default_base_key);
     let session_key = Arc::new(tokio::sync::RwLock::new(base_session_key.clone()));
     let workspace = crate::config::loader::active_workspace_or_current_dir();
 
     let sessions_dir = crate::config::loader::sessions_dir();
     let session_manager = Arc::new(crate::session::SessionManager::new(sessions_dir));
 
-    let agent_loop = Arc::new(tokio::sync::Mutex::new(
-        crate::cli::builder::build_agent_loop(config.clone()).await?,
-    ));
+    let agent_loop = Arc::new(crate::cli::builder::build_agent_loop(config.clone()).await?);
 
     crate::cron::scheduler::start_scheduler(config.clone());
 
     let history = crate::cli::load_session_history()?;
     match history.is_empty() {
         true => {
-            crate::cli::archive_current_session(&session_manager, &base_session_key).await?;
+            match is_session_claimed_by_other_live_tui_in_dir(
+                &marker_dir,
+                current_pid,
+                &base_session_key,
+            ) {
+                false => {
+                    crate::cli::archive_current_session(&session_manager, &base_session_key)
+                        .await?;
+                }
+                true => {}
+            }
         }
         false => {
             let selected = match crate::agent::style::select_menu_with_history(
@@ -350,7 +372,13 @@ pub async fn handle_ratatui_tui() -> Result<()> {
             match selected {
                 0 => {}
                 idx => {
-                    *session_key.write().await = history[idx - 1].key.clone();
+                    let chosen_key = history[idx - 1].key.clone();
+                    let actual_key = allocate_tui_session_key_in_dir(
+                        &marker_dir,
+                        current_pid,
+                        &chosen_key,
+                    );
+                    *session_key.write().await = actual_key;
                 }
             }
         }
@@ -359,13 +387,14 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     let defaults = config.agents.defaults.clone();
     let tui_started_at = chrono::Utc::now().to_rfc3339();
     let tui_cwd = std::env::current_dir().unwrap_or_default();
+    let initial_active_key = session_key.read().await.clone();
     let initial_preview = session_manager
-        .load(&base_session_key)
+        .load(&initial_active_key)
         .ok()
         .map(|session| crate::agent::activity::session_preview_from_messages(&session.messages))
         .unwrap_or_else(|| "No user prompt yet".to_string());
     let active_tui = crate::agent::activity::make_active_tui_session(
-        &base_session_key,
+        &initial_active_key,
         &tui_cwd,
         &tui_started_at,
         &defaults.model,
@@ -405,7 +434,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     });
 
     crate::cli::set_silent_mode(true);
-    spawn_background_channels(&config);
+    spawn_background_channels(&config, agent_loop.clone());
 
     enable_raw_mode()?;
     let mut stdout = stdout();
@@ -414,11 +443,12 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
+    let active_key = session_key.read().await.clone();
+    set_active_ratatui_session_key(Some(active_key.clone()));
     IS_RATATUI_ACTIVE.store(true, Ordering::SeqCst);
     let _guard = RatatuiGuard;
 
     let mut session_config = config.clone();
-    let active_key = session_key.read().await.clone();
     match session_manager.load(&active_key) {
         Ok(session) => {
             crate::agent::agent_loop::apply_session_overrides(
@@ -427,35 +457,14 @@ pub async fn handle_ratatui_tui() -> Result<()> {
             );
             model = session_config.agents.defaults.model.clone();
             provider = session_config.agents.defaults.provider.clone();
-            let changed = session_config.agents.defaults.model != config.agents.defaults.model
-                || session_config.agents.defaults.provider != config.agents.defaults.provider;
-            match changed {
-                true => match crate::providers::resolver::resolve_provider_full(
-                    &session_config,
-                    &session_config.agents.defaults.model,
-                ) {
-                    Ok(resolved) => match agent_loop.try_lock() {
-                        Ok(mut loop_lock) => {
-                            loop_lock.update_model_and_provider(
-                                session_config.clone(),
-                                resolved.instance,
-                            );
-                        }
-                        Err(_) => {}
-                    },
-                    Err(_) => {}
-                },
-                false => {}
-            }
         }
         Err(_) => {}
     }
 
     let mut app = RatatuiApp::new(model, provider, active_key.clone());
-    let marker_dir = tui_marker_dir();
     let _ = write_tui_marker_in_dir(
         &marker_dir,
-        std::process::id(),
+        current_pid,
         &active_key,
         &app.model,
         &app.provider,
@@ -820,7 +829,6 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                     let prov = provider_name.clone();
 
                                                     match apply_session_model_selection(
-                                                        &agent_loop,
                                                         &session_manager,
                                                         &session_key.read().await.clone(),
                                                         &marker_dir,
@@ -894,15 +902,39 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                                 &base_session_key,
                                                             )
                                                             .await;
+                                                            let restored_key =
+                                                                allocate_tui_session_key_in_dir(
+                                                                    &marker_dir,
+                                                                    current_pid,
+                                                                    &target_key,
+                                                                );
                                                             *session_key.write().await =
-                                                                target_key.clone();
+                                                                restored_key.clone();
+                                                            set_active_ratatui_session_key(Some(
+                                                                restored_key.clone(),
+                                                            ));
 
+                                                            let mut restored_cfg = config.clone();
+                                                            crate::agent::agent_loop::apply_session_overrides(
+                                                                &mut restored_cfg,
+                                                                &loaded.metadata,
+                                                            );
+                                                            app.model = restored_cfg
+                                                                .agents
+                                                                .defaults
+                                                                .model
+                                                                .clone();
+                                                            app.provider = restored_cfg
+                                                                .agents
+                                                                .defaults
+                                                                .provider
+                                                                .clone();
                                                             app.messages =
                                                                 ChatMessage::from_session_messages(
                                                                     &loaded.messages,
                                                                 );
                                                             app.update_approx_tokens();
-                                                            app.session_key = target_key.clone();
+                                                            app.session_key = restored_key.clone();
                                                             app.scroll_to_bottom();
                                                             app.messages.push(ChatMessage::notice(
                                                                 format!(
@@ -912,8 +944,8 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                             ));
                                                             let _ = write_tui_marker_in_dir(
                                                                 &marker_dir,
-                                                                std::process::id(),
-                                                                &target_key,
+                                                                current_pid,
+                                                                &restored_key,
                                                                 &app.model,
                                                                 &app.provider,
                                                             );
@@ -1011,6 +1043,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         .await;
                                         let new_key = format!("cli:{}", uuid::Uuid::new_v4());
                                         *session_key.write().await = new_key.clone();
+                                        set_active_ratatui_session_key(Some(new_key.clone()));
                                         app.messages.clear();
                                         app.update_approx_tokens();
                                         app.session_key = new_key.clone();
@@ -1019,7 +1052,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         ));
                                         let _ = write_tui_marker_in_dir(
                                             &marker_dir,
-                                            std::process::id(),
+                                            current_pid,
                                             &new_key,
                                             &app.model,
                                             &app.provider,
@@ -1337,11 +1370,14 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                                     &base_session_key,
                                                                 )
                                                                 .await;
+                                                                set_active_ratatui_session_key(
+                                                                    Some(base_session_key.clone()),
+                                                                );
                                                                 app.session_key =
                                                                     base_session_key.clone();
                                                                 let _ = write_tui_marker_in_dir(
                                                                     &marker_dir,
-                                                                    std::process::id(),
+                                                                    current_pid,
                                                                     &base_session_key,
                                                                     &app.model,
                                                                     &app.provider,
@@ -1434,18 +1470,19 @@ pub async fn handle_ratatui_tui() -> Result<()> {
         }
     }
 
-    remove_tui_marker_in_dir(&marker_dir, std::process::id());
-    match is_last_live_tui_in_dir(&marker_dir, std::process::id()) {
-        true => {
-            let _ = save_default_model_selection(&app.provider, &app.model);
-        }
-        false => {}
-    }
-
+    remove_tui_marker_in_dir(&marker_dir, current_pid);
     let exit_session_key = session_key.read().await.clone();
     crate::agent::activity::remove_active_tui_session(&exit_session_key);
-    crate::shutdown::trigger();
-    crate::channels::shutdown_gateways_bounded(&config).await;
+    match is_last_live_tui_in_dir(&marker_dir, current_pid) {
+        true => {
+            let _ = save_default_model_selection(&app.provider, &app.model);
+            crate::shutdown::trigger();
+            crate::channels::shutdown_gateways_bounded(&config).await;
+        }
+        false => {
+            crate::shutdown::trigger();
+        }
+    }
 
     Ok(())
 }

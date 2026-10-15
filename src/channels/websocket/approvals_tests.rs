@@ -45,27 +45,36 @@ async fn websocket_approval_event_targets_only_requesting_client() {
 
     let mut received_target = false;
     while let Ok(msg) = rx.try_recv() {
-        if let axum::extract::ws::Message::Text(text) = msg {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                if v.get("event").and_then(|s| s.as_str()) == Some("security_request")
-                    && v.get("req_id").and_then(|s| s.as_str()) == Some("req-1")
-                {
-                    received_target = true;
-                }
+        match msg {
+            axum::extract::ws::Message::Text(text) => {
+                let parsed = serde_json::from_str::<serde_json::Value>(&text).ok();
+                let is_target_event = parsed.as_ref().is_some_and(|v| {
+                    v.get("event").and_then(|s| s.as_str()) == Some("security_request")
+                        && v.get("req_id").and_then(|s| s.as_str()) == Some("req-1")
+                });
+                received_target = received_target || is_target_event;
             }
+            _ => {}
         }
     }
-    assert!(received_target, "target client should receive security_request event");
+    assert!(
+        received_target,
+        "target client should receive security_request event"
+    );
 
     while let Ok(msg) = other_rx.try_recv() {
-        if let axum::extract::ws::Message::Text(text) = msg {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
-                assert_ne!(
-                    v.get("event").and_then(|s| s.as_str()),
-                    Some("security_request"),
-                    "other client should never receive targeted security_request event"
-                );
+        match msg {
+            axum::extract::ws::Message::Text(text) => {
+                match serde_json::from_str::<serde_json::Value>(&text) {
+                    Ok(v) => assert_ne!(
+                        v.get("event").and_then(|s| s.as_str()),
+                        Some("security_request"),
+                        "other client should never receive targeted security_request event"
+                    ),
+                    Err(_) => {}
+                }
             }
+            _ => {}
         }
     }
 

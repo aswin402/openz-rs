@@ -2,6 +2,22 @@
 
 use serde_json::Value;
 
+const KNOWN_PROVIDER_KEYS: &[&str] = &[
+    "openai",
+    "anthropic",
+    "openrouter",
+    "deepseek",
+    "groq",
+    "ollama",
+    "minimax",
+    "mistral",
+    "z_ai",
+    "nvidia",
+    "opencode_zen",
+    "cerebras",
+    "google_ai_studio",
+];
+
 pub(crate) fn normalized_config_key(key: &str) -> String {
     key.chars()
         .filter(|character| character.is_ascii_alphanumeric())
@@ -14,10 +30,9 @@ fn is_masked_config_secret(value: &str) -> bool {
 }
 
 pub(crate) fn mask_config_secret(value: &str) -> &'static str {
-    if value.is_empty() {
-        ""
-    } else {
-        "••••••••"
+    match value.is_empty() {
+        true => "",
+        false => "••••••••",
     }
 }
 
@@ -119,9 +134,7 @@ pub(crate) async fn config_data_event(config: &crate::config::schema::Config) ->
         .unwrap_or_default();
     let subagents = super::profiles::subagent_profile_events();
 
-    let mask_key = |key: &Option<String>| {
-        key.as_ref().map(|value| mask_config_secret(value))
-    };
+    let mask_key = |key: &Option<String>| key.as_ref().map(|value| mask_config_secret(value));
     let map_provider = |provider: &Option<crate::config::schema::ProviderConfig>| {
         provider.as_ref().map(|cfg| {
             serde_json::json!({
@@ -206,215 +219,267 @@ pub(crate) async fn config_data_event(config: &crate::config::schema::Config) ->
     )
 }
 
+fn non_empty_trimmed_option(value: &str) -> Option<String> {
+    (!value.trim().is_empty()).then(|| value.to_string())
+}
+
 fn update_provider_config(
     field: &mut Option<crate::config::schema::ProviderConfig>,
     data: &Value,
     include_lookup_fields: bool,
 ) {
-    let Some(data_object) = data.as_object() else {
-        return;
+    let data_object = match data.as_object() {
+        Some(obj) => obj,
+        None => return,
     };
     let mut config = field.clone().unwrap_or_default();
-    if let Some(key) = data_object.get("api_key").and_then(Value::as_str) {
-        if key != "••••••••" {
-            config.api_key = if key.is_empty() {
-                None
-            } else {
-                Some(key.to_string())
-            };
-        }
+    match data_object.get("api_key").and_then(Value::as_str) {
+        Some(key) => match is_masked_config_secret(key) {
+            true => {}
+            false => {
+                config.api_key = (!key.is_empty()).then(|| key.to_string());
+            }
+        },
+        None => {}
     }
-    if include_lookup_fields {
-        if let Some(value) = data_object.get("api_key_env").and_then(Value::as_str) {
-            config.api_key_env = if value.trim().is_empty() {
-                None
-            } else {
-                Some(value.to_string())
-            };
+    match include_lookup_fields {
+        true => {
+            match data_object.get("api_key_env").and_then(Value::as_str) {
+                Some(value) => config.api_key_env = non_empty_trimmed_option(value),
+                None => {}
+            }
+            match data_object.get("api_key_file").and_then(Value::as_str) {
+                Some(value) => config.api_key_file = non_empty_trimmed_option(value),
+                None => {}
+            }
         }
-        if let Some(value) = data_object.get("api_key_file").and_then(Value::as_str) {
-            config.api_key_file = if value.trim().is_empty() {
-                None
-            } else {
-                Some(value.to_string())
-            };
-        }
+        false => {}
     }
-    if let Some(value) = data_object.get("api_base") {
-        config.api_base = value.as_str().map(str::to_string);
+    match data_object.get("api_base") {
+        Some(value) => config.api_base = value.as_str().map(str::to_string),
+        None => {}
     }
-    if let Some(value) = data_object.get("default_model") {
-        config.default_model = value.as_str().map(str::to_string);
+    match data_object.get("default_model") {
+        Some(value) => config.default_model = value.as_str().map(str::to_string),
+        None => {}
     }
     *field = Some(config);
+}
+
+fn apply_defaults_update(config: &mut crate::config::schema::Config, defaults: &Value) {
+    let defaults_config = &mut config.agents.defaults;
+    match defaults.get("model").and_then(Value::as_str) {
+        Some(value) => defaults_config.model = value.to_string(),
+        None => {}
+    }
+    match defaults.get("provider").and_then(Value::as_str) {
+        Some(value) => defaults_config.provider = value.to_string(),
+        None => {}
+    }
+    match (
+        defaults.get("provider").and_then(Value::as_str),
+        defaults.get("model").and_then(Value::as_str),
+    ) {
+        (Some(provider), Some(model)) => crate::channels::record_recent_model(provider, model),
+        _ => {}
+    }
+    match defaults.get("temperature").and_then(Value::as_f64) {
+        Some(value) => defaults_config.temperature = value as f32,
+        None => {}
+    }
+    match defaults.get("max_tokens").and_then(Value::as_u64) {
+        Some(value) => defaults_config.max_tokens = value as usize,
+        None => {}
+    }
+    match defaults.get("streaming").and_then(Value::as_bool) {
+        Some(value) => defaults_config.streaming = value,
+        None => {}
+    }
+    match defaults.get("caveman_mode").and_then(Value::as_bool) {
+        Some(value) => defaults_config.caveman_mode = value,
+        None => {}
+    }
+    match defaults.get("security_mode").and_then(Value::as_str) {
+        Some(value) => defaults_config.security_mode = value.to_string(),
+        None => {}
+    }
+    match defaults.get("bot_name").and_then(Value::as_str) {
+        Some(value) => defaults_config.bot_name = value.to_string(),
+        None => {}
+    }
+    match defaults.get("workspace").and_then(Value::as_str) {
+        Some(value) => defaults_config.workspace = value.to_string(),
+        None => {}
+    }
+    match defaults.get("context_limit") {
+        Some(value) => {
+            defaults_config.context_limit = value.as_u64().map(|number| number as usize);
+        }
+        None => {}
+    }
+    match defaults.get("tool_output_limit") {
+        Some(value) => {
+            defaults_config.tool_output_limit = value.as_u64().map(|number| number as usize);
+        }
+        None => {}
+    }
+    match defaults
+        .get("show_auto_capture_notices")
+        .and_then(Value::as_bool)
+    {
+        Some(value) => defaults_config.show_auto_capture_notices = value,
+        None => {}
+    }
+    match defaults.get("tui_thought_display").and_then(Value::as_str) {
+        Some(value) => defaults_config.tui_thought_display = value.to_string(),
+        None => {}
+    }
+    match defaults.get("max_messages").and_then(Value::as_u64) {
+        Some(value) => defaults_config.max_messages = value as usize,
+        None => {}
+    }
+    match defaults.get("max_tool_iterations").and_then(Value::as_u64) {
+        Some(value) => defaults_config.max_tool_iterations = value as usize,
+        None => {}
+    }
+    match defaults.get("tool_timeout_secs").and_then(Value::as_u64) {
+        Some(value) => defaults_config.tool_timeout_secs = value,
+        None => {}
+    }
+}
+
+fn apply_providers_update(
+    config: &mut crate::config::schema::Config,
+    providers: &serde_json::Map<String, Value>,
+) {
+    let provider_config = &mut config.providers;
+    for (name, field) in [
+        ("openai", &mut provider_config.openai),
+        ("anthropic", &mut provider_config.anthropic),
+        ("openrouter", &mut provider_config.openrouter),
+        ("deepseek", &mut provider_config.deepseek),
+        ("groq", &mut provider_config.groq),
+        ("ollama", &mut provider_config.ollama),
+        ("minimax", &mut provider_config.minimax),
+        ("mistral", &mut provider_config.mistral),
+        ("z_ai", &mut provider_config.z_ai),
+        ("nvidia", &mut provider_config.nvidia),
+        ("opencode_zen", &mut provider_config.opencode_zen),
+        ("cerebras", &mut provider_config.cerebras),
+        ("google_ai_studio", &mut provider_config.google_ai_studio),
+    ] {
+        match providers.get(name) {
+            Some(value) => update_provider_config(field, value, false),
+            None => {}
+        }
+    }
+
+    for (name, value) in providers {
+        match KNOWN_PROVIDER_KEYS.contains(&name.as_str()) || !value.is_object() {
+            true => continue,
+            false => {}
+        }
+        let mut optional_field = provider_config.others.get(name).cloned();
+        update_provider_config(&mut optional_field, value, true);
+        match optional_field {
+            Some(updated) => {
+                provider_config.others.insert(name.clone(), updated);
+            }
+            None => {}
+        }
+    }
+}
+
+fn apply_channels_update(
+    config: &mut crate::config::schema::Config,
+    channels: &serde_json::Map<String, Value>,
+) {
+    let channel_config = &mut config.channels;
+    match channels.get("telegram").and_then(Value::as_object) {
+        Some(data) => {
+            let mut telegram = channel_config.telegram.clone().unwrap_or_default();
+            match data.get("enabled").and_then(Value::as_bool) {
+                Some(value) => telegram.enabled = value,
+                None => {}
+            }
+            match data.get("bot_token").and_then(Value::as_str) {
+                Some(value) => match is_masked_config_secret(value) {
+                    true => {}
+                    false => telegram.bot_token = value.to_string(),
+                },
+                None => {}
+            }
+            channel_config.telegram = Some(telegram);
+        }
+        None => {}
+    }
+
+    match channels.get("discord").and_then(Value::as_object) {
+        Some(data) => {
+            let mut discord = channel_config.discord.clone().unwrap_or_default();
+            match data.get("enabled").and_then(Value::as_bool) {
+                Some(value) => discord.enabled = value,
+                None => {}
+            }
+            match data.get("bot_token").and_then(Value::as_str) {
+                Some(value) => match is_masked_config_secret(value) {
+                    true => {}
+                    false => discord.bot_token = value.to_string(),
+                },
+                None => {}
+            }
+            channel_config.discord = Some(discord);
+        }
+        None => {}
+    }
+
+    match channels.get("whatsapp").and_then(Value::as_object) {
+        Some(data) => {
+            let mut whatsapp = channel_config.whatsapp.clone().unwrap_or_default();
+            match data.get("enabled").and_then(Value::as_bool) {
+                Some(value) => whatsapp.enabled = value,
+                None => {}
+            }
+            match data.get("api_key").and_then(Value::as_str) {
+                Some(value) => match is_masked_config_secret(value) {
+                    true => {}
+                    false => whatsapp.api_key = value.to_string(),
+                },
+                None => {}
+            }
+            match data.get("phone_number_id").and_then(Value::as_str) {
+                Some(value) => whatsapp.phone_number_id = value.to_string(),
+                None => {}
+            }
+            match data.get("webhook_port").and_then(Value::as_u64) {
+                Some(value) => whatsapp.webhook_port = value as u16,
+                None => {}
+            }
+            match data.get("verify_token").and_then(Value::as_str) {
+                Some(value) => whatsapp.verify_token = value.to_string(),
+                None => {}
+            }
+            channel_config.whatsapp = Some(whatsapp);
+        }
+        None => {}
+    }
 }
 
 pub(crate) fn apply_config_update(
     config: &mut crate::config::schema::Config,
     envelope: &Value,
 ) {
-    if let Some(defaults) = envelope.get("defaults") {
-        let defaults_config = &mut config.agents.defaults;
-        if let Some(value) = defaults.get("model").and_then(Value::as_str) {
-            defaults_config.model = value.to_string();
-        }
-        if let Some(value) = defaults.get("provider").and_then(Value::as_str) {
-            defaults_config.provider = value.to_string();
-        }
-        if let (Some(provider), Some(model)) = (
-            defaults.get("provider").and_then(Value::as_str),
-            defaults.get("model").and_then(Value::as_str),
-        ) {
-            crate::channels::record_recent_model(provider, model);
-        }
-        if let Some(value) = defaults.get("temperature").and_then(Value::as_f64) {
-            defaults_config.temperature = value as f32;
-        }
-        if let Some(value) = defaults.get("max_tokens").and_then(Value::as_u64) {
-            defaults_config.max_tokens = value as usize;
-        }
-        if let Some(value) = defaults.get("streaming").and_then(Value::as_bool) {
-            defaults_config.streaming = value;
-        }
-        if let Some(value) = defaults.get("caveman_mode").and_then(Value::as_bool) {
-            defaults_config.caveman_mode = value;
-        }
-        if let Some(value) = defaults.get("security_mode").and_then(Value::as_str) {
-            defaults_config.security_mode = value.to_string();
-        }
-        if let Some(value) = defaults.get("bot_name").and_then(Value::as_str) {
-            defaults_config.bot_name = value.to_string();
-        }
-        if let Some(value) = defaults.get("workspace").and_then(Value::as_str) {
-            defaults_config.workspace = value.to_string();
-        }
-        if let Some(value) = defaults.get("context_limit") {
-            defaults_config.context_limit = value.as_u64().map(|number| number as usize);
-        }
-        if let Some(value) = defaults.get("tool_output_limit") {
-            defaults_config.tool_output_limit = value.as_u64().map(|number| number as usize);
-        }
-        if let Some(value) = defaults
-            .get("show_auto_capture_notices")
-            .and_then(Value::as_bool)
-        {
-            defaults_config.show_auto_capture_notices = value;
-        }
-        if let Some(value) = defaults.get("tui_thought_display").and_then(Value::as_str) {
-            defaults_config.tui_thought_display = value.to_string();
-        }
-        if let Some(value) = defaults.get("max_messages").and_then(Value::as_u64) {
-            defaults_config.max_messages = value as usize;
-        }
-        if let Some(value) = defaults.get("max_tool_iterations").and_then(Value::as_u64) {
-            defaults_config.max_tool_iterations = value as usize;
-        }
-        if let Some(value) = defaults.get("tool_timeout_secs").and_then(Value::as_u64) {
-            defaults_config.tool_timeout_secs = value;
-        }
+    match envelope.get("defaults") {
+        Some(defaults) => apply_defaults_update(config, defaults),
+        None => {}
     }
-
-    if let Some(providers) = envelope.get("providers").and_then(Value::as_object) {
-        let provider_config = &mut config.providers;
-        for (name, field) in [
-            ("openai", &mut provider_config.openai),
-            ("anthropic", &mut provider_config.anthropic),
-            ("openrouter", &mut provider_config.openrouter),
-            ("deepseek", &mut provider_config.deepseek),
-            ("groq", &mut provider_config.groq),
-            ("ollama", &mut provider_config.ollama),
-            ("minimax", &mut provider_config.minimax),
-            ("mistral", &mut provider_config.mistral),
-            ("z_ai", &mut provider_config.z_ai),
-            ("nvidia", &mut provider_config.nvidia),
-            ("opencode_zen", &mut provider_config.opencode_zen),
-            ("cerebras", &mut provider_config.cerebras),
-            ("google_ai_studio", &mut provider_config.google_ai_studio),
-        ] {
-            if let Some(value) = providers.get(name) {
-                update_provider_config(field, value, false);
-            }
-        }
-
-        for (name, value) in providers {
-            if [
-                "openai",
-                "anthropic",
-                "openrouter",
-                "deepseek",
-                "groq",
-                "ollama",
-                "minimax",
-                "mistral",
-                "z_ai",
-                "nvidia",
-                "opencode_zen",
-                "cerebras",
-                "google_ai_studio",
-            ]
-            .contains(&name.as_str())
-            {
-                continue;
-            }
-            if !value.is_object() {
-                continue;
-            }
-            let existing = provider_config.others.get(name).cloned();
-            let mut optional_field = existing;
-            update_provider_config(&mut optional_field, value, true);
-            if let Some(updated) = optional_field {
-                provider_config.others.insert(name.clone(), updated);
-            }
-        }
+    match envelope.get("providers").and_then(Value::as_object) {
+        Some(providers) => apply_providers_update(config, providers),
+        None => {}
     }
-
-    if let Some(channels) = envelope.get("channels").and_then(Value::as_object) {
-        let channel_config = &mut config.channels;
-        if let Some(data) = channels.get("telegram").and_then(Value::as_object) {
-            let mut telegram = channel_config.telegram.clone().unwrap_or_default();
-            if let Some(value) = data.get("enabled").and_then(Value::as_bool) {
-                telegram.enabled = value;
-            }
-            if let Some(value) = data.get("bot_token").and_then(Value::as_str) {
-                if value != "••••••••" {
-                    telegram.bot_token = value.to_string();
-                }
-            }
-            channel_config.telegram = Some(telegram);
-        }
-        if let Some(data) = channels.get("discord").and_then(Value::as_object) {
-            let mut discord = channel_config.discord.clone().unwrap_or_default();
-            if let Some(value) = data.get("enabled").and_then(Value::as_bool) {
-                discord.enabled = value;
-            }
-            if let Some(value) = data.get("bot_token").and_then(Value::as_str) {
-                if value != "••••••••" {
-                    discord.bot_token = value.to_string();
-                }
-            }
-            channel_config.discord = Some(discord);
-        }
-        if let Some(data) = channels.get("whatsapp").and_then(Value::as_object) {
-            let mut whatsapp = channel_config.whatsapp.clone().unwrap_or_default();
-            if let Some(value) = data.get("enabled").and_then(Value::as_bool) {
-                whatsapp.enabled = value;
-            }
-            if let Some(value) = data.get("api_key").and_then(Value::as_str) {
-                if value != "••••••••" {
-                    whatsapp.api_key = value.to_string();
-                }
-            }
-            if let Some(value) = data.get("phone_number_id").and_then(Value::as_str) {
-                whatsapp.phone_number_id = value.to_string();
-            }
-            if let Some(value) = data.get("webhook_port").and_then(Value::as_u64) {
-                whatsapp.webhook_port = value as u16;
-            }
-            if let Some(value) = data.get("verify_token").and_then(Value::as_str) {
-                whatsapp.verify_token = value.to_string();
-            }
-            channel_config.whatsapp = Some(whatsapp);
-        }
+    match envelope.get("channels").and_then(Value::as_object) {
+        Some(channels) => apply_channels_update(config, channels),
+        None => {}
     }
 }
 

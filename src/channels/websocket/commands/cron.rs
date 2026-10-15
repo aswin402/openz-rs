@@ -13,8 +13,9 @@ pub(crate) async fn cron_update_event(
         .and_then(Value::as_str)
         .unwrap_or("")
         .trim();
-    if id.is_empty() {
-        return super::super::protocol::event_error("Cron job id is required.");
+    match id.is_empty() {
+        true => return super::super::protocol::event_error("Cron job id is required."),
+        false => {}
     }
 
     let args = serde_json::json!({ "id": id });

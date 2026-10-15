@@ -18,8 +18,11 @@ fn canonical_extra_without_hash(extra: &serde_json::Map<String, serde_json::Valu
     let mut keys: Vec<_> = extra.keys().filter(|key| key.as_str() != "hash").collect();
     keys.sort();
     for key in keys {
-        if let Some(value) = extra.get(key) {
-            filtered.insert(key.clone(), value.clone());
+        match extra.get(key) {
+            Some(value) => {
+                filtered.insert(key.clone(), value.clone());
+            }
+            None => {}
         }
     }
     serde_json::to_string(&serde_json::Value::Object(filtered)).unwrap_or_else(|_| "{}".to_string())
@@ -34,8 +37,9 @@ fn legacy_message_hash(
     let mut hasher = Sha256::new();
     hasher.update(role.as_bytes());
     hasher.update(content.as_bytes());
-    if let Some(ts) = timestamp {
-        hasher.update(ts.as_bytes());
+    match timestamp {
+        Some(ts) => hasher.update(ts.as_bytes()),
+        None => {}
     }
     hasher.update(prev_hash.as_bytes());
     let result = hasher.finalize();
@@ -112,8 +116,9 @@ impl Session {
         let mut hasher = Sha256::new();
         hasher.update(role.as_bytes());
         hasher.update(content.as_bytes());
-        if let Some(ts) = timestamp {
-            hasher.update(ts.as_bytes());
+        match timestamp {
+            Some(ts) => hasher.update(ts.as_bytes()),
+            None => {}
         }
         let canonical_extra = canonical_extra_without_hash(extra);
         hasher.update(canonical_extra.as_bytes());
@@ -203,25 +208,27 @@ pub enum ChainIntegrity {
     Tampered(String),
 }
 
-
-
 fn remove_stale_lock_path(path: &Path) -> Result<()> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(err) => return Err(err.into()),
+        Err(err) => match err.kind() {
+            std::io::ErrorKind::NotFound => return Ok(()),
+            _ => return Err(err.into()),
+        },
     };
 
-    if metadata.is_file() {
-        return Ok(());
+    match metadata.is_file() {
+        true => return Ok(()),
+        false => {}
     }
 
     let modified = metadata.modified().unwrap_or(SystemTime::now());
     let age = SystemTime::now()
         .duration_since(modified)
         .unwrap_or_else(|_| Duration::from_secs(0));
-    if age < Duration::from_secs(SESSION_LOCK_STALE_SECS) {
-        return Ok(());
+    match age < Duration::from_secs(SESSION_LOCK_STALE_SECS) {
+        true => return Ok(()),
+        false => {}
     }
 
     tracing::warn!(
@@ -229,10 +236,9 @@ fn remove_stale_lock_path(path: &Path) -> Result<()> {
         age_secs = age.as_secs(),
         "Removing stale corrupt OpenZ session lock path"
     );
-    if metadata.is_dir() {
-        fs::remove_dir_all(path)?;
-    } else {
-        fs::remove_file(path)?;
+    match metadata.is_dir() {
+        true => fs::remove_dir_all(path)?,
+        false => fs::remove_file(path)?,
     }
     Ok(())
 }
@@ -256,8 +262,9 @@ fn try_open_and_lock_session_file(path: &Path, key: &str) -> Result<File> {
 }
 
 fn acquire_lock_blocking(dir: &Path, path: &Path, key: &str) -> Result<File> {
-    if !dir.exists() {
-        fs::create_dir_all(dir)?;
+    match dir.exists() {
+        true => {}
+        false => fs::create_dir_all(dir)?,
     }
 
     let mut delay = Duration::from_millis(SESSION_LOCK_INITIAL_BACKOFF_MS);
@@ -268,12 +275,15 @@ fn acquire_lock_blocking(dir: &Path, path: &Path, key: &str) -> Result<File> {
             Ok(file) => return Ok(file),
             Err(err) => {
                 last_error = Some(err);
-                if attempt + 1 < SESSION_LOCK_RETRY_ATTEMPTS {
-                    std::thread::sleep(delay);
-                    delay = std::cmp::min(
-                        delay.saturating_mul(2),
-                        Duration::from_millis(SESSION_LOCK_MAX_BACKOFF_MS),
-                    );
+                match attempt + 1 < SESSION_LOCK_RETRY_ATTEMPTS {
+                    true => {
+                        std::thread::sleep(delay);
+                        delay = std::cmp::min(
+                            delay.saturating_mul(2),
+                            Duration::from_millis(SESSION_LOCK_MAX_BACKOFF_MS),
+                        );
+                    }
+                    false => {}
                 }
             }
         }
@@ -281,7 +291,6 @@ fn acquire_lock_blocking(dir: &Path, path: &Path, key: &str) -> Result<File> {
 
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Failed to acquire session lock")))
 }
-
 
 #[derive(Clone)]
 pub struct ArchivedSession {
@@ -305,14 +314,15 @@ impl SessionSummary {
         match &self.first_user_message {
             Some(msg) => {
                 let cleaned = msg.split_whitespace().collect::<Vec<_>>().join(" ");
-                if cleaned.chars().count() > max_len {
-                    let mut s: String = cleaned.chars().take(max_len.saturating_sub(3)).collect();
-                    s.push_str("...");
-                    s
-                } else if cleaned.is_empty() {
-                    fallback.to_string()
-                } else {
-                    cleaned
+                match (cleaned.is_empty(), cleaned.chars().count() > max_len) {
+                    (true, _) => fallback.to_string(),
+                    (false, true) => {
+                        let mut s: String =
+                            cleaned.chars().take(max_len.saturating_sub(3)).collect();
+                        s.push_str("...");
+                        s
+                    }
+                    (false, false) => cleaned,
                 }
             }
             None => fallback.to_string(),
@@ -347,7 +357,7 @@ impl SessionManager {
     }
 
     pub fn safe_key(key: &str) -> String {
-        key.replace(":", "_").replace("/", "_").replace("\\", "_")
+        key.replace(':', "_").replace('/', "_").replace('\\', "_")
     }
 
     pub fn file_path(&self, key: &str) -> PathBuf {
@@ -439,10 +449,10 @@ impl SessionManager {
         let path = self.file_path(key);
         match fs::remove_file(&path) {
             Ok(()) => Ok(true),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(err) => {
-                Err(err).with_context(|| format!("Failed to delete session file {:?}", path))
-            }
+            Err(err) => match err.kind() {
+                std::io::ErrorKind::NotFound => Ok(false),
+                _ => Err(err).with_context(|| format!("Failed to delete session file {:?}", path)),
+            },
         }
     }
 
@@ -454,8 +464,9 @@ impl SessionManager {
 
     pub fn archive(&self, key: &str) -> Result<Option<ArchivedSession>> {
         let source_path = self.file_path(key);
-        if !source_path.exists() {
-            return Ok(None);
+        match source_path.exists() {
+            false => return Ok(None),
+            true => {}
         }
 
         let session = self.load(key)?;
@@ -488,17 +499,19 @@ impl SessionManager {
     }
 
     pub async fn save(&self, session: &Session) -> Result<()> {
-        if tokio::fs::metadata(&self.dir).await.is_err() {
-            tokio::fs::create_dir_all(&self.dir)
-                .await
-                .with_context(|| format!("Failed to create directory {:?}", self.dir))?;
+        match tokio::fs::metadata(&self.dir).await {
+            Ok(_) => {}
+            Err(_) => {
+                tokio::fs::create_dir_all(&self.dir)
+                    .await
+                    .with_context(|| format!("Failed to create directory {:?}", self.dir))?;
+            }
         }
         let mut session_clone = session.clone();
         session_clone.populate_hashes();
         let path = self.file_path(&session_clone.key);
         let content = serde_json::to_string_pretty(&session_clone)?;
 
-        // Atomic write: write to temp file then rename to prevent corruption
         let temp_path = path.with_extension("json.tmp");
         tokio::fs::write(&temp_path, &content)
             .await
@@ -517,28 +530,36 @@ impl SessionManager {
     /// List lightweight summaries for all saved sessions, sorted newest first.
     pub fn list_summaries(&self) -> Vec<SessionSummary> {
         let mut summaries = Vec::new();
-        let Ok(entries) = fs::read_dir(&self.dir) else {
-            return summaries;
+        let entries = match fs::read_dir(&self.dir) {
+            Ok(entries) => entries,
+            Err(_) => return summaries,
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) == Some("json") {
-                if let Ok(content) = fs::read_to_string(&path) {
-                    if let Ok(session) = serde_json::from_str::<SessionSummaryParser>(&content) {
-                        let first_user = session
-                            .messages
-                            .iter()
-                            .find(|m| m.role == "user")
-                            .map(|m| m.content.clone());
-                        summaries.push(SessionSummary {
-                            key: session.key,
-                            updated_at: session.updated_at,
-                            created_at: session.created_at.unwrap_or(session.updated_at),
-                            message_count: session.messages.len(),
-                            first_user_message: first_user,
-                        });
-                    }
+            let is_json = path.extension().and_then(|s| s.to_str()) == Some("json");
+            match is_json {
+                false => continue,
+                true => {}
+            }
+            let session = fs::read_to_string(&path)
+                .ok()
+                .and_then(|content| serde_json::from_str::<SessionSummaryParser>(&content).ok());
+            match session {
+                Some(session) => {
+                    let first_user = session
+                        .messages
+                        .iter()
+                        .find(|m| m.role == "user")
+                        .map(|m| m.content.clone());
+                    summaries.push(SessionSummary {
+                        key: session.key,
+                        updated_at: session.updated_at,
+                        created_at: session.created_at.unwrap_or(session.updated_at),
+                        message_count: session.messages.len(),
+                        first_user_message: first_user,
+                    });
                 }
+                None => {}
             }
         }
         summaries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
@@ -579,7 +600,6 @@ impl SessionManager {
             .unwrap_or_else(|_| (Vec::new(), 0))
     }
 }
-
 
 #[cfg(test)]
 #[path = "session_tests.rs"]

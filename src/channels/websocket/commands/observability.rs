@@ -7,17 +7,16 @@ pub(crate) async fn mcp_servers_event(config: &crate::config::schema::Config) ->
     let mcp_done = crate::channels::cli::mcp::is_mcp_done();
     let mut servers = Vec::new();
     for (name, server_cfg) in &config.mcp_servers {
-        let status = if !server_cfg.enabled {
-            "disabled"
-        } else if !mcp_done {
-            "starting"
-        } else {
-            "connected"
+        let status = match (server_cfg.enabled, mcp_done) {
+            (false, _) => "disabled",
+            (true, false) => "starting",
+            (true, true) => "connected",
         };
-        let tools_count = if server_cfg.enabled {
-            crate::tools::mcp::spawned_tools_count(&server_cfg.command, &server_cfg.args).await
-        } else {
-            0
+        let tools_count = match server_cfg.enabled {
+            true => {
+                crate::tools::mcp::spawned_tools_count(&server_cfg.command, &server_cfg.args).await
+            }
+            false => 0,
         };
         servers.push(super::super::protocol::mcp_server(
             name,
@@ -34,32 +33,33 @@ pub(crate) async fn mcp_servers_event(config: &crate::config::schema::Config) ->
 pub(crate) async fn logs_event() -> Value {
     let mut log_entries = Vec::new();
     let log_path = crate::logs::default_log_path();
-    if let Ok(content) = std::fs::read_to_string(&log_path) {
-        let lines: Vec<&str> = content.lines().rev().take(100).collect();
-        for (index, line) in lines.iter().enumerate() {
-            if line.trim().is_empty() {
-                continue;
+    match std::fs::read_to_string(&log_path) {
+        Ok(content) => {
+            let lines: Vec<&str> = content.lines().rev().take(100).collect();
+            for (index, line) in lines.iter().enumerate() {
+                match line.trim().is_empty() {
+                    true => continue,
+                    false => {}
+                }
+                let level = match (line.contains("ERROR"), line.contains("WARN")) {
+                    (true, _) => "ERROR",
+                    (false, true) => "WARN",
+                    (false, false) => "INFO",
+                };
+                let timestamp = match line.len() >= 19 && line.as_bytes()[10] == b'T' {
+                    true => line[11..19].to_string(),
+                    false => chrono::Local::now().format("%H:%M:%S").to_string(),
+                };
+                log_entries.push(super::super::protocol::log_entry(
+                    format!("log-{}", index),
+                    timestamp,
+                    level,
+                    "openz::gateway",
+                    line.to_string(),
+                ));
             }
-            let level = if line.contains("ERROR") {
-                "ERROR"
-            } else if line.contains("WARN") {
-                "WARN"
-            } else {
-                "INFO"
-            };
-            let timestamp = if line.len() >= 19 && line.as_bytes()[10] == b'T' {
-                line[11..19].to_string()
-            } else {
-                chrono::Local::now().format("%H:%M:%S").to_string()
-            };
-            log_entries.push(super::super::protocol::log_entry(
-                format!("log-{}", index),
-                timestamp,
-                level,
-                "openz::gateway",
-                line.to_string(),
-            ));
         }
+        Err(_) => {}
     }
     super::super::protocol::logs_data(log_entries)
 }
