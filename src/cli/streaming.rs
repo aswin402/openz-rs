@@ -7,10 +7,9 @@ use crate::println;
 
 pub async fn handle_streaming() -> Result<()> {
     let mut config = load_config()?;
-    let current_status = if config.agents.defaults.streaming {
-        "Enabled"
-    } else {
-        "Disabled"
+    let current_status = match config.agents.defaults.streaming {
+        true => "Enabled",
+        false => "Disabled",
     };
 
     println!(
@@ -33,22 +32,29 @@ pub async fn handle_streaming() -> Result<()> {
 
     let choice = Select::new("Choose option:", options).prompt()?;
 
-    if choice.starts_with("Enable") {
-        config.agents.defaults.streaming = true;
-        save_config(&config)?;
-        println!(
-            "{}✓ Response streaming has been ENABLED globally for OpenZ.{}",
-            EMERALD_GREEN, COLOR_RESET
-        );
-    } else if choice.starts_with("Disable") {
-        config.agents.defaults.streaming = false;
-        save_config(&config)?;
-        println!(
-            "{}✓ Response streaming has been DISABLED globally for OpenZ.{}",
-            EMERALD_GREEN, COLOR_RESET
-        );
-    } else {
-        println!("No changes made.");
+    match (
+        choice.starts_with("Enable"),
+        choice.starts_with("Disable"),
+    ) {
+        (true, _) => {
+            config.agents.defaults.streaming = true;
+            save_config(&config)?;
+            println!(
+                "{}✓ Response streaming has been ENABLED globally for OpenZ.{}",
+                EMERALD_GREEN, COLOR_RESET
+            );
+        }
+        (false, true) => {
+            config.agents.defaults.streaming = false;
+            save_config(&config)?;
+            println!(
+                "{}✓ Response streaming has been DISABLED globally for OpenZ.{}",
+                EMERALD_GREEN, COLOR_RESET
+            );
+        }
+        (false, false) => {
+            println!("No changes made.");
+        }
     }
 
     Ok(())

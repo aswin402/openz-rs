@@ -92,35 +92,43 @@ pub async fn run_cli() -> Result<()> {
 
     match args.command {
         Some(Command::Run(mut headless_args)) => {
-            if headless_args.prompt.is_none() && headless_args.prompt_flag.is_none() {
-                headless_args.prompt = args.prompt;
+            match (
+                headless_args.prompt.is_none(),
+                headless_args.prompt_flag.is_none(),
+            ) {
+                (true, true) => headless_args.prompt = args.prompt,
+                _ => {}
             }
             headless_args.merge_global(args.output_format, args.yes);
             return headless::handle_headless(headless_args).await;
         }
         None => {
-            if let Some(prompt) = args.prompt {
-                let headless_args = args::HeadlessArgs {
-                    prompt: Some(prompt),
-                    output_format: args.output_format.unwrap_or_else(|| "text".to_string()),
-                    yes: args.yes,
-                    ..Default::default()
-                };
-                return headless::handle_headless(headless_args).await;
-            }
             use crossterm::tty::IsTty;
-            if !std::io::stdin().is_tty() {
-                let headless_args = args::HeadlessArgs {
-                    output_format: args.output_format.unwrap_or_else(|| "text".to_string()),
-                    yes: args.yes,
-                    ..Default::default()
-                };
-                return headless::handle_headless(headless_args).await;
+            match (args.prompt, std::io::stdin().is_tty()) {
+                (Some(prompt), _) => {
+                    let headless_args = args::HeadlessArgs {
+                        prompt: Some(prompt),
+                        output_format: args.output_format.unwrap_or_else(|| "text".to_string()),
+                        yes: args.yes,
+                        ..Default::default()
+                    };
+                    return headless::handle_headless(headless_args).await;
+                }
+                (None, false) => {
+                    let headless_args = args::HeadlessArgs {
+                        output_format: args.output_format.unwrap_or_else(|| "text".to_string()),
+                        yes: args.yes,
+                        ..Default::default()
+                    };
+                    return headless::handle_headless(headless_args).await;
+                }
+                (None, true) => {
+                    channels::handle_ratatui_tui().await?;
+                    let _ = crossterm::terminal::disable_raw_mode();
+                    let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
+                    std::process::exit(0);
+                }
             }
-            channels::handle_ratatui_tui().await?;
-            let _ = crossterm::terminal::disable_raw_mode();
-            let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
-            std::process::exit(0);
         }
         Some(Command::Onboard) => {
             onboard::handle_onboard().await?;
@@ -180,19 +188,19 @@ pub async fn run_cli() -> Result<()> {
         }) => {
             doctor::handle_doctor(scrub_secrets, clean_target).await?;
         }
-        Some(Command::McpBridge { port, command_args }) => {
-            if command_args.is_empty() {
+        Some(Command::McpBridge { port, command_args }) => match command_args.as_slice() {
+            [] => {
                 return Err(anyhow::anyhow!(
                     "No target command specified. Usage: openz mcp-bridge --port <port> -- <command> [args...]"
                 ));
             }
-            let command = &command_args[0];
-            let args = &command_args[1..];
-            let (_tx, rx) = tokio::sync::oneshot::channel();
-            let port_guard = std::net::TcpListener::bind(format!("127.0.0.1:{}", port))
-                .map_err(|e| anyhow::anyhow!("Cannot bind to port {}: {}", port, e))?;
-            crate::tools::mcp::run_mcp_bridge(port, port_guard, command, args, rx).await?;
-        }
+            [command, args @ ..] => {
+                let (_tx, rx) = tokio::sync::oneshot::channel();
+                let port_guard = std::net::TcpListener::bind(format!("127.0.0.1:{}", port))
+                    .map_err(|e| anyhow::anyhow!("Cannot bind to port {}: {}", port, e))?;
+                crate::tools::mcp::run_mcp_bridge(port, port_guard, command, args, rx).await?;
+            }
+        },
         Some(Command::Sop { action }) => {
             sop::handle_sop(action).await?;
         }
@@ -233,10 +241,11 @@ pub fn start_database_auto_optimizer() {
         ];
         for name in db_names {
             let path = crate::config::loader::runtime_db_path(name);
-            if path.exists() {
-                if let Ok(conn) = rusqlite::Connection::open(&path) {
+            match (path.exists(), rusqlite::Connection::open(&path)) {
+                (true, Ok(conn)) => {
                     let _ = conn.execute_batch("PRAGMA incremental_vacuum(50); PRAGMA optimize;");
                 }
+                _ => {}
             }
         }
     });

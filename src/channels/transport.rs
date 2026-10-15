@@ -38,19 +38,21 @@ pub(crate) async fn send_external_notification(
     request: &NotificationRequest,
 ) {
     match send_notification_request(client, request).await {
-        Ok(response) if response.status.is_success() => {}
-        Ok(response) => {
-            let error = redact_notification_text(
-                request,
-                &format!("HTTP {}: {}", response.status, response.body),
-            );
-            tracing::warn!(
-                channel = request.target.channel_name(),
-                target = request.target.display_id(),
-                error = %error,
-                "Error sending external notification"
-            );
-        }
+        Ok(response) => match response.status.is_success() {
+            true => {}
+            false => {
+                let error = redact_notification_text(
+                    request,
+                    &format!("HTTP {}: {}", response.status, response.body),
+                );
+                tracing::warn!(
+                    channel = request.target.channel_name(),
+                    target = request.target.display_id(),
+                    error = %error,
+                    "Error sending external notification"
+                );
+            }
+        },
         Err(err) => {
             let error = redact_notification_text(request, &err.to_string());
             tracing::warn!(
@@ -67,16 +69,18 @@ pub(crate) fn redact_notification_text(request: &NotificationRequest, text: &str
     let mut redacted = text.replace(&request.url, "<notification endpoint>");
     match &request.auth {
         NotificationAuth::None => {}
-        NotificationAuth::Bearer(token) => {
-            if !token.is_empty() {
+        NotificationAuth::Bearer(token) => match token.is_empty() {
+            true => {}
+            false => {
                 redacted = redacted.replace(token, "<redacted credential>");
             }
-        }
-        NotificationAuth::Header { value, .. } => {
-            if !value.is_empty() {
+        },
+        NotificationAuth::Header { value, .. } => match value.is_empty() {
+            true => {}
+            false => {
                 redacted = redacted.replace(value, "<redacted credential>");
             }
-        }
+        },
     }
     redacted
 }

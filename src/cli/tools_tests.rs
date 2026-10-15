@@ -66,19 +66,22 @@ async fn required_raw_json_tool_fields_are_documented_or_normalized() {
     for entry in registry.catalog_entries(true) {
         let name = entry["name"].as_str().unwrap_or("<unknown>");
         let schema = &entry["parameters"];
-        let Some(properties) = schema_properties(schema) else {
-            continue;
+        let properties = match schema_properties(schema) {
+            Some(properties) => properties,
+            None => continue,
         };
 
         for field in schema_required_fields(schema) {
-            let Some(prop) = properties.get(&field) else {
-                continue;
+            let prop = match properties.get(&field) {
+                Some(prop) => prop,
+                None => continue,
             };
-            if is_opaque_json_property(prop)
+            match is_opaque_json_property(prop)
                 && !has_actionable_json_example(prop)
                 && !has_raw_json_normalizer(name, &field)
             {
-                offenders.push(format!("{name}.{field}"));
+                true => offenders.push(format!("{name}.{field}")),
+                false => {}
             }
         }
     }

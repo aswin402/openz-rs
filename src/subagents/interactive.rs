@@ -7,6 +7,48 @@ use crate::session::Message;
 use anyhow::{anyhow, Context, Result};
 use inquire::{Confirm, Text};
 
+fn build_subagent_menu_names(profiles: &[SubagentProfile]) -> Vec<String> {
+    let mut names: Vec<String> = profiles.iter().map(|p| p.name.clone()).collect();
+    names.push("Back".to_string());
+    names
+}
+
+fn print_subagent_summary(profile: &SubagentProfile, config: &Config, heading: &str) {
+    println!("\n--- {} ---", heading);
+    println!("Name: {}", profile.name);
+    println!("Description: {}", profile.description);
+    println!(
+        "Primary Model: {}",
+        profile.model.as_deref().unwrap_or("(default)")
+    );
+    let fallbacks_display = profile
+        .fallbacks
+        .clone()
+        .unwrap_or_else(|| config.get_dynamic_fallbacks(&profile.name));
+    println!("Fallback Models: {:?}", fallbacks_display);
+    println!("System Prompt:\n{}", profile.system_prompt);
+    println!("------------------------------------");
+}
+
+async fn prompt_fallback_models(
+    existing: Option<&[String]>,
+    verb: &str,
+    config: &Config,
+) -> Result<Vec<String>> {
+    let mut fallbacks = Vec::new();
+    for idx in 1..=3 {
+        let default_val = existing
+            .and_then(|f| f.get(idx - 1).cloned())
+            .unwrap_or_default();
+        let label = format!("{verb} Fallback Model {idx} (Exit/Esc to skip):");
+        match prompt_choose_model(&label, &default_val, config).await? {
+            Some(fallback) => fallbacks.push(fallback),
+            None => {}
+        }
+    }
+    Ok(fallbacks)
+}
+
 pub async fn run_subagent_manager(config: Config) -> Result<()> {
     let _ = load_profiles()?;
     let active_mdl = config.agents.defaults.model.clone();
@@ -26,20 +68,18 @@ pub async fn run_subagent_manager(config: Config) -> Result<()> {
             true,
         ) {
             Ok(Some(idx)) => idx,
-            _ => break, // Exit on Esc
+            _ => break,
         };
 
         match choice_idx {
-            0 => {
-                if let Err(e) = manage_menu(&config).await {
-                    tracing::error!("Error managing subagents: {}", e);
-                }
-            }
-            1 => {
-                if let Err(e) = create_menu(&config).await {
-                    tracing::error!("Error creating subagent: {}", e);
-                }
-            }
+            0 => match manage_menu(&config).await {
+                Ok(()) => {}
+                Err(e) => tracing::error!("Error managing subagents: {}", e),
+            },
+            1 => match create_menu(&config).await {
+                Ok(()) => {}
+                Err(e) => tracing::error!("Error creating subagent: {}", e),
+            },
             _ => {
                 println!("Exiting subagent manager.");
                 break;
@@ -51,14 +91,16 @@ pub async fn run_subagent_manager(config: Config) -> Result<()> {
 
 async fn manage_menu(config: &Config) -> Result<()> {
     let mut profiles = load_profiles()?;
-    if profiles.is_empty() {
-        println!("No subagents currently configured.");
-        return Ok(());
+    match profiles.is_empty() {
+        true => {
+            println!("No subagents currently configured.");
+            return Ok(());
+        }
+        false => {}
     }
 
     let active_mdl = config.agents.defaults.model.clone();
-    let mut subagent_names: Vec<String> = profiles.iter().map(|p| p.name.clone()).collect();
-    subagent_names.push("Back".to_string());
+    let mut subagent_names = build_subagent_menu_names(&profiles);
 
     loop {
         let name_choice_idx = match crate::agent::style::select_menu_custom(
@@ -69,31 +111,24 @@ async fn manage_menu(config: &Config) -> Result<()> {
             true,
         ) {
             Ok(Some(idx)) => idx,
-            _ => break, // Go back on Esc
+            _ => break,
         };
 
-        if name_choice_idx == profiles.len() {
-            break; // Back option
+        match name_choice_idx == profiles.len() {
+            true => break,
+            false => {}
         }
 
         let name_choice = &subagent_names[name_choice_idx];
 
-        if let Some(pos) = profiles.iter().position(|p| p.name == *name_choice) {
-            loop {
+        match profiles.iter().position(|p| p.name == *name_choice) {
+            Some(pos) => loop {
                 let profile = &profiles[pos];
-                println!("\n--- Subagent Details: {} ---", profile.name);
-                println!("Description: {}", profile.description);
-                println!(
-                    "Primary Model: {}",
-                    profile.model.as_deref().unwrap_or("(default)")
+                print_subagent_summary(
+                    profile,
+                    config,
+                    &format!("Subagent Details: {}", profile.name),
                 );
-                let fallbacks_display = profile
-                    .fallbacks
-                    .clone()
-                    .unwrap_or_else(|| config.get_dynamic_fallbacks(&profile.name));
-                println!("Fallback Models: {:?}", fallbacks_display);
-                println!("System Prompt:\n{}", profile.system_prompt);
-                println!("------------------------------------");
 
                 let options = vec![
                     "Modify Subagent".to_string(),
@@ -109,7 +144,7 @@ async fn manage_menu(config: &Config) -> Result<()> {
                     true,
                 ) {
                     Ok(Some(idx)) => idx,
-                    _ => break, // Go back on Esc
+                    _ => break,
                 };
 
                 match action_idx {
@@ -121,30 +156,20 @@ async fn manage_menu(config: &Config) -> Result<()> {
                         modified.system_prompt = Text::new("Edit System Prompt:")
                             .with_initial_value(&profile.system_prompt)
                             .prompt()?;
-                        if let Some(selected_model) = prompt_choose_model(
+                        match prompt_choose_model(
                             "Edit Primary Model:",
                             profile.model.as_deref().unwrap_or(""),
                             config,
                         )
                         .await?
                         {
-                            modified.model = Some(selected_model);
+                            Some(selected_model) => modified.model = Some(selected_model),
+                            None => {}
                         }
 
-                        let mut fallbacks = Vec::new();
-                        for idx in 1..=3 {
-                            let default_val = profile
-                                .fallbacks
-                                .as_ref()
-                                .and_then(|f| f.get(idx - 1).cloned())
-                                .unwrap_or_default();
-                            let label = format!("Edit Fallback Model {} (Exit/Esc to skip):", idx);
-                            if let Some(fallback) =
-                                prompt_choose_model(&label, &default_val, config).await?
-                            {
-                                fallbacks.push(fallback);
-                            }
-                        }
+                        let fallbacks =
+                            prompt_fallback_models(profile.fallbacks.as_deref(), "Edit", config)
+                                .await?;
                         modified.fallbacks = Some(fallbacks);
 
                         profiles[pos] = modified;
@@ -158,18 +183,21 @@ async fn manage_menu(config: &Config) -> Result<()> {
                         ))
                         .with_default(false)
                         .prompt()?;
-                        if confirm {
-                            profiles.remove(pos);
-                            save_profiles(&profiles)?;
-                            println!("✅ Subagent deleted successfully.");
-                            subagent_names = profiles.iter().map(|p| p.name.clone()).collect();
-                            subagent_names.push("Back".to_string());
-                            break;
+                        match confirm {
+                            true => {
+                                profiles.remove(pos);
+                                save_profiles(&profiles)?;
+                                println!("✅ Subagent deleted successfully.");
+                                subagent_names = build_subagent_menu_names(&profiles);
+                                break;
+                            }
+                            false => {}
                         }
                     }
                     _ => break,
                 }
-            }
+            },
+            None => {}
         }
     }
 
@@ -193,18 +221,15 @@ async fn create_menu(config: &Config) -> Result<()> {
             true,
         ) {
             Ok(Some(idx)) => idx,
-            _ => break, // Go back on Esc
+            _ => break,
         };
-
-        if choice_idx == 2 {
-            break; // Back option
-        }
 
         match choice_idx {
             0 => {
                 let name = Text::new("Enter Subagent Name (snake_case):").prompt()?;
-                if name.trim().is_empty() {
-                    return Err(anyhow!("Name cannot be empty."));
+                match name.trim().is_empty() {
+                    true => return Err(anyhow!("Name cannot be empty.")),
+                    false => {}
                 }
 
                 let description = Text::new("Enter Description:").prompt()?;
@@ -216,17 +241,10 @@ async fn create_menu(config: &Config) -> Result<()> {
                 )
                 .await?;
 
-                let mut fallbacks = Vec::new();
-                for idx in 1..=3 {
-                    let label = format!("Choose Fallback Model {} (Exit/Esc to skip):", idx);
-                    if let Some(fallback) = prompt_choose_model(&label, "", config).await? {
-                        fallbacks.push(fallback);
-                    }
-                }
-                let fallbacks_opt = if fallbacks.is_empty() {
-                    None
-                } else {
-                    Some(fallbacks)
+                let fallbacks = prompt_fallback_models(None, "Choose", config).await?;
+                let fallbacks_opt = match fallbacks.is_empty() {
+                    true => None,
+                    false => Some(fallbacks),
                 };
 
                 let new_profile = SubagentProfile {
@@ -249,40 +267,31 @@ async fn create_menu(config: &Config) -> Result<()> {
                     "Describe the specific task or role you want this subagent to perform:",
                 )
                 .prompt()?;
-                if task_description.trim().is_empty() {
-                    return Err(anyhow!("Description cannot be empty."));
+                match task_description.trim().is_empty() {
+                    true => return Err(anyhow!("Description cannot be empty.")),
+                    false => {}
                 }
 
                 println!("🧠 Asking OpenZ to design this subagent for you...");
                 let ai_designed = ask_openz_to_design(config, &task_description).await?;
 
-                println!("\n--- AI Designed Subagent Proposed ---");
-                println!("Name: {}", ai_designed.name);
-                println!("Description: {}", ai_designed.description);
-                println!(
-                    "Primary Model: {}",
-                    ai_designed.model.as_deref().unwrap_or("(default)")
-                );
-                let fallbacks_display = ai_designed
-                    .fallbacks
-                    .clone()
-                    .unwrap_or_else(|| config.get_dynamic_fallbacks(&ai_designed.name));
-                println!("Fallback Models: {:?}", fallbacks_display);
-                println!("System Prompt:\n{}", ai_designed.system_prompt);
-                println!("------------------------------------");
+                print_subagent_summary(&ai_designed, config, "AI Designed Subagent Proposed");
 
                 let save_choice = Confirm::new("Save this AI-designed subagent?")
                     .with_default(true)
                     .prompt()?;
-                if save_choice {
-                    let mut profiles = load_profiles()?;
-                    profiles.push(ai_designed);
-                    save_profiles(&profiles)?;
-                    println!("✅ AI-designed subagent saved successfully.");
+                match save_choice {
+                    true => {
+                        let mut profiles = load_profiles()?;
+                        profiles.push(ai_designed);
+                        save_profiles(&profiles)?;
+                        println!("✅ AI-designed subagent saved successfully.");
+                    }
+                    false => {}
                 }
                 break;
             }
-            _ => {}
+            _ => break,
         }
     }
 
@@ -290,10 +299,8 @@ async fn create_menu(config: &Config) -> Result<()> {
 }
 
 async fn ask_openz_to_design(config: &Config, task_description: &str) -> Result<SubagentProfile> {
-    // 1. Build provider
     let provider = crate::cli::build_agent_loop(config.clone()).await?.provider;
 
-    // 2. Query LLM to generate profile JSON
     let system_prompt = "You are a specialized agent creator. Given a user's description of a task, design a custom subagent. \
         Return the output as a clean JSON block exactly matching this schema:\n\
         {\n\
@@ -324,7 +331,6 @@ async fn ask_openz_to_design(config: &Config, task_description: &str) -> Result<
         .content
         .ok_or_else(|| anyhow!("No design returned from AI"))?;
 
-    // Parse JSON safely
     let cleaned_content = content
         .trim()
         .trim_start_matches("```json")
@@ -357,13 +363,16 @@ async fn prompt_choose_model(
         .filter(|provider| config.is_provider_configured(provider.name))
         .collect::<Vec<_>>();
 
-    if provider_list.is_empty() {
-        println!(
-            "{}⚠️ No LLM providers configured! Please run 'openz configure' first.{}",
-            crate::agent::style::colors::AURA_GOLD,
-            crate::agent::style::colors::COLOR_RESET
-        );
-        return Ok(None);
+    match provider_list.is_empty() {
+        true => {
+            println!(
+                "{}⚠️ No LLM providers configured! Please run 'openz configure' first.{}",
+                crate::agent::style::colors::AURA_GOLD,
+                crate::agent::style::colors::COLOR_RESET
+            );
+            return Ok(None);
+        }
+        false => {}
     }
 
     let mut provider_options: Vec<String> = provider_list
@@ -372,69 +381,79 @@ async fn prompt_choose_model(
         .collect();
     provider_options.push("Exit".to_string());
 
-    match crate::agent::style::select_menu_custom(
+    let prov_idx = match crate::agent::style::select_menu_custom(
         prompt_label,
         &provider_options,
         current_model,
         Some("Select Provider"),
         true,
     )? {
-        Some(prov_idx) => {
-            if prov_idx == provider_list.len() {
-                return Ok(None);
-            }
-            let prov_info = provider_list[prov_idx];
+        Some(idx) => idx,
+        None => return Ok(None),
+    };
 
-            let mut model_options =
-                match crate::channels::fetch_provider_models(prov_info.name, config).await {
-                    Some(models) => models,
-                    None => prov_info.models.iter().map(|&m| m.to_string()).collect(),
-                };
-            model_options.push("Type manually (Custom Model)".to_string());
-            model_options.push("Exit".to_string());
+    let prov_info = match provider_list.get(prov_idx) {
+        Some(info) => *info,
+        None => return Ok(None),
+    };
 
-            match crate::agent::style::select_menu_custom(
-                &format!("Choose a model from {} ({}):", prov_info.display, prov_info.models.len()),
-                &model_options,
-                current_model,
-                None,
-                false,
-            )? {
-                Some(model_idx) => {
-                    if model_idx == model_options.len() - 1 {
-                        return Ok(None);
-                    }
-                    let mut final_model = if model_idx == model_options.len() - 2 {
-                        let custom_model = inquire::Text::new("Enter custom model name:")
-                            .with_initial_value(current_model)
-                            .prompt()?;
-                        if custom_model.trim().is_empty() {
-                            return Ok(None);
-                        }
-                        custom_model.trim().to_string()
-                    } else {
-                        model_options[model_idx].clone()
-                    };
+    let mut model_options =
+        match crate::channels::fetch_provider_models(prov_info.name, config).await {
+            Some(models) => models,
+            None => prov_info.models.iter().map(|&m| m.to_string()).collect(),
+        };
+    model_options.push("Type manually (Custom Model)".to_string());
+    model_options.push("Exit".to_string());
 
-                    let descriptor = crate::config::provider_catalog::find_provider(prov_info.name);
-                    let has_provider_prefix = descriptor
-                        .map(|descriptor| {
-                            descriptor
-                                .model_prefixes
-                                .iter()
-                                .any(|prefix| final_model.starts_with(prefix))
-                        })
-                        .unwrap_or(false);
+    let model_idx = match crate::agent::style::select_menu_custom(
+        &format!(
+            "Choose a model from {} ({}):",
+            prov_info.display,
+            prov_info.models.len()
+        ),
+        &model_options,
+        current_model,
+        None,
+        false,
+    )? {
+        Some(idx) => idx,
+        None => return Ok(None),
+    };
 
-                    if !has_provider_prefix {
-                        final_model = format!("{}/{}", prov_info.name, final_model);
-                    }
+    match model_idx == model_options.len() - 1 {
+        true => return Ok(None),
+        false => {}
+    }
 
-                    Ok(Some(final_model))
-                }
-                None => Ok(None),
+    let mut final_model = match model_idx == model_options.len() - 2 {
+        true => {
+            let custom_model = inquire::Text::new("Enter custom model name:")
+                .with_initial_value(current_model)
+                .prompt()?;
+            match custom_model.trim().is_empty() {
+                true => return Ok(None),
+                false => custom_model.trim().to_string(),
             }
         }
-        None => Ok(None),
+        false => model_options[model_idx].clone(),
+    };
+
+    let descriptor = crate::config::provider_catalog::find_provider(prov_info.name);
+    let has_provider_prefix = descriptor
+        .map(|descriptor| {
+            descriptor
+                .model_prefixes
+                .iter()
+                .any(|prefix| final_model.starts_with(prefix))
+        })
+        .unwrap_or(false);
+
+    match has_provider_prefix {
+        true => {}
+        false => {
+            final_model = format!("{}/{}", prov_info.name, final_model);
+        }
     }
+
+    Ok(Some(final_model))
 }

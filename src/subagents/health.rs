@@ -49,8 +49,9 @@ impl SubagentHealthRegistry {
 
     pub fn save(&self) -> Result<()> {
         let path = Self::path();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
+        match path.parent() {
+            Some(parent) => fs::create_dir_all(parent)?,
+            None => {}
         }
         fs::write(path, serde_json::to_string_pretty(self)?)?;
         Ok(())

@@ -1,8 +1,6 @@
-use crate::tools::ToolRegistry;
-
-
-use crate::config::schema::Config;
 use crate::cli::is_silent_mode;
+use crate::config::schema::Config;
+use crate::tools::ToolRegistry;
 
 pub(crate) fn register_lazy_mcp_tools(registry: &ToolRegistry, config: &Config) {
     // ── MCP: lazy registration ────────────────────────────────────────────────
@@ -10,8 +8,9 @@ pub(crate) fn register_lazy_mcp_tools(registry: &ToolRegistry, config: &Config) 
 
     let has_any_mcp = config.mcp_servers.values().any(|c| c.enabled);
 
-    if has_any_mcp {
-        tracing::info!("Setting up MCP servers (background)...");
+    match has_any_mcp {
+        true => tracing::info!("Setting up MCP servers (background)..."),
+        false => {}
     }
 
     // Collect enabled servers for the background task
@@ -26,8 +25,9 @@ pub(crate) fn register_lazy_mcp_tools(registry: &ToolRegistry, config: &Config) 
     let num_configs = mcp_configs.len() as u32;
 
     let _mcp_handle = tokio::spawn(async move {
-        if !silent {
-            crate::channels::cli::init_mcp_progress(num_configs);
+        match silent {
+            false => crate::channels::cli::init_mcp_progress(num_configs),
+            true => {}
         }
 
         let mut servers_loaded = 0u32;
@@ -45,8 +45,9 @@ pub(crate) fn register_lazy_mcp_tools(registry: &ToolRegistry, config: &Config) 
                         &mcp_config_clone.args,
                     )
                     .await?;
-                    if name_clone == "memory" {
-                        crate::tools::mcp::set_memory_mcp_client(mcp_client.clone());
+                    match name_clone.as_str() {
+                        "memory" => crate::tools::mcp::set_memory_mcp_client(mcp_client.clone()),
+                        _ => {}
                     }
                     let tools = mcp_client.list_tools().await?;
                     Ok::<_, anyhow::Error>(tools)
@@ -55,43 +56,49 @@ pub(crate) fn register_lazy_mcp_tools(registry: &ToolRegistry, config: &Config) 
 
                 match result {
                     Ok(Ok(tools)) => {
-                        if !silent {
-                            crate::channels::cli::increment_mcp_loaded();
+                        match silent {
+                            false => crate::channels::cli::increment_mcp_loaded(),
+                            true => {}
                         }
                         let mut count = 0;
                         for t in tools {
-                            if let (Some(t_name), Some(desc)) = (
+                            match (
                                 t.get("name").and_then(|v| v.as_str()),
                                 t.get("description").and_then(|v| v.as_str()),
                             ) {
-                                let params = t.get("inputSchema").cloned().unwrap_or(
-                                    serde_json::json!({"type": "object", "properties": {}}),
-                                );
-                                let wrapper = crate::tools::mcp::LazyMcpToolWrapper {
-                                    server_name: name_clone.clone(),
-                                    command: mcp_config_clone.command.clone(),
-                                    args: mcp_config_clone.args.clone(),
-                                    name: t_name.to_string(),
-                                    description: desc.to_string(),
-                                    parameters: params,
-                                    is_memory_server: name_clone == "memory",
-                                };
-                                registry_bg.register(std::sync::Arc::new(wrapper));
-                                count += 1;
+                                (Some(t_name), Some(desc)) => {
+                                    let params = t.get("inputSchema").cloned().unwrap_or(
+                                        serde_json::json!({"type": "object", "properties": {}}),
+                                    );
+                                    let wrapper = crate::tools::mcp::LazyMcpToolWrapper {
+                                        server_name: name_clone.clone(),
+                                        command: mcp_config_clone.command.clone(),
+                                        args: mcp_config_clone.args.clone(),
+                                        name: t_name.to_string(),
+                                        description: desc.to_string(),
+                                        parameters: params,
+                                        is_memory_server: name_clone == "memory",
+                                    };
+                                    registry_bg.register(std::sync::Arc::new(wrapper));
+                                    count += 1;
+                                }
+                                _ => {}
                             }
                         }
                         Ok::<usize, anyhow::Error>(count)
                     }
                     Ok(Err(e)) => {
-                        if !silent {
-                            crate::channels::cli::increment_mcp_failed();
+                        match silent {
+                            false => crate::channels::cli::increment_mcp_failed(),
+                            true => {}
                         }
                         tracing::error!("Failed starting MCP server {}: {:?}", name_clone, e);
                         Err(e)
                     }
                     Err(elapsed) => {
-                        if !silent {
-                            crate::channels::cli::increment_mcp_failed();
+                        match silent {
+                            false => crate::channels::cli::increment_mcp_failed(),
+                            true => {}
                         }
                         tracing::error!(
                             "Timed out starting MCP server {} after 15s: {:?}",
@@ -121,13 +128,17 @@ pub(crate) fn register_lazy_mcp_tools(registry: &ToolRegistry, config: &Config) 
         }
 
         // Update the status bar pill — the render loop reads these atomics every redraw
-        if !silent {
-            crate::channels::cli::set_mcp_status(servers_loaded, servers_failed);
-            crate::channels::cli::set_mcp_done();
+        match silent {
+            false => {
+                crate::channels::cli::set_mcp_status(servers_loaded, servers_failed);
+                crate::channels::cli::set_mcp_done();
+            }
+            true => {}
         }
 
-        if has_any_mcp {
-            crate::tools::mcp::start_mcp_health_checks();
+        match has_any_mcp {
+            true => crate::tools::mcp::start_mcp_health_checks(),
+            false => {}
         }
     });
 }

@@ -27,16 +27,20 @@ pub async fn archive_current_session(
     session_manager: &SessionManager,
     session_key: &str,
 ) -> Result<()> {
-    if let Ok(mut current_session) = session_manager.load(session_key) {
-        if !current_session.messages.is_empty() {
-            let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
-            let archive_key = format!("cli:history_{}", timestamp);
-            current_session.key = archive_key;
-            session_manager.save(&current_session).await?;
+    match session_manager.load(session_key) {
+        Ok(mut current_session) => match current_session.messages.is_empty() {
+            true => Ok(()),
+            false => {
+                let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S").to_string();
+                let archive_key = format!("cli:history_{}", timestamp);
+                current_session.key = archive_key;
+                session_manager.save(&current_session).await?;
 
-            let empty_session = crate::session::Session::new(session_key);
-            session_manager.save(&empty_session).await?;
-        }
+                let empty_session = crate::session::Session::new(session_key);
+                session_manager.save(&empty_session).await?;
+                Ok(())
+            }
+        },
+        Err(_) => Ok(()),
     }
-    Ok(())
 }

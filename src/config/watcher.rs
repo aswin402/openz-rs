@@ -19,16 +19,22 @@ pub struct ConfigWatcherGuard {
 impl ConfigWatcherGuard {
     /// Explicitly stop the watcher.
     pub async fn stop(&mut self) {
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(()).await;
+        match self.shutdown_tx.take() {
+            Some(tx) => {
+                let _ = tx.send(()).await;
+            }
+            None => {}
         }
     }
 }
 
 impl Drop for ConfigWatcherGuard {
     fn drop(&mut self) {
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.try_send(());
+        match self.shutdown_tx.take() {
+            Some(tx) => {
+                let _ = tx.try_send(());
+            }
+            None => {}
         }
     }
 }
@@ -54,17 +60,19 @@ pub fn spawn_config_watcher<F>(
 where
     F: Fn(&Config) + Send + Sync + 'static,
 {
-    let watch_dir = if target_path.is_dir() {
-        target_path.clone()
-    } else {
-        target_path
+    let watch_dir = match target_path.is_dir() {
+        true => target_path.clone(),
+        false => target_path
             .parent()
             .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."))
+            .unwrap_or_else(|| PathBuf::from(".")),
     };
 
-    if !watch_dir.exists() {
-        let _ = std::fs::create_dir_all(&watch_dir);
+    match watch_dir.exists() {
+        false => {
+            let _ = std::fs::create_dir_all(&watch_dir);
+        }
+        true => {}
     }
 
     let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
@@ -74,19 +82,27 @@ where
     let event_tx_clone = event_tx.clone();
 
     let mut watcher = RecommendedWatcher::new(
-        move |res: Result<notify::Event, notify::Error>| {
-            if let Ok(event) = res {
-                let is_relevant = if let Some(ref target) = target_name {
-                    event.paths.iter().any(|p| {
-                        p.file_name().is_some_and(|name| name == target)
-                    })
-                } else {
-                    true
+        move |res: Result<notify::Event, notify::Error>| match res {
+            Ok(event) => {
+                let is_relevant = match target_name {
+                    Some(ref target) => event
+                        .paths
+                        .iter()
+                        .any(|p| p.file_name().is_some_and(|name| name == target)),
+                    None => true,
                 };
-                if is_relevant && (event.kind.is_modify() || event.kind.is_create() || event.kind.is_other()) {
-                    let _ = event_tx_clone.try_send(());
+                match is_relevant
+                    && (event.kind.is_modify()
+                        || event.kind.is_create()
+                        || event.kind.is_other())
+                {
+                    true => {
+                        let _ = event_tx_clone.try_send(());
+                    }
+                    false => {}
                 }
             }
+            Err(_) => {}
         },
         NotifyConfig::default(),
     )?;
@@ -108,8 +124,9 @@ where
                 }
                 Some(_) = event_rx.recv() => {
                     let now = Instant::now();
-                    if now.duration_since(last_processed) < debounce {
-                        continue;
+                    match now.duration_since(last_processed) < debounce {
+                        true => continue,
+                        false => {}
                     }
                     last_processed = now;
 
@@ -135,11 +152,12 @@ where
                         Ok(mut guard) => {
                             let current_json = serde_json::to_string(&*guard).unwrap_or_default();
                             let new_json = serde_json::to_string(&reloaded).unwrap_or_default();
-                            if current_json != new_json {
-                                *guard = reloaded.clone();
-                                true
-                            } else {
-                                false
+                            match current_json != new_json {
+                                true => {
+                                    *guard = reloaded.clone();
+                                    true
+                                }
+                                false => false,
                             }
                         }
                         Err(poisoned) => {
@@ -149,9 +167,12 @@ where
                         }
                     };
 
-                    if changed {
-                        info!("Live configuration reloaded from {}", target_path_clone.display());
-                        on_change(&reloaded);
+                    match changed {
+                        true => {
+                            info!("Live configuration reloaded from {}", target_path_clone.display());
+                            on_change(&reloaded);
+                        }
+                        false => {}
                     }
                 }
             }
@@ -166,4 +187,3 @@ where
 #[cfg(test)]
 #[path = "watcher_tests.rs"]
 mod tests;
-

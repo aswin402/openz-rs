@@ -54,8 +54,9 @@ pub fn load_profiles() -> Result<Vec<SubagentProfile>> {
 
     let mut cache = cache_mutex.lock().unwrap_or_else(|e| e.into_inner());
 
-    if !cache.profiles.is_empty() && cache.last_mtime.is_some() && cache.last_mtime == mtime {
-        return Ok(cache.profiles.clone());
+    match !cache.profiles.is_empty() && cache.last_mtime.is_some() && cache.last_mtime == mtime {
+        true => return Ok(cache.profiles.clone()),
+        false => {}
     }
 
     let loaded = load_profiles_uncached()?;
@@ -69,15 +70,17 @@ pub fn load_profiles_uncached() -> Result<Vec<SubagentProfile>> {
     let path = subagents_file_path();
     let defaults = default_profiles();
 
-    if !path.exists() {
-        save_profiles(&defaults)?;
-        return Ok(defaults);
+    match path.exists() {
+        false => {
+            save_profiles(&defaults)?;
+            return Ok(defaults);
+        }
+        true => {}
     }
 
     let content = fs::read_to_string(&path)
         .with_context(|| format!("Failed to read subagents file at {:?}", path))?;
 
-    // Attempt to parse the content as a general JSON Value first
     let parsed_json: serde_json::Value = match serde_json::from_str(&content) {
         Ok(val) => val,
         Err(e) => {
@@ -97,77 +100,95 @@ pub fn load_profiles_uncached() -> Result<Vec<SubagentProfile>> {
     let mut loaded_profiles = Vec::new();
     let mut has_errors = false;
 
-    if let serde_json::Value::Array(arr) = parsed_json {
-        for item in arr {
-            match serde_json::from_value::<SubagentProfile>(item.clone()) {
-                Ok(profile) => {
-                    loaded_profiles.push(profile);
-                }
-                Err(e) => {
-                    has_errors = true;
-                    tracing::error!(
-                        "Failed to parse subagent profile: {:?}. Error: {:?}",
-                        item,
-                        e
-                    );
+    match parsed_json {
+        serde_json::Value::Array(arr) => {
+            for item in arr {
+                match serde_json::from_value::<SubagentProfile>(item.clone()) {
+                    Ok(profile) => {
+                        loaded_profiles.push(profile);
+                    }
+                    Err(e) => {
+                        has_errors = true;
+                        tracing::error!(
+                            "Failed to parse subagent profile: {:?}. Error: {:?}",
+                            item,
+                            e
+                        );
+                    }
                 }
             }
         }
-    } else {
-        has_errors = true;
-        tracing::error!("subagents.json is not a JSON array. Reverting to defaults.");
+        _ => {
+            has_errors = true;
+            tracing::error!("subagents.json is not a JSON array. Reverting to defaults.");
+        }
     }
 
-    if has_errors && loaded_profiles.is_empty() {
-        let backup_path =
-            path.with_extension(format!("corrupt.{}", chrono::Utc::now().timestamp()));
-        let _ = fs::copy(&path, &backup_path);
-        loaded_profiles = defaults.clone();
-        save_profiles(&loaded_profiles)?;
-        return Ok(loaded_profiles);
+    match has_errors && loaded_profiles.is_empty() {
+        true => {
+            let backup_path =
+                path.with_extension(format!("corrupt.{}", chrono::Utc::now().timestamp()));
+            let _ = fs::copy(&path, &backup_path);
+            loaded_profiles = defaults.clone();
+            save_profiles(&loaded_profiles)?;
+            return Ok(loaded_profiles);
+        }
+        false => {}
     }
 
     let mut migrated = false;
     for default_profile in defaults {
-        if !loaded_profiles
+        match loaded_profiles
             .iter()
             .any(|p| p.name == default_profile.name)
         {
-            loaded_profiles.push(default_profile);
-            migrated = true;
+            false => {
+                loaded_profiles.push(default_profile);
+                migrated = true;
+            }
+            true => {}
         }
     }
 
     for profile in &mut loaded_profiles {
-        if is_default_subagent(&profile.name) {
-            let is_old_default_model = matches!(
+        let is_old_default_model = is_default_subagent(&profile.name)
+            && matches!(
                 profile.model.as_deref(),
                 Some("gpt-4o-mini")
                     | Some("claude-3-5-sonnet")
                     | Some("gpt-4o")
                     | Some("google_ai_studio/gemini-2.0-flash")
             );
-            if is_old_default_model {
+        match is_old_default_model {
+            true => {
                 profile.model = None;
                 profile.fallbacks = None;
                 migrated = true;
             }
+            false => {}
         }
 
-        if let Some(ref mut fbs) = profile.fallbacks {
-            fbs.retain(|s| !s.is_empty());
-            if fbs.len() < MAX_SUBAGENT_FALLBACKS {
-                while fbs.len() < 2 {
-                    fbs.push(String::new());
+        match profile.fallbacks {
+            Some(ref mut fbs) => {
+                fbs.retain(|s| !s.is_empty());
+                match fbs.len() < MAX_SUBAGENT_FALLBACKS {
+                    true => {
+                        while fbs.len() < 2 {
+                            fbs.push(String::new());
+                        }
+                        fbs.push("openrouter/free".to_string());
+                        migrated = true;
+                    }
+                    false => {}
                 }
-                fbs.push("openrouter/free".to_string());
-                migrated = true;
             }
+            None => {}
         }
     }
 
-    if migrated || has_errors {
-        save_profiles(&loaded_profiles)?;
+    match migrated || has_errors {
+        true => save_profiles(&loaded_profiles)?,
+        false => {}
     }
 
     Ok(loaded_profiles)
@@ -175,8 +196,9 @@ pub fn load_profiles_uncached() -> Result<Vec<SubagentProfile>> {
 
 pub fn save_profiles(profiles: &[SubagentProfile]) -> Result<()> {
     let path = subagents_file_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+    match path.parent() {
+        Some(parent) => fs::create_dir_all(parent)?,
+        None => {}
     }
     let content = serde_json::to_string_pretty(profiles)?;
     fs::write(&path, content)

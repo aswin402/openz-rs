@@ -97,69 +97,93 @@ impl PathPolicy {
                     std::env::temp_dir(),
                     vault_dir,
                 ];
-                if !allowed
+                match allowed
                     .iter()
                     .any(|root| canonical.starts_with(canonicalize_with_missing_leaf(root)))
                 {
-                    return Err(anyhow!(
-                        "Path traversal prevention: Path {:?} is not allowed (must be inside workspace, ~/.openz, openz_vault, or temp)",
-                        path
-                    ));
+                    true => {}
+                    false => {
+                        return Err(anyhow!(
+                            "Path traversal prevention: Path {:?} is not allowed (must be inside workspace, ~/.openz, openz_vault, or temp)",
+                            path
+                        ));
+                    }
                 }
             }
             PathPolicyMode::RuntimeData => {
-                let runtime_root = canonicalize_with_missing_leaf(
-                    &crate::config::loader::runtime_data_dir(),
-                );
-                if !canonical.starts_with(&runtime_root) {
-                    return Err(anyhow!(
-                        "runtime path {:?} is outside OpenZ runtime data directory",
-                        path
-                    ));
+                let runtime_root =
+                    canonicalize_with_missing_leaf(&crate::config::loader::runtime_data_dir());
+                match canonical.starts_with(&runtime_root) {
+                    true => {}
+                    false => {
+                        return Err(anyhow!(
+                            "runtime path {:?} is outside OpenZ runtime data directory",
+                            path
+                        ));
+                    }
                 }
             }
             PathPolicyMode::HeadroomSensitive => {
-                if FORBIDDEN_ROOTS.iter().any(|root| {
+                match FORBIDDEN_ROOTS.iter().any(|root| {
                     canonical == Path::new(root)
                         || canonical.starts_with(Path::new(root).join(""))
                 }) {
-                    return Err(anyhow!(
-                        "path '{}' is blocked by headroom path policy",
-                        canonical.display()
-                    ));
-                }
-
-                if let Ok(root) = std::env::var("HEADROOM_WORKSPACE") {
-                    if !root.trim().is_empty()
-                        && !canonical.starts_with(canonicalize_with_missing_leaf(Path::new(&root)))
-                    {
+                    true => {
                         return Err(anyhow!(
-                            "path '{}' is outside workspace root '{}'",
-                            canonical.display(),
-                            root
+                            "path '{}' is blocked by headroom path policy",
+                            canonical.display()
                         ));
                     }
+                    false => {}
+                }
+
+                match std::env::var("HEADROOM_WORKSPACE") {
+                    Ok(root) => match !root.trim().is_empty()
+                        && !canonical.starts_with(canonicalize_with_missing_leaf(Path::new(&root)))
+                    {
+                        true => {
+                            return Err(anyhow!(
+                                "path '{}' is outside workspace root '{}'",
+                                canonical.display(),
+                                root
+                            ));
+                        }
+                        false => {}
+                    },
+                    Err(_) => {}
                 }
 
                 for component in canonical.components() {
                     let lower = component.as_os_str().to_string_lossy().to_lowercase();
-                    if SENSITIVE_COMPONENTS.iter().any(|name| lower == *name) {
-                        return Err(anyhow!("sensitive path component '{}' is blocked", lower));
+                    match SENSITIVE_COMPONENTS.iter().any(|name| lower == *name) {
+                        true => {
+                            return Err(anyhow!(
+                                "sensitive path component '{}' is blocked",
+                                lower
+                            ));
+                        }
+                        false => {}
                     }
                 }
 
-                if let Some(name) = canonical.file_name().and_then(|name| name.to_str()) {
-                    let lower = name.to_lowercase();
-                    if SENSITIVE_EXACT.iter().any(|blocked| lower == *blocked)
-                        || lower.contains("secret")
-                        || lower.contains("token")
-                        || lower.ends_with(".pem")
-                        || lower.ends_with(".key")
-                        || lower.ends_with(".p12")
-                        || lower.ends_with(".pfx")
-                    {
-                        return Err(anyhow!("sensitive file '{}' is blocked", name));
+                match canonical.file_name().and_then(|name| name.to_str()) {
+                    Some(name) => {
+                        let lower = name.to_lowercase();
+                        match SENSITIVE_EXACT.iter().any(|blocked| lower == *blocked)
+                            || lower.contains("secret")
+                            || lower.contains("token")
+                            || lower.ends_with(".pem")
+                            || lower.ends_with(".key")
+                            || lower.ends_with(".p12")
+                            || lower.ends_with(".pfx")
+                        {
+                            true => {
+                                return Err(anyhow!("sensitive file '{}' is blocked", name));
+                            }
+                            false => {}
+                        }
                     }
+                    None => {}
                 }
             }
         }
@@ -169,18 +193,21 @@ impl PathPolicy {
 }
 
 pub(crate) fn canonicalize_with_missing_leaf(path: &Path) -> PathBuf {
-    if let Ok(canonical) = path.canonicalize() {
-        return canonical;
+    match path.canonicalize() {
+        Ok(canonical) => return canonical,
+        Err(_) => {}
     }
 
     let mut cursor = path.to_path_buf();
     let mut missing = Vec::new();
     while !cursor.exists() {
-        if let Some(name) = cursor.file_name() {
-            missing.push(name.to_os_string());
+        match cursor.file_name() {
+            Some(name) => missing.push(name.to_os_string()),
+            None => {}
         }
-        if !cursor.pop() {
-            return path.to_path_buf();
+        match cursor.pop() {
+            true => {}
+            false => return path.to_path_buf(),
         }
     }
 
@@ -194,4 +221,3 @@ pub(crate) fn canonicalize_with_missing_leaf(path: &Path) -> PathBuf {
 #[cfg(test)]
 #[path = "path_policy_tests.rs"]
 mod tests;
-

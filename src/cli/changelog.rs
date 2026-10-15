@@ -3,11 +3,13 @@ use crate::println;
 use anyhow::Result;
 
 fn current_binary_size_label() -> String {
-    let Ok(path) = std::env::current_exe() else {
-        return "unknown".to_string();
+    let path = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(_) => return "unknown".to_string(),
     };
-    let Ok(metadata) = std::fs::metadata(path) else {
-        return "unknown".to_string();
+    let metadata = match std::fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(_) => return "unknown".to_string(),
     };
     let mb = metadata.len() as f64 / 1_048_576.0;
     format!("{mb:.1} MB")

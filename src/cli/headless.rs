@@ -61,13 +61,19 @@ pub struct HeadlessSecurityPolicy {
 impl HeadlessSecurityPolicy {
     pub fn new(auto_approve_all: bool, allowed_tools_csv: Option<&str>) -> Self {
         let mut allowed_tools = std::collections::HashSet::new();
-        if let Some(csv) = allowed_tools_csv {
-            for tool in csv.split(',') {
-                let trimmed = tool.trim().to_lowercase();
-                if !trimmed.is_empty() {
-                    allowed_tools.insert(trimmed);
+        match allowed_tools_csv {
+            Some(csv) => {
+                for tool in csv.split(',') {
+                    let trimmed = tool.trim().to_lowercase();
+                    match trimmed.is_empty() {
+                        true => {}
+                        false => {
+                            allowed_tools.insert(trimmed);
+                        }
+                    }
                 }
             }
+            None => {}
         }
         Self {
             auto_approve_all,
@@ -77,8 +83,11 @@ impl HeadlessSecurityPolicy {
     }
 
     pub fn record_denial(&self, tool: &str) {
-        if let Ok(mut guard) = self.denied_tool.lock() {
-            *guard = Some(tool.to_string());
+        match self.denied_tool.lock() {
+            Ok(mut guard) => {
+                *guard = Some(tool.to_string());
+            }
+            Err(_) => {}
         }
     }
 
@@ -87,14 +96,10 @@ impl HeadlessSecurityPolicy {
     }
 
     pub fn is_tool_permitted(&self, tool_name: &str, is_sensitive: bool) -> bool {
-        if !is_sensitive {
-            return true;
+        match (is_sensitive, self.auto_approve_all) {
+            (false, _) | (true, true) => true,
+            (true, false) => self.allowed_tools.contains(&tool_name.trim().to_lowercase()),
         }
-        if self.auto_approve_all {
-            return true;
-        }
-        self.allowed_tools
-            .contains(&tool_name.trim().to_lowercase())
     }
 }
 
@@ -111,68 +116,84 @@ pub fn resolve_session_key(
     continue_session: bool,
     manager: Option<&crate::session::SessionManager>,
 ) -> String {
-    if let Some(key) = explicit.map(str::trim).filter(|k| !k.is_empty()) {
-        return key.to_string();
+    match explicit.map(str::trim).filter(|k| !k.is_empty()) {
+        Some(key) => return key.to_string(),
+        None => {}
     }
-    if continue_session {
-        if let Some(mgr) = manager {
-            if let Some(latest) = mgr.list_summaries().first() {
-                return latest.key.clone();
-            }
-        }
+    match (
+        continue_session,
+        manager.and_then(|mgr| mgr.list_summaries().into_iter().next()),
+    ) {
+        (true, Some(latest)) => latest.key,
+        _ => format!(
+            "cli:headless_{}_{}",
+            chrono::Utc::now().format("%Y%m%d_%H%M%S"),
+            &uuid::Uuid::new_v4().to_string()[..8]
+        ),
     }
-    format!(
-        "cli:headless_{}_{}",
-        chrono::Utc::now().format("%Y%m%d_%H%M%S"),
-        &uuid::Uuid::new_v4().to_string()[..8]
-    )
+}
+
+fn non_stdin_prompt(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "-")
+        .map(str::to_string)
 }
 
 pub async fn resolve_prompt(
     prompt_arg: Option<&str>,
     prompt_flag: Option<&str>,
 ) -> anyhow::Result<String> {
-    if let Some(arg) = prompt_arg.map(str::trim).filter(|s| !s.is_empty()) {
-        if arg != "-" {
-            return Ok(arg.to_string());
-        }
-    } else if let Some(flag) = prompt_flag.map(str::trim).filter(|s| !s.is_empty()) {
-        if flag != "-" {
-            return Ok(flag.to_string());
-        }
+    match non_stdin_prompt(prompt_arg).or_else(|| non_stdin_prompt(prompt_flag)) {
+        Some(prompt) => return Ok(prompt),
+        None => {}
     }
 
     use tokio::io::AsyncReadExt;
     let mut buffer = String::new();
     tokio::io::stdin().read_to_string(&mut buffer).await?;
     let trimmed = buffer.trim().to_string();
-    if trimmed.is_empty() {
-        anyhow::bail!("No prompt provided via positional argument, flag, or stdin");
+    match trimmed.is_empty() {
+        true => anyhow::bail!("No prompt provided via positional argument, flag, or stdin"),
+        false => Ok(trimmed),
     }
-    Ok(trimmed)
 }
 
 pub fn format_output(output: &HeadlessRunOutput, format: HeadlessFormat) -> String {
     match format {
-        HeadlessFormat::Text => {
-            if output.status != "success" {
-                match (&output.error, output.content.trim().is_empty()) {
-                    (Some(err), false) => format!("{}\n\n{}", err, output.content),
-                    (Some(err), true) => err.clone(),
-                    (None, _) => output.content.clone(),
-                }
-            } else {
-                output.content.clone()
-            }
-        }
+        HeadlessFormat::Text => match output.status.as_str() {
+            "success" => output.content.clone(),
+            _ => match (&output.error, output.content.trim().is_empty()) {
+                (Some(err), false) => format!("{}\n\n{}", err, output.content),
+                (Some(err), true) => err.clone(),
+                (None, _) => output.content.clone(),
+            },
+        },
         HeadlessFormat::Json => {
             serde_json::to_string_pretty(output).unwrap_or_else(|_| "{}".to_string())
         }
         HeadlessFormat::StreamJson => {
-            // Emits completed HeadlessRunOutput as a single compact NDJSON line for MVP.
-            // Full incremental token event streaming is planned for a future milestone.
             serde_json::to_string(output).unwrap_or_else(|_| "{}".to_string())
         }
+    }
+}
+
+fn classify_headless_denial(
+    policy: &HeadlessSecurityPolicy,
+    default_status: &str,
+    default_error: Option<String>,
+    default_exit_code: i32,
+) -> (String, Option<String>, i32) {
+    match policy.last_denial() {
+        Some(tool) => (
+            "security_denied".to_string(),
+            Some(format!(
+                "Execution denied: Tool '{}' requires confirmation in headless mode. Run with -y/--yes or --allowed-tools to permit.",
+                tool
+            )),
+            2,
+        ),
+        None => (default_status.to_string(), default_error, default_exit_code),
     }
 }
 
@@ -229,18 +250,8 @@ pub async fn execute_headless_turn(
         Ok(run_result) => {
             let tools_used = run_result.tools_used;
             let tool_iterations = tools_used.len();
-            let mut status = "success".to_string();
-            let mut error = None;
-            let mut exit_code = 0;
-
-            if let Some(tool) = policy.last_denial() {
-                status = "security_denied".to_string();
-                error = Some(format!(
-                    "Execution denied: Tool '{}' requires confirmation in headless mode. Run with -y/--yes or --allowed-tools to permit.",
-                    tool
-                ));
-                exit_code = 2;
-            }
+            let (status, error, exit_code) =
+                classify_headless_denial(&policy, "success", None, 0);
 
             Ok(HeadlessRunOutput {
                 status,
@@ -257,25 +268,15 @@ pub async fn execute_headless_turn(
         }
         Err(err) => {
             let err_msg = err.to_string();
-            let mut exit_code = if err_msg.contains("denied")
+            let default_exit_code = match err_msg.contains("denied")
                 || err_msg.contains("security")
                 || err_msg.contains("forbidden")
             {
-                2
-            } else {
-                1
+                true => 2,
+                false => 1,
             };
-            let mut status = "error".to_string();
-            let mut error = Some(err_msg);
-
-            if let Some(tool) = policy.last_denial() {
-                status = "security_denied".to_string();
-                error = Some(format!(
-                    "Execution denied: Tool '{}' requires confirmation in headless mode. Run with -y/--yes or --allowed-tools to permit.",
-                    tool
-                ));
-                exit_code = 2;
-            }
+            let (status, error, exit_code) =
+                classify_headless_denial(&policy, "error", Some(err_msg), default_exit_code);
 
             Ok(HeadlessRunOutput {
                 status,
@@ -301,17 +302,21 @@ pub async fn handle_headless(args: crate::cli::args::HeadlessArgs) -> anyhow::Re
     let format = HeadlessFormat::parse(&args.output_format);
 
     let mut config = crate::config::loader::load_config().unwrap_or_default();
-    if let Some(ref m) = args.model {
-        config.agents.defaults.model = m.clone();
+    match args.model {
+        Some(ref m) => config.agents.defaults.model = m.clone(),
+        None => {}
     }
-    if let Some(ref p) = args.provider {
-        config.agents.defaults.provider = p.clone();
+    match args.provider {
+        Some(ref p) => config.agents.defaults.provider = p.clone(),
+        None => {}
     }
-    if let Some(iters) = args.max_iterations {
-        config.agents.defaults.max_tool_iterations = iters;
+    match args.max_iterations {
+        Some(iters) => config.agents.defaults.max_tool_iterations = iters,
+        None => {}
     }
-    if let Some(timeout) = args.timeout {
-        config.agents.defaults.tool_timeout_secs = timeout;
+    match args.timeout {
+        Some(timeout) => config.agents.defaults.tool_timeout_secs = timeout,
+        None => {}
     }
 
     let agent_loop = crate::cli::builder::build_agent_loop(config).await?;
@@ -324,19 +329,26 @@ pub async fn handle_headless(args: crate::cli::args::HeadlessArgs) -> anyhow::Re
     let output = execute_headless_turn(&agent_loop, &args, &prompt, &session_key).await?;
     let rendered = format_output(&output, format);
 
-    if args.wait_curator {
-        crate::agent::agent_loop::save::wait_for_curator(std::time::Duration::from_secs(30)).await;
+    match args.wait_curator {
+        true => {
+            crate::agent::agent_loop::save::wait_for_curator(std::time::Duration::from_secs(30))
+                .await;
+        }
+        false => {}
     }
 
-    if output.status == "success" {
-        println!("{}", rendered);
-        std::process::exit(0);
-    } else {
-        if format == HeadlessFormat::Text {
-            eprintln!("{}", rendered);
-        } else {
+    match (output.status.as_str(), format) {
+        ("success", _) => {
             println!("{}", rendered);
+            std::process::exit(0);
         }
-        std::process::exit(output.exit_code);
+        (_, HeadlessFormat::Text) => {
+            eprintln!("{}", rendered);
+            std::process::exit(output.exit_code);
+        }
+        (_, _) => {
+            println!("{}", rendered);
+            std::process::exit(output.exit_code);
+        }
     }
 }

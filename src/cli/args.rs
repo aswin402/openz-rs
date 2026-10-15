@@ -151,11 +151,13 @@ pub struct HeadlessArgs {
 
 impl HeadlessArgs {
     pub fn merge_global(&mut self, global_output_format: Option<String>, global_yes: bool) {
-        if global_yes {
-            self.yes = true;
+        match global_yes {
+            true => self.yes = true,
+            false => {}
         }
-        if let Some(fmt) = global_output_format {
-            self.output_format = fmt;
+        match global_output_format {
+            Some(fmt) => self.output_format = fmt,
+            None => {}
         }
     }
 }

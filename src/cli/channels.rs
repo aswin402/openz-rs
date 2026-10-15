@@ -8,6 +8,36 @@ use crate::cron::scheduler::start_scheduler;
 use crate::{eprintln, println};
 use anyhow::{anyhow, Result};
 
+fn resolve_channel_secret(configured: String, env_var: &str) -> Result<String> {
+    match configured.is_empty() {
+        true => std::env::var(env_var)
+            .map_err(|_| anyhow!("{env_var} environment variable or config parameter not set.")),
+        false => Ok(configured),
+    }
+}
+
+async fn run_channel_until_ctrl_c<C: Channel>(
+    channel: C,
+    channel_label: &str,
+    config: &Config,
+) -> ! {
+    tokio::select! {
+        biased;
+        _ = tokio::signal::ctrl_c() => {
+            println!("\r\nExiting {} channel...", channel_label);
+        }
+        res = channel.start() => {
+            match res {
+                Ok(()) => {}
+                Err(e) => eprintln!("{} error: {}", channel_label, e),
+            }
+        }
+    }
+
+    crate::channels::shutdown_gateways_bounded(config).await;
+    std::process::exit(0);
+}
+
 pub async fn handle_ratatui_tui() -> Result<()> {
     crate::channels::handle_ratatui_tui().await
 }
@@ -26,8 +56,9 @@ pub async fn handle_gateway() -> Result<()> {
             crate::println!("\r\nExiting Gateway server...");
         }
         res = gateway.start() => {
-            if let Err(e) = res {
-                crate::eprintln!("Gateway error: {}", e);
+            match res {
+                Ok(()) => {}
+                Err(e) => crate::eprintln!("Gateway error: {}", e),
             }
         }
     }
@@ -40,105 +71,35 @@ pub async fn handle_gateway() -> Result<()> {
 pub async fn handle_telegram() -> Result<()> {
     let config = load_config()?;
     let tg_config = config.channels.telegram.clone().unwrap_or_default();
-
-    let token = if tg_config.bot_token.is_empty() {
-        std::env::var("TELEGRAM_BOT_TOKEN").map_err(|_| {
-            anyhow!("TELEGRAM_BOT_TOKEN environment variable or config parameter not set.")
-        })?
-    } else {
-        tg_config.bot_token
-    };
+    let token = resolve_channel_secret(tg_config.bot_token, "TELEGRAM_BOT_TOKEN")?;
 
     start_scheduler(config.clone());
     let agent_loop = build_agent_loop(config.clone()).await?;
     let channel = TelegramChannel::new(token, agent_loop);
-
-    tokio::select! {
-        biased;
-        _ = tokio::signal::ctrl_c() => {
-            println!("\r\nExiting Telegram channel...");
-        }
-        res = channel.start() => {
-            if let Err(e) = res {
-                eprintln!("Telegram error: {}", e);
-            }
-        }
-    }
-
-    crate::channels::shutdown_gateways_bounded(&config).await;
-    std::process::exit(0);
+    run_channel_until_ctrl_c(channel, "Telegram", &config).await
 }
 
 pub async fn handle_discord() -> Result<()> {
     let config = load_config()?;
     let dc_config = config.channels.discord.clone().unwrap_or_default();
-
-    let token = if dc_config.bot_token.is_empty() {
-        std::env::var("DISCORD_BOT_TOKEN").map_err(|_| {
-            anyhow!("DISCORD_BOT_TOKEN environment variable or config parameter not set.")
-        })?
-    } else {
-        dc_config.bot_token
-    };
+    let token = resolve_channel_secret(dc_config.bot_token, "DISCORD_BOT_TOKEN")?;
 
     start_scheduler(config.clone());
     let agent_loop = build_agent_loop(config.clone()).await?;
     let channel = DiscordChannel::new(token, agent_loop);
-
-    tokio::select! {
-        biased;
-        _ = tokio::signal::ctrl_c() => {
-            println!("\r\nExiting Discord channel...");
-        }
-        res = channel.start() => {
-            if let Err(e) = res {
-                eprintln!("Discord error: {}", e);
-            }
-        }
-    }
-
-    crate::channels::shutdown_gateways_bounded(&config).await;
-    std::process::exit(0);
+    run_channel_until_ctrl_c(channel, "Discord", &config).await
 }
 
 pub async fn handle_whatsapp() -> Result<()> {
     let config = load_config()?;
     let wa_config = config.channels.whatsapp.clone().unwrap_or_default();
-
-    let key = if wa_config.api_key.is_empty() {
-        std::env::var("WHATSAPP_API_KEY").map_err(|_| {
-            anyhow!("WHATSAPP_API_KEY environment variable or config parameter not set.")
-        })?
-    } else {
-        wa_config.api_key
-    };
-
-    let phone_id = if wa_config.phone_number_id.is_empty() {
-        std::env::var("WHATSAPP_PHONE_NUMBER_ID").map_err(|_| {
-            anyhow!("WHATSAPP_PHONE_NUMBER_ID environment variable or config parameter not set.")
-        })?
-    } else {
-        wa_config.phone_number_id
-    };
+    let key = resolve_channel_secret(wa_config.api_key, "WHATSAPP_API_KEY")?;
+    let phone_id = resolve_channel_secret(wa_config.phone_number_id, "WHATSAPP_PHONE_NUMBER_ID")?;
 
     start_scheduler(config.clone());
     let agent_loop = build_agent_loop(config.clone()).await?;
     let channel = WhatsAppChannel::new(key, phone_id, agent_loop);
-
-    tokio::select! {
-        biased;
-        _ = tokio::signal::ctrl_c() => {
-            println!("\r\nExiting WhatsApp channel...");
-        }
-        res = channel.start() => {
-            if let Err(e) = res {
-                eprintln!("WhatsApp error: {}", e);
-            }
-        }
-    }
-
-    crate::channels::shutdown_gateways_bounded(&config).await;
-    std::process::exit(0);
+    run_channel_until_ctrl_c(channel, "WhatsApp", &config).await
 }
 
 pub async fn handle_email() -> Result<()> {
@@ -146,35 +107,19 @@ pub async fn handle_email() -> Result<()> {
     start_scheduler(config.clone());
     let agent_loop = build_agent_loop(config.clone()).await?;
     let channel = EmailChannel::new(agent_loop);
-
-    tokio::select! {
-        biased;
-        _ = tokio::signal::ctrl_c() => {
-            println!("\r\nExiting Email channel...");
-        }
-        res = channel.start() => {
-            if let Err(e) = res {
-                eprintln!("Email error: {}", e);
-            }
-        }
-    }
-
-    crate::channels::shutdown_gateways_bounded(&config).await;
-    std::process::exit(0);
+    run_channel_until_ctrl_c(channel, "Email", &config).await
 }
 
 pub fn is_telegram_configured(config: &Config) -> bool {
-    if let Some(ref tg) = config.channels.telegram {
-        !tg.bot_token.is_empty()
-    } else {
-        false
+    match config.channels.telegram {
+        Some(ref tg) => !tg.bot_token.is_empty(),
+        None => false,
     }
 }
 
 pub fn is_email_configured(config: &Config) -> bool {
-    if let Some(ref em) = config.channels.email {
-        em.enabled && !em.imap_server.is_empty() && !em.username.is_empty()
-    } else {
-        false
+    match config.channels.email {
+        Some(ref em) => em.enabled && !em.imap_server.is_empty() && !em.username.is_empty(),
+        None => false,
     }
 }

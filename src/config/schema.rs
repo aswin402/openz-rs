@@ -895,10 +895,9 @@ fn env_key(env_keys: &[&str]) -> Option<String> {
 fn custom_provider_env_key(provider_name: &str) -> String {
     let mut key = String::from("OPENZ_PROVIDER_");
     for ch in provider_name.chars() {
-        if ch.is_ascii_alphanumeric() {
-            key.push(ch.to_ascii_uppercase());
-        } else {
-            key.push('_');
+        match ch.is_ascii_alphanumeric() {
+            true => key.push(ch.to_ascii_uppercase()),
+            false => key.push('_'),
         }
     }
     key.push_str("_API_KEY");
@@ -913,6 +912,29 @@ fn is_local_api_base(api_base: &str) -> bool {
         || base.starts_with("http://[::1]")
 }
 
+fn dynamic_fallback_model(prov: &str, is_vision: bool) -> Option<&'static str> {
+    match (prov, is_vision) {
+        ("google_ai_studio", _) => Some("google_ai_studio/gemini-2.5-flash"),
+        ("anthropic", _) => Some("anthropic/claude-3-5-sonnet"),
+        ("openai", _) => Some("openai/gpt-4o-mini"),
+        ("deepseek", false) => Some("deepseek/deepseek-chat"),
+        ("groq", false) => Some("groq/llama-3.3-70b-versatile"),
+        ("nvidia", true) => Some("nvidia/meta/llama-3.2-90b-vision-instruct"),
+        ("nvidia", false) => Some("nvidia/meta/llama-3.3-70b-instruct"),
+        ("openrouter", true) => Some("openrouter/google/gemini-2.0-flash-exp:free"),
+        ("openrouter", false) => Some("openrouter/free"),
+        ("opencode_zen", _) => Some("opencode_zen/deepseek-v4-flash-free"),
+        ("z.ai", _) => Some("z.ai/glm-4.7-flash"),
+        ("mistral", true) => Some("mistral/pixtral-large-latest"),
+        ("mistral", false) => Some("mistral/mistral-large-latest"),
+        ("cerebras", false) => Some("cerebras/llama-3.3-70b"),
+        ("minimax", false) => Some("minimax/MiniMax-M3"),
+        ("ollama", true) => Some("ollama/llava"),
+        ("ollama", false) => Some("ollama/llama3"),
+        _ => None,
+    }
+}
+
 // ── Shared provider config resolution ─────────────────────────────────────
 // Single source of truth for resolving provider API key + base URL.
 // Used by: resolver.rs, channels/mod.rs (fetch_provider_models), cli/builder.rs.
@@ -920,34 +942,36 @@ impl Config {
     /// Resolve API key and base URL for a provider from config + env vars.
     /// Returns `(api_key, api_base)` — local providers may return an empty key.
     pub fn resolve_provider_config(&self, provider_name: &str) -> (String, String) {
-        if let Some(def) = provider_def(provider_name) {
-            let descriptor = provider_catalog::find_provider(provider_name)
-                .expect("every built-in provider definition must have catalog metadata");
-            let provider = (def.config)(&self.providers);
-            let key = if descriptor.local {
-                String::new()
-            } else {
-                env_key(descriptor.environment_keys)
-                    .or_else(|| configured_key(provider))
-                    .unwrap_or_default()
-            };
-            let base = provider
-                .and_then(|p| p.api_base.clone())
-                .unwrap_or_else(|| descriptor.default_api_base.to_string());
-            return (key, base);
+        match provider_def(provider_name) {
+            Some(def) => {
+                let descriptor = provider_catalog::find_provider(provider_name)
+                    .expect("every built-in provider definition must have catalog metadata");
+                let provider = (def.config)(&self.providers);
+                let key = match descriptor.local {
+                    true => String::new(),
+                    false => env_key(descriptor.environment_keys)
+                        .or_else(|| configured_key(provider))
+                        .unwrap_or_default(),
+                };
+                let base = provider
+                    .and_then(|p| p.api_base.clone())
+                    .unwrap_or_else(|| descriptor.default_api_base.to_string());
+                (key, base)
+            }
+            None => match self.providers.others.get(provider_name) {
+                Some(provider) => {
+                    let base = provider.api_base.clone().unwrap_or_default();
+                    let env_var = custom_provider_env_key(provider_name);
+                    let key = std::env::var(env_var)
+                        .ok()
+                        .filter(|key| !key.trim().is_empty())
+                        .or_else(|| configured_key(Some(provider)))
+                        .unwrap_or_default();
+                    (key, base)
+                }
+                None => (String::new(), String::new()),
+            },
         }
-
-        let Some(provider) = self.providers.others.get(provider_name) else {
-            return (String::new(), String::new());
-        };
-        let base = provider.api_base.clone().unwrap_or_default();
-        let env_var = custom_provider_env_key(provider_name);
-        let key = std::env::var(env_var)
-            .ok()
-            .filter(|key| !key.trim().is_empty())
-            .or_else(|| configured_key(Some(provider)))
-            .unwrap_or_default();
-        (key, base)
     }
 
     pub fn custom_provider_names(&self) -> Vec<String> {
@@ -1021,49 +1045,56 @@ impl Config {
     }
 
     pub fn get_provider_config(&self, provider_name: &str) -> Option<&ProviderConfig> {
-        if let Some(def) = provider_def(provider_name) {
-            (def.config)(&self.providers)
-        } else {
-            self.providers.others.get(provider_name)
+        match provider_def(provider_name) {
+            Some(def) => (def.config)(&self.providers),
+            None => self.providers.others.get(provider_name),
         }
     }
 
     pub fn is_provider_configured(&self, provider_name: &str) -> bool {
-        if let Some(def) = provider_def(provider_name) {
-            let descriptor = provider_catalog::find_provider(provider_name)
-                .expect("every built-in provider definition must have catalog metadata");
-            if provider_name == "ollama_local" || provider_name == "mivi" {
-                return true;
+        match provider_def(provider_name) {
+            Some(def) => {
+                let descriptor = provider_catalog::find_provider(provider_name)
+                    .expect("every built-in provider definition must have catalog metadata");
+                match matches!(provider_name, "ollama_local" | "mivi") {
+                    true => true,
+                    false => {
+                        let provider = (def.config)(&self.providers);
+                        match descriptor.local {
+                            true => provider.is_some(),
+                            false => configured_key(provider).is_some(),
+                        }
+                    }
+                }
             }
-            let provider = (def.config)(&self.providers);
-            if descriptor.local {
-                provider.is_some()
-            } else {
-                configured_key(provider).is_some()
-            }
-        } else if let Some(provider) = self.providers.others.get(provider_name) {
-            provider
-                .api_base
-                .as_deref()
-                .is_some_and(|base| !base.trim().is_empty())
-                && (configured_key(Some(provider)).is_some()
-                    || self.custom_provider_allows_empty_key(provider_name))
-        } else {
-            false
+            None => match self.providers.others.get(provider_name) {
+                Some(provider) => {
+                    provider
+                        .api_base
+                        .as_deref()
+                        .is_some_and(|base| !base.trim().is_empty())
+                        && (configured_key(Some(provider)).is_some()
+                            || self.custom_provider_allows_empty_key(provider_name))
+                }
+                None => false,
+            },
         }
     }
 
     pub fn is_provider_available(&self, provider_name: &str) -> bool {
-        if provider_def(provider_name).is_some() {
-            let descriptor = provider_catalog::find_provider(provider_name)
-                .expect("every built-in provider definition must have catalog metadata");
-            self.is_provider_configured(provider_name)
-                || env_key(descriptor.environment_keys).is_some()
-        } else {
-            self.is_provider_configured(provider_name)
-                || std::env::var(custom_provider_env_key(provider_name))
-                    .ok()
-                    .is_some_and(|key| !key.trim().is_empty())
+        match provider_def(provider_name).is_some() {
+            true => {
+                let descriptor = provider_catalog::find_provider(provider_name)
+                    .expect("every built-in provider definition must have catalog metadata");
+                self.is_provider_configured(provider_name)
+                    || env_key(descriptor.environment_keys).is_some()
+            }
+            false => {
+                self.is_provider_configured(provider_name)
+                    || std::env::var(custom_provider_env_key(provider_name))
+                        .ok()
+                        .is_some_and(|key| !key.trim().is_empty())
+            }
         }
     }
 
@@ -1088,75 +1119,18 @@ impl Config {
         ];
 
         for &prov in providers_in_order {
-            if self.is_provider_available(prov) {
-                let model_name = match prov {
-                    "google_ai_studio" => "google_ai_studio/gemini-2.5-flash".to_string(),
-                    "anthropic" => "anthropic/claude-3-5-sonnet".to_string(),
-                    "openai" => "openai/gpt-4o-mini".to_string(),
-                    "deepseek" => {
-                        if is_vision {
-                            continue;
-                        } else {
-                            "deepseek/deepseek-chat".to_string()
-                        }
+            match (
+                self.is_provider_available(prov),
+                dynamic_fallback_model(prov, is_vision),
+            ) {
+                (true, Some(model)) => {
+                    let model_name = model.to_string();
+                    match fallbacks.contains(&model_name) {
+                        true => {}
+                        false => fallbacks.push(model_name),
                     }
-                    "groq" => {
-                        if is_vision {
-                            continue;
-                        } else {
-                            "groq/llama-3.3-70b-versatile".to_string()
-                        }
-                    }
-                    "nvidia" => {
-                        if is_vision {
-                            "nvidia/meta/llama-3.2-90b-vision-instruct".to_string()
-                        } else {
-                            "nvidia/meta/llama-3.3-70b-instruct".to_string()
-                        }
-                    }
-                    "openrouter" => {
-                        if is_vision {
-                            "openrouter/google/gemini-2.0-flash-exp:free".to_string()
-                        } else {
-                            "openrouter/free".to_string()
-                        }
-                    }
-                    "opencode_zen" => "opencode_zen/deepseek-v4-flash-free".to_string(),
-                    "z.ai" => "z.ai/glm-4.7-flash".to_string(),
-                    "mistral" => {
-                        if is_vision {
-                            "mistral/pixtral-large-latest".to_string()
-                        } else {
-                            "mistral/mistral-large-latest".to_string()
-                        }
-                    }
-                    "cerebras" => {
-                        if is_vision {
-                            continue;
-                        } else {
-                            "cerebras/llama-3.3-70b".to_string()
-                        }
-                    }
-                    "minimax" => {
-                        if is_vision {
-                            continue;
-                        } else {
-                            "minimax/MiniMax-M3".to_string()
-                        }
-                    }
-                    "ollama" => {
-                        if is_vision {
-                            "ollama/llava".to_string()
-                        } else {
-                            "ollama/llama3".to_string()
-                        }
-                    }
-                    _ => continue,
-                };
-
-                if !fallbacks.contains(&model_name) {
-                    fallbacks.push(model_name);
                 }
+                _ => {}
             }
         }
 

@@ -23,18 +23,27 @@ fn notification_payloads_preserve_channel_contracts() {
     std::fs::write(dir.join("telegram_history.json"), "{}").unwrap();
 
     let mut config = crate::config::schema::Config::default();
-    if let Some(tg) = config.channels.telegram.as_mut() {
-        tg.enabled = true;
-        tg.bot_token = "tg-token".to_string();
+    match config.channels.telegram.as_mut() {
+        Some(tg) => {
+            tg.enabled = true;
+            tg.bot_token = "tg-token".to_string();
+        }
+        None => {}
     }
-    if let Some(dc) = config.channels.discord.as_mut() {
-        dc.enabled = true;
-        dc.bot_token = "dc-token".to_string();
+    match config.channels.discord.as_mut() {
+        Some(dc) => {
+            dc.enabled = true;
+            dc.bot_token = "dc-token".to_string();
+        }
+        None => {}
     }
-    if let Some(wa) = config.channels.whatsapp.as_mut() {
-        wa.enabled = true;
-        wa.api_key = "wa-token".to_string();
-        wa.phone_number_id = "phone-id".to_string();
+    match config.channels.whatsapp.as_mut() {
+        Some(wa) => {
+            wa.enabled = true;
+            wa.api_key = "wa-token".to_string();
+            wa.phone_number_id = "phone-id".to_string();
+        }
+        None => {}
     }
 
     let requests = build_external_notification_requests(&config, &dir, "hello");
@@ -120,11 +129,12 @@ async fn test_ws_sender_registration_and_cleanup() {
     // Receive the message from the receiver to check if it got routed
     let received = rx.recv().await;
     assert!(received.is_some());
-    if let Some(axum::extract::ws::Message::Text(txt)) = received {
-        assert!(txt.contains("notification"));
-        assert!(txt.contains("Test broadcast message"));
-    } else {
-        panic!("Expected Text message");
+    match received {
+        Some(axum::extract::ws::Message::Text(txt)) => {
+            assert!(txt.contains("notification"));
+            assert!(txt.contains("Test broadcast message"));
+        }
+        _ => panic!("Expected Text message"),
     }
 
     // 3. Clean up sender

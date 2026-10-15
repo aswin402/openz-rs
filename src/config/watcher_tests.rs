@@ -37,10 +37,7 @@ async fn test_config_watcher_reloads_on_file_change() {
 
     // Wait up to 2 seconds for the watcher to detect and apply the change
     let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(2) {
-        if call_count.load(Ordering::SeqCst) > 0 {
-            break;
-        }
+    while start.elapsed() < Duration::from_secs(2) && call_count.load(Ordering::SeqCst) == 0 {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
 

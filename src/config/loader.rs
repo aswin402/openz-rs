@@ -12,33 +12,25 @@ tokio::task_local! {
 pub fn resolve_path(path_str: &str) -> PathBuf {
     let base = ACTIVE_WORKSPACE.try_with(|w| w.clone()).ok();
 
-    let path = if path_str.starts_with("~/.openz/") || path_str == "~/.openz" {
-        let runtime_dir = config_dir();
-        if path_str == "~/.openz" {
-            runtime_dir
-        } else {
-            runtime_dir.join(&path_str["~/.openz/".len()..])
-        }
-    } else if path_str.starts_with("~/") || path_str == "~" {
-        if let Some(home) = dirs::home_dir() {
-            if path_str == "~" {
-                home
-            } else {
-                home.join(&path_str[2..])
-            }
-        } else {
-            PathBuf::from(path_str)
-        }
-    } else {
-        PathBuf::from(path_str)
+    let path = match path_str {
+        "~/.openz" => config_dir(),
+        "~" => dirs::home_dir().unwrap_or_else(|| PathBuf::from(path_str)),
+        _ => match (
+            path_str.strip_prefix("~/.openz/"),
+            path_str.strip_prefix("~/"),
+        ) {
+            (Some(rel), _) => config_dir().join(rel),
+            (None, Some(rel)) => match dirs::home_dir() {
+                Some(home) => home.join(rel),
+                None => PathBuf::from(path_str),
+            },
+            (None, None) => PathBuf::from(path_str),
+        },
     };
 
-    if path.is_absolute() {
-        path
-    } else if let Some(b) = base {
-        b.join(path)
-    } else {
-        path
+    match (path.is_absolute(), base) {
+        (true, _) | (false, None) => path,
+        (false, Some(b)) => b.join(path),
     }
 }
 
@@ -50,21 +42,27 @@ pub fn active_workspace_or_current_dir() -> PathBuf {
 
 pub fn workspace_for_agent_turn(config: &Config) -> PathBuf {
     let workspace = config.agents.defaults.workspace.trim();
-    if workspace.is_empty() || workspace == "~/.openz/workspace" {
-        return std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    match workspace.is_empty() || workspace == "~/.openz/workspace" {
+        true => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        false => resolve_path(workspace),
     }
-    resolve_path(workspace)
 }
 
 pub fn set_command_cwd(cmd: &mut std::process::Command) {
-    if let Ok(dir) = ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
-        cmd.current_dir(dir);
+    match ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
+        Ok(dir) => {
+            cmd.current_dir(dir);
+        }
+        Err(_) => {}
     }
 }
 
 pub fn set_tokio_command_cwd(cmd: &mut tokio::process::Command) {
-    if let Ok(dir) = ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
-        cmd.current_dir(dir);
+    match ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
+        Ok(dir) => {
+            cmd.current_dir(dir);
+        }
+        Err(_) => {}
     }
 }
 
@@ -75,14 +73,14 @@ pub fn verify_safe_path(path: &Path) -> Result<()> {
 }
 
 pub fn config_dir() -> PathBuf {
-    if let Ok(dir) = CONFIG_DIR_OVERRIDE.try_with(|p| p.clone()) {
-        dir
-    } else if let Ok(override_dir) = std::env::var("OPENZ_CONFIG_DIR") {
-        PathBuf::from(override_dir)
-    } else {
-        dirs::home_dir()
-            .map(|h| h.join(".openz"))
-            .unwrap_or_else(|| PathBuf::from("~/.openz"))
+    match CONFIG_DIR_OVERRIDE.try_with(|p| p.clone()) {
+        Ok(dir) => dir,
+        Err(_) => match std::env::var("OPENZ_CONFIG_DIR") {
+            Ok(override_dir) => PathBuf::from(override_dir),
+            Err(_) => dirs::home_dir()
+                .map(|h| h.join(".openz"))
+                .unwrap_or_else(|| PathBuf::from("~/.openz")),
+        },
     }
 }
 
@@ -166,14 +164,16 @@ pub fn activity_file() -> PathBuf {
 /// project/working directory. It is pure and safe to call from tests.
 pub fn root_runtime_db_artifacts(root: &Path) -> Vec<PathBuf> {
     let mut found = Vec::new();
-    if !root.is_dir() {
-        return found;
+    match root.is_dir() {
+        false => return found,
+        true => {}
     }
 
     let mut push_if_present = |name: &str| {
         let p = root.join(name);
-        if p.is_file() {
-            found.push(p);
+        match p.is_file() {
+            true => found.push(p),
+            false => {}
         }
     };
 
@@ -183,24 +183,29 @@ pub fn root_runtime_db_artifacts(root: &Path) -> Vec<PathBuf> {
 
     // Also catch any stray SQLite companions in the root, even if the base
     // filename is not in the known list.
-    if let Ok(entries) = std::fs::read_dir(root) {
-        for entry in entries.flatten() {
-            if let Ok(ft) = entry.file_type() {
-                if !ft.is_file() {
-                    continue;
+    match std::fs::read_dir(root) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let is_regular_file = entry
+                    .file_type()
+                    .map(|ft| ft.is_file())
+                    .unwrap_or(false);
+                match is_regular_file {
+                    false => continue,
+                    true => {}
                 }
                 let fname = entry.file_name().to_string_lossy().to_string();
-                if fname.ends_with(".db")
+                let is_sqlite_artifact = fname.ends_with(".db")
                     || fname.ends_with(".db-wal")
-                    || fname.ends_with(".db-shm")
-                {
-                    let p = entry.path();
-                    if !found.contains(&p) {
-                        found.push(p);
-                    }
+                    || fname.ends_with(".db-shm");
+                let p = entry.path();
+                match is_sqlite_artifact && !found.contains(&p) {
+                    true => found.push(p),
+                    false => {}
                 }
             }
         }
+        Err(_) => {}
     }
 
     found.sort();
@@ -231,17 +236,20 @@ pub fn check_root_runtime_dbs() -> RootDbDiagnostics {
     let found = root_runtime_db_artifacts(&root);
     let global_memory_db_exists = runtime_db_path("memory.db").exists();
 
-    if !found.is_empty() {
-        let files: Vec<String> = found
-            .iter()
-            .map(|p| p.to_string_lossy().to_string())
-            .collect();
-        tracing::warn!(
-            root = %root.display(),
-            files = ?files,
-            global_memory_db_exists,
-            "Runtime database files found in the working directory. These are stale artifacts and should live under the global data dir (~/.openz). Migrate or archive them (e.g. via `openz doctor`) so they do not shadow the real database."
-        );
+    match found.is_empty() {
+        false => {
+            let files: Vec<String> = found
+                .iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect();
+            tracing::warn!(
+                root = %root.display(),
+                files = ?files,
+                global_memory_db_exists,
+                "Runtime database files found in the working directory. These are stale artifacts and should live under the global data dir (~/.openz). Migrate or archive them (e.g. via `openz doctor`) so they do not shadow the real database."
+            );
+        }
+        true => {}
     }
 
     RootDbDiagnostics {
@@ -261,8 +269,9 @@ pub fn check_root_runtime_dbs() -> RootDbDiagnostics {
 /// Returns the `(from, to)` moves performed. This never deletes data.
 pub fn migrate_root_runtime_dbs() -> Vec<(PathBuf, PathBuf)> {
     let diag = check_root_runtime_dbs();
-    if !diag.has_root_runtime_dbs() {
-        return Vec::new();
+    match diag.has_root_runtime_dbs() {
+        false => return Vec::new(),
+        true => {}
     }
 
     let global_dir = runtime_data_dir();
@@ -275,15 +284,19 @@ pub fn migrate_root_runtime_dbs() -> Vec<(PathBuf, PathBuf)> {
             .file_name()
             .map(|f| f.to_string_lossy().to_string())
             .unwrap_or_default();
-        let dst = if runtime_db_path(&fname).exists() {
-            let _ = std::fs::create_dir_all(&archive_dir);
-            archive_dir.join(&fname)
-        } else {
-            let _ = std::fs::create_dir_all(&global_dir);
-            global_dir.join(&fname)
+        let dst = match runtime_db_path(&fname).exists() {
+            true => {
+                let _ = std::fs::create_dir_all(&archive_dir);
+                archive_dir.join(&fname)
+            }
+            false => {
+                let _ = std::fs::create_dir_all(&global_dir);
+                global_dir.join(&fname)
+            }
         };
-        if let Ok(()) = std::fs::rename(src, &dst) {
-            moves.push((src.clone(), dst));
+        match std::fs::rename(src, &dst) {
+            Ok(()) => moves.push((src.clone(), dst)),
+            Err(_) => {}
         }
     }
     moves
@@ -399,7 +412,11 @@ fn read_file_mtime(path: &Path) -> std::time::SystemTime {
         .unwrap_or_else(|_| std::time::SystemTime::now())
 }
 
-fn store_config_cache(path: PathBuf, config: Config, last_modified: std::time::SystemTime) -> Config {
+fn store_config_cache(
+    path: PathBuf,
+    config: Config,
+    last_modified: std::time::SystemTime,
+) -> Config {
     let mut cache = lock_config_cache();
     *cache = Some(ConfigCache {
         config: config.clone(),
@@ -476,7 +493,6 @@ pub fn load_config() -> Result<Config> {
     Ok(store_config_cache(path, config, final_modified))
 }
 
-
 pub fn read_config_from_path(path: &Path) -> Result<Config> {
     let content = fs::read_to_string(path)
         .with_context(|| format!("Failed to read config file at {:?}", path))?;
@@ -504,9 +520,12 @@ pub fn save_config_to_path(path: &Path, config: &Config) -> Result<()> {
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(config_dir);
-    if !dir.exists() {
-        fs::create_dir_all(&dir)
-            .with_context(|| format!("Failed to create config directory at {:?}", dir))?;
+    match dir.exists() {
+        false => {
+            fs::create_dir_all(&dir)
+                .with_context(|| format!("Failed to create config directory at {:?}", dir))?;
+        }
+        true => {}
     }
 
     let content = serde_json::to_string_pretty(config)?;
@@ -533,10 +552,14 @@ pub fn save_config_to_path(path: &Path, config: &Config) -> Result<()> {
             })?;
         temp_file
             .write_all(content.as_bytes())
-            .with_context(|| format!("Failed to write temporary config file to {:?}", temp_path))?;
+            .with_context(|| {
+                format!("Failed to write temporary config file to {:?}", temp_path)
+            })?;
         temp_file
             .sync_all()
-            .with_context(|| format!("Failed to sync temporary config file at {:?}", temp_path))?;
+            .with_context(|| {
+                format!("Failed to sync temporary config file at {:?}", temp_path)
+            })?;
     }
     #[cfg(not(unix))]
     {
@@ -544,12 +567,15 @@ pub fn save_config_to_path(path: &Path, config: &Config) -> Result<()> {
             .with_context(|| format!("Failed to write temporary config file to {:?}", temp_path))?;
     }
 
-    if let Err(e) = fs::rename(&temp_path, path) {
-        let _ = fs::remove_file(&temp_path);
-        return Err(e).context(format!(
-            "Failed to rename temporary config file to {:?}",
-            path
-        ));
+    match fs::rename(&temp_path, path) {
+        Ok(()) => {}
+        Err(e) => {
+            let _ = fs::remove_file(&temp_path);
+            return Err(e).context(format!(
+                "Failed to rename temporary config file to {:?}",
+                path
+            ));
+        }
     }
 
     #[cfg(unix)]

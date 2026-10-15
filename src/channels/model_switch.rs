@@ -14,8 +14,9 @@ pub enum ModelSwitchCommand {
 
 pub fn render_model_risk_warning(provider: &str, model: &str) -> String {
     let risk = classify_model_risk(provider, model);
-    if !risk.risky {
-        return String::new();
+    match risk.risky {
+        false => return String::new(),
+        true => {}
     }
     let registry = crate::model_registry::ModelRegistry::load();
     let health = registry.get(provider, model);
@@ -26,18 +27,27 @@ pub fn render_model_risk_warning(provider: &str, model: &str) -> String {
     for reason in risk.reasons {
         out.push_str(&format!("\n- {reason}"));
     }
-    if let Some(record) = health {
-        if record.failure_count > 0
+    match health {
+        Some(record) => match record.failure_count > 0
             || record.blank_response_count > 0
             || record.think_leak_count > 0
         {
-            out.push_str(&format!(
+            true => out.push_str(&format!(
                 "\n- prior health: {} failures, {} blank replies, {} think leaks",
                 record.failure_count, record.blank_response_count, record.think_leak_count
-            ));
-        }
+            )),
+            false => {}
+        },
+        None => {}
     }
     out
+}
+
+fn push_unique_label(out: &mut Vec<String>, label: String) {
+    match out.iter().any(|existing| existing == &label) {
+        true => {}
+        false => out.push(label),
+    }
 }
 
 pub fn model_menu_options_with_prefs(provider: &str, models: Vec<String>) -> Vec<String> {
@@ -50,27 +60,22 @@ pub fn model_menu_options_with_prefs(provider: &str, models: Vec<String>) -> Vec
         .iter()
         .filter(|entry| entry.provider == provider)
     {
-        let label = format!("★ {}", fav.model);
-        if !out.iter().any(|existing| existing == &label) {
-            out.push(label);
-        }
+        push_unique_label(&mut out, format!("★ {}", fav.model));
     }
     for recent in prefs
         .recent
         .iter()
         .filter(|entry| entry.provider == provider)
     {
-        let label = format!("◷ {}", recent.model);
-        if !out.iter().any(|existing| existing == &label) {
-            out.push(label);
-        }
+        push_unique_label(&mut out, format!("◷ {}", recent.model));
     }
     for model in models {
-        if !out
+        match out
             .iter()
             .any(|existing| model_menu_model_name(existing).eq_ignore_ascii_case(&model))
         {
-            out.push(model);
+            true => {}
+            false => out.push(model),
         }
     }
     out
@@ -85,8 +90,9 @@ pub fn model_menu_model_name(item: &str) -> &str {
 pub fn parse_model_switch_command(text: &str) -> ModelSwitchCommand {
     let trimmed = text.trim();
     let mut parts = trimmed.split_whitespace();
-    if parts.next() != Some("/switch-model") {
-        return ModelSwitchCommand::None;
+    match parts.next() {
+        Some("/switch-model") => {}
+        _ => return ModelSwitchCommand::None,
     }
     match (parts.next(), parts.next()) {
         (None, _) => ModelSwitchCommand::ShowProviders,
@@ -109,14 +115,16 @@ pub fn parse_model_switch_command(text: &str) -> ModelSwitchCommand {
 
 pub fn model_switch_text_response(text: &str) -> Option<String> {
     let command = parse_model_switch_command(text);
-    if command == ModelSwitchCommand::None {
-        return None;
+    match command {
+        ModelSwitchCommand::None => None,
+        command => {
+            let config = match crate::config::loader::load_config() {
+                Ok(config) => config,
+                Err(e) => return Some(format!("Failed to load OpenZ config: {e}")),
+            };
+            Some(render_model_switch_command(&config, command))
+        }
     }
-    let config = match crate::config::loader::load_config() {
-        Ok(config) => config,
-        Err(e) => return Some(format!("Failed to load OpenZ config: {e}")),
-    };
-    Some(render_model_switch_command(&config, command))
 }
 
 pub fn render_model_switch_command(
@@ -145,8 +153,9 @@ pub fn render_model_switch_command(
 
 pub fn render_model_switch_providers(config: &crate::config::schema::Config) -> String {
     let providers = configured_provider_model_options(config);
-    if providers.is_empty() {
-        return "No configured LLM providers found. Run `openz configure` first.".to_string();
+    match providers.is_empty() {
+        true => return "No configured LLM providers found. Run `openz configure` first.".to_string(),
+        false => {}
     }
 
     let mut response = format!(
@@ -164,24 +173,33 @@ pub fn render_model_switch_models(
     config: &crate::config::schema::Config,
     provider: &str,
 ) -> String {
-    let Some(provider_models) = provider_model_option_by_name(config, provider) else {
-        return format!("Unknown provider `{provider}`. Use `/switch-model` to list providers.");
+    let provider_models = match provider_model_option_by_name(config, provider) {
+        Some(provider_models) => provider_models,
+        None => {
+            return format!(
+                "Unknown provider `{provider}`. Use `/switch-model` to list providers."
+            );
+        }
     };
-    if !config.is_provider_available(provider) {
-        return format!(
-            "Provider `{provider}` is not configured. Run `openz configure` or set its API key first."
-        );
+    match config.is_provider_available(provider) {
+        false => {
+            return format!(
+                "Provider `{provider}` is not configured. Run `openz configure` or set its API key first."
+            );
+        }
+        true => {}
     }
 
     let mut response = format!(
         "Models for `{}` ({}):\n",
         provider_models.name, provider_models.display
     );
-    if provider_models.models.is_empty() {
-        response.push_str("- Type any OpenAI-compatible model name manually\n");
-    } else {
-        for model in &provider_models.models {
-            response.push_str(&format!("- `{model}`\n"));
+    match provider_models.models.is_empty() {
+        true => response.push_str("- Type any OpenAI-compatible model name manually\n"),
+        false => {
+            for model in &provider_models.models {
+                response.push_str(&format!("- `{model}`\n"));
+            }
         }
     }
     response.push_str(&format!(
@@ -192,8 +210,9 @@ pub fn render_model_switch_models(
 }
 
 fn spawn_model_smoke_test(mut config: crate::config::schema::Config, provider: &str, model: &str) {
-    let Ok(handle) = tokio::runtime::Handle::try_current() else {
-        return;
+    let handle = match tokio::runtime::Handle::try_current() {
+        Ok(handle) => handle,
+        Err(_) => return,
     };
     let provider = provider.to_string();
     let model = model.trim().to_string();
@@ -248,19 +267,29 @@ fn spawn_model_smoke_test(mut config: crate::config::schema::Config, provider: &
                 let blank = content.trim().is_empty();
                 let think_leak = content.contains("<think>") || content.contains("</think>");
                 let ok = content.trim().contains("OPENZ_MODEL_OK") && !blank;
-                if ok {
-                    let _ = crate::model_registry::record_model_success(
-                        &provider, &model, risk.tier, risk.risky, reasons, blank, think_leak, false,
-                    );
-                } else {
-                    let _ = crate::model_registry::record_model_failure(
-                        &provider,
-                        &model,
-                        risk.tier,
-                        risk.risky,
-                        reasons,
-                        &format!("smoke test unexpected response: {}", content.trim()),
-                    );
+                match ok {
+                    true => {
+                        let _ = crate::model_registry::record_model_success(
+                            &provider,
+                            &model,
+                            risk.tier,
+                            risk.risky,
+                            reasons,
+                            blank,
+                            think_leak,
+                            false,
+                        );
+                    }
+                    false => {
+                        let _ = crate::model_registry::record_model_failure(
+                            &provider,
+                            &model,
+                            risk.tier,
+                            risk.risky,
+                            reasons,
+                            &format!("smoke test unexpected response: {}", content.trim()),
+                        );
+                    }
                 }
             }
             Ok(Err(err)) => {
@@ -292,14 +321,17 @@ pub fn save_default_model_selection(
     provider: &str,
     model: &str,
 ) -> anyhow::Result<()> {
-    if provider_models_by_name(provider).is_none() && !base_config.is_custom_provider(provider) {
-        anyhow::bail!("unknown provider `{provider}`");
+    match provider_models_by_name(provider).is_none() && !base_config.is_custom_provider(provider) {
+        true => anyhow::bail!("unknown provider `{provider}`"),
+        false => {}
     }
-    if !base_config.is_provider_available(provider) {
-        anyhow::bail!("provider `{provider}` is not configured");
+    match base_config.is_provider_available(provider) {
+        false => anyhow::bail!("provider `{provider}` is not configured"),
+        true => {}
     }
-    if model.trim().is_empty() {
-        anyhow::bail!("model cannot be empty");
+    match model.trim().is_empty() {
+        true => anyhow::bail!("model cannot be empty"),
+        false => {}
     }
 
     let risk = classify_model_risk(provider, model);

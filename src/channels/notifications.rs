@@ -68,37 +68,39 @@ pub(crate) fn whatsapp_message_url(phone_number_id: &str) -> String {
 /// Split outbound text without breaking UTF-8 code points or needlessly
 /// carrying a leading newline into the next protocol message.
 pub(crate) fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
-    if text.len() <= max_len {
-        return vec![text.to_string()];
+    match text.len() <= max_len {
+        true => return vec![text.to_string()],
+        false => {}
     }
     let mut chunks = Vec::new();
     let mut remaining = text;
     while !remaining.is_empty() {
-        if remaining.len() <= max_len {
-            chunks.push(remaining.to_string());
-            break;
+        match remaining.len() <= max_len {
+            true => {
+                chunks.push(remaining.to_string());
+                break;
+            }
+            false => {}
         }
 
         let mut split_at = max_len;
         while split_at > 0 && !remaining.is_char_boundary(split_at) {
             split_at -= 1;
         }
-        if split_at == 0 {
-            split_at = 1;
-            while split_at < remaining.len() && !remaining.is_char_boundary(split_at) {
-                split_at += 1;
+        match split_at {
+            0 => {
+                split_at = 1;
+                while split_at < remaining.len() && !remaining.is_char_boundary(split_at) {
+                    split_at += 1;
+                }
             }
+            _ => {}
         }
 
         let candidate = &remaining[..split_at];
-        let final_split = if let Some(idx) = candidate.rfind('\n') {
-            if idx > 0 {
-                idx
-            } else {
-                split_at
-            }
-        } else {
-            split_at
+        let final_split = match candidate.rfind('\n') {
+            Some(0) | None => split_at,
+            Some(idx) => idx,
         };
 
         chunks.push(remaining[..final_split].to_string());
@@ -108,10 +110,9 @@ pub(crate) fn chunk_message(text: &str, max_len: usize) -> Vec<String> {
 }
 
 fn configured_or_env(config_value: &str, env_var: &str) -> Option<String> {
-    if config_value.trim().is_empty() {
-        std::env::var(env_var).ok().filter(|v| !v.trim().is_empty())
-    } else {
-        Some(config_value.to_string())
+    match config_value.trim().is_empty() {
+        true => std::env::var(env_var).ok().filter(|v| !v.trim().is_empty()),
+        false => Some(config_value.to_string()),
     }
 }
 
@@ -171,11 +172,14 @@ pub(crate) fn build_whatsapp_notification_requests(
     targets: Vec<String>,
     msg: &str,
 ) -> Vec<NotificationRequest> {
-    if phone_number_id.trim().is_empty() || api_key.trim().is_empty() {
-        tracing::warn!(
-            "Skipping WhatsApp notifications because api_key or phone_number_id is empty"
-        );
-        return Vec::new();
+    match phone_number_id.trim().is_empty() || api_key.trim().is_empty() {
+        true => {
+            tracing::warn!(
+                "Skipping WhatsApp notifications because api_key or phone_number_id is empty"
+            );
+            return Vec::new();
+        }
+        false => {}
     }
 
     targets
@@ -204,45 +208,55 @@ pub(crate) fn build_external_notification_requests(
 ) -> Vec<NotificationRequest> {
     let mut requests = Vec::new();
 
-    if let Some(tg_config) = &config.channels.telegram {
-        if tg_config.enabled {
-            if let Some(token) = configured_or_env(&tg_config.bot_token, "TELEGRAM_BOT_TOKEN") {
-                requests.extend(build_telegram_notification_requests(
-                    token,
-                    get_active_session_targets(sessions_dir, "telegram_"),
-                    msg,
-                ));
-            } else {
+    match &config.channels.telegram {
+        Some(tg_config) => match (
+            tg_config.enabled,
+            configured_or_env(&tg_config.bot_token, "TELEGRAM_BOT_TOKEN"),
+        ) {
+            (true, Some(token)) => requests.extend(build_telegram_notification_requests(
+                token,
+                get_active_session_targets(sessions_dir, "telegram_"),
+                msg,
+            )),
+            (true, None) => {
                 tracing::warn!(
                     "Skipping Telegram notifications because no bot token is configured"
                 );
             }
-        }
+            (false, _) => {}
+        },
+        None => {}
     }
 
-    if let Some(dc_config) = &config.channels.discord {
-        if dc_config.enabled {
-            if let Some(token) = configured_or_env(&dc_config.bot_token, "DISCORD_BOT_TOKEN") {
-                requests.extend(build_discord_notification_requests(
-                    token,
-                    get_active_session_targets(sessions_dir, "discord_"),
-                    msg,
-                ));
-            } else {
+    match &config.channels.discord {
+        Some(dc_config) => match (
+            dc_config.enabled,
+            configured_or_env(&dc_config.bot_token, "DISCORD_BOT_TOKEN"),
+        ) {
+            (true, Some(token)) => requests.extend(build_discord_notification_requests(
+                token,
+                get_active_session_targets(sessions_dir, "discord_"),
+                msg,
+            )),
+            (true, None) => {
                 tracing::warn!("Skipping Discord notifications because no bot token is configured");
             }
-        }
+            (false, _) => {}
+        },
+        None => {}
     }
 
-    if let Some(wa_config) = &config.channels.whatsapp {
-        if wa_config.enabled {
-            requests.extend(build_whatsapp_notification_requests(
+    match &config.channels.whatsapp {
+        Some(wa_config) => match wa_config.enabled {
+            true => requests.extend(build_whatsapp_notification_requests(
                 wa_config.api_key.clone(),
                 &wa_config.phone_number_id,
                 get_active_session_targets(sessions_dir, "whatsapp_"),
                 msg,
-            ));
-        }
+            )),
+            false => {}
+        },
+        None => {}
     }
 
     requests

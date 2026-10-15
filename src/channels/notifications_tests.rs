@@ -8,10 +8,12 @@ fn notification_target_normalization_preserves_channel_contracts() {
         "hello",
     );
     assert_eq!(telegram.len(), 1);
-    assert!(matches!(
-        &telegram[0].target,
-        NotificationTarget::Telegram { chat_id } if chat_id == "00123"
-    ));
+    assert_eq!(
+        telegram[0].target,
+        NotificationTarget::Telegram {
+            chat_id: "00123".to_string()
+        }
+    );
     assert_eq!(telegram[0].payload["chat_id"], 123);
 
     let discord = build_discord_notification_requests(
@@ -19,10 +21,12 @@ fn notification_target_normalization_preserves_channel_contracts() {
         vec!["channel-1".to_string()],
         "hello",
     );
-    assert!(matches!(
-        &discord[0].target,
-        NotificationTarget::Discord { channel_id } if channel_id == "channel-1"
-    ));
+    assert_eq!(
+        discord[0].target,
+        NotificationTarget::Discord {
+            channel_id: "channel-1".to_string()
+        }
+    );
 
     let whatsapp = build_whatsapp_notification_requests(
         "whatsapp-token".to_string(),
@@ -30,10 +34,12 @@ fn notification_target_normalization_preserves_channel_contracts() {
         vec!["15551234567".to_string()],
         "hello",
     );
-    assert!(matches!(
-        &whatsapp[0].target,
-        NotificationTarget::WhatsApp { recipient } if recipient == "15551234567"
-    ));
+    assert_eq!(
+        whatsapp[0].target,
+        NotificationTarget::WhatsApp {
+            recipient: "15551234567".to_string()
+        }
+    );
 }
 
 #[test]
