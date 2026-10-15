@@ -201,6 +201,7 @@ const GPT_CANDIDATES: &[&str] = &["openai", "opencode_zen", "openrouter"];
 const DEEPSEEK_CANDIDATES: &[&str] = &["deepseek", "opencode_zen", "openrouter"];
 const GEMINI_CANDIDATES: &[&str] = &["google_ai_studio", "opencode_zen", "openrouter"];
 const GEMMA_CANDIDATES: &[&str] = &["google_ai_studio", "openrouter", "opencode_zen"];
+const MINIMAX_CANDIDATES: &[&str] = &["minimax", "openrouter", "opencode_zen"];
 const MISTRAL_CANDIDATES: &[&str] = &["mistral", "openrouter", "opencode_zen"];
 const COHERE_CANDIDATES: &[&str] = &["cohere", "openrouter"];
 const SAMBANOVA_CANDIDATES: &[&str] = &["sambanova"];
@@ -213,6 +214,7 @@ const DEFAULT_CANDIDATES: &[&str] = &[
     "anthropic",
     "openai",
     "deepseek",
+    "minimax",
     "openrouter",
     "groq",
     "mistral",
@@ -267,31 +269,36 @@ pub fn environment_keys_for_provider(input: &str) -> &'static [&'static str] {
 
 pub fn keyword_provider_candidates(model: &str) -> &'static [&'static str] {
     let normalized = model.to_ascii_lowercase();
-    if normalized.contains("claude") {
-        CLAUDE_CANDIDATES
-    } else if normalized.contains("gpt") {
-        GPT_CANDIDATES
-    } else if normalized.contains("deepseek") {
-        DEEPSEEK_CANDIDATES
-    } else if normalized.contains("gemini") {
-        GEMINI_CANDIDATES
-    } else if normalized.contains("gemma") {
-        GEMMA_CANDIDATES
-    } else if normalized.contains("mistral") || normalized.contains("codestral") {
-        MISTRAL_CANDIDATES
-    } else if normalized.contains("command-r") || normalized.contains("command-r7") {
-        COHERE_CANDIDATES
-    } else if normalized.contains("sambanova") {
-        SAMBANOVA_CANDIDATES
-    } else if normalized.ends_with("-hf") || normalized.starts_with("meta-") {
-        HUGGINGFACE_CANDIDATES
-    } else if normalized.contains("ollama_local") {
-        OLLAMA_LOCAL_CANDIDATES
-    } else if normalized.contains("ollama") {
-        OLLAMA_CANDIDATES
-    } else {
-        DEFAULT_CANDIDATES
-    }
+    let rules: [(bool, &[&str]); 12] = [
+        (normalized.contains("claude"), CLAUDE_CANDIDATES),
+        (normalized.contains("gpt"), GPT_CANDIDATES),
+        (normalized.contains("deepseek"), DEEPSEEK_CANDIDATES),
+        (normalized.contains("gemini"), GEMINI_CANDIDATES),
+        (normalized.contains("gemma"), GEMMA_CANDIDATES),
+        (
+            normalized.contains("minimax") || normalized.starts_with("abab"),
+            MINIMAX_CANDIDATES,
+        ),
+        (
+            normalized.contains("mistral") || normalized.contains("codestral"),
+            MISTRAL_CANDIDATES,
+        ),
+        (
+            normalized.contains("command-r") || normalized.contains("command-r7"),
+            COHERE_CANDIDATES,
+        ),
+        (normalized.contains("sambanova"), SAMBANOVA_CANDIDATES),
+        (
+            normalized.ends_with("-hf") || normalized.starts_with("meta-"),
+            HUGGINGFACE_CANDIDATES,
+        ),
+        (normalized.contains("ollama_local"), OLLAMA_LOCAL_CANDIDATES),
+        (normalized.contains("ollama"), OLLAMA_CANDIDATES),
+    ];
+    rules
+        .into_iter()
+        .find_map(|(matched, candidates)| matched.then_some(candidates))
+        .unwrap_or(DEFAULT_CANDIDATES)
 }
 
 #[cfg(test)]

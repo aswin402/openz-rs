@@ -442,7 +442,14 @@ pub(crate) fn resolve_provider_for_subagent_model(
     model: &str,
 ) -> anyhow::Result<crate::providers::resolver::ResolvedProvider> {
     let mut subagent_config = config.clone();
-    subagent_config.agents.defaults.provider = "auto".to_string();
+    let has_explicit_prefix = model.contains('/');
+    let is_same_default_model = model
+        .trim()
+        .eq_ignore_ascii_case(config.agents.defaults.model.trim());
+    let should_force_auto = has_explicit_prefix || !is_same_default_model;
+    let _ = should_force_auto.then(|| {
+        subagent_config.agents.defaults.provider = "auto".to_string();
+    });
     crate::providers::resolver::resolve_provider_full(&subagent_config, model)
 }
 

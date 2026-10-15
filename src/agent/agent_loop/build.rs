@@ -150,10 +150,17 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         subagents_list
     );
 
-    let mut activity_part = String::new();
-    if let Some(activity) = crate::agent::activity::get_activity() {
-        if activity.session_id != ctx.session_key {
-            activity_part = format!(
+    let workspace_root_display = crate::tools::subagent::workspace::current_workspace_root()
+        .to_string_lossy()
+        .to_string();
+    let mut activity_part = format!(
+        "\n\n[Active Workspace]\nCurrent working directory: {} (resolve relative paths like '.' or filenames directly inside this workspace; do not assume another repository path from past sessions).",
+        workspace_root_display
+    );
+    let _ = crate::agent::activity::get_activity()
+        .filter(|activity| activity.session_id != ctx.session_key)
+        .map(|activity| {
+            activity_part.push_str(&format!(
                 "\n\n[SYSTEM NOTICE] Status of the other active/last-run session on this computer:\n\
                  * Session ID: {}\n\
                  * Status: {}\n\
@@ -163,9 +170,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 activity.status,
                 activity.current_tool.as_deref().unwrap_or("None"),
                 activity.timestamp
-            );
-        }
-    }
+            ));
+        });
 
     let caveman_rules = if config.agents.defaults.caveman_mode {
         "\n\nRespond terse like smart caveman. All technical substance stay. Only fluff die.\nRules:\n- Drop: articles (a/an/the), filler (just/really/basically), pleasantries, hedging\n- Fragments OK. Short synonyms. Technical terms exact. Code unchanged.\n- Pattern: [thing] [action] [reason]. [next step].\n- Not: \"Sure! I'd be happy to help you with that.\"\n- Yes: \"Bug in auth middleware. Fix:\""

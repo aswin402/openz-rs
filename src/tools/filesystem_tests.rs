@@ -415,8 +415,23 @@ async fn test_patch_file_fuzzy_unified_diff_and_search_replace_modes() -> Result
         "// extra comment 1\n// extra comment 2\nfn greet() {\n    println!(\"done\");\n}\n"
     );
 
+    // 4. Conflict-marker SEARCH/REPLACE block with copied Hashline prefixes (e.g. "3:a1b2| " or "1cd9| ")
+    let hashline_patch = "<<<<<<< SEARCH\n3:a1b2| fn greet() {\n4:dead|     println!(\"done\");\n5:beef| }\n=======\n3:a1b2| fn greet() {\n4:cafe|     println!(\"hashline_stripped\");\n5:beef| }\n>>>>>>> REPLACE";
+    let res4 = PatchFileTool
+        .call(&serde_json::json!({
+            "path": file_path.to_str().unwrap(),
+            "patch": hashline_patch
+        }))
+        .await?;
+    assert_eq!(res4["status"], "success");
+    assert_eq!(
+        std::fs::read_to_string(&file_path)?,
+        "// extra comment 1\n// extra comment 2\nfn greet() {\n    println!(\"hashline_stripped\");\n}\n"
+    );
+
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())
 }
+
 
 

@@ -219,3 +219,20 @@ fn test_seed_subagent_working_set_preserves_sticky_tools_across_begin_turn() {
     );
 }
 
+#[test]
+fn test_subagent_minimax_default_model_preserves_minimax_provider() {
+    let mut config = Config::default();
+    config.agents.defaults.provider = "minimax".to_string();
+    config.agents.defaults.model = "MiniMax-M2.7".to_string();
+    config.providers.minimax = Some(crate::config::schema::ProviderConfig {
+        api_key: Some("minimax-test-key".to_string()),
+        ..Default::default()
+    });
+
+    let resolved = resolve_provider_for_subagent_model(&config, "MiniMax-M2.7")
+        .expect("MiniMax-M2.7 should resolve to minimax provider");
+    assert_eq!(resolved.provider_name, "minimax");
+    assert_eq!(resolved.model, "MiniMax-M2.7");
+}
+
+

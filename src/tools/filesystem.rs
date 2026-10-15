@@ -60,6 +60,33 @@ fn normalize_expected_hash(raw: &str) -> String {
         .to_ascii_lowercase()
 }
 
+fn is_four_hex_chars(s: &str) -> bool {
+    s.len() == 4 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn is_hashline_tag(prefix: &str) -> bool {
+    let trimmed = prefix.trim_start();
+    match trimmed.split_once(':') {
+        Some((line_digits, hash_part)) => {
+            !line_digits.is_empty()
+                && line_digits.bytes().all(|b| b.is_ascii_digit())
+                && is_four_hex_chars(hash_part)
+        }
+        None => is_four_hex_chars(trimmed),
+    }
+}
+
+/// Strips a leading `Hashline` anchor prefix (`<line>:<4-hex>| ` or `<4-hex>| `)
+/// when an LLM copies anchored output from `read_file(include_hashes: true)` into
+/// `patch_file` or `replace_lines`.
+pub fn strip_hashline_line_prefix(line: &str) -> &str {
+    line.split_once('|')
+        .and_then(|(prefix, rest)| {
+            is_hashline_tag(prefix).then(|| rest.strip_prefix(' ').unwrap_or(rest))
+        })
+        .unwrap_or(line)
+}
+
 fn find_line_span_by_anchor(
     lines: &[String],
     requested_start_idx: usize,
@@ -74,7 +101,11 @@ fn find_line_span_by_anchor(
                 lines[idx..idx + span]
                     .iter()
                     .zip(anchor_lines.iter())
-                    .all(|(file_line, anchor_line)| file_line.trim_end_matches('\r') == anchor_line.trim_end_matches('\r'))
+                    .all(|(file_line, anchor_line)| {
+                        let f_clean = file_line.trim_end_matches('\r');
+                        let a_clean = anchor_line.trim_end_matches('\r');
+                        f_clean == a_clean || f_clean == strip_hashline_line_prefix(a_clean)
+                    })
             })
             .min_by_key(|&idx| idx.abs_diff(requested_start_idx));
 
@@ -85,7 +116,11 @@ fn find_line_span_by_anchor(
                         lines[idx..idx + span]
                             .iter()
                             .zip(anchor_lines.iter())
-                            .all(|(file_line, anchor_line)| file_line.trim() == anchor_line.trim())
+                            .all(|(file_line, anchor_line)| {
+                                let f_trim = file_line.trim();
+                                f_trim == anchor_line.trim()
+                                    || f_trim == strip_hashline_line_prefix(anchor_line).trim()
+                            })
                     })
                     .min_by_key(|&idx| idx.abs_diff(requested_start_idx))
             })
@@ -209,14 +244,20 @@ fn apply_single_search_replace(content: &str, edit: &SearchReplaceEdit) -> Resul
                             file_lines[idx..idx + span]
                                 .iter()
                                 .zip(target_lines.iter())
-                                .all(|(a, b)| a.trim_end() == b.trim_end())
+                                .all(|(a, b)| {
+                                    a.trim_end() == b.trim_end()
+                                        || a.trim_end() == strip_hashline_line_prefix(b).trim_end()
+                                })
                         })
                         .or_else(|| {
                             (0..=max_start).find(|&idx| {
                                 file_lines[idx..idx + span]
                                     .iter()
                                     .zip(target_lines.iter())
-                                    .all(|(a, b)| a.trim() == b.trim())
+                                    .all(|(a, b)| {
+                                        a.trim() == b.trim()
+                                            || a.trim() == strip_hashline_line_prefix(b).trim()
+                                    })
                             })
                         })
                 })
@@ -225,7 +266,11 @@ fn apply_single_search_replace(content: &str, edit: &SearchReplaceEdit) -> Resul
 
             let mut updated_lines = Vec::with_capacity(file_lines.len() + edit.replacement.lines().count());
             updated_lines.extend(file_lines[..matched_start].iter().cloned());
-            updated_lines.extend(edit.replacement.lines().map(|l| l.to_string()));
+            updated_lines.extend(
+                edit.replacement
+                    .lines()
+                    .map(|l| strip_hashline_line_prefix(l).to_string()),
+            );
             updated_lines.extend(file_lines[matched_start + span..].iter().cloned());
 
             let mut joined = updated_lines.join("\n");

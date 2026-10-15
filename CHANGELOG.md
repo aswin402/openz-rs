@@ -1,5 +1,38 @@
-## [0.0.255] - 2026-10-15
-### v0.0.255 (Latest Release)
+## [0.0.256] - 2026-10-15
+### v0.0.256 (Latest Release)
+
+#### Added
+- **`Hashline`-Prefix Tolerance in `patch_file` & `replace_lines` ([`src/tools/filesystem.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem.rs))**: Added `strip_hashline_line_prefix()`, `is_hashline_tag()`, and `is_four_hex_chars()` (`0` `if/else`, `0` `regex`) so when an LLM reads a file with `read_file(include_hashes: true)` and copies `LINE:HASH| ` or `HASH| ` prefixes into `patch_file` (`<<<<<<< SEARCH` / `target` / `replacement`) or `replace_lines` (`anchor_text`), the edit succeeds on the first turn without requiring a retry turn.
+- **Active Workspace Directory Grounding in `DynamicPromptSuffix` ([`src/agent/agent_loop/build.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs))**: Injected `[Active Workspace]` (`current_workspace_root()`) into the dynamic prompt suffix so the agent and subagents always resolve relative paths against the active working directory rather than assuming stale repository paths from cross-session memory.
+
+#### Fixed
+- **Subagent Provider Routing for `MiniMax` & Configured Default Models ([`src/config/provider_catalog.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/provider_catalog.rs), [`src/tools/subagent/runner.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/runner.rs))**: Added `MINIMAX_CANDIDATES` (`minimax` / `abab` keyword matching) and `"minimax"` in `DEFAULT_CANDIDATES` using a table-driven `find_map` (`0` `if/else`), and updated `resolve_provider_for_subagent_model()` to preserve `config.agents.defaults.provider` when the subagent model matches the configured default model without a provider prefix, fixing a bug uncovered during live agent testing where `MiniMax-M2.7` subagents fell through to `openai`.
+
+#### Documentation
+- **Synchronized Release Manifests**: Updated [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md), and [`CHANGELOG.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/CHANGELOG.md) to `0.0.256`.
+
+### Sources & Inspirations
+- **[Inspiration]**: Live real-world `openz run -y` telemetry with `MiniMax-M2.7` exercising `read_file(include_hashes: true)`, `patch_file`, `replace_lines`, `tool_catalog.batch_execute`, and `delegate_task`.
+
+- **Ideas**:
+  - Automatic `Hashline` Prefix Stripping in Edit Tools, Subagent Provider Preservation & MiniMax Keyword Routing, and Active Workspace Prompt Grounding.
+- **Inspirations**:
+  - Oh My Pi (`omp`) `Hashline` edit ergonomics and real-world live agent execution traces (`0` `if/else`, `0` `regex`).
+- **Sources & References**:
+  - [`src/tools/filesystem.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem.rs), [`src/tools/filesystem_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem_tests.rs)
+  - [`src/config/provider_catalog.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/provider_catalog.rs)
+  - [`src/tools/subagent/runner.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/runner.rs), [`src/tools/subagent/runner_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/runner_tests.rs)
+  - [`src/agent/agent_loop/build.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/build.rs)
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Synchronous SemVer increment to `0.0.256`.
+- **Details & Metrics**:
+  - Achieved `0` `if/else` statements and `0` `regex` across all added/modified lines in `filesystem.rs`, `provider_catalog.rs`, `runner.rs`, and `build.rs`.
+  - Maintained the 260 registered native tools invariant (`test_native_tool_registration_names`).
+- **Verification**:
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 1 -- test_patch_file_fuzzy_unified_diff_and_search_replace_modes`: PASS (1/1).
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 1 -- test_subagent_minimax_default_model_preserves_minimax_provider`: PASS (1/1).
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 1 -- release_version_surfaces_match_cargo_package_version`: PASS (1/1).
+
+### v0.0.255 — 2026-10-15
 
 #### Added
 - **`cargo-pretty` Live Unit-Graph TUI & Built-In Animated Fallback in [`localupdate.sh`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/localupdate.sh) & [`localinstall.sh`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/localinstall.sh)**: Integrated [`romancitodev/cargo-pretty`](https://github.com/romancitodev/cargo-pretty) (`cargo pretty build --bin openz --locked ...`) for interactive TTY builds alongside a built-in `cargo-pretty`-styled ANSI live status renderer (`run_builtin_cargo_pretty_tui()`, `render_rust_progress_bar()`, `#C1440E → #E8834E → #F6C9A0 → #FFFFFF` Rust color ramp, active `Compiling` viewport, and 4-row fading `Compiled` history), animated braille pipeline step runners (`run_pipeline_step()`), and a boxed post-install telemetry summary card (`render_summary_card()`).
