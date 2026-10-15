@@ -2,7 +2,14 @@ use crate::agent::style::*;
 use crate::println;
 use std::io::{stdout, Write};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
+
+pub use crate::agent::style::markdown::{
+    char_display_width, clean_cell_text as shared_clean_cell_text, compute_table_column_widths,
+    horizontal_divider, is_divider_row, is_table_row, provider_display_name, split_row,
+    str_display_width, terminal_width_or_default, text_display_width, tokenize_inline_markdown,
+    wrap_display_text as wrap_text, InlineSegment, OPENZ_BANNER_PARTS,
+};
 
 pub static CUSTOM_CONTEXT_LIMIT: Mutex<Option<usize>> = Mutex::new(None);
 static MCP_SPIN: AtomicU32 = AtomicU32::new(0);
@@ -28,632 +35,385 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/workflows", "Search reusable workflows"),
 ];
 
-pub(super) fn char_display_width(c: char) -> usize {
-    let cp = c as u32;
-    if cp == 0xFE0F {
-        0
-    } else if (0x1F000..=0x1FBF9).contains(&cp)
-        || c == '⬢'
-        || c == '🗑'
-        || c == '📊'
-        || c == '✅'
-        || c == '❌'
-        || c == '⚠'
-        || c == '⚡'
-        || c == 'ℹ'
-    {
-        2
-    } else {
-        1
-    }
-}
-
-fn str_display_width(s: &str) -> usize {
-    s.chars().map(char_display_width).sum()
-}
-
-fn cli_re_ansi() -> Option<&'static regex::Regex> {
-    static RE: OnceLock<Option<regex::Regex>> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r"\x1B\[[0-9;]*[a-zA-Z]").ok())
-        .as_ref()
-}
-
-fn cli_re_bold() -> Option<&'static regex::Regex> {
-    static RE: OnceLock<Option<regex::Regex>> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r"\*\*(.*?)\*\*").ok())
-        .as_ref()
-}
-
-fn cli_re_code() -> Option<&'static regex::Regex> {
-    static RE: OnceLock<Option<regex::Regex>> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r"`(.*?)`").ok())
-        .as_ref()
-}
-
-fn cli_re_italic() -> Option<&'static regex::Regex> {
-    static RE: OnceLock<Option<regex::Regex>> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r"\*(.*?)\*").ok())
-        .as_ref()
-}
-
-fn text_display_width(text: &str) -> usize {
-    let mut cleaned = text.to_string();
-    if let Some(re) = cli_re_ansi() {
-        cleaned = re.replace_all(&cleaned, "").to_string();
-    }
-    if let Some(re) = cli_re_bold() {
-        cleaned = re.replace_all(&cleaned, "$1").to_string();
-    }
-    if let Some(re) = cli_re_code() {
-        cleaned = re.replace_all(&cleaned, "$1").to_string();
-    }
-    if let Some(re) = cli_re_italic() {
-        cleaned = re.replace_all(&cleaned, "$1").to_string();
-    }
-    str_display_width(&cleaned)
-}
-
-fn is_table_row(line: &str) -> bool {
-    let trimmed = line.trim();
-    trimmed.contains('|') && !is_divider_row(line)
-}
-
-fn is_divider_row(line: &str) -> bool {
-    let trimmed = line.trim();
-    if trimmed.is_empty() || !trimmed.contains('|') {
-        return false;
-    }
-    trimmed
-        .chars()
-        .all(|c| c == '|' || c == '-' || c == ':' || c.is_whitespace())
-}
-
-fn split_row(line: &str) -> Vec<String> {
-    let mut trimmed = line.trim();
-    if trimmed.is_empty() {
-        return Vec::new();
-    }
-    if trimmed.starts_with('|') {
-        trimmed = trimmed[1..].trim();
-    }
-    if trimmed.ends_with('|') {
-        trimmed = trimmed[..trimmed.len() - 1].trim();
-    }
-    let mut cells = Vec::new();
-    let mut current = String::new();
-    let mut chars = trimmed.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            if let Some(&'|') = chars.peek() {
-                current.push('|');
-                chars.next();
-            } else {
-                current.push('\\');
-            }
-        } else if c == '|' {
-            cells.push(current.trim().to_string());
-            current.clear();
-        } else {
-            current.push(c);
-        }
-    }
-    cells.push(current.trim().to_string());
-    cells
-}
-
-fn wrap_text(text: &str, max_width: usize) -> Vec<String> {
-    if max_width == 0 {
-        return vec![text.to_string()];
-    }
-    let mut lines = Vec::new();
-    for paragraph in text.split('\n') {
-        let mut current_line = String::new();
-        let mut current_width = 0;
-
-        for word in paragraph.split_whitespace() {
-            let word_width = text_display_width(word);
-
-            if current_line.is_empty() {
-                if word_width <= max_width {
-                    current_line.push_str(word);
-                    current_width = word_width;
-                } else {
-                    let mut w_chars = word.chars().peekable();
-                    while w_chars.peek().is_some() {
-                        let mut chunk = String::new();
-                        let mut chunk_w = 0;
-                        while let Some(&c) = w_chars.peek() {
-                            let cw = char_display_width(c);
-                            if chunk_w + cw > max_width && chunk_w > 0 {
-                                break;
-                            }
-                            chunk.push(c);
-                            chunk_w += cw;
-                            w_chars.next();
-                        }
-                        lines.push(chunk);
-                    }
-                }
-            } else {
-                let space_width = 1;
-                if current_width + space_width + word_width <= max_width {
-                    current_line.push(' ');
-                    current_line.push_str(word);
-                    current_width += space_width + word_width;
-                } else {
-                    lines.push(current_line);
-                    current_line = String::new();
-                    current_width = 0;
-
-                    if word_width <= max_width {
-                        current_line.push_str(word);
-                        current_width = word_width;
-                    } else {
-                        let mut w_chars = word.chars().peekable();
-                        while w_chars.peek().is_some() {
-                            let mut chunk = String::new();
-                            let mut chunk_w = 0;
-                            while let Some(&c) = w_chars.peek() {
-                                let cw = char_display_width(c);
-                                if chunk_w + cw > max_width && chunk_w > 0 {
-                                    break;
-                                }
-                                chunk.push(c);
-                                chunk_w += cw;
-                                w_chars.next();
-                            }
-                            if w_chars.peek().is_some() {
-                                lines.push(chunk);
-                            } else {
-                                current_line = chunk;
-                                current_width = chunk_w;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if !current_line.is_empty() {
-            lines.push(current_line);
-        }
-        if lines.is_empty() && paragraph.is_empty() {
-            lines.push(String::new());
-        }
-    }
-
-    if lines.is_empty() {
-        lines.push(String::new());
-    }
-    lines
+fn colorize_status_glyphs(text: &str) -> String {
+    text.replace('✔', &format!("{}✔{}", EMERALD_GREEN, COLOR_RESET))
+        .replace('✅', &format!("{}✅{}", EMERALD_GREEN, COLOR_RESET))
+        .replace('✓', &format!("{}✓{}", EMERALD_GREEN, COLOR_RESET))
+        .replace('✖', &format!("{}✖{}", ERROR_RED, COLOR_RESET))
+        .replace('❌', &format!("{}❌{}", ERROR_RED, COLOR_RESET))
+        .replace('✗', &format!("{}✗{}", ERROR_RED, COLOR_RESET))
 }
 
 fn format_cell_text(text: &str) -> String {
-    let light_blue = "\x1b[38;2;135;206;250m";
-    let mut formatted = text.to_string();
-
-    formatted = formatted
-        .replace("✔", &format!("{}{}{}", EMERALD_GREEN, "✔", COLOR_RESET))
-        .replace("✅", &format!("{}{}{}", EMERALD_GREEN, "✅", COLOR_RESET))
-        .replace("✓", &format!("{}{}{}", EMERALD_GREEN, "✓", COLOR_RESET))
-        .replace("✖", &format!("{}{}{}", ERROR_RED, "✖", COLOR_RESET))
-        .replace("❌", &format!("{}{}{}", ERROR_RED, "❌", COLOR_RESET))
-        .replace("✗", &format!("{}{}{}", ERROR_RED, "✗", COLOR_RESET));
-
-    if let Some(re) = cli_re_bold() {
-        formatted = re
-            .replace_all(
-                &formatted,
-                &format!("{}{}$1{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET),
-            )
-            .to_string();
-    }
-    if let Some(re) = cli_re_code() {
-        formatted = re
-            .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
-            .to_string();
-    }
-    if let Some(re) = cli_re_italic() {
-        formatted = re
-            .replace_all(&formatted, &format!("{}$1{}", light_blue, COLOR_RESET))
-            .to_string();
-    }
-
-    formatted
+    tokenize_inline_markdown(&colorize_status_glyphs(text))
+        .into_iter()
+        .map(|seg| match seg {
+            InlineSegment::Plain(s) => s,
+            InlineSegment::Bold(s) => format!("{}{}{}{}", RED_ORANGE, COLOR_BOLD, s, COLOR_RESET),
+            InlineSegment::Code(s) | InlineSegment::Italic(s) => {
+                format!("{}{}{}", LIGHT_BLUE, s, COLOR_RESET)
+            }
+        })
+        .collect::<Vec<String>>()
+        .join("")
 }
 
 pub fn format_markdown_line(line: &str) -> String {
     let trimmed = line.trim();
-    if trimmed.chars().all(|c| c == '-') && trimmed.len() >= 3 && !trimmed.is_empty() {
-        return format!("{}──────{}", LIGHT_WHITE, COLOR_RESET);
+    let is_hr = trimmed.len() >= 3 && trimmed.chars().all(|c| c == '-');
+    let is_heading = line.trim_start().starts_with('#');
+    match (is_hr, is_heading) {
+        (true, _) => format!("{}──────{}", LIGHT_WHITE, COLOR_RESET),
+        (false, true) => format!("{}{}{}", HEADING_BLUE, line, COLOR_RESET),
+        (false, false) => format_cell_text(line),
     }
-
-    if line.trim_start().starts_with('#') {
-        return format!("{}{}{}", HEADING_BLUE, line, COLOR_RESET);
-    }
-
-    format_cell_text(line)
 }
 
 pub fn print_normal_line(line: &str) {
     let formatted = format_markdown_line(line);
-    print!("{}\r\n", formatted);
+    std::print!("{}\r\n", formatted);
     let _ = std::io::stdout().flush();
 }
 
 fn clean_cell_text(text: &str) -> String {
-    let mut cleaned = text.trim();
-    while let Some(rest) = cleaned.strip_prefix('|') {
-        cleaned = rest.trim();
-    }
-    while let Some(rest) = cleaned.strip_suffix('|') {
-        cleaned = rest.trim();
-    }
-    if let Some(inner) = cleaned
-        .strip_prefix("**")
-        .and_then(|s| s.strip_suffix("**"))
-    {
-        cleaned = inner.trim();
-    }
-    if let Some(inner) = cleaned.strip_prefix('*').and_then(|s| s.strip_suffix('*')) {
-        cleaned = inner.trim();
-    }
-    cleaned.to_string()
+    shared_clean_cell_text(text, true)
 }
 
 pub fn render_table_lines(table_lines: &[&str]) -> Vec<String> {
-    if table_lines.len() < 2 {
-        return table_lines.iter().map(|l| format_markdown_line(l)).collect();
-    }
-
-    let headers: Vec<String> = split_row(table_lines[0])
-        .into_iter()
-        .map(|h| clean_cell_text(&h))
-        .collect();
+    let headers: Vec<String> = table_lines
+        .first()
+        .map(|first| {
+            split_row(first)
+                .into_iter()
+                .map(|h| clean_cell_text(&h))
+                .collect()
+        })
+        .unwrap_or_default();
     let num_cols = headers.len();
-    if num_cols == 0 {
-        return table_lines.iter().map(|l| format_markdown_line(l)).collect();
-    }
 
-    let mut data_rows = Vec::new();
-    for &line in &table_lines[2..] {
-        let mut cells = split_row(line);
-        while cells.len() < num_cols {
-            cells.push(String::new());
-        }
-        cells.truncate(num_cols);
-        data_rows.push(cells);
-    }
+    match (table_lines.len() >= 2, num_cols > 0) {
+        (false, _) | (_, false) => table_lines.iter().map(|l| format_markdown_line(l)).collect(),
+        (true, true) => {
+            let data_rows: Vec<Vec<String>> = table_lines[2..]
+                .iter()
+                .map(|&line| {
+                    let mut cells = split_row(line);
+                    cells.resize(num_cols, String::new());
+                    cells
+                })
+                .collect();
 
-    let term_width = if let Ok((w, _)) = crossterm::terminal::size() {
-        w as usize
-    } else {
-        80
-    };
+            let term_width = terminal_width_or_default(80);
+            let separator_overhead = 3 * (num_cols - 1);
+            let available_width = term_width
+                .saturating_sub(separator_overhead)
+                .saturating_sub(2);
 
-    let separator_overhead = 3 * (num_cols - 1);
-    let available_width = term_width
-        .saturating_sub(separator_overhead)
-        .saturating_sub(2);
+            let max_content_widths: Vec<usize> = (0..num_cols)
+                .map(|col| {
+                    data_rows
+                        .iter()
+                        .map(|row| text_display_width(&row[col]))
+                        .fold(text_display_width(&headers[col]), usize::max)
+                        .max(3)
+                })
+                .collect();
 
-    let mut max_content_widths = vec![0; num_cols];
-    for col in 0..num_cols {
-        let mut max_w = text_display_width(&headers[col]);
-        for row in &data_rows {
-            max_w = max_w.max(text_display_width(&row[col]));
-        }
-        max_content_widths[col] = max_w.max(3);
-    }
+            let col_widths = compute_table_column_widths(&max_content_widths, available_width, 10);
 
-    let total_content_width: usize = max_content_widths.iter().sum();
-    let mut col_widths = max_content_widths.clone();
-
-    if total_content_width > available_width {
-        let mut remaining_width = available_width;
-        let mut large_cols = Vec::new();
-
-        for col in 0..num_cols {
-            if max_content_widths[col] <= 15 {
-                col_widths[col] = max_content_widths[col];
-                remaining_width = remaining_width.saturating_sub(col_widths[col]);
-            } else {
-                large_cols.push(col);
-            }
-        }
-
-        if !large_cols.is_empty() {
-            let equal_share = remaining_width / large_cols.len();
-            let mut extra = remaining_width % large_cols.len();
-            for &col in &large_cols {
-                let share = equal_share
-                    + if extra > 0 {
-                        extra -= 1;
-                        1
-                    } else {
-                        0
+            let divider_segments: Vec<String> = (0..num_cols)
+                .map(|col| {
+                    let extra_pad = match col == 0 || col == num_cols - 1 {
+                        true => 1,
+                        false => 2,
                     };
-                col_widths[col] = share.max(10);
+                    "─".repeat(col_widths[col] + extra_pad)
+                })
+                .collect();
+            let divider = divider_segments.join("┼");
+
+            let separator = format!(" {}│{} ", LIGHT_WHITE, COLOR_RESET);
+            let divider_colored = format!("{}{}{}", LIGHT_WHITE, divider, COLOR_RESET);
+
+            let header_cell_lines: Vec<Vec<String>> = (0..num_cols)
+                .map(|col| wrap_text(&headers[col], col_widths[col]))
+                .collect();
+            let max_header_lines = header_cell_lines
+                .iter()
+                .map(Vec::len)
+                .max()
+                .unwrap_or(1)
+                .max(1);
+
+            let mut result_lines = Vec::new();
+            for line_idx in 0..max_header_lines {
+                let header_line_parts: Vec<String> = (0..num_cols)
+                    .map(|col| {
+                        let text = header_cell_lines[col]
+                            .get(line_idx)
+                            .cloned()
+                            .unwrap_or_default();
+                        let visible_w = text_display_width(&text);
+                        let padding_len = col_widths[col].saturating_sub(visible_w);
+                        let formatted = format_cell_text(&text);
+                        format!(
+                            "{}{}{}{}{}",
+                            HEADING_BLUE,
+                            COLOR_BOLD,
+                            formatted,
+                            COLOR_RESET,
+                            " ".repeat(padding_len)
+                        )
+                    })
+                    .collect();
+                result_lines.push(header_line_parts.join(&separator));
             }
-        }
-    }
 
-    let mut divider = String::new();
-    for col in 0..num_cols {
-        if col == 0 {
-            divider.push_str(&"─".repeat(col_widths[0] + 1));
-        } else if col == num_cols - 1 {
-            divider.push_str(&"─".repeat(col_widths[col] + 1));
-        } else {
-            divider.push_str(&"─".repeat(col_widths[col] + 2));
-        }
-        if col < num_cols - 1 {
-            divider.push('┼');
-        }
-    }
+            result_lines.push(divider_colored);
 
-    let separator = format!(" {}│{} ", LIGHT_WHITE, COLOR_RESET);
-    let divider_colored = format!("{}{}{}", LIGHT_WHITE, divider, COLOR_RESET);
+            for row in data_rows {
+                let cell_lines: Vec<Vec<String>> = (0..num_cols)
+                    .map(|col| wrap_text(&row[col], col_widths[col]))
+                    .collect();
+                let max_lines = cell_lines.iter().map(Vec::len).max().unwrap_or(1).max(1);
 
-    let mut header_cell_lines = Vec::new();
-    let mut max_header_lines = 1;
-    for col in 0..num_cols {
-        let lines = wrap_text(&headers[col], col_widths[col]);
-        max_header_lines = max_header_lines.max(lines.len());
-        header_cell_lines.push(lines);
-    }
-
-    let mut result_lines = Vec::new();
-
-    for line_idx in 0..max_header_lines {
-        let mut header_line_parts = Vec::new();
-        for col in 0..num_cols {
-            let text = header_cell_lines[col]
-                .get(line_idx)
-                .cloned()
-                .unwrap_or_default();
-            let visible_w = text_display_width(&text);
-            let padding_len = col_widths[col].saturating_sub(visible_w);
-            let formatted = format_cell_text(&text);
-            let colored = format!(
-                "{}{}{}{}{}",
-                HEADING_BLUE,
-                COLOR_BOLD,
-                formatted,
-                COLOR_RESET,
-                " ".repeat(padding_len)
-            );
-            header_line_parts.push(colored);
-        }
-        result_lines.push(header_line_parts.join(&separator));
-    }
-
-    result_lines.push(divider_colored);
-
-    for row in data_rows {
-        let mut cell_lines = Vec::new();
-        let mut max_lines = 1;
-        for col in 0..num_cols {
-            let lines = wrap_text(&row[col], col_widths[col]);
-            max_lines = max_lines.max(lines.len());
-            cell_lines.push(lines);
-        }
-
-        for line_idx in 0..max_lines {
-            let mut row_line_parts = Vec::new();
-            for col in 0..num_cols {
-                let text = cell_lines[col].get(line_idx).cloned().unwrap_or_default();
-                let visible_w = text_display_width(&text);
-                let padding_len = col_widths[col].saturating_sub(visible_w);
-                let formatted = format_cell_text(&text);
-                let padded = format!("{}{}", formatted, " ".repeat(padding_len));
-                row_line_parts.push(padded);
+                for line_idx in 0..max_lines {
+                    let row_line_parts: Vec<String> = (0..num_cols)
+                        .map(|col| {
+                            let text = cell_lines[col].get(line_idx).cloned().unwrap_or_default();
+                            let visible_w = text_display_width(&text);
+                            let padding_len = col_widths[col].saturating_sub(visible_w);
+                            let formatted = format_cell_text(&text);
+                            format!("{}{}", formatted, " ".repeat(padding_len))
+                        })
+                        .collect();
+                    result_lines.push(row_line_parts.join(&separator));
+                }
             }
-            result_lines.push(row_line_parts.join(&separator));
+
+            result_lines
         }
     }
-
-    result_lines
 }
 
 pub fn render_table(table_lines: &[&str]) {
     for line in render_table_lines(table_lines) {
-        print!("{}\r\n", line);
+        std::print!("{}\r\n", line);
     }
     let _ = std::io::stdout().flush();
 }
 
 pub fn print_session_history(session: &crate::session::Session) {
-    if session.messages.is_empty() {
-        return;
-    }
-    println!("{}=== Session History ==={}", COLOR_BOLD, COLOR_RESET);
+    (!session.messages.is_empty()).then(|| {
+        println!("{}=== Session History ==={}", COLOR_BOLD, COLOR_RESET);
+        let divider = horizontal_divider(terminal_width_or_default(60).min(60));
 
-    // Build a map of tool_call_id -> (tool_name, tool_arguments)
-    let mut tool_calls_map = std::collections::HashMap::new();
-    for msg in &session.messages {
-        if let Some(tool_calls) = msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
-            for tc in tool_calls {
-                if let (Some(id), Some(name)) = (
-                    tc.get("id").and_then(|v| v.as_str()),
-                    tc.get("function")
-                        .and_then(|f| f.get("name"))
-                        .and_then(|v| v.as_str()),
-                ) {
-                    let args = tc
-                        .get("function")
-                        .and_then(|f| f.get("arguments"))
-                        .cloned()
-                        .unwrap_or(serde_json::Value::Null);
-                    tool_calls_map.insert(id.to_string(), (name.to_string(), args));
-                }
-            }
+        let mut tool_calls_map = std::collections::HashMap::new();
+        for msg in &session.messages {
+            msg.extra
+                .get("tool_calls")
+                .and_then(|v| v.as_array())
+                .map(|tool_calls| {
+                    for tc in tool_calls {
+                        let id_opt = tc.get("id").and_then(|v| v.as_str());
+                        let name_opt = tc
+                            .get("function")
+                            .and_then(|f| f.get("name"))
+                            .and_then(|v| v.as_str());
+                        id_opt.zip(name_opt).map(|(id, name)| {
+                            let args = tc
+                                .get("function")
+                                .and_then(|f| f.get("arguments"))
+                                .cloned()
+                                .unwrap_or(serde_json::Value::Null);
+                            tool_calls_map.insert(id.to_string(), (name.to_string(), args));
+                        });
+                    }
+                });
         }
-    }
 
-    let mut first_user = true;
-    for msg in &session.messages {
-        let content = msg.content.trim();
-
-        match msg.role.as_str() {
-            "user" => {
-                if !content.is_empty() {
-                    if !first_user {
-                        println!(
-                            "{}────────────────────────────────────────────────────────────{}",
-                            LIGHT_WHITE, COLOR_RESET
-                        );
-                    }
-                    first_user = false;
-
-                    let lines: Vec<&str> = content.lines().collect();
-                    for (idx, line) in lines.iter().enumerate() {
-                        let prefix = if idx == 0 { "> " } else { "- " };
-                        println!("{}{}{}{}", COLOR_BOLD, AURA_SLATE, prefix, line);
-                    }
+        let mut first_user = true;
+        for msg in &session.messages {
+            let content = msg.content.trim();
+            match msg.role.as_str() {
+                "user" => {
+                    (!content.is_empty()).then(|| {
+                        (!first_user).then(|| {
+                            println!("{}{}{}", LIGHT_WHITE, divider, COLOR_RESET);
+                        });
+                        first_user = false;
+                        for (idx, line) in content.lines().enumerate() {
+                            let prefix = match idx == 0 {
+                                true => "> ",
+                                false => "- ",
+                            };
+                            println!("{}{}{}{}", COLOR_BOLD, AURA_SLATE, prefix, line);
+                        }
+                    });
                 }
-            }
-            "assistant" => {
-                // 1. Print thoughts / reasoning_content if any
-                if let Some(reasoning_val) = msg.extra.get("reasoning_content") {
-                    if let Some(reasoning_str) = reasoning_val.as_str() {
-                        let trimmed_reasoning = reasoning_str.trim();
-                        if !trimmed_reasoning.is_empty() {
+                "assistant" => {
+                    msg.extra
+                        .get("reasoning_content")
+                        .and_then(|v| v.as_str())
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(|trimmed_reasoning| {
                             println!("{}• {}Thought{}", RED_ORANGE, COLOR_BOLD, COLOR_RESET);
                             crate::agent::style::print_tree_monologue("  L ", trimmed_reasoning);
                             println!();
+                        });
+
+                    (!content.is_empty()).then(|| {
+                        print_colored_markdown(content);
+                        println!();
+                    });
+                }
+                "tool" => {
+                    let tool_call_id = msg
+                        .extra
+                        .get("tool_call_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let leaf_prefix = "  L ";
+
+                    match tool_calls_map.get(tool_call_id) {
+                        Some((name, args_val)) => {
+                            let skip = crate::agent::style::is_profile_subagent(name)
+                                || name == "parallel_research";
+                            (!skip).then(|| {
+                                let parsed_args = args_val
+                                    .as_str()
+                                    .and_then(|s| serde_json::from_str(s).ok())
+                                    .unwrap_or_else(|| args_val.clone());
+
+                                let formatted_args =
+                                    crate::agent::agent_loop::tool_execution::format_tool_args(
+                                        name,
+                                        &parsed_args,
+                                    );
+                                let title = crate::agent::style::get_tool_clean_name(name);
+                                let details =
+                                    crate::agent::style::clean_tool_args_msg(name, &formatted_args);
+
+                                match details.is_empty() {
+                                    true => println!(
+                                        "{}• {}{}{}{}{}",
+                                        RED_ORANGE,
+                                        COLOR_RESET,
+                                        COLOR_BOLD,
+                                        LIGHT_WHITE,
+                                        title,
+                                        COLOR_RESET
+                                    ),
+                                    false => println!(
+                                        "{}• {}{}{}{} {}{}{}{}",
+                                        RED_ORANGE,
+                                        COLOR_RESET,
+                                        COLOR_BOLD,
+                                        LIGHT_WHITE,
+                                        title,
+                                        COLOR_RESET,
+                                        AURA_SLATE,
+                                        details,
+                                        COLOR_RESET
+                                    ),
+                                }
+
+                                crate::agent::security::SecurityGuard::is_sensitive(
+                                    name,
+                                    &parsed_args,
+                                )
+                                .then(|| {
+                                    println!(
+                                        "{}> Authorize execution?: {}{}Approve (Allow once){}",
+                                        COLOR_BOLD, COLOR_RESET, RED_ORANGE, COLOR_RESET
+                                    );
+                                });
+
+                                let outcome_val: serde_json::Value = serde_json::from_str(content)
+                                    .unwrap_or_else(|_| {
+                                        serde_json::json!({
+                                            "status": "success",
+                                            "output": content
+                                        })
+                                    });
+
+                                let summary = crate::agent::style::format_tool_outcome_summary(
+                                    name,
+                                    &parsed_args,
+                                    &outcome_val,
+                                );
+
+                                let has_symbol = summary.contains('\u{2713}')
+                                    || summary.contains('\u{2715}')
+                                    || matches!(
+                                        name.as_str(),
+                                        "write_file" | "patch_file" | "replace_lines"
+                                    );
+                                match has_symbol {
+                                    true => {
+                                        println!(
+                                            "{}{}{}{}",
+                                            AURA_SLATE, leaf_prefix, COLOR_RESET, summary
+                                        );
+                                    }
+                                    false => {
+                                        println!(
+                                            "{}{}{}✓ {}{}",
+                                            AURA_SLATE,
+                                            leaf_prefix,
+                                            AURA_GREEN,
+                                            summary,
+                                            COLOR_RESET
+                                        );
+                                    }
+                                }
+                            });
+                        }
+                        None => {
+                            let name = msg
+                                .extra
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Tool");
+                            let summary = match content.len() > 100 {
+                                true => format!("{}...", &content[..100]),
+                                false => content.to_string(),
+                            };
+                            println!(
+                                "{}{}{}✓ {}: {}{}",
+                                AURA_SLATE, leaf_prefix, AURA_GREEN, name, summary, COLOR_RESET
+                            );
                         }
                     }
                 }
-
-                // 2. Print assistant message content if any
-                if !content.is_empty() {
-                    print_colored_markdown(content);
-                    println!();
-                }
-            }
-            "tool" => {
-                let tool_call_id = msg
-                    .extra
-                    .get("tool_call_id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let leaf_prefix = "  L ";
-
-                if let Some((name, args_val)) = tool_calls_map.get(tool_call_id) {
-                    if crate::agent::style::is_profile_subagent(name) || name == "parallel_research"
-                    {
-                        continue;
-                    }
-                    let parsed_args = if let Some(s) = args_val.as_str() {
-                        serde_json::from_str(s).unwrap_or(serde_json::Value::Null)
-                    } else {
-                        args_val.clone()
-                    };
-
-                    // Print tool call header
-                    let formatted_args = crate::agent::agent_loop::tool_execution::format_tool_args(
-                        name,
-                        &parsed_args,
-                    );
-                    let title = crate::agent::style::get_tool_clean_name(name);
-                    let details = crate::agent::style::clean_tool_args_msg(name, &formatted_args);
-
-                    if details.is_empty() {
+                other => {
+                    (!content.is_empty()).then(|| {
                         println!(
-                            "{}• {}{}{}{}{}",
-                            RED_ORANGE, COLOR_RESET, COLOR_BOLD, LIGHT_WHITE, title, COLOR_RESET
+                            "{}{}:{}{} {}",
+                            AURA_SLATE, other, COLOR_BOLD, COLOR_RESET, content
                         );
-                    } else {
-                        println!(
-                            "{}• {}{}{}{} {}{}{}{}",
-                            RED_ORANGE,
-                            COLOR_RESET,
-                            COLOR_BOLD,
-                            LIGHT_WHITE,
-                            title,
-                            COLOR_RESET,
-                            AURA_SLATE,
-                            details,
-                            COLOR_RESET
-                        );
-                    }
-
-                    // Print security guard approval if sensitive
-                    if crate::agent::security::SecurityGuard::is_sensitive(name, &parsed_args) {
-                        println!(
-                            "{}> Authorize execution?: {}{}Approve (Allow once){}",
-                            COLOR_BOLD, COLOR_RESET, RED_ORANGE, COLOR_RESET
-                        );
-                    }
-
-                    let outcome_val: serde_json::Value = serde_json::from_str(content)
-                        .unwrap_or_else(|_| {
-                            serde_json::json!({
-                                "status": "success",
-                                "output": content
-                            })
-                        });
-
-                    let summary = crate::agent::style::format_tool_outcome_summary(
-                        name,
-                        &parsed_args,
-                        &outcome_val,
-                    );
-
-                    let has_symbol = summary.contains('\u{2713}') || summary.contains('\u{2715}');
-
-                    if has_symbol
-                        || name == "write_file"
-                        || name == "patch_file"
-                        || name == "replace_lines"
-                    {
-                        println!("{}{}{}{}", AURA_SLATE, leaf_prefix, COLOR_RESET, summary);
-                    } else {
-                        println!(
-                            "{}{}{}✓ {}{}",
-                            AURA_SLATE, leaf_prefix, AURA_GREEN, summary, COLOR_RESET
-                        );
-                    }
-                } else {
-                    let name = msg
-                        .extra
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("Tool");
-                    let summary = if content.len() > 100 {
-                        format!("{}...", &content[..100])
-                    } else {
-                        content.to_string()
-                    };
-                    println!(
-                        "{}{}{}✓ {}: {}{}",
-                        AURA_SLATE, leaf_prefix, AURA_GREEN, name, summary, COLOR_RESET
-                    );
-                }
-            }
-            other => {
-                if !content.is_empty() {
-                    println!(
-                        "{}{}:{}{} {}",
-                        AURA_SLATE, other, COLOR_BOLD, COLOR_RESET, content
-                    );
+                    });
                 }
             }
         }
-    }
 
-    println!(
-        "{}────────────────────────────────────────────────────────────{}",
-        LIGHT_WHITE, COLOR_RESET
-    );
+        println!("{}{}{}", LIGHT_WHITE, divider, COLOR_RESET);
+    });
+}
+
+#[derive(Debug, Clone)]
+enum StreamBlockState {
+    Normal,
+    CodeBlock,
+    PendingTable(String),
+    InTable(Vec<String>),
 }
 
 #[derive(Debug, Clone)]
 pub struct StreamingMarkdownRenderer {
     current_line: String,
-    pending_table_header: Option<String>,
-    table_lines: Vec<String>,
-    in_table: bool,
-    in_code_block: bool,
+    state: StreamBlockState,
     silent: bool,
     started: bool,
     captured_lines: Option<Vec<String>>,
@@ -663,10 +423,7 @@ impl StreamingMarkdownRenderer {
     pub fn new(silent: bool) -> Self {
         Self {
             current_line: String::new(),
-            pending_table_header: None,
-            table_lines: Vec::new(),
-            in_table: false,
-            in_code_block: false,
+            state: StreamBlockState::Normal,
             silent,
             started: false,
             captured_lines: None,
@@ -676,10 +433,7 @@ impl StreamingMarkdownRenderer {
     pub fn new_with_capture() -> Self {
         Self {
             current_line: String::new(),
-            pending_table_header: None,
-            table_lines: Vec::new(),
-            in_table: false,
-            in_code_block: false,
+            state: StreamBlockState::Normal,
             silent: true,
             started: false,
             captured_lines: Some(Vec::new()),
@@ -699,127 +453,129 @@ impl StreamingMarkdownRenderer {
     }
 
     pub fn push_chunk(&mut self, text: &str) {
-        if (self.silent && self.captured_lines.is_none()) || text.is_empty() {
-            return;
-        }
-        self.started = true;
-
-        for c in text.chars() {
-            if c == '\r' {
-                continue;
+        let should_process = !(self.silent && self.captured_lines.is_none()) && !text.is_empty();
+        should_process.then(|| {
+            self.started = true;
+            for c in text.chars() {
+                match c {
+                    '\r' => {}
+                    '\n' => {
+                        let line = std::mem::take(&mut self.current_line);
+                        self.process_completed_line(line);
+                    }
+                    other => self.current_line.push(other),
+                }
             }
-            if c == '\n' {
-                let line = std::mem::take(&mut self.current_line);
-                self.process_completed_line(line);
-            } else {
-                self.current_line.push(c);
-            }
-        }
+        });
     }
 
     fn process_completed_line(&mut self, line: String) {
-        let trimmed_start = line.trim_start();
+        let is_fence = line.trim_start().starts_with("```");
+        let is_div = is_divider_row(&line);
+        let is_row = is_table_row(&line);
+        let prev_state = std::mem::replace(&mut self.state, StreamBlockState::Normal);
 
-        if trimmed_start.starts_with("```") {
-            if self.in_table {
-                self.flush_table();
+        match (prev_state, is_fence, is_div, is_row) {
+            (StreamBlockState::CodeBlock, true, _, _) => {
+                self.output_raw_line(&line);
+                self.state = StreamBlockState::Normal;
             }
-            if let Some(header) = self.pending_table_header.take() {
+            (StreamBlockState::CodeBlock, false, _, _) => {
+                self.output_raw_line(&line);
+                self.state = StreamBlockState::CodeBlock;
+            }
+            (StreamBlockState::Normal, true, _, _) => {
+                self.output_raw_line(&line);
+                self.state = StreamBlockState::CodeBlock;
+            }
+            (StreamBlockState::PendingTable(header), true, _, _) => {
                 self.output_line(&header);
+                self.output_raw_line(&line);
+                self.state = StreamBlockState::CodeBlock;
             }
-            self.in_code_block = !self.in_code_block;
-            self.output_raw_line(&line);
-            return;
-        }
-
-        if self.in_code_block {
-            self.output_raw_line(&line);
-            return;
-        }
-
-        if self.in_table {
-            if is_table_row(&line) {
-                self.table_lines.push(line);
-            } else {
-                self.flush_table();
+            (StreamBlockState::InTable(rows), true, _, _) => {
+                self.emit_table_rows(&rows);
+                self.output_raw_line(&line);
+                self.state = StreamBlockState::CodeBlock;
+            }
+            (StreamBlockState::InTable(mut rows), false, _, true) => {
+                rows.push(line);
+                self.state = StreamBlockState::InTable(rows);
+            }
+            (StreamBlockState::InTable(rows), false, _, false) => {
+                self.emit_table_rows(&rows);
+                self.state = StreamBlockState::Normal;
                 self.process_completed_line(line);
             }
-            return;
-        }
-
-        if let Some(header) = self.pending_table_header.take() {
-            if is_divider_row(&line) {
-                self.in_table = true;
-                self.table_lines.push(header);
-                self.table_lines.push(line);
-            } else {
-                self.output_line(&header);
-                if is_table_row(&line) {
-                    self.pending_table_header = Some(line);
-                } else {
-                    self.output_line(&line);
-                }
+            (StreamBlockState::PendingTable(header), false, true, _) => {
+                self.state = StreamBlockState::InTable(vec![header, line]);
             }
-            return;
-        }
-
-        if is_table_row(&line) {
-            self.pending_table_header = Some(line);
-        } else {
-            self.output_line(&line);
+            (StreamBlockState::PendingTable(header), false, false, true) => {
+                self.output_line(&header);
+                self.state = StreamBlockState::PendingTable(line);
+            }
+            (StreamBlockState::PendingTable(header), false, false, false) => {
+                self.output_line(&header);
+                self.output_line(&line);
+                self.state = StreamBlockState::Normal;
+            }
+            (StreamBlockState::Normal, false, _, true) => {
+                self.state = StreamBlockState::PendingTable(line);
+            }
+            (StreamBlockState::Normal, false, _, false) => {
+                self.output_line(&line);
+                self.state = StreamBlockState::Normal;
+            }
         }
     }
 
-    fn flush_table(&mut self) {
-        if !self.table_lines.is_empty() {
-            let refs: Vec<&str> = self.table_lines.iter().map(|s| s.as_str()).collect();
+    fn emit_table_rows(&mut self, rows: &[String]) {
+        (!rows.is_empty()).then(|| {
+            let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
             for rendered in render_table_lines(&refs) {
-                if let Some(ref mut cap) = self.captured_lines {
-                    cap.push(rendered.clone());
-                }
-                if !self.silent {
-                    print!("{}\r\n", rendered);
-                }
+                self.captured_lines
+                    .as_mut()
+                    .map(|cap| cap.push(rendered.clone()));
+                (!self.silent).then(|| {
+                    std::print!("{}\r\n", rendered);
+                });
             }
-            if !self.silent {
+            (!self.silent).then(|| {
                 let _ = std::io::stdout().flush();
-            }
-            self.table_lines.clear();
-        }
-        self.in_table = false;
+            });
+        });
     }
 
     fn output_line(&mut self, line: &str) {
         let formatted = format_markdown_line(line);
-        if let Some(ref mut cap) = self.captured_lines {
-            cap.push(formatted.clone());
-        }
-        if !self.silent {
-            print!("{}\r\n", formatted);
+        self.captured_lines
+            .as_mut()
+            .map(|cap| cap.push(formatted.clone()));
+        (!self.silent).then(|| {
+            std::print!("{}\r\n", formatted);
             let _ = std::io::stdout().flush();
-        }
+        });
     }
 
     fn output_raw_line(&mut self, line: &str) {
-        if let Some(ref mut cap) = self.captured_lines {
-            cap.push(line.to_string());
-        }
-        if !self.silent {
-            print!("{}\r\n", line);
+        self.captured_lines
+            .as_mut()
+            .map(|cap| cap.push(line.to_string()));
+        (!self.silent).then(|| {
+            std::print!("{}\r\n", line);
             let _ = std::io::stdout().flush();
-        }
+        });
     }
 
     pub fn finish(&mut self) {
-        if !self.current_line.is_empty() {
+        (!self.current_line.is_empty()).then(|| {
             let line = std::mem::take(&mut self.current_line);
             self.process_completed_line(line);
-        }
-        if self.in_table {
-            self.flush_table();
-        }
-        if let Some(header) = self.pending_table_header.take() {
-            self.output_line(&header);
+        });
+        match std::mem::replace(&mut self.state, StreamBlockState::Normal) {
+            StreamBlockState::InTable(rows) => self.emit_table_rows(&rows),
+            StreamBlockState::PendingTable(header) => self.output_line(&header),
+            StreamBlockState::Normal | StreamBlockState::CodeBlock => {}
         }
     }
 }
@@ -830,7 +586,6 @@ pub fn print_colored_markdown(content: &str) {
     streamer.finish();
 }
 
-#[allow(clippy::too_many_arguments)]
 pub static LAST_CURSOR_LINE: std::sync::atomic::AtomicUsize =
     std::sync::atomic::AtomicUsize::new(0);
 
@@ -840,16 +595,84 @@ pub fn get_last_cursor_line() -> usize {
 
 pub fn clear_input_rendering(lines_printed: usize) {
     let prev_cursor_line = get_last_cursor_line();
-    if prev_cursor_line > 0 {
-        print!("\x1b[{}A\r", prev_cursor_line);
-    }
-    if lines_printed > 1 {
+    (prev_cursor_line > 0).then(|| {
+        std::print!("\x1b[{}A\r", prev_cursor_line);
+    });
+    (lines_printed > 1).then(|| {
         for _ in 0..(lines_printed - 1) {
-            print!("\r\n\x1b[2K");
+            std::print!("\r\n\x1b[2K");
         }
-        print!("\x1b[{}A\r", lines_printed - 1);
+        std::print!("\x1b[{}A\r", lines_printed - 1);
+    });
+    std::print!("\r\x1b[2K");
+}
+
+fn format_mcp_status_pill() -> (String, String) {
+    const SPIN_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let mcp_done = super::mcp::is_mcp_done();
+    let (mcp_loaded, mcp_failed, mcp_total) = super::mcp::get_mcp_stats();
+
+    match (mcp_done, mcp_failed > 0, mcp_loaded > 0, mcp_total > 0) {
+        (false, _, _, true) => {
+            let frame_idx = MCP_SPIN.fetch_add(1, Ordering::Relaxed) as usize % SPIN_FRAMES.len();
+            let frame = SPIN_FRAMES[frame_idx];
+            let processed = mcp_loaded + mcp_failed;
+            (
+                format!(" mcp {}/{} {}  │ ", processed, mcp_total, frame),
+                format!(
+                    " {}mcp {}{}/{} {}{}  {}│{} ",
+                    AURA_SLATE,
+                    AURA_GOLD,
+                    processed,
+                    mcp_total,
+                    frame,
+                    COLOR_RESET,
+                    AURA_SLATE,
+                    COLOR_RESET
+                ),
+            )
+        }
+        (false, _, _, false) => {
+            let frame_idx = MCP_SPIN.fetch_add(1, Ordering::Relaxed) as usize % SPIN_FRAMES.len();
+            let frame = SPIN_FRAMES[frame_idx];
+            (
+                format!(" mcp {}  │ ", frame),
+                format!(
+                    " {}mcp {}{}  {}│{} ",
+                    AURA_SLATE, frame, COLOR_RESET, AURA_SLATE, COLOR_RESET
+                ),
+            )
+        }
+        (true, false, false, _) => (
+            " mcp 0  │ ".to_string(),
+            format!(
+                " {}mcp 0{}  {}│{} ",
+                AURA_SLATE, COLOR_RESET, AURA_SLATE, COLOR_RESET
+            ),
+        ),
+        (true, false, true, _) => (
+            format!(" mcp {}  │ ", mcp_loaded),
+            format!(
+                " {}mcp {}{}{}  {}│{} ",
+                AURA_SLATE, AURA_GREEN, mcp_loaded, COLOR_RESET, AURA_SLATE, COLOR_RESET
+            ),
+        ),
+        (true, true, _, _) => (
+            format!(" mcp {} ({}✗)  │ ", mcp_loaded, mcp_failed),
+            format!(
+                " {}mcp {}{}{} ({}{}{}✗)  {}│{} ",
+                AURA_SLATE,
+                AURA_GREEN,
+                mcp_loaded,
+                COLOR_RESET,
+                AURA_ROSE,
+                mcp_failed,
+                COLOR_RESET,
+                AURA_SLATE,
+                COLOR_RESET
+            ),
+        ),
     }
-    print!("\r\x1b[2K");
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -866,140 +689,47 @@ pub fn render_box(
     width: usize,
     lines_printed: &mut usize,
 ) -> anyhow::Result<()> {
-    // First, clear the previous rendering below the input line
     clear_input_rendering(*lines_printed);
 
-    // 1. Calculate token usage
     let session = session_manager.get_or_create(session_key);
     let total_chars: usize = session.messages.iter().map(|m| m.content.len()).sum();
     let approx_tokens = total_chars / 4;
 
-    let custom_limit = if let Ok(guard) = CUSTOM_CONTEXT_LIMIT.lock() {
-        *guard
-    } else {
-        None
-    };
-
-    let limit_tokens = if let Some(limit) = custom_limit {
-        limit
-    } else {
+    let custom_limit = CUSTOM_CONTEXT_LIMIT.lock().ok().and_then(|guard| *guard);
+    let limit_tokens = custom_limit.unwrap_or_else(|| {
         crate::providers::DynamicContextRegistry::resolve_context_window(
             model,
             &crate::config::schema::Config::default(),
         )
+    });
+
+    let limit_str = match limit_tokens >= 1_000_000 {
+        true => format!("{}M", limit_tokens / 1_000_000),
+        false => format!("{}K", limit_tokens / 1000),
     };
 
-    let limit_str = if limit_tokens >= 1_000_000 {
-        format!("{}M", limit_tokens / 1_000_000)
-    } else {
-        format!("{}K", limit_tokens / 1000)
+    let approx_tokens_str = match approx_tokens >= 1000 {
+        true => format!("{:.1}K", approx_tokens as f64 / 1000.0),
+        false => format!("{}", approx_tokens),
     };
 
-    let approx_tokens_str = if approx_tokens >= 1000 {
-        format!("{:.1}K", approx_tokens as f64 / 1000.0)
-    } else {
-        format!("{}", approx_tokens)
+    let display_provider = provider_display_name(provider);
+
+    let max_model_len = match (width < 60, width < 80) {
+        (true, _) => 10,
+        (false, true) => 16,
+        (false, false) => 30,
     };
 
-    let provider_lower = provider.to_lowercase();
-    let display_provider = match provider_lower.as_str() {
-        "openai" => "OpenAI",
-        "anthropic" => "Anthropic",
-        "google" => "Google",
-        "deepseek" => "DeepSeek",
-        other => other,
-    };
-
-    let max_model_len = if width < 60 {
-        10
-    } else if width < 80 {
-        16
-    } else {
-        30
-    };
-
-    let display_model = if model.chars().count() > max_model_len {
-        let truncated: String = model.chars().take(max_model_len - 1).collect();
-        format!("{}…", truncated)
-    } else {
-        model.to_string()
-    };
-
-    // ── MCP pill ──────────────────────────────────────────────────────────────
-    const SPIN_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-    let mcp_done = super::mcp::is_mcp_done();
-    let (mcp_loaded, mcp_failed, mcp_total) = super::mcp::get_mcp_stats();
-
-    let (mcp_pill_plain, mcp_pill_colored) = if !mcp_done {
-        let frame_idx = MCP_SPIN.fetch_add(1, Ordering::Relaxed) as usize % SPIN_FRAMES.len();
-        let frame = SPIN_FRAMES[frame_idx];
-        let total = mcp_total;
-        let processed = mcp_loaded + mcp_failed;
-        if total > 0 {
-            (
-                format!(" mcp {}/{} {}  │ ", processed, total, frame),
-                format!(
-                    " {}mcp {}{}/{} {}{}  {}│{} ",
-                    AURA_SLATE,
-                    AURA_GOLD,
-                    processed,
-                    total,
-                    frame,
-                    COLOR_RESET,
-                    AURA_SLATE,
-                    COLOR_RESET
-                ),
-            )
-        } else {
-            (
-                format!(" mcp {}  │ ", frame),
-                format!(
-                    " {}mcp {}{}  {}│{} ",
-                    AURA_SLATE, frame, COLOR_RESET, AURA_SLATE, COLOR_RESET
-                ),
-            )
+    let display_model = match model.chars().count() > max_model_len {
+        true => {
+            let truncated: String = model.chars().take(max_model_len - 1).collect();
+            format!("{}…", truncated)
         }
-    } else if mcp_failed == 0 {
-        if mcp_loaded == 0 {
-            (
-                " mcp 0  │ ".to_string(),
-                format!(
-                    " {}mcp 0{}  {}│{} ",
-                    AURA_SLATE, COLOR_RESET, AURA_SLATE, COLOR_RESET
-                ),
-            )
-        } else {
-            (
-                format!(" mcp {}  │ ", mcp_loaded),
-                format!(
-                    " {}mcp {}{}{}  {}│{} ",
-                    AURA_SLATE,
-                    AURA_GREEN,
-                    mcp_loaded,
-                    COLOR_RESET,
-                    AURA_SLATE,
-                    COLOR_RESET
-                ),
-            )
-        }
-    } else {
-        (
-            format!(" mcp {} ({}✗)  │ ", mcp_loaded, mcp_failed),
-            format!(
-                " {}mcp {}{}{} ({}{}{}✗)  {}│{} ",
-                AURA_SLATE,
-                AURA_GREEN,
-                mcp_loaded,
-                COLOR_RESET,
-                AURA_ROSE,
-                mcp_failed,
-                COLOR_RESET,
-                AURA_SLATE,
-                COLOR_RESET
-            ),
-        )
+        false => model.to_string(),
     };
 
+    let (mcp_pill_plain, mcp_pill_colored) = format_mcp_status_pill();
     let pill_plain_len = mcp_pill_plain.chars().count();
 
     let visible_status_len = pill_plain_len
@@ -1007,7 +737,7 @@ pub fn render_box(
         + display_model.chars().count()
         + approx_tokens_str.chars().count()
         + limit_str.chars().count()
-        + 11; // spacing, vertical pipes, slash, brackets
+        + 11;
 
     let fill_chars = width.saturating_sub(visible_status_len);
     let line_fill: String = std::iter::repeat_n('─', fill_chars).collect();
@@ -1028,169 +758,152 @@ pub fn render_box(
         limit_str
     );
 
-    // Filter autocomplete dropdown suggestions
-    let mut matches = Vec::new();
-    if typed_input.starts_with('/') && !typed_input.contains(' ') {
-        for &(cmd, desc) in SLASH_COMMANDS {
-            if cmd.starts_with(typed_input) {
-                matches.push((cmd, desc));
-            }
-        }
-    }
+    let matches: Vec<(&str, &str)> = (typed_input.starts_with('/') && !typed_input.contains(' '))
+        .then(|| {
+            SLASH_COMMANDS
+                .iter()
+                .copied()
+                .filter(|&(cmd, _)| cmd.starts_with(typed_input))
+                .collect()
+        })
+        .unwrap_or_default();
 
-    let status_line = if autocomplete_visible && !matches.is_empty() {
-        let line_fill: String = std::iter::repeat_n('─', width).collect();
-        format!("{}{}{}", LIGHT_WHITE, line_fill, COLOR_RESET)
-    } else {
-        format!(
+    let status_line = match autocomplete_visible && !matches.is_empty() {
+        true => {
+            let full_fill: String = std::iter::repeat_n('─', width).collect();
+            format!("{}{}{}", LIGHT_WHITE, full_fill, COLOR_RESET)
+        }
+        false => format!(
             "{}{}{}[{}]{}{}",
             LIGHT_WHITE, line_fill, RED_ORANGE, status_content, LIGHT_WHITE, COLOR_RESET
-        )
+        ),
     };
 
-    let display_text = if let Some(idx) = selected_index {
-        if idx < matches.len() {
-            matches[idx].0
-        } else {
-            typed_input
-        }
-    } else {
-        typed_input
-    };
+    let display_text = selected_index
+        .and_then(|idx| matches.get(idx).map(|&(cmd, _)| cmd))
+        .unwrap_or(typed_input);
 
-    // Print input lines with multi-line wrapping (> for first line, - for subsequent lines)
     let display_chars: Vec<char> = display_text.chars().collect();
     let char_count = display_chars.len();
 
-    let active_cursor_idx = if selected_index.is_some() {
-        char_count
-    } else {
-        cursor_idx.min(char_count)
+    let active_cursor_idx = match selected_index.is_some() {
+        true => char_count,
+        false => cursor_idx.min(char_count),
     };
 
-    let prompt_prefix_width = 2; // "> " or "- "
+    let prompt_prefix_width = 2;
     let max_line_content_width = width.saturating_sub(prompt_prefix_width).max(1);
 
-    struct InputLine {
-        chars: Vec<char>,
-    }
-
-    let mut input_lines: Vec<InputLine> = Vec::new();
-    let mut current_chars = Vec::new();
+    let mut input_lines: Vec<String> = Vec::new();
+    let mut current_chars = String::new();
     let mut current_width = 0;
     let mut cursor_line_idx = 0;
     let mut cursor_col_offset = 0;
 
     for (idx, &c) in display_chars.iter().enumerate() {
-        if idx == active_cursor_idx {
+        (idx == active_cursor_idx).then(|| {
             cursor_line_idx = input_lines.len();
             cursor_col_offset = current_width;
-        }
+        });
 
         let cw = char_display_width(c);
-        if c == '\n' || (current_width + cw > max_line_content_width && !current_chars.is_empty()) {
-            input_lines.push(InputLine {
-                chars: current_chars,
-            });
-            current_chars = Vec::new();
+        let should_wrap =
+            c == '\n' || (current_width + cw > max_line_content_width && !current_chars.is_empty());
+        should_wrap.then(|| {
+            input_lines.push(std::mem::take(&mut current_chars));
             current_width = 0;
-        }
+        });
 
-        if c != '\n' {
+        (c != '\n').then(|| {
             current_chars.push(c);
             current_width += cw;
-        }
+        });
     }
 
-    if active_cursor_idx == display_chars.len() {
+    (active_cursor_idx == display_chars.len()).then(|| {
         cursor_line_idx = input_lines.len();
         cursor_col_offset = current_width;
-    }
-
-    input_lines.push(InputLine {
-        chars: current_chars,
     });
 
+    input_lines.push(current_chars);
     LAST_CURSOR_LINE.store(cursor_line_idx, Ordering::Relaxed);
 
     let mut new_lines_printed: usize = 0;
-    for (line_idx, line) in input_lines.iter().enumerate() {
-        let prefix_str = if line_idx == 0 { "> " } else { "- " };
-        let line_content: String = line.chars.iter().collect();
-
-        if line_idx == 0 {
-            print!(
-                "{}{}{}{}",
-                LIGHT_WHITE, prefix_str, COLOR_RESET, line_content
-            );
-        } else {
-            print!(
-                "\r\n\x1b[2K{}{}{}{}",
-                LIGHT_WHITE, prefix_str, COLOR_RESET, line_content
-            );
-        }
+    for (line_idx, line_content) in input_lines.iter().enumerate() {
+        let (lead, prefix_str) = match line_idx == 0 {
+            true => ("", "> "),
+            false => ("\r\n\x1b[2K", "- "),
+        };
+        std::print!(
+            "{}{}{}{}{}",
+            lead,
+            LIGHT_WHITE,
+            prefix_str,
+            COLOR_RESET,
+            line_content
+        );
         new_lines_printed += 1;
     }
 
-    // Status line immediately below the input lines
-    print!("\r\n\x1b[2K{}", status_line);
+    std::print!("\r\n\x1b[2K{}", status_line);
     new_lines_printed += 1;
 
-    if autocomplete_visible && !matches.is_empty() {
-        let max_display = 5;
-        let mut start_idx = 0;
-        if let Some(idx) = selected_index {
-            if idx >= max_display {
-                start_idx = idx - max_display + 1;
-            }
-        }
+    (autocomplete_visible && !matches.is_empty()).then(|| {
+        let max_display = 5usize;
+        let start_idx = selected_index
+            .filter(|&idx| idx >= max_display)
+            .map(|idx| idx - max_display + 1)
+            .unwrap_or(0);
         let end_idx = (start_idx + max_display).min(matches.len());
 
-        for (i, item) in matches.iter().enumerate().take(end_idx).skip(start_idx) {
-            let (cmd, desc) = *item;
-            let is_selected = selected_index == Some(i);
-
-            if is_selected {
-                print!(
+        for (i, &(cmd, desc)) in matches.iter().enumerate().take(end_idx).skip(start_idx) {
+            match selected_index == Some(i) {
+                true => std::print!(
                     "\r\n\x1b[2K> {}{:<30}{}{}{}",
-                    RED_ORANGE, cmd, AURA_SLATE, desc, COLOR_RESET
-                );
-            } else {
-                print!(
+                    RED_ORANGE,
+                    cmd,
+                    AURA_SLATE,
+                    desc,
+                    COLOR_RESET
+                ),
+                false => std::print!(
                     "\r\n\x1b[2K  {:<30}{}{}{}",
-                    cmd, AURA_SLATE, desc, COLOR_RESET
-                );
+                    cmd,
+                    AURA_SLATE,
+                    desc,
+                    COLOR_RESET
+                ),
             }
             new_lines_printed += 1;
         }
 
         let rem_below = matches.len() - end_idx;
         let rem_above = start_idx;
-        if rem_below > 0 || rem_above > 0 {
-            let mut parts = Vec::new();
-            if rem_above > 0 {
-                parts.push(format!("↑ {} more", rem_above));
-            }
-            if rem_below > 0 {
-                parts.push(format!("↓ {} more", rem_below));
-            }
-            print!(
+        let more_parts: Vec<String> = [
+            (rem_above > 0).then(|| format!("↑ {} more", rem_above)),
+            (rem_below > 0).then(|| format!("↓ {} more", rem_below)),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+
+        (!more_parts.is_empty()).then(|| {
+            std::print!(
                 "\r\n\x1b[2K  {}{}{}",
                 AURA_SLATE,
-                parts.join(" / "),
+                more_parts.join(" / "),
                 COLOR_RESET
             );
             new_lines_printed += 1;
-        }
+        });
 
-        // Print spacing empty line
-        print!("\r\n\x1b[2K");
+        std::print!("\r\n\x1b[2K");
         new_lines_printed += 1;
 
-        // Print help/navigation instructions at the bottom
-        print!(
+        std::print!(
             "\r\n\x1b[2K  {}↑/↓ Navigate · enter Select · tab Complete{}",
-            AURA_SLATE, COLOR_RESET
+            AURA_SLATE,
+            COLOR_RESET
         );
 
         let cancel_text = format!("  {}esc to cancel{}", AURA_SLATE, COLOR_RESET);
@@ -1200,18 +913,16 @@ pub fn render_box(
         let spacing = width.saturating_sub(cancel_width + model_width);
         let spaces: String = std::iter::repeat_n(' ', spacing).collect();
 
-        print!("\r\n\x1b[2K{}{}{}", cancel_text, spaces, model_display);
+        std::print!("\r\n\x1b[2K{}{}{}", cancel_text, spaces, model_display);
         new_lines_printed += 2;
-    }
+    });
 
-    // Move terminal cursor back up to cursor_line_idx line and place it at active cursor position
     let up_lines = new_lines_printed.saturating_sub(1 + cursor_line_idx);
     let cursor_col = 3 + cursor_col_offset;
 
-    if up_lines > 0 {
-        print!("\x1b[{}A\x1b[{}G", up_lines, cursor_col);
-    } else {
-        print!("\x1b[{}G", cursor_col);
+    match up_lines > 0 {
+        true => std::print!("\x1b[{}A\x1b[{}G", up_lines, cursor_col),
+        false => std::print!("\x1b[{}G", cursor_col),
     }
 
     let _ = crossterm::execute!(stdout(), crossterm::cursor::Show);
@@ -1224,4 +935,3 @@ pub fn render_box(
 #[cfg(test)]
 #[path = "render_tests.rs"]
 mod tests;
-

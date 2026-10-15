@@ -130,3 +130,54 @@ fn test_strip_ansi_escapes() {
         "Error details"
     );
 }
+
+#[test]
+fn test_zero_regex_inline_tokenizer_and_rich_tool_outcomes() {
+    let tokens = tokenize_inline_markdown("Hello **bold** and `code` with *italic*!");
+    assert_eq!(
+        tokens,
+        vec![
+            InlineSegment::Plain("Hello ".to_string()),
+            InlineSegment::Bold("bold".to_string()),
+            InlineSegment::Plain(" and ".to_string()),
+            InlineSegment::Code("code".to_string()),
+            InlineSegment::Plain(" with ".to_string()),
+            InlineSegment::Italic("italic".to_string()),
+            InlineSegment::Plain("!".to_string()),
+        ]
+    );
+    assert_eq!(provider_display_name("minimax"), "MiniMax");
+    assert_eq!(provider_display_name("openrouter"), "OpenRouter");
+    assert_eq!(provider_display_name("opencode_zen"), "OpenCode Zen");
+
+    let multi_hunk_summary = format_tool_outcome_summary(
+        "replace_lines",
+        &serde_json::json!({ "path": "src/lib.rs" }),
+        &serde_json::json!({
+            "hunks_applied": 2,
+            "lines_modified": 5,
+            "diagnostics": { "balanced_delimiters": true }
+        }),
+    );
+    assert_eq!(multi_hunk_summary, "2 hunks · 5 lines");
+
+    let unbalanced_summary = format_tool_outcome_summary(
+        "write_file",
+        &serde_json::json!({ "path": "src/lib.rs", "content": "fn x() {\n" }),
+        &serde_json::json!({
+            "line_count": 1,
+            "diagnostics": { "balanced_delimiters": false }
+        }),
+    );
+    assert!(unbalanced_summary.contains("unbalanced delimiters"));
+
+    let batch_summary = format_tool_outcome_summary(
+        "tool_catalog",
+        &serde_json::json!({}),
+        &serde_json::json!({
+            "batch_executed_count": 3,
+            "batch_execution_mode": "concurrent"
+        }),
+    );
+    assert!(batch_summary.contains("batch: 3 tools (concurrent)"));
+}

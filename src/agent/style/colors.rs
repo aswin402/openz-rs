@@ -13,4 +13,6 @@ pub const ERROR_RED: &str = "\x1b[38;2;255;0;0m"; // Red: #FF0000
 pub const RED_ORANGE: &str = "\x1b[38;2;255;69;0m";
 pub const BRAND_PURPLE: &str = "\x1b[38;2;89;0;255m";
 pub const LIGHT_WHITE: &str = "\x1b[38;2;220;220;220m";
+pub const BRAND_WHITE: &str = "\x1b[38;2;240;240;240m";
 pub const HEADING_BLUE: &str = "\x1b[38;2;0;175;255m";
+pub const LIGHT_BLUE: &str = "\x1b[38;2;135;206;250m";

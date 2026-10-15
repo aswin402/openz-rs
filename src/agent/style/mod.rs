@@ -1,10 +1,12 @@
 pub mod colors;
 pub mod icons;
+pub mod markdown;
 pub mod menu;
 pub mod spinner;
 
 pub use colors::*;
 pub use icons::*;
+pub use markdown::*;
 pub use menu::*;
 pub use spinner::*;
 
@@ -30,36 +32,6 @@ macro_rules! tui_print {
     };
 }
 
-pub fn tui_println_fn<T: AsRef<str>>(msg: T) {
-    if is_silent() {
-        return;
-    }
-    let s = msg.as_ref();
-    let replaced = s.replace("\r\n", "\n").replace("\n", "\r\n");
-
-    let _guard = stdout_lock();
-    if is_spinner_active() {
-        print!("\r\x1b[2K");
-    }
-    print!("{}\r\n", replaced);
-    let _ = std::io::stdout().flush();
-}
-
-pub fn tui_print_fn<T: AsRef<str>>(msg: T) {
-    if is_silent() {
-        return;
-    }
-    let s = msg.as_ref();
-    let replaced = s.replace("\r\n", "\n").replace("\n", "\r\n");
-
-    let _guard = stdout_lock();
-    if is_spinner_active() {
-        print!("\r\x1b[2K");
-    }
-    print!("{}", replaced);
-    let _ = std::io::stdout().flush();
-}
-
 #[macro_export]
 macro_rules! tui_eprintln {
     () => {
@@ -79,11 +51,6 @@ macro_rules! tui_eprint {
         $crate::agent::style::tui_eprint_fn(format!($($arg)*))
     };
 }
-
-// ── TUI-safe println!/print!/eprintln! shims ────────────────────────────────
-// These shadow the standard macros in CLI modules so that output is routed
-// through tui_println!/tui_print! which handle raw-mode line endings.
-// Import them with: use crate::{println, print, eprintln};
 
 #[macro_export]
 macro_rules! println {
@@ -109,48 +76,56 @@ macro_rules! eprint {
     ($($arg:tt)*) => { $crate::tui_print!($($arg)*) };
 }
 
-pub fn tui_eprintln_fn<T: AsRef<str>>(msg: T) {
-    if is_silent() {
-        return;
-    }
-    let s = msg.as_ref();
-    let replaced = s.replace("\r\n", "\n").replace("\n", "\r\n");
+fn write_tui_stream(msg: &str, to_stderr: bool, append_newline: bool) {
+    (!is_silent()).then(|| {
+        let replaced = msg.replace("\r\n", "\n").replace('\n', "\r\n");
+        let _guard = stdout_lock();
+        is_spinner_active().then(|| {
+            std::print!("\r\x1b[2K");
+        });
+        match (to_stderr, append_newline) {
+            (false, true) => {
+                std::print!("{}\r\n", replaced);
+                let _ = std::io::stdout().flush();
+            }
+            (false, false) => {
+                std::print!("{}", replaced);
+                let _ = std::io::stdout().flush();
+            }
+            (true, true) => {
+                std::eprint!("{}\r\n", replaced);
+                let _ = std::io::stderr().flush();
+            }
+            (true, false) => {
+                std::eprint!("{}", replaced);
+                let _ = std::io::stderr().flush();
+            }
+        }
+    });
+}
 
-    let _guard = stdout_lock();
-    if is_spinner_active() {
-        print!("\r\x1b[2K");
-    }
-    eprint!("{}\r\n", replaced);
-    let _ = std::io::stderr().flush();
+pub fn tui_println_fn<T: AsRef<str>>(msg: T) {
+    write_tui_stream(msg.as_ref(), false, true);
+}
+
+pub fn tui_print_fn<T: AsRef<str>>(msg: T) {
+    write_tui_stream(msg.as_ref(), false, false);
+}
+
+pub fn tui_eprintln_fn<T: AsRef<str>>(msg: T) {
+    write_tui_stream(msg.as_ref(), true, true);
 }
 
 pub fn tui_eprint_fn<T: AsRef<str>>(msg: T) {
-    if is_silent() {
-        return;
-    }
-    let s = msg.as_ref();
-    let replaced = s.replace("\r\n", "\n").replace("\n", "\r\n");
-
-    let _guard = stdout_lock();
-    if is_spinner_active() {
-        print!("\r\x1b[2K");
-    }
-    eprint!("{}", replaced);
-    let _ = std::io::stderr().flush();
+    write_tui_stream(msg.as_ref(), true, false);
 }
 
 /// Returns the prefix string for a tree trace line at the specified delegation depth.
 pub fn get_tree_prefix_for_depth(is_leaf: bool, depth: usize) -> String {
-    if depth > 0 {
-        // For subagent tools, both starts and outcomes get the "L " connector
-        format!("{}L ", "  ".repeat(depth))
-    } else {
-        // Root agent depth (depth == 0)
-        if is_leaf {
-            "  L ".to_string()
-        } else {
-            "".to_string()
-        }
+    match (depth > 0, is_leaf) {
+        (true, _) => format!("{}L ", "  ".repeat(depth)),
+        (false, true) => "  L ".to_string(),
+        (false, false) => String::new(),
     }
 }
 
@@ -179,23 +154,20 @@ pub fn get_tree_spinner_msg(_name: &str, _formatted_args: &str) -> String {
     )
 }
 
-/// Strips standard graphic SGR ANSI escape sequences (\x1b[...m) from a string.
+/// Strips standard CSI ANSI escape sequences (\x1b[...<alpha>) from a string.
 pub fn strip_ansi_escapes(s: &str) -> String {
-    let mut result = String::new();
-    let mut in_escape = false;
-    let chars = s.chars();
-
-    for c in chars {
-        if c == '\x1b' {
-            in_escape = true;
-        } else if in_escape {
-            if c == 'm' {
-                in_escape = false;
+    let (result, _) = s.chars().fold(
+        (String::with_capacity(s.len()), false),
+        |(mut acc, in_escape), c| match (in_escape, c == '\x1b', c.is_ascii_alphabetic()) {
+            (_, true, _) => (acc, true),
+            (true, false, true) => (acc, false),
+            (true, false, false) => (acc, true),
+            (false, false, _) => {
+                acc.push(c);
+                (acc, false)
             }
-        } else {
-            result.push(c);
-        }
-    }
+        },
+    );
     result
 }
 
@@ -203,31 +175,29 @@ pub fn strip_ansi_escapes(s: &str) -> String {
 pub fn clean_tool_args_msg(name: &str, formatted_args: &str) -> String {
     let stripped = strip_ansi_escapes(formatted_args);
     let trimmed = stripped.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-
-    // Check if it ends with ')' and contains '('
-    if trimmed.ends_with(')') {
-        if let Some(open_idx) = trimmed.find('(') {
-            let details = &trimmed[open_idx + 1..trimmed.len() - 1];
-            return details.trim().to_string();
+    match trimmed.is_empty() {
+        true => String::new(),
+        false => {
+            let paren_inner = trimmed
+                .strip_suffix(')')
+                .and_then(|before_close| before_close.find('(').map(|idx| before_close[idx + 1..].trim()));
+            match paren_inner {
+                Some(details) => details.to_string(),
+                None => {
+                    let clean = get_tool_clean_name(name)
+                        .to_lowercase()
+                        .replace([' ', '_'], "");
+                    let norm_args = trimmed.to_lowercase().replace([' ', '_'], "");
+                    let is_redundant = clean == norm_args
+                        || (norm_args.len() >= 3
+                            && (clean.contains(&norm_args) || norm_args.contains(&clean)));
+                    match is_redundant {
+                        true => String::new(),
+                        false => trimmed.to_string(),
+                    }
+                }
+            }
         }
-    }
-
-    // If it doesn't have parentheses, check if it is just a friendly name variant of the tool.
-    let clean = get_tool_clean_name(name)
-        .to_lowercase()
-        .replace(" ", "")
-        .replace("_", "");
-    let norm_args = trimmed.to_lowercase().replace(" ", "").replace("_", "");
-
-    if clean == norm_args
-        || (norm_args.len() >= 3 && (clean.contains(&norm_args) || norm_args.contains(&clean)))
-    {
-        String::new()
-    } else {
-        trimmed.to_string()
     }
 }
 
@@ -236,8 +206,8 @@ pub fn get_tree_tool_start_msg(name: &str, formatted_args: &str) -> String {
     let prefix = get_tree_prefix(false);
     let clean_name = get_tool_clean_name(name);
     let details = clean_tool_args_msg(name, formatted_args);
-    if details.is_empty() {
-        format!(
+    match details.is_empty() {
+        true => format!(
             "{}{}{}{}• {}{}{}{}{}",
             colors::AURA_SLATE,
             prefix,
@@ -248,9 +218,8 @@ pub fn get_tree_tool_start_msg(name: &str, formatted_args: &str) -> String {
             colors::LIGHT_WHITE,
             clean_name,
             colors::COLOR_RESET
-        )
-    } else {
-        format!(
+        ),
+        false => format!(
             "{}{}{}{}• {}{}{}{}{} {}{}{}",
             colors::AURA_SLATE,
             prefix,
@@ -264,117 +233,141 @@ pub fn get_tree_tool_start_msg(name: &str, formatted_args: &str) -> String {
             colors::AURA_SLATE,
             details,
             colors::COLOR_RESET
-        )
+        ),
     }
 }
 
 /// Prints the colored start indicator of a tool execution with tree prefixes.
 pub fn print_tree_tool_start(name: &str, formatted_args: &str) {
-    if is_silent() {
-        return;
-    }
-    if is_profile_subagent(name) || name == "parallel_research" {
-        return;
-    }
-    let output = get_tree_tool_start_msg(name, formatted_args);
-    let replaced = output.replace("\r\n", "\n").replace("\n", "\r\n");
-    print!("{}\r\n", replaced);
-    let _ = std::io::stdout().flush();
+    let should_print = !is_silent() && !is_profile_subagent(name) && name != "parallel_research";
+    should_print.then(|| {
+        let output = get_tree_tool_start_msg(name, formatted_args);
+        let replaced = output.replace("\r\n", "\n").replace('\n', "\r\n");
+        std::print!("{}\r\n", replaced);
+        let _ = std::io::stdout().flush();
+    });
 }
 
 pub fn is_profile_subagent(name: &str) -> bool {
-    if let Ok(profiles) = crate::subagents::load_profiles() {
-        profiles.iter().any(|p| p.name == name)
-    } else {
-        false
-    }
+    crate::subagents::load_profiles()
+        .map(|profiles| profiles.iter().any(|p| p.name == name))
+        .unwrap_or(false)
 }
 
 pub fn get_command_error_summary(stdout: &str, stderr: &str) -> String {
-    for line in stderr.lines().chain(stdout.lines()) {
-        let trimmed = line.trim();
-        if trimmed.starts_with("error[E") {
-            if let Some(pos) = trimmed.find("]: ") {
-                let code = &trimmed[..pos + 2];
-                let msg = &trimmed[pos + 3..];
-                return replace_with_em_dash(&format!("compiler error \u{2014} {} {}", code, msg));
+    let combined = || stderr.lines().chain(stdout.lines()).map(str::trim);
+
+    let compiler_err = combined().find_map(|trimmed| {
+        trimmed
+            .starts_with("error[E")
+            .then(|| {
+                trimmed.find("]: ").map(|pos| {
+                    let code = &trimmed[..pos + 2];
+                    let msg = &trimmed[pos + 3..];
+                    replace_with_em_dash(&format!("compiler error \u{2014} {} {}", code, msg))
+                })
+            })
+            .flatten()
+            .or_else(|| {
+                trimmed
+                    .strip_prefix("error:")
+                    .map(|msg| replace_with_em_dash(&format!("compiler error \u{2014} {}", msg.trim())))
+            })
+    });
+
+    let failure_err = || {
+        combined().find_map(|trimmed| {
+            let has_timeout = trimmed.to_lowercase().contains("timeout");
+            let has_err_kw = trimmed.contains("Failed")
+                || trimmed.contains("Error:")
+                || trimmed.contains("error ");
+            match (has_timeout, has_err_kw) {
+                (true, _) => Some(replace_with_em_dash("timeout not handled")),
+                (false, true) => Some(replace_with_em_dash(trimmed)),
+                (false, false) => None,
             }
-        } else if let Some(msg) = trimmed.strip_prefix("error:") {
-            return replace_with_em_dash(&format!("compiler error \u{2014} {}", msg.trim()));
-        }
+        })
+    };
+
+    let first_non_empty = || {
+        combined()
+            .find(|trimmed| !trimmed.is_empty())
+            .map(replace_with_em_dash)
+    };
+
+    compiler_err
+        .or_else(failure_err)
+        .or_else(first_non_empty)
+        .unwrap_or_else(|| "command failed".to_string())
+}
+
+fn strip_list_bullet_prefix(trimmed: &str) -> &str {
+    trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))
+        .or_else(|| {
+            trimmed.find(". ").and_then(|pos| {
+                (pos > 0 && trimmed[..pos].chars().all(|c| c.is_ascii_digit()))
+                    .then_some(&trimmed[pos + 2..])
+            })
+        })
+        .unwrap_or(trimmed)
+}
+
+fn truncate_summary_text(summary: String, max_chars: usize) -> String {
+    match summary.len() > max_chars {
+        true => format!("{}...", &summary[..max_chars.saturating_sub(3)]),
+        false => summary,
     }
-    for line in stderr.lines().chain(stdout.lines()) {
-        let trimmed = line.trim();
-        if trimmed.to_lowercase().contains("timeout") {
-            return replace_with_em_dash("timeout not handled");
-        }
-        if trimmed.contains("Failed") || trimmed.contains("Error:") || trimmed.contains("error ") {
-            return replace_with_em_dash(trimmed);
-        }
-    }
-    for line in stderr.lines().chain(stdout.lines()) {
-        let trimmed = line.trim();
-        if !trimmed.is_empty() {
-            return replace_with_em_dash(trimmed);
-        }
-    }
-    "command failed".to_string()
 }
 
 pub fn format_subagent_summary(content: &str) -> String {
-    let cleaned = content.trim();
-    for line in cleaned.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        let mut final_line = trimmed;
-        if final_line.starts_with("- ") || final_line.starts_with("* ") {
-            final_line = &final_line[2..];
-        } else if let Some(pos) = final_line.find(". ") {
-            if final_line[..pos].chars().all(|c| c.is_ascii_digit()) {
-                final_line = &final_line[pos + 2..];
-            }
-        }
-
-        let final_line = final_line.trim_matches('*').trim();
-        if !final_line.is_empty() {
-            let summary = replace_with_em_dash(final_line);
-            if summary.len() > 80 {
-                return format!("{}...", &summary[..77]);
-            }
-            return summary;
-        }
-    }
-    "completed task".to_string()
+    content
+        .trim()
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(strip_list_bullet_prefix)
+        .map(|line| line.trim_matches('*').trim())
+        .find(|line| !line.is_empty())
+        .map(replace_with_em_dash)
+        .map(|summary| truncate_summary_text(summary, 80))
+        .unwrap_or_else(|| "completed task".to_string())
 }
 
 pub fn format_reasoning_summary(reasoning: &str) -> String {
-    for line in reasoning.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        let mut cleaned = trimmed;
-        if cleaned.starts_with("- ") || cleaned.starts_with("* ") {
-            cleaned = &cleaned[2..];
-        }
-        let cleaned = cleaned.trim_matches('*').trim();
-        if !cleaned.is_empty() {
-            let summary = replace_with_em_dash(cleaned);
-            if summary.len() > 100 {
-                return format!("{}...", &summary[..97]);
-            }
-            return summary;
-        }
-    }
-    "analyzing requirements".to_string()
+    reasoning
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| {
+            line.strip_prefix("- ")
+                .or_else(|| line.strip_prefix("* "))
+                .unwrap_or(line)
+        })
+        .map(|line| line.trim_matches('*').trim())
+        .find(|line| !line.is_empty())
+        .map(replace_with_em_dash)
+        .map(|summary| truncate_summary_text(summary, 100))
+        .unwrap_or_else(|| "analyzing requirements".to_string())
 }
 
 fn replace_with_em_dash(s: &str) -> String {
     s.replace(" - ", " \u{2014} ")
         .replace(" -- ", " \u{2014} ")
         .replace(" \u{2013} ", " \u{2014} ")
+}
+
+fn append_diagnostics_badge(base: String, res: &serde_json::Value) -> String {
+    let unbalanced = res
+        .get("diagnostics")
+        .and_then(|d| d.get("balanced_delimiters"))
+        .and_then(|v| v.as_bool())
+        == Some(false);
+    match unbalanced {
+        true => format!("{} (\u{26a0} unbalanced delimiters)", base),
+        false => base,
+    }
 }
 
 pub fn format_tool_outcome_summary(
@@ -384,39 +377,107 @@ pub fn format_tool_outcome_summary(
 ) -> String {
     match name {
         "write_file" => {
-            let content = arguments
-                .get("content")
-                .or(arguments.get("code"))
-                .or(arguments.get("text"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let line_count = content.lines().count();
-            format!("{} lines", line_count)
+            let line_count = res
+                .get("line_count")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize)
+                .unwrap_or_else(|| {
+                    arguments
+                        .get("content")
+                        .or_else(|| arguments.get("code"))
+                        .or_else(|| arguments.get("text"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .lines()
+                        .count()
+                });
+            append_diagnostics_badge(format!("{} lines", line_count), res)
         }
         "patch_file" => {
             let patch_str = arguments
                 .get("patch")
-                .or(arguments.get("content"))
-                .or(arguments.get("diff"))
+                .or_else(|| arguments.get("content"))
+                .or_else(|| arguments.get("diff"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            summarize_patch(patch_str)
+            let base = match !patch_str.is_empty() {
+                true => summarize_patch(patch_str),
+                false => arguments
+                    .get("replacement")
+                    .or_else(|| arguments.get("new_text"))
+                    .and_then(|v| v.as_str())
+                    .and_then(|r| r.lines().map(str::trim).find(|l| !l.is_empty()))
+                    .map(|first| format!("replace with {}", first))
+                    .unwrap_or_else(|| "modified file".to_string()),
+            };
+            append_diagnostics_badge(base, res)
         }
         "replace_lines" => {
-            let replacement = arguments
-                .get("replacement")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let trimmed = replacement.trim();
-            if trimmed.is_empty() {
-                "removed lines".to_string()
-            } else if trimmed.starts_with("use ") {
-                let cleaned = trimmed.split('\n').next().unwrap_or(trimmed).trim();
-                let cleaned = cleaned.strip_suffix(';').unwrap_or(cleaned);
-                format!("add {}", cleaned)
-            } else {
-                let first_line = trimmed.split('\n').next().unwrap_or(trimmed).trim();
-                format!("replace with {}", first_line)
+            let hunks = res
+                .get("hunks_applied")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(1);
+            let base = match hunks > 1 {
+                true => {
+                    let lines_mod = res
+                        .get("lines_modified")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(hunks);
+                    format!("{} hunks \u{00b7} {} lines", hunks, lines_mod)
+                }
+                false => {
+                    let replacement = arguments
+                        .get("replacement")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let trimmed = replacement.trim();
+                    match (trimmed.is_empty(), trimmed.starts_with("use ")) {
+                        (true, _) => "removed lines".to_string(),
+                        (false, true) => {
+                            let first = trimmed.split('\n').next().unwrap_or(trimmed).trim();
+                            let cleaned = first.strip_suffix(';').unwrap_or(first);
+                            format!("add {}", cleaned)
+                        }
+                        (false, false) => {
+                            let first_line = trimmed.split('\n').next().unwrap_or(trimmed).trim();
+                            format!("replace with {}", first_line)
+                        }
+                    }
+                }
+            };
+            append_diagnostics_badge(base, res)
+        }
+        "tool_catalog" => {
+            let batch_count = res
+                .get("batch_executed_count")
+                .and_then(|v| v.as_u64())
+                .filter(|&n| n > 0);
+            let mounted_count = res
+                .get("mounted_tools")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.len())
+                .filter(|&n| n > 0);
+            match (batch_count, mounted_count) {
+                (Some(n), _) => {
+                    let mode = res
+                        .get("batch_execution_mode")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("sequential");
+                    format!(
+                        "{}\u{2713} batch: {} tools ({}){}",
+                        colors::AURA_GREEN,
+                        n,
+                        mode,
+                        colors::COLOR_RESET
+                    )
+                }
+                (None, Some(m)) => format!(
+                    "{}\u{2713} mounted {} tools{}",
+                    colors::AURA_GREEN,
+                    m,
+                    colors::COLOR_RESET
+                ),
+                (None, None) => format!("{}\u{2713} completed{}", colors::AURA_GREEN, colors::COLOR_RESET),
             }
         }
         "knowledge_source" => {
@@ -517,142 +578,136 @@ pub fn format_tool_outcome_summary(
                 .get("command")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            if status_code == 0 {
-                let summary = if command_str.contains("build") {
-                    "build succeeded"
-                } else if command_str.contains("test") {
-                    "all tests passing"
-                } else if command_str.contains("clippy") {
-                    "clippy passed"
-                } else {
-                    "command succeeded"
-                };
-                format!(
-                    "{}\u{2713} {}{}",
-                    colors::AURA_GREEN,
-                    summary,
-                    colors::COLOR_RESET
-                )
-            } else {
-                let stdout = res
-                    .get("stdout")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default();
-                let stderr = res
-                    .get("stderr")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default();
-                let err_summary = get_command_error_summary(stdout, stderr);
-                format!(
-                    "{}\u{2715} {}{}",
-                    colors::AURA_ROSE,
-                    err_summary,
-                    colors::COLOR_RESET
-                )
+            match status_code == 0 {
+                true => {
+                    let summary = [
+                        ("build", "build succeeded"),
+                        ("test", "all tests passing"),
+                        ("clippy", "clippy passed"),
+                    ]
+                    .iter()
+                    .find_map(|&(kw, label)| command_str.contains(kw).then_some(label))
+                    .unwrap_or("command succeeded");
+                    format!(
+                        "{}\u{2713} {}{}",
+                        colors::AURA_GREEN,
+                        summary,
+                        colors::COLOR_RESET
+                    )
+                }
+                false => {
+                    let stdout = res
+                        .get("stdout")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default();
+                    let stderr = res
+                        .get("stderr")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default();
+                    let err_summary = get_command_error_summary(stdout, stderr);
+                    format!(
+                        "{}\u{2715} {}{}",
+                        colors::AURA_ROSE,
+                        err_summary,
+                        colors::COLOR_RESET
+                    )
+                }
             }
         }
-        _ => {
-            if let Some(err) = res.get("error").and_then(|v| v.as_str()) {
-                format!(
-                    "{}\u{2715} Failed: {}{}",
-                    colors::AURA_ROSE,
-                    err,
-                    colors::COLOR_RESET
-                )
-            } else {
-                format!(
-                    "{}\u{2713} completed{}",
-                    colors::AURA_GREEN,
-                    colors::COLOR_RESET
-                )
-            }
-        }
+        _ => match res.get("error").and_then(|v| v.as_str()) {
+            Some(err) => format!(
+                "{}\u{2715} Failed: {}{}",
+                colors::AURA_ROSE,
+                err,
+                colors::COLOR_RESET
+            ),
+            None => format!(
+                "{}\u{2713} completed{}",
+                colors::AURA_GREEN,
+                colors::COLOR_RESET
+            ),
+        },
     }
 }
 
 fn summarize_patch(patch_str: &str) -> String {
-    let mut added = Vec::new();
-    let mut removed = Vec::new();
-    for line in patch_str.lines() {
-        if line.starts_with('+') && !line.starts_with("+++") {
-            let trimmed = line[1..].trim();
-            if !trimmed.is_empty() {
-                added.push(trimmed);
-            }
-        } else if line.starts_with('-') && !line.starts_with("---") {
-            let trimmed = line[1..].trim();
-            if !trimmed.is_empty() {
-                removed.push(trimmed);
-            }
-        }
-    }
-    if !added.is_empty() {
-        let first = added[0];
-        if first.starts_with("use ") {
-            let cleaned = first.strip_suffix(';').unwrap_or(first);
+    let first_added = patch_str
+        .lines()
+        .filter(|line| line.starts_with('+') && !line.starts_with("+++"))
+        .map(|line| line[1..].trim())
+        .find(|trimmed| !trimmed.is_empty());
+    let first_removed = patch_str
+        .lines()
+        .filter(|line| line.starts_with('-') && !line.starts_with("---"))
+        .map(|line| line[1..].trim())
+        .find(|trimmed| !trimmed.is_empty());
+
+    match (first_added, first_removed) {
+        (Some(added), _) => {
+            let cleaned = added
+                .starts_with("use ")
+                .then(|| added.strip_suffix(';'))
+                .flatten()
+                .unwrap_or(added);
             format!("add {}", cleaned)
-        } else {
-            format!("add {}", first)
         }
-    } else if !removed.is_empty() {
-        format!("remove {}", removed[0])
-    } else {
-        "modified file".to_string()
+        (None, Some(removed)) => format!("remove {}", removed),
+        (None, None) => "modified file".to_string(),
     }
 }
 
-/// Wraps a single line of text into multiple lines, none exceeding `max_width`.
-/// It performs word wrapping on spaces, falling back to character wrapping if a word is longer than `max_width`.
-pub fn wrap_line(line: &str, max_width: usize) -> Vec<String> {
-    if max_width == 0 {
-        return vec![line.to_string()];
+fn split_ascii_word_into_chunks(word: &str, max_width: usize) -> (Vec<String>, String) {
+    let mut chunks = Vec::new();
+    let mut temp = word;
+    while temp.len() > max_width {
+        let (left, right) = temp.split_at(max_width);
+        chunks.push(left.to_string());
+        temp = right;
     }
-    let mut lines = Vec::new();
-    let mut current_line = String::new();
+    (chunks, temp.to_string())
+}
 
-    for word in line.split_whitespace() {
-        if current_line.is_empty() {
-            if word.len() <= max_width {
-                current_line.push_str(word);
-            } else {
-                // Word is too long, must split it by characters
-                let mut temp = word;
-                while temp.len() > max_width {
-                    let (left, right) = temp.split_at(max_width);
-                    lines.push(left.to_string());
-                    temp = right;
-                }
-                current_line.push_str(temp);
-            }
-        } else {
-            // Check if adding the word fits
-            if current_line.len() + 1 + word.len() <= max_width {
-                current_line.push(' ');
-                current_line.push_str(word);
-            } else {
-                lines.push(current_line);
-                current_line = String::new();
-                if word.len() <= max_width {
-                    current_line.push_str(word);
-                } else {
-                    let mut temp = word;
-                    while temp.len() > max_width {
-                        let (left, right) = temp.split_at(max_width);
-                        lines.push(left.to_string());
-                        temp = right;
+/// Wraps a single line of text into multiple lines, none exceeding `max_width`.
+pub fn wrap_line(line: &str, max_width: usize) -> Vec<String> {
+    match max_width {
+        0 => vec![line.to_string()],
+        _ => {
+            let (mut lines, rem_line) = line.split_whitespace().fold(
+                (Vec::<String>::new(), String::new()),
+                |(mut acc, cur), word| {
+                    let fits_cur = !cur.is_empty() && (cur.len() + 1 + word.len() <= max_width);
+                    let fits_fresh = word.len() <= max_width;
+                    match (cur.is_empty(), fits_cur, fits_fresh) {
+                        (true, _, true) => (acc, word.to_string()),
+                        (true, _, false) => {
+                            let (chunks, tail) = split_ascii_word_into_chunks(word, max_width);
+                            acc.extend(chunks);
+                            (acc, tail)
+                        }
+                        (false, true, _) => {
+                            let mut next = cur;
+                            next.push(' ');
+                            next.push_str(word);
+                            (acc, next)
+                        }
+                        (false, false, true) => {
+                            acc.push(cur);
+                            (acc, word.to_string())
+                        }
+                        (false, false, false) => {
+                            acc.push(cur);
+                            let (chunks, tail) = split_ascii_word_into_chunks(word, max_width);
+                            acc.extend(chunks);
+                            (acc, tail)
+                        }
                     }
-                    current_line.push_str(temp);
-                }
-            }
+                },
+            );
+            (!rem_line.is_empty()).then(|| lines.push(rem_line));
+            lines.is_empty().then(|| lines.push(String::new()));
+            lines
         }
     }
-    if !current_line.is_empty() {
-        lines.push(current_line);
-    }
-    if lines.is_empty() {
-        lines.push(String::new());
-    }
-    lines
 }
 
 /// Prints a monologue/thought block with the tree prefix, wrapping long lines and aligning wrapped sub-lines after the prefix.
@@ -660,44 +715,36 @@ pub fn print_tree_monologue(leaf_prefix: &str, text: &str) {
     let terminal_width = crossterm::terminal::size().map(|(w, _)| w).unwrap_or(80) as usize;
     let prefix_len = leaf_prefix.chars().count();
     let max_width = terminal_width.saturating_sub(prefix_len);
+    let indent_pad = " ".repeat(prefix_len);
 
-    let mut is_first_line = true;
-    for line in text.trim().lines() {
+    let _ = text.trim().lines().fold(true, |mut is_first_line, line| {
         let trimmed = line.trim();
-        if trimmed.is_empty() {
-            crate::tui_println!(
-                "{}{}{}",
-                colors::AURA_SLATE,
-                " ".repeat(prefix_len),
-                colors::COLOR_RESET
-            );
-            continue;
-        }
-        let wrapped = wrap_line(trimmed, max_width);
-        for sub_line in wrapped {
-            if is_first_line {
-                crate::tui_println!(
-                    "{}{}{}{}",
-                    colors::AURA_SLATE,
-                    leaf_prefix,
-                    sub_line,
-                    colors::COLOR_RESET
-                );
-                is_first_line = false;
-            } else {
-                crate::tui_println!(
-                    "{}{}{}{}",
-                    colors::AURA_SLATE,
-                    " ".repeat(prefix_len),
-                    sub_line,
-                    colors::COLOR_RESET
-                );
+        match trimmed.is_empty() {
+            true => {
+                crate::tui_println!("{}{}{}", colors::AURA_SLATE, indent_pad, colors::COLOR_RESET);
+                is_first_line
+            }
+            false => {
+                for sub_line in wrap_line(trimmed, max_width) {
+                    let active_prefix = match is_first_line {
+                        true => leaf_prefix,
+                        false => indent_pad.as_str(),
+                    };
+                    crate::tui_println!(
+                        "{}{}{}{}",
+                        colors::AURA_SLATE,
+                        active_prefix,
+                        sub_line,
+                        colors::COLOR_RESET
+                    );
+                    is_first_line = false;
+                }
+                is_first_line
             }
         }
-    }
+    });
 }
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
-

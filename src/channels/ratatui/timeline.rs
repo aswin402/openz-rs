@@ -77,17 +77,8 @@ pub(crate) fn render_timeline(f: &mut Frame, app: &mut RatatuiApp, area: Rect) {
     let mut lines = Vec::new();
 
     // ── OpenZ CLI Authentic ASCII Logo Banner ───────────────────────────────
-    let logo_parts = [
-        (" ██████╗ ██████╗ ███████╗███╗   ██╗", "███████╗"),
-        ("██╔═══██╗██╔══██╗██╔════╝████╗  ██║", "╚══███╔╝"),
-        ("██║   ██║██████╔╝█████╗  ██╔██╗ ██║", "  ███╔╝ "),
-        ("██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║", " ███╔╝  "),
-        ("╚██████╔╝██║     ███████╗██║ ╚████║", "███████╗"),
-        (" ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝", "╚══════╝"),
-    ];
-
     lines.push(Line::from(String::new()));
-    for (white_part, orange_part) in &logo_parts {
+    for (white_part, orange_part) in crate::agent::style::markdown::OPENZ_BANNER_PARTS {
         lines.push(Line::from(vec![
             Span::styled(
                 white_part.to_string(),

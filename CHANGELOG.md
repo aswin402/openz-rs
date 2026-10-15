@@ -1,5 +1,34 @@
-## [0.0.258] - 2026-10-15
-### v0.0.258 (Latest Release)
+## [0.0.259] - 2026-10-15
+### v0.0.259 (Latest Release)
+
+#### Added
+- **Unified Zero-Regex, Zero-`if`/`else` TUI Markdown & Layout Engine ([`src/agent/style/markdown.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/style/markdown.rs), [`src/agent/style/colors.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/style/colors.rs))**: Added a single-pass slice-based inline Markdown tokenizer (`tokenize_inline_markdown` + `InlineSegment`), shared Unicode display width calculator (`char_display_width`, `str_display_width`, `text_display_width`), GFM table parser and proportional column-width layout engine (`is_table_row`, `is_divider_row`, `split_row`, `clean_cell_text`, `compute_table_column_widths`, `wrap_display_text`), canonical 14-provider display name resolver (`provider_display_name`), dynamic terminal width helpers (`terminal_width_or_default`, `horizontal_divider`), and shared `OPENZ_BANNER_PARTS`, `BRAND_WHITE`, and `LIGHT_BLUE` constants (`0` `if/else`, `0` `regex`).
+- **Rich TUI Tool Outcome Telemetry & Stream Deduplication ([`src/agent/style/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/style/mod.rs), [`src/agent/style/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/style/mod_tests.rs))**: Refactored `src/agent/style/mod.rs` to `0` `if/else` and `0` `regex`, consolidated `tui_print`/`tui_println`/`tui_eprint`/`tui_eprintln` onto `write_tui_stream()`, and upgraded `format_tool_outcome_summary()` to surface multi-hunk `replace_lines` badges (`hunks_applied`), `tool_catalog` batch execution modes (`batch_execution_mode`), and post-edit structural diagnostics (`diagnostics.balanced`).
+- **Zero-Regex, Zero-`if`/`else` CLI & Ratatui Markdown Consolidation ([`src/channels/cli/render.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/render.rs), [`src/channels/cli/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/mod.rs), [`src/channels/ratatui/markdown.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/markdown.rs), [`src/channels/ratatui/welcome.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/welcome.rs), [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs))**: Eliminated all 22 `regex::Regex` usages across the TUI (`12` in `channels/cli/render.rs`, `10` in `channels/ratatui/markdown.rs`), replaced `StreamingMarkdownRenderer`'s boolean flags with an explicit `StreamBlockState` state machine, deduplicated GFM table/width/banner implementations across CLI and Ratatui, and refactored all modified TUI modules to `0` `if/else`.
+
+#### Documentation
+- **Synchronized Release Manifests**: Updated [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md), and [`CHANGELOG.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/CHANGELOG.md) to `0.0.259`.
+
+### Sources & Inspirations
+- **[Inspiration]**: Oh My Pi (`omp`) and Claude Code terminal UI architecture — single-pass zero-regex inline Markdown tokenization, state-machine streaming renderers (`StreamBlockState`), and rich post-edit/batch tool telemetry badges.
+
+- **Ideas**:
+  - Unified Zero-Regex Inline Markdown & GFM Table Engine, Explicit `StreamBlockState` Streaming Renderer, and Rich Post-Edit/Batch TUI Outcome Telemetry.
+- **Inspirations**:
+  - Oh My Pi (`omp`), Claude Code, OpenAI Codex CLI, and Ratatui (`0` `if/else`, `0` `regex`).
+- **Sources & References**:
+  - [`src/agent/style/markdown.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/style/markdown.rs), [`src/agent/style/colors.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/style/colors.rs), [`src/agent/style/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/style/mod.rs), [`src/agent/style/mod_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/style/mod_tests.rs)
+  - [`src/channels/cli/render.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/render.rs), [`src/channels/cli/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/cli/mod.rs)
+  - [`src/channels/ratatui/markdown.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/markdown.rs), [`src/channels/ratatui/welcome.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/welcome.rs), [`src/channels/ratatui/timeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/ratatui/timeline.rs)
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md): Synchronous SemVer increment to `0.0.259`.
+- **Details & Metrics**:
+  - Achieved `0` `if/else` statements and `0` `regex` across `src/agent/style/markdown.rs`, `src/agent/style/mod.rs`, `src/agent/style/mod_tests.rs`, `src/channels/cli/render.rs`, `src/channels/cli/mod.rs`, and `src/channels/ratatui/markdown.rs`, and eliminated all 22 `regex::Regex` occurrences from the TUI directories.
+  - Maintained the 260 registered native tools invariant (`test_native_tool_registration_names`).
+- **Verification**:
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 1 -- style::tests channels::cli::render::tests channels::ratatui::markdown::tests test_native_tool_registration_names`: PASS.
+  - `RUST_FONTCONFIG_DLOPEN=1 cargo test -p openz --lib -j 1 -- release_version_surfaces_match_cargo_package_version`: PASS.
+
+### v0.0.258 — 2026-10-15
 
 #### Added
 - **Lean Batch-Only Envelope in `ToolCatalogTool` ([`src/tools/self_management/catalog.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog.rs))**: When `tool_catalog` is invoked purely for `batch_execute` without discovery filters (`query`, `domain`, `risk`, `only_exposed`, `include_schema`), the full 260-tool `"tools"` array is omitted (`"tools_omitted": true`), keeping `batch_results` inline without triggering the `>4,000` char context compactor.

@@ -6,14 +6,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 /// Authentic OpenZ ASCII banner lines: "OPEN" (white), "Z" (brand orange).
-pub const BANNER_PARTS: &[(&str, &str)] = &[
-    (" ██████╗ ██████╗ ███████╗███╗   ██╗", "███████╗"),
-    ("██╔═══██╗██╔══██╗██╔════╝████╗  ██║", "╚══███╔╝"),
-    ("██║   ██║██████╔╝█████╗  ██╔██╗ ██║", "  ███╔╝ "),
-    ("██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║", " ███╔╝  "),
-    ("╚██████╔╝██║     ███████╗██║ ╚████║", "███████╗"),
-    (" ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝", "╚══════╝"),
-];
+pub use crate::agent::style::markdown::OPENZ_BANNER_PARTS as BANNER_PARTS;
 
 /// Renders the Zen Welcome Screen when the conversation timeline is empty.
 pub fn render_welcome_screen(
