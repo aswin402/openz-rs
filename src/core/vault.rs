@@ -41,23 +41,14 @@ pub fn category_description(cat: &str) -> &'static str {
 /// Expands leading `~` or returns the path as is.
 pub fn expand_vault_path(raw_path: &str) -> PathBuf {
     let trimmed = raw_path.trim();
-    if trimmed.is_empty() {
-        return dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("openz_vault");
+    match (trimmed, trimmed.strip_prefix("~/"), dirs::home_dir()) {
+        ("", _, Some(home)) => home.join("openz_vault"),
+        ("", _, None) => PathBuf::from(".").join("openz_vault"),
+        ("~", _, Some(home)) => home,
+        ("~", _, None) => PathBuf::from("."),
+        (_, Some(stripped), Some(home)) => home.join(stripped),
+        _ => PathBuf::from(trimmed),
     }
-
-    if trimmed == "~" {
-        return dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    }
-
-    if let Some(stripped) = trimmed.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(stripped);
-        }
-    }
-
-    PathBuf::from(trimmed)
 }
 
 /// Resolves the active root directory for OpenZ Vault.
@@ -67,18 +58,17 @@ pub fn expand_vault_path(raw_path: &str) -> PathBuf {
 /// 2. `config.vault.path`
 /// 3. Default: `~/openz_vault`
 pub fn resolve_vault_path(config: &Config) -> PathBuf {
-    if let Ok(env_val) = std::env::var(OPENZ_VAULT_DIR_ENV) {
-        let trimmed = env_val.trim();
-        if !trimmed.is_empty() {
-            return expand_vault_path(trimmed);
-        }
-    }
+    let env_override = std::env::var(OPENZ_VAULT_DIR_ENV)
+        .ok()
+        .map(|val| val.trim().to_string())
+        .filter(|val| !val.is_empty());
+    let config_path = Some(config.vault.path.trim())
+        .filter(|val| !val.is_empty())
+        .map(str::to_string);
 
-    let config_path = config.vault.path.trim();
-    if !config_path.is_empty() {
-        expand_vault_path(config_path)
-    } else {
-        expand_vault_path("~/openz_vault")
+    match env_override.or(config_path) {
+        Some(chosen) => expand_vault_path(&chosen),
+        None => expand_vault_path("~/openz_vault"),
     }
 }
 
@@ -122,29 +112,43 @@ Welcome to your **OpenZ Vault**! This directory is your dedicated personal works
 /// Ensures that the OpenZ Vault and its standard category subdirectories exist on disk.
 /// Also writes a welcoming and informative `README.md` if not already present.
 pub fn ensure_vault_initialized(config: &Config) -> Result<PathBuf> {
-    if !config.vault.enabled {
-        return Ok(resolve_vault_path(config));
-    }
-
     let vault_dir = resolve_vault_path(config);
-    if !vault_dir.exists() {
-        fs::create_dir_all(&vault_dir)
-            .with_context(|| format!("Failed to create OpenZ Vault at {}", vault_dir.display()))?;
+    match config.vault.enabled {
+        false => return Ok(vault_dir),
+        true => {}
     }
 
-    if config.vault.auto_create {
-        for category in VAULT_CATEGORIES {
-            let cat_dir = vault_dir.join(category);
-            if !cat_dir.exists() {
-                let _ = fs::create_dir_all(&cat_dir);
+    match vault_dir.exists() {
+        true => {}
+        false => {
+            fs::create_dir_all(&vault_dir).with_context(|| {
+                format!("Failed to create OpenZ Vault at {}", vault_dir.display())
+            })?;
+        }
+    }
+
+    match config.vault.auto_create {
+        true => {
+            for category in VAULT_CATEGORIES {
+                let cat_dir = vault_dir.join(category);
+                match cat_dir.exists() {
+                    true => {}
+                    false => {
+                        let _ = fs::create_dir_all(&cat_dir);
+                    }
+                }
+            }
+
+            let readme_path = vault_dir.join("README.md");
+            match readme_path.exists() {
+                true => {}
+                false => {
+                    let readme_content = generate_vault_readme(&config.vault.name);
+                    let _ = fs::write(&readme_path, readme_content);
+                }
             }
         }
-
-        let readme_path = vault_dir.join("README.md");
-        if !readme_path.exists() {
-            let readme_content = generate_vault_readme(&config.vault.name);
-            let _ = fs::write(&readme_path, readme_content);
-        }
+        false => {}
     }
 
     Ok(vault_dir)
@@ -177,15 +181,19 @@ pub struct VaultSummary {
 pub fn scan_vault(config: &Config) -> VaultSummary {
     let root_path = resolve_vault_path(config);
     let exists = root_path.exists();
-    let writable = if exists {
-        let test_file = root_path.join(".openz_write_probe");
-        let write_ok = fs::write(&test_file, b"ok").is_ok();
-        if write_ok {
-            let _ = fs::remove_file(&test_file);
+    let writable = match exists {
+        true => {
+            let test_file = root_path.join(".openz_write_probe");
+            let write_ok = fs::write(&test_file, b"ok").is_ok();
+            match write_ok {
+                true => {
+                    let _ = fs::remove_file(&test_file);
+                }
+                false => {}
+            }
+            write_ok
         }
-        write_ok
-    } else {
-        false
+        false => false,
     };
 
     let mut total_items = 0;
@@ -193,8 +201,8 @@ pub fn scan_vault(config: &Config) -> VaultSummary {
 
     for &category in VAULT_CATEGORIES {
         let cat_path = root_path.join(category);
-        let count = if cat_path.exists() {
-            fs::read_dir(&cat_path)
+        let count = match cat_path.exists() {
+            true => fs::read_dir(&cat_path)
                 .map(|entries| {
                     entries
                         .flatten()
@@ -205,9 +213,8 @@ pub fn scan_vault(config: &Config) -> VaultSummary {
                         })
                         .count()
                 })
-                .unwrap_or(0)
-        } else {
-            0
+                .unwrap_or(0),
+            false => 0,
         };
 
         total_items += count;

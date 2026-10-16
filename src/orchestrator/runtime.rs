@@ -23,18 +23,21 @@ pub fn build_step_prompt(
     workflow_goal: &str,
     prior_results: &[String],
 ) -> String {
-    let prior = if prior_results.is_empty() {
-        "No prior step results.".to_string()
-    } else {
-        prior_results.join("\n")
+    let prior = match prior_results.is_empty() {
+        true => "No prior step results.".to_string(),
+        false => prior_results.join("\n"),
     };
     let policy = crate::grounding::step_execution_policy(workflow_goal, &step.goal, &step.agent);
-    let grounding_guidance = if policy.require_sources {
-        "Use web/docs/local tools when required for current, external, source-specific, uncertain, or high-stakes facts. Cite or name sources when used. If sources are unavailable or weak, say verification is incomplete."
-    } else if policy.allow_nested_delegation {
-        "Complete this step directly when possible, but nested delegation is permitted because this step explicitly asks for complex, delegated, research, scan, implementation, refactor, debug, or multi-source work."
-    } else {
-        "Complete the step directly when possible. Do not delegate or research for trivial/general-knowledge tasks. Use web only if required by the step. Use nested delegation only when the step explicitly asks for delegation or clearly needs another specialist."
+    let grounding_guidance = match (policy.require_sources, policy.allow_nested_delegation) {
+        (true, _) => {
+            "Use web/docs/local tools when required for current, external, source-specific, uncertain, or high-stakes facts. Cite or name sources when used. If sources are unavailable or weak, say verification is incomplete."
+        }
+        (false, true) => {
+            "Complete this step directly when possible, but nested delegation is permitted because this step explicitly asks for complex, delegated, research, scan, implementation, refactor, debug, or multi-source work."
+        }
+        (false, false) => {
+            "Complete the step directly when possible. Do not delegate or research for trivial/general-knowledge tasks. Use web only if required by the step. Use nested delegation only when the step explicitly asks for delegation or clearly needs another specialist."
+        }
     };
 
     format!(
@@ -74,6 +77,34 @@ where
 {
     pub fn new(executor: E, sink: S) -> Self {
         Self { executor, sink }
+    }
+
+    fn finish_workflow(
+        &self,
+        run_id: String,
+        status: WorkflowStatus,
+        summary: String,
+        steps: Vec<StepRunResult>,
+    ) -> WorkflowRunResult {
+        let status_label = match status {
+            WorkflowStatus::Success => "success",
+            WorkflowStatus::Failed => "failed",
+            WorkflowStatus::Running => "running",
+            WorkflowStatus::Cancelled => "cancelled",
+            WorkflowStatus::AwaitingReview => "awaiting_review",
+        };
+        self.sink.emit(WorkflowEvent::RunFinished {
+            run_id: run_id.clone(),
+            status: status_label.to_string(),
+            summary: summary.clone(),
+        });
+        WorkflowRunResult {
+            run_id,
+            status,
+            summary,
+            steps,
+            sources: vec![],
+        }
     }
 
     async fn run_step(
@@ -132,16 +163,12 @@ where
         known_agents: &[String],
     ) -> Result<WorkflowRunResult> {
         validate_workflow_spec(&spec, known_agents)?;
-        let ordered_steps = if matches!(
-            &spec.mode,
+        let ordered_steps = match &spec.mode {
             WorkflowMode::Sequential
-                | WorkflowMode::Graph
-                | WorkflowMode::ManagerWorker
-                | WorkflowMode::SelectorGroup
-        ) {
-            Some(ready_step_order(&spec)?)
-        } else {
-            None
+            | WorkflowMode::Graph
+            | WorkflowMode::ManagerWorker
+            | WorkflowMode::SelectorGroup => Some(ready_step_order(&spec)?),
+            WorkflowMode::ReviewLoop | WorkflowMode::Parallel => None,
         };
 
         let run_id = Uuid::new_v4().to_string();
@@ -158,75 +185,33 @@ where
                 for step in
                     ordered_steps.expect("dependency-aware modes are ordered before run start")
                 {
-                    self.sink.emit(WorkflowEvent::StepStarted {
-                        run_id: run_id.clone(),
-                        step_id: step.id.clone(),
-                        agent: step.agent.clone(),
-                    });
-                    let started = std::time::Instant::now();
-                    match self
-                        .executor
-                        .execute_step(step, &spec, &prior_results)
-                        .await
-                    {
-                        Ok(output) => {
-                            self.sink.emit(WorkflowEvent::StepFinished {
-                                run_id: run_id.clone(),
-                                step_id: step.id.clone(),
-                                status: "success".to_string(),
-                                output: output.clone(),
-                            });
-                            prior_results.push(format!("{}: {}", step.id, output));
-                            results.push(StepRunResult {
-                                step_id: step.id.clone(),
-                                agent: step.agent.clone(),
-                                status: StepStatus::Success,
-                                output,
-                                error: None,
-                                duration_ms: started.elapsed().as_millis(),
-                            });
+                    let step_result = self.run_step(&run_id, &spec, step, &prior_results).await;
+                    match step_result.status {
+                        StepStatus::Success => {
+                            prior_results.push(format!("{}: {}", step.id, step_result.output));
+                            results.push(step_result);
                         }
-                        Err(err) => {
-                            let error = err.to_string();
-                            self.sink.emit(WorkflowEvent::StepFinished {
-                                run_id: run_id.clone(),
-                                step_id: step.id.clone(),
-                                status: "failed".to_string(),
-                                output: error.clone(),
-                            });
-                            results.push(StepRunResult {
-                                step_id: step.id.clone(),
-                                agent: step.agent.clone(),
-                                status: StepStatus::Failed,
-                                output: String::new(),
-                                error: Some(error),
-                                duration_ms: started.elapsed().as_millis(),
-                            });
+                        _ => {
                             let summary = format!("workflow failed at step '{}'", step.id);
-                            self.sink.emit(WorkflowEvent::RunFinished {
-                                run_id: run_id.clone(),
-                                status: "failed".to_string(),
-                                summary: summary.clone(),
-                            });
-                            return Ok(WorkflowRunResult {
+                            results.push(step_result);
+                            return Ok(self.finish_workflow(
                                 run_id,
-                                status: WorkflowStatus::Failed,
+                                WorkflowStatus::Failed,
                                 summary,
-                                steps: results,
-                                sources: vec![],
-                            });
+                                results,
+                            ));
                         }
                     }
                 }
             }
             WorkflowMode::SelectorGroup => {
-                let group_agents = if spec.agents.is_empty() {
-                    known_agents.to_vec()
-                } else {
-                    spec.agents
+                let group_agents = match spec.agents.is_empty() {
+                    true => known_agents.to_vec(),
+                    false => spec
+                        .agents
                         .iter()
                         .map(|agent| agent.name.clone())
-                        .collect::<Vec<_>>()
+                        .collect::<Vec<_>>(),
                 };
                 let mut last_speaker: Option<String> = None;
                 let mut next_agent_index = 0usize;
@@ -234,56 +219,54 @@ where
                     ordered_steps.expect("selector group steps are ordered before run start")
                 {
                     let candidates = selector_candidates(&group_agents, last_speaker.as_deref());
-                    let selected_agent = if group_agents.is_empty() {
-                        step.agent.clone()
-                    } else {
-                        let mut selected = None;
-                        for offset in 0..group_agents.len() {
-                            let index = (next_agent_index + offset) % group_agents.len();
-                            let agent = &group_agents[index];
-                            if candidates.iter().any(|candidate| candidate == agent) {
-                                selected = Some((index, agent.clone()));
-                                break;
-                            }
+                    let selected_agent = match group_agents.is_empty() {
+                        true => step.agent.clone(),
+                        false => {
+                            let selected = (0..group_agents.len()).find_map(|offset| {
+                                let index = (next_agent_index + offset) % group_agents.len();
+                                let agent = &group_agents[index];
+                                candidates
+                                    .iter()
+                                    .any(|candidate| candidate == agent)
+                                    .then(|| (index, agent.clone()))
+                            });
+                            let (index, agent) = selected.unwrap_or_else(|| {
+                                let index = next_agent_index % group_agents.len();
+                                (index, group_agents[index].clone())
+                            });
+                            next_agent_index = (index + 1) % group_agents.len();
+                            agent
                         }
-                        let (index, agent) = selected.unwrap_or_else(|| {
-                            let index = next_agent_index % group_agents.len();
-                            (index, group_agents[index].clone())
-                        });
-                        next_agent_index = (index + 1) % group_agents.len();
-                        agent
                     };
                     let mut selected_step = step.clone();
                     selected_step.agent = selected_agent;
                     let step_result = self
                         .run_step(&run_id, &spec, &selected_step, &prior_results)
                         .await;
-                    if !matches!(step_result.status, StepStatus::Success) {
-                        let summary = format!("workflow failed at step '{}'", step.id);
-                        results.push(step_result);
-                        self.sink.emit(WorkflowEvent::RunFinished {
-                            run_id: run_id.clone(),
-                            status: "failed".to_string(),
-                            summary: summary.clone(),
-                        });
-                        return Ok(WorkflowRunResult {
-                            run_id,
-                            status: WorkflowStatus::Failed,
-                            summary,
-                            steps: results,
-                            sources: vec![],
-                        });
+                    match step_result.status {
+                        StepStatus::Success => {
+                            prior_results.push(format!("{}: {}", step.id, step_result.output));
+                            last_speaker = Some(step_result.agent.clone());
+                            results.push(step_result);
+                        }
+                        _ => {
+                            let summary = format!("workflow failed at step '{}'", step.id);
+                            results.push(step_result);
+                            return Ok(self.finish_workflow(
+                                run_id,
+                                WorkflowStatus::Failed,
+                                summary,
+                                results,
+                            ));
+                        }
                     }
-                    prior_results.push(format!("{}: {}", step.id, step_result.output));
-                    last_speaker = Some(step_result.agent.clone());
-                    results.push(step_result);
                 }
             }
             WorkflowMode::ReviewLoop => {
                 let ordered_steps = ready_step_order(&spec)?;
                 let reviewer_name = spec.review.reviewer.as_deref().unwrap_or("").trim();
-                let reviewer_index = if !reviewer_name.is_empty() {
-                    ordered_steps
+                let reviewer_index = match reviewer_name.is_empty() {
+                    false => ordered_steps
                         .iter()
                         .position(|step| step.agent == reviewer_name)
                         .ok_or_else(|| {
@@ -291,14 +274,13 @@ where
                                 "review loop reviewer '{}' has no matching workflow step",
                                 reviewer_name
                             )
-                        })?
-                } else {
-                    ordered_steps
+                        })?,
+                    true => ordered_steps
                         .iter()
                         .position(|step| step.id.eq_ignore_ascii_case("review"))
                         .ok_or_else(|| {
                             anyhow::anyhow!("review loop needs a review step or review.reviewer")
-                        })?
+                        })?,
                 };
                 let reviewer_step = ordered_steps[reviewer_index];
                 let implementation_steps = ordered_steps
@@ -318,47 +300,43 @@ where
                     let round_note = format!("review round {round}/{max_rounds}");
                     for step in &implementation_steps {
                         let step_result = self.run_step(&run_id, &spec, step, &prior_results).await;
-                        if !matches!(step_result.status, StepStatus::Success) {
-                            let summary = format!("workflow failed at step '{}'", step.id);
-                            results.push(step_result);
-                            self.sink.emit(WorkflowEvent::RunFinished {
-                                run_id: run_id.clone(),
-                                status: "failed".to_string(),
-                                summary: summary.clone(),
-                            });
-                            return Ok(WorkflowRunResult {
-                                run_id,
-                                status: WorkflowStatus::Failed,
-                                summary,
-                                steps: results,
-                                sources: vec![],
-                            });
+                        match step_result.status {
+                            StepStatus::Success => {
+                                prior_results.push(format!(
+                                    "{} {}: {}",
+                                    round_note, step.id, step_result.output
+                                ));
+                                results.push(step_result);
+                            }
+                            _ => {
+                                let summary = format!("workflow failed at step '{}'", step.id);
+                                results.push(step_result);
+                                return Ok(self.finish_workflow(
+                                    run_id,
+                                    WorkflowStatus::Failed,
+                                    summary,
+                                    results,
+                                ));
+                            }
                         }
-                        prior_results.push(format!(
-                            "{} {}: {}",
-                            round_note, step.id, step_result.output
-                        ));
-                        results.push(step_result);
                     }
 
                     let review_result = self
                         .run_step(&run_id, &spec, reviewer_step, &prior_results)
                         .await;
-                    if !matches!(review_result.status, StepStatus::Success) {
-                        let summary = format!("workflow failed at step '{}'", reviewer_step.id);
-                        results.push(review_result);
-                        self.sink.emit(WorkflowEvent::RunFinished {
-                            run_id: run_id.clone(),
-                            status: "failed".to_string(),
-                            summary: summary.clone(),
-                        });
-                        return Ok(WorkflowRunResult {
-                            run_id,
-                            status: WorkflowStatus::Failed,
-                            summary,
-                            steps: results,
-                            sources: vec![],
-                        });
+                    match review_result.status {
+                        StepStatus::Success => {}
+                        _ => {
+                            let summary =
+                                format!("workflow failed at step '{}'", reviewer_step.id);
+                            results.push(review_result);
+                            return Ok(self.finish_workflow(
+                                run_id,
+                                WorkflowStatus::Failed,
+                                summary,
+                                results,
+                            ));
+                        }
                     }
 
                     let termination_status =
@@ -374,72 +352,51 @@ where
                             for step in &post_approval_steps {
                                 let step_result =
                                     self.run_step(&run_id, &spec, step, &prior_results).await;
-                                if !matches!(step_result.status, StepStatus::Success) {
-                                    let summary = format!("workflow failed at step '{}'", step.id);
-                                    results.push(step_result);
-                                    self.sink.emit(WorkflowEvent::RunFinished {
-                                        run_id: run_id.clone(),
-                                        status: "failed".to_string(),
-                                        summary: summary.clone(),
-                                    });
-                                    return Ok(WorkflowRunResult {
-                                        run_id,
-                                        status: WorkflowStatus::Failed,
-                                        summary,
-                                        steps: results,
-                                        sources: vec![],
-                                    });
+                                match step_result.status {
+                                    StepStatus::Success => {
+                                        prior_results.push(format!(
+                                            "{}: {}",
+                                            step.id, step_result.output
+                                        ));
+                                        results.push(step_result);
+                                    }
+                                    _ => {
+                                        let summary =
+                                            format!("workflow failed at step '{}'", step.id);
+                                        results.push(step_result);
+                                        return Ok(self.finish_workflow(
+                                            run_id,
+                                            WorkflowStatus::Failed,
+                                            summary,
+                                            results,
+                                        ));
+                                    }
                                 }
-                                prior_results.push(format!("{}: {}", step.id, step_result.output));
-                                results.push(step_result);
                             }
 
                             let summary = format!("review loop approved after {round} round(s)");
-                            self.sink.emit(WorkflowEvent::RunFinished {
-                                run_id: run_id.clone(),
-                                status: "success".to_string(),
-                                summary: summary.clone(),
-                            });
-                            return Ok(WorkflowRunResult {
+                            return Ok(self.finish_workflow(
                                 run_id,
-                                status: WorkflowStatus::Success,
+                                WorkflowStatus::Success,
                                 summary,
-                                steps: results,
-                                sources: vec![],
-                            });
+                                results,
+                            ));
                         }
                         Some(WorkflowStatus::Failed) => {
                             let summary = format!("review loop failed after {round} round(s)");
-                            self.sink.emit(WorkflowEvent::RunFinished {
-                                run_id: run_id.clone(),
-                                status: "failed".to_string(),
-                                summary: summary.clone(),
-                            });
-                            return Ok(WorkflowRunResult {
+                            return Ok(self.finish_workflow(
                                 run_id,
-                                status: WorkflowStatus::Failed,
+                                WorkflowStatus::Failed,
                                 summary,
-                                steps: results,
-                                sources: vec![],
-                            });
+                                results,
+                            ));
                         }
                         _ => {}
                     }
                 }
 
                 let summary = "review loop reached max_rounds".to_string();
-                self.sink.emit(WorkflowEvent::RunFinished {
-                    run_id: run_id.clone(),
-                    status: "failed".to_string(),
-                    summary: summary.clone(),
-                });
-                return Ok(WorkflowRunResult {
-                    run_id,
-                    status: WorkflowStatus::Failed,
-                    summary,
-                    steps: results,
-                    sources: vec![],
-                });
+                return Ok(self.finish_workflow(run_id, WorkflowStatus::Failed, summary, results));
             }
             WorkflowMode::Parallel => {
                 let executor = &self.executor;
@@ -483,14 +440,12 @@ where
                 }
                 completed.sort_by_key(|(index, _, _)| *index);
 
-                let mut first_failure_step = None;
+                let mut first_failure_step: Option<String> = None;
                 for (_, step, step_result) in completed {
                     let (status, event_output) = match &step_result.status {
                         StepStatus::Success => ("success", step_result.output.clone()),
                         StepStatus::Failed => {
-                            if first_failure_step.is_none() {
-                                first_failure_step = Some(step.id.clone());
-                            }
+                            let _ = first_failure_step.get_or_insert_with(|| step.id.clone());
                             (
                                 "failed",
                                 step_result
@@ -500,9 +455,7 @@ where
                             )
                         }
                         _ => {
-                            if first_failure_step.is_none() {
-                                first_failure_step = Some(step.id.clone());
-                            }
+                            let _ = first_failure_step.get_or_insert_with(|| step.id.clone());
                             (
                                 "failed",
                                 format!("unexpected step status: {:?}", step_result.status),
@@ -518,37 +471,23 @@ where
                     results.push(step_result);
                 }
 
-                if let Some(step_id) = first_failure_step {
-                    let summary = format!("workflow failed at step '{}'", step_id);
-                    self.sink.emit(WorkflowEvent::RunFinished {
-                        run_id: run_id.clone(),
-                        status: "failed".to_string(),
-                        summary: summary.clone(),
-                    });
-                    return Ok(WorkflowRunResult {
-                        run_id,
-                        status: WorkflowStatus::Failed,
-                        summary,
-                        steps: results,
-                        sources: vec![],
-                    });
+                match first_failure_step {
+                    Some(step_id) => {
+                        let summary = format!("workflow failed at step '{step_id}'");
+                        return Ok(self.finish_workflow(
+                            run_id,
+                            WorkflowStatus::Failed,
+                            summary,
+                            results,
+                        ));
+                    }
+                    None => {}
                 }
             }
         }
 
         let summary = format!("{} step(s) completed", results.len());
-        self.sink.emit(WorkflowEvent::RunFinished {
-            run_id: run_id.clone(),
-            status: "success".to_string(),
-            summary: summary.clone(),
-        });
-        Ok(WorkflowRunResult {
-            run_id,
-            status: WorkflowStatus::Success,
-            summary,
-            steps: results,
-            sources: vec![],
-        })
+        Ok(self.finish_workflow(run_id, WorkflowStatus::Success, summary, results))
     }
 }
 
@@ -558,10 +497,9 @@ pub fn selector_candidates(agents: &[String], last_speaker: Option<&str>) -> Vec
         .filter(|agent| Some(agent.as_str()) != last_speaker)
         .cloned()
         .collect::<Vec<_>>();
-    if filtered.is_empty() {
-        agents.to_vec()
-    } else {
-        filtered
+    match filtered.is_empty() {
+        true => agents.to_vec(),
+        false => filtered,
     }
 }
 
@@ -569,27 +507,24 @@ pub fn output_satisfies_termination(
     output: &str,
     policy: &TerminationPolicy,
 ) -> Option<WorkflowStatus> {
-    if let Some(keyword) = policy
+    let failure_hit = policy
         .failure_keyword
         .as_deref()
         .map(str::trim)
         .filter(|keyword| !keyword.is_empty())
-    {
-        if output.contains(keyword) {
-            return Some(WorkflowStatus::Failed);
-        }
-    }
-    if let Some(keyword) = policy
+        .is_some_and(|keyword| output.contains(keyword));
+    let success_hit = policy
         .success_keyword
         .as_deref()
         .map(str::trim)
         .filter(|keyword| !keyword.is_empty())
-    {
-        if output.contains(keyword) {
-            return Some(WorkflowStatus::Success);
-        }
+        .is_some_and(|keyword| output.contains(keyword));
+
+    match (failure_hit, success_hit) {
+        (true, _) => Some(WorkflowStatus::Failed),
+        (false, true) => Some(WorkflowStatus::Success),
+        (false, false) => None,
     }
-    None
 }
 
 fn ready_step_order(spec: &WorkflowSpec) -> Result<Vec<&WorkflowStep>> {
@@ -605,8 +540,9 @@ fn ready_step_order(spec: &WorkflowSpec) -> Result<Vec<&WorkflowStep>> {
                     .all(|dependency| completed.contains(dependency.as_str()))
         });
 
-        let Some(step) = next else {
-            anyhow::bail!("workflow contains unresolved step dependencies");
+        let step = match next {
+            Some(s) => s,
+            None => anyhow::bail!("workflow contains unresolved step dependencies"),
         };
 
         completed.insert(step.id.as_str());

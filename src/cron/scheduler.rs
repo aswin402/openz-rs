@@ -24,15 +24,16 @@ pub fn start_scheduler(config: Config) -> tokio::task::JoinHandle<()> {
         };
 
         loop {
-            if *shutdown_rx.borrow() {
-                break;
+            match *shutdown_rx.borrow() {
+                true => break,
+                false => {}
             }
 
-            if let Err(e) = tick_scheduler(&config).await {
-                crate::channels::cli::send_notification(&format!(
-                    "Error in cron scheduler tick: {}",
-                    e
-                ));
+            match tick_scheduler(&config).await {
+                Ok(()) => {}
+                Err(e) => crate::channels::cli::send_notification(&format!(
+                    "Error in cron scheduler tick: {e}"
+                )),
             }
 
             tokio::select! {
@@ -75,14 +76,12 @@ fn mark_job_running(job: &mut CronJob, started_at: chrono::DateTime<Utc>) {
 }
 
 fn should_notify_cron(quiet: bool, notify_on: &CronNotifyPolicy, status: &CronJobStatus) -> bool {
-    if quiet {
-        return false;
-    }
-    match notify_on {
-        CronNotifyPolicy::Never => false,
-        CronNotifyPolicy::Failure => matches!(status, CronJobStatus::Failed),
-        CronNotifyPolicy::Always => true,
-    }
+    (!quiet)
+        && match notify_on {
+            CronNotifyPolicy::Never => false,
+            CronNotifyPolicy::Failure => matches!(status, CronJobStatus::Failed),
+            CronNotifyPolicy::Always => true,
+        }
 }
 
 fn failed_run_record(
@@ -110,18 +109,20 @@ fn update_job_success(
     run_record: &CronRunRecord,
 ) -> Result<()> {
     crate::cron::with_cron_jobs_mut(|jobs| {
-        if let Some(j) = jobs.iter_mut().find(|j| j.id == job_id) {
-            j.status = if j.enabled {
-                CronJobStatus::Idle
-            } else {
-                CronJobStatus::Disabled
-            };
-            j.last_run = Some(completed_at.to_rfc3339());
-            j.last_finished_at = Some(completed_at.to_rfc3339());
-            j.updated_at = Some(completed_at.to_rfc3339());
-            j.run_count = j.run_count.saturating_add(1);
-            j.last_error = None;
-            j.last_log_path = run_record.log_path.clone();
+        match jobs.iter_mut().find(|j| j.id == job_id) {
+            Some(j) => {
+                j.status = match j.enabled {
+                    true => CronJobStatus::Idle,
+                    false => CronJobStatus::Disabled,
+                };
+                j.last_run = Some(completed_at.to_rfc3339());
+                j.last_finished_at = Some(completed_at.to_rfc3339());
+                j.updated_at = Some(completed_at.to_rfc3339());
+                j.run_count = j.run_count.saturating_add(1);
+                j.last_error = None;
+                j.last_log_path = run_record.log_path.clone();
+            }
+            None => {}
         }
     })?;
     Ok(())
@@ -133,15 +134,18 @@ fn update_job_failure(
     error: &anyhow::Error,
 ) -> Result<()> {
     crate::cron::with_cron_jobs_mut(|jobs| {
-        if let Some(j) = jobs.iter_mut().find(|j| j.id == job_id) {
-            j.status = CronJobStatus::Failed;
-            j.last_run = Some(completed_at.to_rfc3339());
-            j.last_finished_at = Some(completed_at.to_rfc3339());
-            j.updated_at = Some(completed_at.to_rfc3339());
-            j.run_count = j.run_count.saturating_add(1);
-            j.failure_count = j.failure_count.saturating_add(1);
-            j.last_error = Some(error.to_string());
-            j.last_log_path = None;
+        match jobs.iter_mut().find(|j| j.id == job_id) {
+            Some(j) => {
+                j.status = CronJobStatus::Failed;
+                j.last_run = Some(completed_at.to_rfc3339());
+                j.last_finished_at = Some(completed_at.to_rfc3339());
+                j.updated_at = Some(completed_at.to_rfc3339());
+                j.run_count = j.run_count.saturating_add(1);
+                j.failure_count = j.failure_count.saturating_add(1);
+                j.last_error = Some(error.to_string());
+                j.last_log_path = None;
+            }
+            None => {}
         }
     })?;
     Ok(())
@@ -154,11 +158,12 @@ pub async fn run_single_job_now(config: &Config, job: CronJob) -> Result<CronRun
             .iter_mut()
             .find(|j| j.id == job.id)
             .ok_or_else(|| anyhow!("Cron job with ID '{}' not found.", job.id))?;
-        if matches!(j.status, CronJobStatus::Running) {
-            if !running_state_is_stale(j, started_at) {
-                return Err(anyhow!("Cron job with ID '{}' is already running.", job.id));
-            }
-            mark_stale_running_failure(j, started_at);
+        match matches!(j.status, CronJobStatus::Running) {
+            true => match running_state_is_stale(j, started_at) {
+                false => return Err(anyhow!("Cron job with ID '{}' is already running.", job.id)),
+                true => mark_stale_running_failure(j, started_at),
+            },
+            false => {}
         }
         mark_job_running(j, started_at);
         Ok(())
@@ -171,10 +176,13 @@ pub async fn run_single_job_now(config: &Config, job: CronJob) -> Result<CronRun
                 .as_deref()
                 .and_then(|dt| dt.parse::<chrono::DateTime<Utc>>().ok())
                 .unwrap_or_else(Utc::now);
-            if let Err(e) = append_cron_run_record(&record) {
-                tracing::error!(job_id = %job.id, error = ?e, "failed to append manual cron run record");
-                update_job_failure(&job.id, completed_at, &e)?;
-                return Err(e);
+            match append_cron_run_record(&record) {
+                Ok(()) => {}
+                Err(e) => {
+                    tracing::error!(job_id = %job.id, error = ?e, "failed to append manual cron run record");
+                    update_job_failure(&job.id, completed_at, &e)?;
+                    return Err(e);
+                }
             }
             update_job_success(&job.id, completed_at, &record)?;
             Ok(record)
@@ -199,26 +207,24 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
 
     crate::cron::with_cron_jobs_mut(|jobs| {
         for job in jobs.iter_mut() {
-            if matches!(job.status, CronJobStatus::Running) {
-                if !running_state_is_stale(job, now) {
-                    continue;
-                }
-                mark_stale_running_failure(job, now);
+            match matches!(job.status, CronJobStatus::Running) {
+                true => match running_state_is_stale(job, now) {
+                    false => continue,
+                    true => mark_stale_running_failure(job, now),
+                },
+                false => {}
             }
-            if !job.enabled {
-                continue;
+            match job.enabled {
+                false => continue,
+                true => {}
             }
 
-            let next_run = match &job.next_run {
-                Some(dt_str) => match dt_str.parse::<chrono::DateTime<Utc>>() {
-                    Ok(dt) => dt,
-                    Err(_) => {
-                        let next = calculate_next_run(&job.schedule, None)
-                            .unwrap_or_else(|| now + chrono::Duration::minutes(5));
-                        job.next_run = Some(next.to_rfc3339());
-                        next
-                    }
-                },
+            let next_run = match job
+                .next_run
+                .as_deref()
+                .and_then(|dt_str| dt_str.parse::<chrono::DateTime<Utc>>().ok())
+            {
+                Some(dt) => dt,
                 None => {
                     let next = calculate_next_run(&job.schedule, None)
                         .unwrap_or_else(|| now + chrono::Duration::minutes(5));
@@ -227,18 +233,24 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
                 }
             };
 
-            if now >= next_run {
-                let started_at = Utc::now();
-                let next_next = calculate_next_run(&job.schedule, Some(now))
-                    .unwrap_or_else(|| now + chrono::Duration::minutes(5));
-                if job.run_once {
-                    job.enabled = false;
-                    job.next_run = None;
-                } else {
-                    job.next_run = Some(next_next.to_rfc3339());
+            match now >= next_run {
+                true => {
+                    let started_at = Utc::now();
+                    let next_next = calculate_next_run(&job.schedule, Some(now))
+                        .unwrap_or_else(|| now + chrono::Duration::minutes(5));
+                    match job.run_once {
+                        true => {
+                            job.enabled = false;
+                            job.next_run = None;
+                        }
+                        false => {
+                            job.next_run = Some(next_next.to_rfc3339());
+                        }
+                    }
+                    mark_job_running(job, started_at);
+                    jobs_to_run.push(job.clone());
                 }
-                mark_job_running(job, started_at);
-                jobs_to_run.push(job.clone());
+                false => {}
             }
         }
     })?;
@@ -265,71 +277,77 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
                         .unwrap_or_else(Utc::now);
                     match append_cron_run_record(&run_record) {
                         Ok(()) => {
-                            if let Err(e) =
-                                update_job_success(&job_clone.id, completed_at, &run_record)
-                            {
-                                tracing::error!("Failed to update cron jobs metadata: {:?}", e);
+                            match update_job_success(&job_clone.id, completed_at, &run_record) {
+                                Ok(()) => {}
+                                Err(e) => {
+                                    tracing::error!("Failed to update cron jobs metadata: {:?}", e)
+                                }
                             }
                             tracing::info!(job_id = %job_clone.id, "cron job completed successfully");
-                            if should_notify_cron(
+                            match should_notify_cron(
                                 job_clone.quiet,
                                 &job_clone.notify_on,
                                 &CronJobStatus::Success,
                             ) {
-                                crate::channels::cli::send_notification(&format!(
+                                true => crate::channels::cli::send_notification(&format!(
                                     "Cron Job {} completed successfully.",
                                     job_clone.id
-                                ));
+                                )),
+                                false => {}
                             }
                         }
                         Err(e) => {
                             tracing::error!(job_id = %job_clone.id, error = ?e, "failed to append cron run record");
-                            if let Err(err) = update_job_failure(&job_clone.id, completed_at, &e) {
-                                tracing::error!(
+                            match update_job_failure(&job_clone.id, completed_at, &e) {
+                                Ok(()) => {}
+                                Err(err) => tracing::error!(
                                     "Failed to update cron jobs metadata after run-record append failure: {:?}",
                                     err
-                                );
+                                ),
                             }
-                            if should_notify_cron(
+                            match should_notify_cron(
                                 job_clone.quiet,
                                 &job_clone.notify_on,
                                 &CronJobStatus::Failed,
                             ) {
-                                crate::channels::cli::send_notification(&format!(
+                                true => crate::channels::cli::send_notification(&format!(
                                     "Error running Cron Job {}: {}",
                                     job_clone.id, e
-                                ));
+                                )),
+                                false => {}
                             }
                         }
                     }
                 }
                 Err(e) => {
                     let run_record = failed_run_record(&job_clone, started_at, &e);
-                    let append_err = append_cron_run_record(&run_record).err();
-                    if let Some(err) = &append_err {
-                        tracing::error!(job_id = %job_clone.id, error = ?err, "failed to append failed cron run record");
+                    match append_cron_run_record(&run_record) {
+                        Ok(()) => {}
+                        Err(err) => tracing::error!(job_id = %job_clone.id, error = ?err, "failed to append failed cron run record"),
                     }
                     let completed_at = run_record
                         .finished_at
                         .as_deref()
                         .and_then(|dt| dt.parse::<chrono::DateTime<Utc>>().ok())
                         .unwrap_or_else(Utc::now);
-                    if let Err(err) = update_job_failure(&job_clone.id, completed_at, &e) {
-                        tracing::error!(
+                    match update_job_failure(&job_clone.id, completed_at, &e) {
+                        Ok(()) => {}
+                        Err(err) => tracing::error!(
                             "Failed to update cron jobs metadata after failure: {:?}",
                             err
-                        );
+                        ),
                     }
                     tracing::error!(job_id = %job_clone.id, error = ?e, "cron job failed");
-                    if should_notify_cron(
+                    match should_notify_cron(
                         job_clone.quiet,
                         &job_clone.notify_on,
                         &CronJobStatus::Failed,
                     ) {
-                        crate::channels::cli::send_notification(&format!(
+                        true => crate::channels::cli::send_notification(&format!(
                             "Error running Cron Job {}: {}",
                             job_clone.id, e
-                        ));
+                        )),
+                        false => {}
                     }
                 }
             }
@@ -357,8 +375,9 @@ Task: {}",
     let res = agent_loop.run(&prompt, &session_key).await?;
 
     let logs_dir = config_dir().join("cron_logs");
-    if !logs_dir.exists() {
-        std::fs::create_dir_all(&logs_dir)?;
+    match logs_dir.exists() {
+        true => {}
+        false => std::fs::create_dir_all(&logs_dir)?,
     }
     let timestamp = Utc::now().format("%Y%m%d_%H%M%S%.3f").to_string();
     let run_id = format!("{}_{}", job.id, uuid::Uuid::new_v4());

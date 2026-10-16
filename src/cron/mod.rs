@@ -123,8 +123,9 @@ pub fn cron_runs_file_path() -> PathBuf {
 
 pub fn append_cron_run_record(record: &CronRunRecord) -> Result<()> {
     let path = cron_runs_file_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+    match path.parent() {
+        Some(parent) => fs::create_dir_all(parent)?,
+        None => {}
     }
     let mut line = serde_json::to_string(record)?;
     line.push('\n');
@@ -140,28 +141,30 @@ pub fn append_cron_run_record(record: &CronRunRecord) -> Result<()> {
 
 pub fn load_cron_run_records(job_id: Option<&str>, limit: usize) -> Result<Vec<CronRunRecord>> {
     let path = cron_runs_file_path();
-    if !path.exists() || limit == 0 {
-        return Ok(Vec::new());
+    match !path.exists() || limit == 0 {
+        true => return Ok(Vec::new()),
+        false => {}
     }
 
     let content = fs::read_to_string(&path)
         .with_context(|| format!("Failed to read cron run log at {:?}", path))?;
     let mut records = Vec::new();
     for line in content.lines() {
-        if line.trim().is_empty() {
-            continue;
+        match line.trim().is_empty() {
+            true => continue,
+            false => {}
         }
         let record: CronRunRecord = serde_json::from_str(line)
             .with_context(|| format!("Failed to parse cron run record from {:?}", path))?;
-        if job_id.map(|wanted| wanted == record.job_id).unwrap_or(true) {
-            records.push(record);
+        match job_id.map(|wanted| wanted == record.job_id).unwrap_or(true) {
+            true => records.push(record),
+            false => {}
         }
     }
 
-    if records.len() > limit {
-        Ok(records.split_off(records.len() - limit))
-    } else {
-        Ok(records)
+    match records.len() > limit {
+        true => Ok(records.split_off(records.len() - limit)),
+        false => Ok(records),
     }
 }
 
@@ -180,25 +183,32 @@ impl FileLock {
                 Ok(_) => {
                     return FileLock { lock_path };
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if let Ok(metadata) = std::fs::metadata(&lock_path) {
-                        if let Ok(modified) = metadata.modified() {
-                            if let Ok(elapsed) = modified.elapsed() {
-                                if elapsed.as_secs() > 10 {
-                                    let _ = std::fs::remove_file(&lock_path);
-                                    continue;
-                                }
+                Err(e) => match e.kind() == std::io::ErrorKind::AlreadyExists {
+                    true => {
+                        let is_stale = std::fs::metadata(&lock_path)
+                            .ok()
+                            .and_then(|m| m.modified().ok())
+                            .and_then(|t| t.elapsed().ok())
+                            .is_some_and(|elapsed| elapsed.as_secs() > 10);
+                        match is_stale {
+                            true => {
+                                let _ = std::fs::remove_file(&lock_path);
+                                continue;
                             }
+                            false => {}
                         }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-                Err(_) => {
-                    if let Some(parent) = lock_path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
+                    false => {
+                        match lock_path.parent() {
+                            Some(parent) => {
+                                let _ = std::fs::create_dir_all(parent);
+                            }
+                            None => {}
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
+                },
             }
         }
     }
@@ -217,8 +227,9 @@ pub fn acquire_cron_lock() -> FileLock {
 
 pub fn load_jobs_raw() -> Result<Vec<CronJob>> {
     let path = cron_file_path();
-    if !path.exists() {
-        return Ok(Vec::new());
+    match path.exists() {
+        false => return Ok(Vec::new()),
+        true => {}
     }
     let content = fs::read_to_string(&path)
         .with_context(|| format!("Failed to read cron jobs file at {:?}", path))?;
@@ -229,8 +240,9 @@ pub fn load_jobs_raw() -> Result<Vec<CronJob>> {
 
 pub fn save_jobs_raw(jobs: &[CronJob]) -> Result<()> {
     let path = cron_file_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+    match path.parent() {
+        Some(parent) => fs::create_dir_all(parent)?,
+        None => {}
     }
     let content = serde_json::to_string_pretty(jobs)?;
     fs::write(&path, content)
@@ -261,8 +273,9 @@ where
 
 pub fn parse_schedule(s: &str) -> Option<chrono::Duration> {
     let s = s.trim();
-    if s.len() < 2 {
-        return None;
+    match s.len() < 2 {
+        true => return None,
+        false => {}
     }
     let (num_str, unit) = s.split_at(s.len() - 1);
     let num: i64 = num_str.parse().ok()?;
@@ -285,34 +298,30 @@ pub fn calculate_next_run(
     let now = Utc::now();
     let base_time = last_run.unwrap_or(now);
 
-    // 1. Try simple duration parsing
-    if let Some(duration) = parse_schedule(s) {
-        return Some(base_time + duration);
+    match parse_schedule(s) {
+        Some(duration) => return Some(base_time + duration),
+        None => {}
     }
 
     let s_clean = s.trim();
 
-    // 2. Try a plain local clock time, e.g. "18:00" or "18:00:30".
-    // Users read wall-clock times in the TUI, so store the next local occurrence as UTC.
-    if let Some(next_local_time) = next_local_clock_time(s_clean) {
-        return Some(next_local_time);
+    match next_local_clock_time(s_clean) {
+        Some(next_local_time) => return Some(next_local_time),
+        None => {}
     }
 
-    // 3. Try standard Unix cron parsing (5-field or 6-field) in local time.
-    let cron_str = if s_clean.split_whitespace().count() == 5 {
-        format!("0 {}", s_clean)
-    } else {
-        s_clean.to_string()
+    let cron_str = match s_clean.split_whitespace().count() == 5 {
+        true => format!("0 {s_clean}"),
+        false => s_clean.to_string(),
     };
 
-    if let Ok(schedule) = cron::Schedule::from_str(&cron_str) {
-        return schedule
+    match cron::Schedule::from_str(&cron_str) {
+        Ok(schedule) => schedule
             .upcoming(Local)
             .next()
-            .map(|dt| dt.with_timezone(&Utc));
+            .map(|dt| dt.with_timezone(&Utc)),
+        Err(_) => None,
     }
-
-    None
 }
 
 fn next_local_clock_time(s: &str) -> Option<chrono::DateTime<Utc>> {
@@ -322,9 +331,12 @@ fn next_local_clock_time(s: &str) -> Option<chrono::DateTime<Utc>> {
     let now = Local::now();
     let today = now.date_naive().and_time(time);
     let mut candidate = Local.from_local_datetime(&today).earliest()?;
-    if candidate <= now {
-        let tomorrow = now.date_naive().succ_opt()?.and_time(time);
-        candidate = Local.from_local_datetime(&tomorrow).earliest()?;
+    match candidate <= now {
+        true => {
+            let tomorrow = now.date_naive().succ_opt()?.and_time(time);
+            candidate = Local.from_local_datetime(&tomorrow).earliest()?;
+        }
+        false => {}
     }
     Some(candidate.with_timezone(&Utc))
 }

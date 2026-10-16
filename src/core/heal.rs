@@ -27,28 +27,27 @@ pub fn validate_compile_command(cmd: &str) -> Result<()> {
     let is_allowed = ALLOWED_COMPILE_PREFIXES
         .iter()
         .any(|p| cmd_lower.starts_with(p) || cmd_lower == p.trim());
-    if !is_allowed {
-        return Err(anyhow!(
+    match is_allowed {
+        true => Ok(()),
+        false => Err(anyhow!(
             "Compile command '{}' is not in the allowed list. Allowed: cargo, rustc, gcc, g++, clang, make, cmake, ninja, go, npm, npx, yarn, pnpm, node, python, javac, java, mvn, gradle, swift, dotnet, pytest, jest, vitest, tsc",
             cmd
-        ));
+        )),
     }
-    Ok(())
 }
 
 /// Strips surrounding markdown code block fences (e.g. ```rust\n...``` or ```\n...```)
 /// and returns the inner code content.
 pub fn strip_code_fence(text: &str) -> String {
     let mut cleaned = text.trim();
-    if cleaned.starts_with("```") {
-        if let Some(pos) = cleaned.find('\n') {
-            cleaned = &cleaned[pos + 1..];
-        } else {
-            cleaned = "";
-        }
+    match (cleaned.starts_with("```"), cleaned.find('\n')) {
+        (true, Some(pos)) => cleaned = &cleaned[pos + 1..],
+        (true, None) => cleaned = "",
+        (false, _) => {}
     }
-    if cleaned.ends_with("```") {
-        cleaned = cleaned[..cleaned.len().saturating_sub(3)].trim_end();
+    match cleaned.ends_with("```") {
+        true => cleaned = cleaned[..cleaned.len().saturating_sub(3)].trim_end(),
+        false => {}
     }
     cleaned.to_string()
 }
@@ -59,7 +58,7 @@ pub async fn run_compile_check(compile_command: &str) -> Result<(bool, String)> 
     let output = cmd.output().await?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    let combined = format!("{}{}", stdout, stderr);
+    let combined = format!("{stdout}{stderr}");
     Ok((output.status.success(), combined))
 }
 
@@ -74,17 +73,19 @@ pub struct FileBackupGuard {
 impl FileBackupGuard {
     pub fn create(target_path: &Path, write_bak_file: bool) -> Result<Self> {
         let original_content = std::fs::read_to_string(target_path).ok();
-        let backup_file_path = if write_bak_file && target_path.exists() {
-            let bak_path = target_path.with_extension(format!(
-                "{}.bak",
-                target_path.extension().and_then(|e| e.to_str()).unwrap_or("")
-            ));
-            if let Err(e) = std::fs::copy(target_path, &bak_path) {
-                tracing::warn!("Failed to create backup of {:?}: {}", target_path, e);
+        let backup_file_path = match write_bak_file && target_path.exists() {
+            true => {
+                let bak_path = target_path.with_extension(format!(
+                    "{}.bak",
+                    target_path.extension().and_then(|e| e.to_str()).unwrap_or("")
+                ));
+                match std::fs::copy(target_path, &bak_path) {
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("Failed to create backup of {:?}: {}", target_path, e),
+                }
+                Some(bak_path)
             }
-            Some(bak_path)
-        } else {
-            None
+            false => None,
         };
 
         Ok(Self {
@@ -100,10 +101,12 @@ impl FileBackupGuard {
     }
 
     pub fn rollback(&mut self) -> Result<()> {
-        if let Some(orig) = &self.original_content {
-            std::fs::write(&self.target_path, orig)?;
-        } else if self.target_path.exists() {
-            let _ = std::fs::remove_file(&self.target_path);
+        match (&self.original_content, self.target_path.exists()) {
+            (Some(orig), _) => std::fs::write(&self.target_path, orig)?,
+            (None, true) => {
+                let _ = std::fs::remove_file(&self.target_path);
+            }
+            (None, false) => {}
         }
         self.defused = true;
         Ok(())
@@ -116,8 +119,11 @@ impl FileBackupGuard {
 
 impl Drop for FileBackupGuard {
     fn drop(&mut self) {
-        if !self.defused {
-            let _ = self.rollback();
+        match self.defused {
+            true => {}
+            false => {
+                let _ = self.rollback();
+            }
         }
     }
 }
@@ -137,12 +143,13 @@ impl GitSnapshot {
         .await
         .unwrap_or(false);
 
-        if !is_git {
-            return Self { committed: false };
+        match is_git {
+            false => return Self { committed: false },
+            true => {}
         }
 
         let escaped = quote_shell_arg(&path.to_string_lossy());
-        let mut add_cmd = host_tokio_shell_command(&format!("git add -- {}", escaped));
+        let mut add_cmd = host_tokio_shell_command(&format!("git add -- {escaped}"));
         let _ = add_cmd.output().await;
 
         let mut commit_cmd =
@@ -156,16 +163,22 @@ impl GitSnapshot {
     }
 
     pub async fn on_success(self) {
-        if self.committed {
-            let mut reset_cmd = host_tokio_shell_command("git reset HEAD~1");
-            let _ = reset_cmd.output().await;
+        match self.committed {
+            true => {
+                let mut reset_cmd = host_tokio_shell_command("git reset HEAD~1");
+                let _ = reset_cmd.output().await;
+            }
+            false => {}
         }
     }
 
     pub async fn on_failure(self) {
-        if self.committed {
-            let mut reset_cmd = host_tokio_shell_command("git reset --mixed HEAD~1");
-            let _ = reset_cmd.output().await;
+        match self.committed {
+            true => {
+                let mut reset_cmd = host_tokio_shell_command("git reset --mixed HEAD~1");
+                let _ = reset_cmd.output().await;
+            }
+            false => {}
         }
     }
 }
@@ -216,6 +229,26 @@ pub async fn heal_code_with_llm(
     Ok(strip_code_fence(&raw))
 }
 
+fn is_binary_file_extension(ext: &str) -> bool {
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "docx"
+            | "xlsx"
+            | "pdf"
+            | "pptx"
+            | "zip"
+            | "png"
+            | "jpg"
+            | "jpeg"
+            | "bin"
+            | "exe"
+            | "tar"
+            | "gz"
+            | "so"
+            | "dylib"
+    )
+}
+
 /// Runs an iterative edit-and-compile reflection loop modifying `file_path`
 /// until `compile_command` succeeds or `max_iterations` is reached.
 pub async fn run_compiler_auto_heal(
@@ -227,21 +260,22 @@ pub async fn run_compiler_auto_heal(
 ) -> Result<serde_json::Value> {
     validate_compile_command(compile_command)?;
 
-    if !file_path.exists() {
-        return Err(anyhow!("File does not exist: {:?}", file_path));
+    match file_path.exists() {
+        false => return Err(anyhow!("File does not exist: {:?}", file_path)),
+        true => {}
     }
 
-    if let Some(ext) = file_path.extension().and_then(|e| e.to_str()) {
-        let lower = ext.to_lowercase();
-        if matches!(
-            lower.as_str(),
-            "docx" | "xlsx" | "pdf" | "pptx" | "zip" | "png" | "jpg" | "jpeg" | "bin" | "exe" | "tar" | "gz" | "so" | "dylib"
-        ) {
+    match file_path
+        .extension()
+        .and_then(|e| e.to_str())
+        .filter(|ext| is_binary_file_extension(ext))
+    {
+        Some(ext) => {
             return Err(anyhow!(
-                "compiler_auto_heal only supports text/code source files, not binary format '.{}'",
-                ext
+                "compiler_auto_heal only supports text/code source files, not binary format '.{ext}'"
             ));
         }
+        None => {}
     }
 
     let mut backup = FileBackupGuard::create(file_path, true)?;
@@ -265,8 +299,8 @@ pub async fn run_compiler_auto_heal(
             COLOR_RESET
         );
 
-        let user_prompt = if current_error.is_empty() {
-            format!(
+        let user_prompt = match current_error.is_empty() {
+            true => format!(
                 "TARGET FILE: {:?}\n\n\
                  CURRENT CONTENT:\n\
                  ```\n\
@@ -275,9 +309,8 @@ pub async fn run_compiler_auto_heal(
                  INSTRUCTION: {}\n\n\
                  Please edit the file content to satisfy the instruction, and output the complete new file content.",
                 file_path, file_content, instruction
-            )
-        } else {
-            format!(
+            ),
+            false => format!(
                 "TARGET FILE: {:?}\n\n\
                  CURRENT CONTENT:\n\
                  ```\n\
@@ -289,7 +322,7 @@ pub async fn run_compiler_auto_heal(
                  ```\n\n\
                  Please fix this compilation error and output the complete corrected file content.",
                 file_path, file_content, current_error
-            )
+            ),
         };
 
         let messages = vec![Message {
@@ -315,39 +348,43 @@ pub async fn run_compiler_auto_heal(
         file_content = updated_content_str;
 
         let (success, output_str) = run_compile_check(compile_command).await?;
-        if success {
-            compile_success = true;
-            crate::tui_println!(
-                "{}✓ [Compiler Auto-Heal] Compilation succeeded! (Iteration {}){}",
-                EMERALD_GREEN,
-                iteration,
-                COLOR_RESET
-            );
-            break;
-        } else {
-            current_error = output_str;
-            crate::tui_println!(
-                "{}▲ [Compiler Auto-Heal] Compilation failed. Error output captured.{}",
-                AURA_GOLD,
-                COLOR_RESET
-            );
+        match success {
+            true => {
+                compile_success = true;
+                crate::tui_println!(
+                    "{}✓ [Compiler Auto-Heal] Compilation succeeded! (Iteration {}){}",
+                    EMERALD_GREEN,
+                    iteration,
+                    COLOR_RESET
+                );
+                break;
+            }
+            false => {
+                current_error = output_str;
+                crate::tui_println!(
+                    "{}▲ [Compiler Auto-Heal] Compilation failed. Error output captured.{}",
+                    AURA_GOLD,
+                    COLOR_RESET
+                );
+            }
         }
     }
 
-    if compile_success {
-        backup.defuse();
-        Ok(serde_json::json!({
-            "status": "success",
-            "message": "File edited and compiled successfully",
-            "iterations": iteration
-        }))
-    } else {
-        Ok(serde_json::json!({
+    match compile_success {
+        true => {
+            backup.defuse();
+            Ok(serde_json::json!({
+                "status": "success",
+                "message": "File edited and compiled successfully",
+                "iterations": iteration
+            }))
+        }
+        false => Ok(serde_json::json!({
             "status": "failed",
             "message": "Failed to compile within the maximum number of iterations",
             "error": current_error,
             "iterations": iteration
-        }))
+        })),
     }
 }
 
@@ -365,41 +402,52 @@ pub async fn run_transactional_heal_edit(
     let git_snapshot = GitSnapshot::try_create(file_path).await;
     let mut backup = FileBackupGuard::create(file_path, false)?;
 
-    if let Some(parent) = file_path.parent() {
-        std::fs::create_dir_all(parent)?;
+    match file_path.parent() {
+        Some(parent) => std::fs::create_dir_all(parent)?,
+        None => {}
     }
     std::fs::write(file_path, new_content)?;
 
     let (mut success, mut output_str) = run_compile_check(compile_command).await?;
 
-    if !success {
-        if let Ok(healed_content) =
-            heal_code_with_llm(provider, file_path, new_content, &output_str).await
+    match success {
+        true => {}
+        false => match heal_code_with_llm(provider, file_path, new_content, &output_str)
+            .await
+            .ok()
+            .filter(|healed| !healed.is_empty())
         {
-            if !healed_content.is_empty() {
+            Some(healed_content) => {
                 std::fs::write(file_path, &healed_content)?;
-                if let Ok((h_success, h_output)) = run_compile_check(compile_command).await {
-                    success = h_success;
-                    output_str = h_output;
+                match run_compile_check(compile_command).await {
+                    Ok((h_success, h_output)) => {
+                        success = h_success;
+                        output_str = h_output;
+                    }
+                    Err(_) => {}
                 }
             }
-        }
+            None => {}
+        },
     }
 
-    if success {
-        backup.defuse();
-        git_snapshot.on_success().await;
-        Ok(serde_json::json!({
-            "status": "success",
-            "message": "File written and verified successfully."
-        }))
-    } else {
-        let _ = backup.rollback();
-        git_snapshot.on_failure().await;
-        Ok(serde_json::json!({
-            "status": "error",
-            "error": format!("Compilation failed, self-healing failed. Rolled back changes. Error output:\n{}", output_str)
-        }))
+    match success {
+        true => {
+            backup.defuse();
+            git_snapshot.on_success().await;
+            Ok(serde_json::json!({
+                "status": "success",
+                "message": "File written and verified successfully."
+            }))
+        }
+        false => {
+            let _ = backup.rollback();
+            git_snapshot.on_failure().await;
+            Ok(serde_json::json!({
+                "status": "error",
+                "error": format!("Compilation failed, self-healing failed. Rolled back changes. Error output:\n{output_str}")
+            }))
+        }
     }
 }
 

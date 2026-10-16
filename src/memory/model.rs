@@ -300,13 +300,14 @@ impl MemoryScope {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
-        if let Some(workspace) = args
+        match args
             .get("workspace")
             .and_then(Value::as_str)
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            scope.workspace = workspace.to_string();
+            Some(workspace) => scope.workspace = workspace.to_string(),
+            None => {}
         }
         scope
     }

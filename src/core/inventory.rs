@@ -313,30 +313,36 @@ fn build_session_inventory_from_parts(
     let mut channel_counts = BTreeMap::<String, usize>::new();
     let mut recent_sessions = Vec::new();
 
-    if let Ok(entries) = fs::read_dir(sessions_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
-                continue;
+    match fs::read_dir(sessions_dir) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                match path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+                    false => continue,
+                    true => {}
+                }
+                let content = match fs::read_to_string(&path) {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                let session = match serde_json::from_str::<crate::session::Session>(&content) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+                let channel = channel_from_session_key(&session.key).to_string();
+                *channel_counts.entry(channel.clone()).or_insert(0) += 1;
+                recent_sessions.push(RecentSessionInventoryItem {
+                    title: crate::agent::activity::session_preview_from_messages(&session.messages),
+                    updated_at: session.updated_at.to_rfc3339(),
+                    message_count: session.messages.len(),
+                    file_path: path_display(&path),
+                    active: active_keys.contains(&session.key),
+                    key: session.key,
+                    channel,
+                });
             }
-            let Ok(content) = fs::read_to_string(&path) else {
-                continue;
-            };
-            let Ok(session) = serde_json::from_str::<crate::session::Session>(&content) else {
-                continue;
-            };
-            let channel = channel_from_session_key(&session.key).to_string();
-            *channel_counts.entry(channel.clone()).or_insert(0) += 1;
-            recent_sessions.push(RecentSessionInventoryItem {
-                title: crate::agent::activity::session_preview_from_messages(&session.messages),
-                updated_at: session.updated_at.to_rfc3339(),
-                message_count: session.messages.len(),
-                file_path: path_display(&path),
-                active: active_keys.contains(&session.key),
-                key: session.key,
-                channel,
-            });
         }
+        Err(_) => {}
     }
 
     recent_sessions.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
@@ -372,23 +378,27 @@ fn build_webui_control_center_inventory() -> WebUiControlCenterInventory {
     }
 }
 
+const SESSION_KEY_PREFIX_CHANNELS: &[(&str, &str)] = &[
+    ("cli:", "tui"),
+    ("ratatui:", "ratatui"),
+    ("ws:", "webui"),
+    ("telegram:", "telegram"),
+    ("discord:", "discord"),
+    ("whatsapp:", "whatsapp"),
+    ("email:", "email"),
+    ("subagent:", "subagent"),
+    ("cli_", "tui"),
+    ("ws_", "webui"),
+    ("telegram_", "telegram"),
+    ("discord_", "discord"),
+    ("whatsapp_", "whatsapp"),
+];
+
 fn channel_from_session_key(key: &str) -> &'static str {
-    match key.split_once(':').map(|(prefix, _)| prefix) {
-        Some("cli") => "tui",
-        Some("ratatui") => "ratatui",
-        Some("ws") => "webui",
-        Some("telegram") => "telegram",
-        Some("discord") => "discord",
-        Some("whatsapp") => "whatsapp",
-        Some("email") => "email",
-        Some("subagent") => "subagent",
-        _ if key.starts_with("cli_") => "tui",
-        _ if key.starts_with("ws_") => "webui",
-        _ if key.starts_with("telegram_") => "telegram",
-        _ if key.starts_with("discord_") => "discord",
-        _ if key.starts_with("whatsapp_") => "whatsapp",
-        _ => "unknown",
-    }
+    SESSION_KEY_PREFIX_CHANNELS
+        .iter()
+        .find_map(|(prefix, channel)| key.starts_with(prefix).then_some(*channel))
+        .unwrap_or("unknown")
 }
 
 fn build_tool_inventory(registry: &crate::tools::ToolRegistry) -> Vec<ToolInventoryItem> {
@@ -492,16 +502,20 @@ fn build_subagent_inventory_item(
         .clone()
         .unwrap_or_else(|| "default".to_string());
     let effective_model = explicit_model.unwrap_or_else(|| config.agents.defaults.model.clone());
-    let provider = if model == "default" {
-        "inherit".to_string()
-    } else {
-        provider_from_model_or_default(&model, "auto")
+    let provider = match model == "default" {
+        true => "inherit".to_string(),
+        false => provider_from_model_or_default(&model, "auto"),
     };
     let effective_provider =
         provider_from_model_or_default(&effective_model, &config.agents.defaults.provider);
     let supports_vision = crate::providers::model_supports_vision(&effective_model);
     let capabilities = infer_subagent_capabilities(&profile, supports_vision);
     let fallbacks = profile.fallbacks.unwrap_or_default();
+    let source = match is_core {
+        true => "core",
+        false => "user",
+    }
+    .to_string();
 
     SubagentInventoryItem {
         name: profile.name,
@@ -519,7 +533,7 @@ fn build_subagent_inventory_item(
         failure_count: health.map(|record| record.failure_count).unwrap_or(0),
         is_core,
         is_protected: is_core,
-        source: if is_core { "core" } else { "user" }.to_string(),
+        source,
     }
 }
 
@@ -529,6 +543,14 @@ fn provider_from_model_or_default(model: &str, default_provider: &str) -> String
         .map(|(provider, _)| provider.to_string())
         .unwrap_or_else(|| default_provider.to_string())
 }
+
+const SUBAGENT_CAPABILITY_KEYWORDS: &[(&str, &[&str])] = &[
+    ("vision", &["vision", "image"]),
+    ("web", &["research", "web", "internet", "docs"]),
+    ("code", &["code", "debug", "test", "refactor", "rust"]),
+    ("browser", &["browser"]),
+    ("memory", &["memory", "knowledge"]),
+];
 
 fn infer_subagent_capabilities(
     profile: &crate::subagents::SubagentProfile,
@@ -541,32 +563,21 @@ fn infer_subagent_capabilities(
     .to_lowercase();
     let mut capabilities = Vec::new();
 
-    if supports_vision || haystack.contains("vision") || haystack.contains("image") {
-        capabilities.push("vision".to_string());
+    match supports_vision {
+        true => capabilities.push("vision".to_string()),
+        false => {}
     }
-    if haystack.contains("research")
-        || haystack.contains("web")
-        || haystack.contains("internet")
-        || haystack.contains("docs")
-    {
-        capabilities.push("web".to_string());
+
+    for &(capability, keywords) in SUBAGENT_CAPABILITY_KEYWORDS {
+        match keywords.iter().any(|kw| haystack.contains(kw)) {
+            true => capabilities.push(capability.to_string()),
+            false => {}
+        }
     }
-    if haystack.contains("code")
-        || haystack.contains("debug")
-        || haystack.contains("test")
-        || haystack.contains("refactor")
-        || haystack.contains("rust")
-    {
-        capabilities.push("code".to_string());
-    }
-    if haystack.contains("browser") {
-        capabilities.push("browser".to_string());
-    }
-    if haystack.contains("memory") || haystack.contains("knowledge") {
-        capabilities.push("memory".to_string());
-    }
-    if capabilities.is_empty() {
-        capabilities.push("general".to_string());
+
+    match capabilities.is_empty() {
+        true => capabilities.push("general".to_string()),
+        false => {}
     }
     capabilities.sort();
     capabilities.dedup();

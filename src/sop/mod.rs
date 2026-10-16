@@ -71,34 +71,43 @@ pub fn sop_instances_dir() -> PathBuf {
 
 pub fn initialize_sop_system() -> Result<()> {
     let dir = sop_dir();
-    if !dir.exists() {
-        fs::create_dir_all(&dir)?;
+    match dir.exists() {
+        true => {}
+        false => fs::create_dir_all(&dir)?,
     }
     let inst_dir = sop_instances_dir();
-    if !inst_dir.exists() {
-        fs::create_dir_all(&inst_dir)?;
+    match inst_dir.exists() {
+        true => {}
+        false => fs::create_dir_all(&inst_dir)?,
     }
 
     let defs_path = sop_definitions_path();
-    let mut current_defs = if defs_path.exists() {
-        let content = fs::read_to_string(&defs_path)?;
-        serde_json::from_str::<Vec<SopDefinition>>(&content).unwrap_or_default()
-    } else {
-        Vec::new()
+    let mut current_defs = match defs_path.exists() {
+        true => {
+            let content = fs::read_to_string(&defs_path)?;
+            serde_json::from_str::<Vec<SopDefinition>>(&content).unwrap_or_default()
+        }
+        false => Vec::new(),
     };
 
     let defaults = get_default_sop_definitions();
     let mut updated = false;
     for def in defaults {
-        if !current_defs.iter().any(|d| d.id == def.id) {
-            current_defs.push(def);
-            updated = true;
+        match current_defs.iter().any(|d| d.id == def.id) {
+            true => {}
+            false => {
+                current_defs.push(def);
+                updated = true;
+            }
         }
     }
 
-    if updated || !defs_path.exists() {
-        let content = serde_json::to_string_pretty(&current_defs)?;
-        fs::write(&defs_path, content)?;
+    match updated || !defs_path.exists() {
+        true => {
+            let content = serde_json::to_string_pretty(&current_defs)?;
+            fs::write(&defs_path, content)?;
+        }
+        false => {}
     }
 
     Ok(())
@@ -122,21 +131,23 @@ pub fn validate_sop_definition(def: &SopDefinition) -> Result<()> {
     // 1. Check for duplicate step names
     let mut names = HashSet::new();
     for step in &def.steps {
-        if !names.insert(&step.name) {
-            anyhow::bail!("Duplicate step name: '{}' in SOP '{}'", step.name, def.id);
+        match names.insert(&step.name) {
+            false => anyhow::bail!("Duplicate step name: '{}' in SOP '{}'", step.name, def.id),
+            true => {}
         }
     }
 
     // 2. Check for dependencies on non-existent steps
     for step in &def.steps {
         for dep in &step.depends_on {
-            if !names.contains(dep) {
-                anyhow::bail!(
+            match names.contains(dep) {
+                false => anyhow::bail!(
                     "Step '{}' in SOP '{}' depends on non-existent step '{}'",
                     step.name,
                     def.id,
                     dep
-                );
+                ),
+                true => {}
             }
         }
     }
@@ -161,16 +172,17 @@ pub fn validate_sop_definition(def: &SopDefinition) -> Result<()> {
 
         let step = &def.steps[u];
         for dep_name in &step.depends_on {
-            if let Some(&v) = step_indices.get(dep_name.as_str()) {
-                if state[v] == 1 {
-                    anyhow::bail!(
+            match step_indices.get(dep_name.as_str()).copied() {
+                Some(v) => match state[v] {
+                    1 => anyhow::bail!(
                         "Circular dependency detected involving step '{}' and step '{}'",
                         step.name,
                         dep_name
-                    );
-                } else if state[v] == 0 {
-                    dfs(v, def, step_indices, state)?;
-                }
+                    ),
+                    0 => dfs(v, def, step_indices, state)?,
+                    _ => {}
+                },
+                None => {}
             }
         }
 
@@ -179,8 +191,9 @@ pub fn validate_sop_definition(def: &SopDefinition) -> Result<()> {
     }
 
     for i in 0..n {
-        if state[i] == 0 {
-            dfs(i, def, &step_indices, &mut state)?;
+        match state[i] {
+            0 => dfs(i, def, &step_indices, &mut state)?,
+            _ => {}
         }
     }
 
@@ -388,33 +401,43 @@ fn get_default_sop_definitions() -> Vec<SopDefinition> {
     ]
 }
 
-static SOP_TEMPLATE_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-
 pub fn substitute_template(template: &str, context: &serde_json::Value) -> String {
-    let re = SOP_TEMPLATE_RE.get_or_init(|| {
-        regex::Regex::new(r"\{\{([^}]+)\}\}").expect("static template regex must compile")
-    });
-    re.replace_all(template, |caps: &regex::Captures| {
-        let path = caps.get(1).map(|m| m.as_str().trim()).unwrap_or("");
-        resolve_path_value(context, path)
-    })
-    .into_owned()
+    let mut output = String::with_capacity(template.len());
+    let mut remaining = template;
+    while let Some((before, after_open)) = remaining.split_once("{{") {
+        output.push_str(before);
+        match after_open.split_once("}}") {
+            Some((raw_key, rest)) => {
+                let key = raw_key.trim();
+                match key.is_empty() {
+                    true => output.push_str("{{}}"),
+                    false => output.push_str(&resolve_path_value(context, key)),
+                }
+                remaining = rest;
+            }
+            None => {
+                output.push_str("{{");
+                output.push_str(after_open);
+                remaining = "";
+            }
+        }
+    }
+    output.push_str(remaining);
+    output
 }
 
 fn resolve_path_value(json_value: &serde_json::Value, path: &str) -> String {
     let parts: Vec<&str> = path.split('.').collect();
     let mut current = json_value;
     for part in parts {
-        if let Some(next) = current.get(part) {
-            current = next;
-        } else {
-            return format!("{{{{{}}}}}", path);
+        match current.get(part) {
+            Some(next) => current = next,
+            None => return format!("{{{{{path}}}}}"),
         }
     }
-    if let Some(s) = current.as_str() {
-        s.to_string()
-    } else {
-        current.to_string()
+    match current.as_str() {
+        Some(s) => s.to_string(),
+        None => current.to_string(),
     }
 }
 

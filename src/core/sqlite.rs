@@ -18,11 +18,12 @@ pub fn apply_standard_pragmas(conn: &Connection) -> Result<()> {
 /// Apply the standard SQLite pragmas with additional SQL statements (e.g. `PRAGMA foreign_keys = ON;`).
 pub fn apply_standard_pragmas_with_extra(conn: &Connection, extra_sql: &str) -> Result<()> {
     let trimmed = extra_sql.trim();
-    if trimmed.is_empty() {
-        apply_standard_pragmas(conn)
-    } else {
-        let combined = format!("{STANDARD_SQLITE_PRAGMAS} {trimmed}");
-        conn.execute_batch(&combined)
+    match trimmed.is_empty() {
+        true => apply_standard_pragmas(conn),
+        false => {
+            let combined = format!("{STANDARD_SQLITE_PRAGMAS} {trimmed}");
+            conn.execute_batch(&combined)
+        }
     }
 }
 

@@ -4,14 +4,17 @@ use std::collections::HashSet;
 use super::spec::{ReviewMode, WorkflowMode, WorkflowSpec};
 
 pub fn validate_workflow_spec(spec: &WorkflowSpec, known_agents: &[String]) -> Result<()> {
-    if spec.goal.trim().is_empty() {
-        return Err(anyhow!("workflow goal is required"));
+    match spec.goal.trim().is_empty() {
+        true => return Err(anyhow!("workflow goal is required")),
+        false => {}
     }
-    if spec.steps.is_empty() {
-        return Err(anyhow!("workflow must include at least one step"));
+    match spec.steps.is_empty() {
+        true => return Err(anyhow!("workflow must include at least one step")),
+        false => {}
     }
-    if spec.termination.max_rounds == 0 || spec.termination.max_rounds > 64 {
-        return Err(anyhow!("termination.max_rounds must be between 1 and 64"));
+    match spec.termination.max_rounds == 0 || spec.termination.max_rounds > 64 {
+        true => return Err(anyhow!("termination.max_rounds must be between 1 and 64")),
+        false => {}
     }
 
     let known: HashSet<&str> = known_agents.iter().map(String::as_str).collect();
@@ -23,54 +26,67 @@ pub fn validate_workflow_spec(spec: &WorkflowSpec, known_agents: &[String]) -> R
     let mut step_ids = HashSet::new();
 
     for step in &spec.steps {
-        if step.id.trim().is_empty() {
-            return Err(anyhow!("step id is required"));
+        match step.id.trim().is_empty() {
+            true => return Err(anyhow!("step id is required")),
+            false => {}
         }
-        if !step_ids.insert(step.id.as_str()) {
-            return Err(anyhow!("duplicate step id: {}", step.id));
+        match step_ids.insert(step.id.as_str()) {
+            false => return Err(anyhow!("duplicate step id: {}", step.id)),
+            true => {}
         }
-        if !known.contains(step.agent.as_str()) && !declared.contains(step.agent.as_str()) {
-            return Err(anyhow!(
-                "unknown agent '{}' for step '{}'",
-                step.agent,
-                step.id
-            ));
+        match known.contains(step.agent.as_str()) || declared.contains(step.agent.as_str()) {
+            false => {
+                return Err(anyhow!(
+                    "unknown agent '{}' for step '{}'",
+                    step.agent,
+                    step.id
+                ));
+            }
+            true => {}
         }
-        if step.goal.trim().is_empty() {
-            return Err(anyhow!("step '{}' goal is required", step.id));
+        match step.goal.trim().is_empty() {
+            true => return Err(anyhow!("step '{}' goal is required", step.id)),
+            false => {}
         }
     }
 
     for step in &spec.steps {
         for dep in &step.depends_on {
-            if !step_ids.contains(dep.as_str()) {
-                return Err(anyhow!(
-                    "step '{}' has missing dependency '{}'",
-                    step.id,
-                    dep
-                ));
+            match step_ids.contains(dep.as_str()) {
+                false => {
+                    return Err(anyhow!(
+                        "step '{}' has missing dependency '{}'",
+                        step.id,
+                        dep
+                    ));
+                }
+                true => {}
             }
         }
     }
 
-    if matches!(&spec.mode, WorkflowMode::Parallel)
-        && spec.steps.iter().any(|step| !step.depends_on.is_empty())
-    {
-        return Err(anyhow!(
-            "parallel mode does not accept step dependencies; use graph mode"
-        ));
+    let invalid_parallel_deps = matches!(&spec.mode, WorkflowMode::Parallel)
+        && spec.steps.iter().any(|step| !step.depends_on.is_empty());
+    match invalid_parallel_deps {
+        true => {
+            return Err(anyhow!(
+                "parallel mode does not accept step dependencies; use graph mode"
+            ));
+        }
+        false => {}
     }
 
-    if matches!(&spec.review.mode, ReviewMode::Required)
+    let missing_reviewer = matches!(&spec.review.mode, ReviewMode::Required)
         && spec
             .review
             .reviewer
             .as_deref()
             .unwrap_or("")
             .trim()
-            .is_empty()
-    {
-        return Err(anyhow!("required review mode needs review.reviewer"));
+            .is_empty();
+    match missing_reviewer {
+        true => return Err(anyhow!("required review mode needs review.reviewer")),
+        false => {}
     }
 
     Ok(())

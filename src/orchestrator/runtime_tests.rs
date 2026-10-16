@@ -124,10 +124,9 @@ impl StepExecutor for FailNamedStepExecutor {
         _spec: &WorkflowSpec,
         _prior_results: &[String],
     ) -> anyhow::Result<String> {
-        if step.id == self.fail_step_id {
-            Err(anyhow::anyhow!("{} failed", step.id))
-        } else {
-            Ok(format!("{} done", step.id))
+        match step.id == self.fail_step_id {
+            true => Err(anyhow::anyhow!("{} failed", step.id)),
+            false => Ok(format!("{} done", step.id)),
         }
     }
 }
@@ -159,14 +158,15 @@ impl StepExecutor for ScriptedExecutor {
         _prior_results: &[String],
     ) -> anyhow::Result<String> {
         self.calls.lock().unwrap().push(step.id.clone());
-        if step.id == "review" {
-            let mut outputs = self.outputs.lock().unwrap();
-            if outputs.is_empty() {
-                anyhow::bail!("scripted executor has no output left");
+        match step.id.as_str() {
+            "review" => {
+                let mut outputs = self.outputs.lock().unwrap();
+                match outputs.is_empty() {
+                    true => anyhow::bail!("scripted executor has no output left"),
+                    false => Ok(outputs.remove(0)),
+                }
             }
-            Ok(outputs.remove(0))
-        } else {
-            Ok(format!("{} done", step.id))
+            _ => Ok(format!("{} done", step.id)),
         }
     }
 }
@@ -784,17 +784,25 @@ async fn parallel_runtime_emits_failure_lifecycle_events() {
 
     assert!(matches!(result.status, WorkflowStatus::Failed));
     assert_eq!(result.summary, "workflow failed at step 'a'");
-    assert!(matches!(
-        &events.lock().unwrap()[..],
+    let recorded = events.lock().unwrap();
+    let matched = match &recorded[..] {
         [
             WorkflowEvent::RunStarted { .. },
             WorkflowEvent::StepStarted { step_id, .. },
             WorkflowEvent::StepFinished { status, output, .. },
-            WorkflowEvent::RunFinished { status: run_status, summary, .. },
-        ] if step_id == "a"
-            && status == "failed"
-            && output == "executor failed"
-            && run_status == "failed"
-            && summary == "workflow failed at step 'a'"
-    ));
+            WorkflowEvent::RunFinished {
+                status: run_status,
+                summary,
+                ..
+            },
+        ] => {
+            step_id == "a"
+                && status == "failed"
+                && output == "executor failed"
+                && run_status == "failed"
+                && summary == "workflow failed at step 'a'"
+        }
+        _ => false,
+    };
+    assert!(matched);
 }
