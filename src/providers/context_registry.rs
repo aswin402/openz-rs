@@ -18,6 +18,41 @@ pub const CHARS_PER_TOKEN: f64 = 4.0;
 pub const MIN_PROMPT_BUDGET_CHARS: usize = 8_000;
 pub const MIN_TOOL_OUTPUT_CHARS: usize = 4_000;
 
+const BUILTIN_CONTEXT_WINDOW_RULES: &[(&[&str], usize)] = &[
+    (&["gemini-1.5-pro", "gemini-2.5-pro"], 2_097_152),
+    (&["gemini"], 1_048_576),
+    (&["minimax"], 204_800),
+    (
+        &["claude-3-5", "claude-3", "claude", "o1", "o3-mini", "o3"],
+        200_000,
+    ),
+    (&["deepseek-v4"], 1_000_000),
+    (
+        &[
+            "deepseek-v3",
+            "deepseek-r1",
+            "deepseek-chat",
+            "deepseek-reasoner",
+            "deepseek",
+            "gpt-4.5",
+            "gpt-4o",
+            "gpt-4",
+            "llama-3.1",
+            "llama-3.2",
+            "llama-3.3",
+            "llama3.1",
+            "llama3.2",
+            "llama3.3",
+            "qwen",
+            "mistral-large",
+        ],
+        128_000,
+    ),
+    (&["mistral", "codestral"], 32_768),
+    (&["gpt-3.5"], 16_384),
+    (&["llama-3", "llama3"], 8_192),
+];
+
 #[derive(Debug, Clone, serde::Deserialize, Default)]
 pub struct ModelsCatalogFile {
     #[serde(default)]
@@ -30,104 +65,47 @@ pub struct DynamicContextRegistry;
 
 impl DynamicContextRegistry {
     /// Resolve the true context window (in tokens) for a given model.
-    ///
-    /// Hierarchy:
-    /// 1. User config explicit override (`config.agents.defaults.context_limit`)
-    /// 2. External catalog file (`~/.openz/models.json`)
-    /// 3. Built-in curated patterns (MiniMax, Claude, Gemini, GPT, DeepSeek, etc.)
-    /// 4. Fallback default (128,000 tokens)
     pub fn resolve_context_window(model: &str, config: &Config) -> usize {
-        // Tier 1: User explicit config override
-        if let Some(explicit) = config.agents.defaults.context_limit {
-            if explicit > 0 {
-                return explicit;
-            }
+        match config.agents.defaults.context_limit.filter(|&v| v > 0) {
+            Some(explicit) => return explicit,
+            None => {}
         }
 
         let normalized = model.trim().to_lowercase();
 
-        // Tier 2: External models.json catalog
-        if let Some(catalog) = Self::load_external_catalog() {
-            // Check exact model match
-            if let Some(&limit) = catalog.models.get(&normalized) {
-                if limit > 0 {
-                    return limit;
-                }
-            }
-            // Check pattern match
-            for (pattern, &limit) in &catalog.patterns {
-                let pat_norm = pattern.trim().to_lowercase();
-                if !pat_norm.is_empty() && normalized.contains(&pat_norm) && limit > 0 {
-                    return limit;
-                }
-            }
-        }
+        let external_match = Self::load_external_catalog().and_then(|catalog| {
+            let exact = catalog.models.get(&normalized).copied().filter(|&v| v > 0);
+            exact.or_else(|| {
+                catalog.patterns.iter().find_map(|(pattern, &limit)| {
+                    let pat_norm = pattern.trim().to_lowercase();
+                    (!pat_norm.is_empty() && normalized.contains(&pat_norm) && limit > 0)
+                        .then_some(limit)
+                })
+            })
+        });
 
-        // Tier 3: Built-in curated patterns
-        if let Some(window) = Self::lookup_builtin_model_window(&normalized) {
-            return window;
-        }
-
-        // Tier 4: Fallback
-        FALLBACK_CONTEXT_WINDOW_TOKENS
+        external_match
+            .or_else(|| Self::lookup_builtin_model_window(&normalized))
+            .unwrap_or(FALLBACK_CONTEXT_WINDOW_TOKENS)
     }
 
     /// Lookup standard context windows from built-in model patterns.
     fn lookup_builtin_model_window(model_lower: &str) -> Option<usize> {
-        if model_lower.contains("gemini-1.5-pro") || model_lower.contains("gemini-2.5-pro") {
-            Some(2_097_152)
-        } else if model_lower.contains("gemini") {
-            Some(1_048_576)
-        } else if model_lower.contains("minimax") {
-            Some(204_800)
-        } else if model_lower.contains("claude-3-5")
-            || model_lower.contains("claude-3")
-            || model_lower.contains("claude")
-            || model_lower.contains("o1")
-            || model_lower.contains("o3-mini")
-            || model_lower.contains("o3")
-        {
-            Some(200_000)
-        } else if model_lower.contains("deepseek-v4") {
-            Some(1_000_000)
-        } else if model_lower.contains("deepseek-v3")
-            || model_lower.contains("deepseek-r1")
-            || model_lower.contains("deepseek-chat")
-            || model_lower.contains("deepseek-reasoner")
-            || model_lower.contains("deepseek")
-            || model_lower.contains("gpt-4.5")
-            || model_lower.contains("gpt-4o")
-            || model_lower.contains("gpt-4")
-            || model_lower.contains("llama-3.1")
-            || model_lower.contains("llama-3.2")
-            || model_lower.contains("llama-3.3")
-            || model_lower.contains("llama3.1")
-            || model_lower.contains("llama3.2")
-            || model_lower.contains("llama3.3")
-            || model_lower.contains("qwen")
-            || model_lower.contains("mistral-large")
-        {
-            Some(128_000)
-        } else if model_lower.contains("mistral") || model_lower.contains("codestral") {
-            Some(32_768)
-        } else if model_lower.contains("gpt-3.5") {
-            Some(16_384)
-        } else if model_lower.contains("llama-3") || model_lower.contains("llama3") {
-            Some(8_192)
-        } else {
-            None
-        }
+        BUILTIN_CONTEXT_WINDOW_RULES
+            .iter()
+            .find_map(|(needles, window)| {
+                needles
+                    .iter()
+                    .any(|needle| model_lower.contains(needle))
+                    .then_some(*window)
+            })
     }
 
     /// Resolve prompt budget (in characters) dynamically based on context window and ratio.
-    ///
-    /// Formula: tokens * prompt_budget_ratio * 4.0 chars/token.
-    /// Clamped to at least MIN_PROMPT_BUDGET_CHARS (8,000) with NO static 64k upper clamp.
     pub fn resolve_prompt_budget_chars(model: &str, config: &Config) -> usize {
-        if let Some(explicit) = config.agents.defaults.prompt_budget_limit {
-            if explicit > 0 {
-                return explicit;
-            }
+        match config.agents.defaults.prompt_budget_limit.filter(|&v| v > 0) {
+            Some(explicit) => return explicit,
+            None => {}
         }
 
         let window_tokens = Self::resolve_context_window(model, config);
@@ -143,14 +121,10 @@ impl DynamicContextRegistry {
     }
 
     /// Resolve tool output limit (in characters) dynamically based on context window and ratio.
-    ///
-    /// Formula: tokens * tool_output_ratio * 4.0 chars/token.
-    /// Clamped to at least MIN_TOOL_OUTPUT_CHARS (4,000).
     pub fn resolve_tool_output_limit_chars(model: &str, config: &Config) -> usize {
-        if let Some(explicit) = config.agents.defaults.tool_output_limit {
-            if explicit > 0 {
-                return explicit;
-            }
+        match config.agents.defaults.tool_output_limit.filter(|&v| v > 0) {
+            Some(explicit) => return explicit,
+            None => {}
         }
 
         let window_tokens = Self::resolve_context_window(model, config);
@@ -175,14 +149,12 @@ impl DynamicContextRegistry {
         let mut total_chars = system_prompt.chars().count();
         for msg in messages {
             total_chars += msg.content.chars().count();
-            // Count tool call / extra metadata characters
             for (k, v) in &msg.extra {
                 total_chars += k.chars().count();
-                if let Some(s) = v.as_str() {
-                    total_chars += s.chars().count();
-                } else {
-                    total_chars += v.to_string().chars().count();
-                }
+                total_chars += match v.as_str() {
+                    Some(s) => s.chars().count(),
+                    None => v.to_string().chars().count(),
+                };
             }
         }
         Self::estimate_tokens_from_chars(total_chars)
@@ -225,25 +197,19 @@ impl DynamicContextRegistry {
         CACHE
             .get_or_init(|| {
                 let path = Self::models_catalog_path();
-                if !path.is_file() {
-                    return None;
-                }
+                path.is_file().then_some(())?;
                 let content = std::fs::read_to_string(&path).ok()?;
-                // Try structured format first
-                if let Ok(structured) = serde_json::from_str::<ModelsCatalogFile>(&content) {
-                    if !structured.models.is_empty() || !structured.patterns.is_empty() {
-                        return Some(structured);
-                    }
-                }
-                // Try simple key-value format {"model_name": context_limit}
-                if let Ok(flat) = serde_json::from_str::<HashMap<String, usize>>(&content) {
+                let structured = serde_json::from_str::<ModelsCatalogFile>(&content)
+                    .ok()
+                    .filter(|s| !s.models.is_empty() || !s.patterns.is_empty());
+                structured.or_else(|| {
+                    let flat = serde_json::from_str::<HashMap<String, usize>>(&content).ok()?;
                     let mut catalog = ModelsCatalogFile::default();
                     for (k, v) in flat {
                         catalog.models.insert(k.to_lowercase(), v);
                     }
-                    return Some(catalog);
-                }
-                None
+                    Some(catalog)
+                })
             })
             .clone()
     }

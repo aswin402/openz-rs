@@ -36,8 +36,10 @@ async fn test_serialize_messages_vision_fallback() {
     let system_prompt = "system instructions";
 
     let temp_dir = std::env::temp_dir();
-    let test_img_path = temp_dir.join("test_img.png");
-    std::fs::write(&test_img_path, vec![0; 100]).unwrap();
+    let test_img_path = temp_dir.join(format!("test_img_{}.png", uuid::Uuid::new_v4()));
+    let mut png_bytes = b"\x89PNG\r\n\x1a\n".to_vec();
+    png_bytes.extend(vec![0u8; 92]);
+    std::fs::write(&test_img_path, png_bytes).unwrap();
 
     let image_tag = format!("![](file://{})", test_img_path.to_string_lossy());
     let msg_content = format!("{} check this image", image_tag);

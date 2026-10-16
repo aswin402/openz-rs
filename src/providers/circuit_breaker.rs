@@ -39,14 +39,16 @@ impl CircuitBreakerInner {
         match self.state {
             CircuitState::Closed | CircuitState::HalfOpen => Ok(()),
             CircuitState::Open => {
-                // Check if enough time has passed to transition to HalfOpen
-                if let Some(last) = self.last_failure {
-                    if last.elapsed() >= self.reset_timeout {
+                let recovered = self
+                    .last_failure
+                    .is_some_and(|last| last.elapsed() >= self.reset_timeout);
+                match recovered {
+                    true => {
                         self.state = CircuitState::HalfOpen;
-                        return Ok(());
+                        Ok(())
                     }
+                    false => Err(()),
                 }
-                Err(())
             }
         }
     }
@@ -60,8 +62,9 @@ impl CircuitBreakerInner {
     fn record_failure(&mut self) {
         self.consecutive_failures += 1;
         self.last_failure = Some(Instant::now());
-        if self.consecutive_failures >= self.threshold {
-            self.state = CircuitState::Open;
+        match self.consecutive_failures >= self.threshold {
+            true => self.state = CircuitState::Open,
+            false => {}
         }
     }
 
@@ -132,27 +135,15 @@ pub fn backoff_duration(attempt: usize, base: Duration, max_delay: Duration) -> 
     let mut delay = base;
     for _ in 1..attempt {
         delay = delay.saturating_mul(2);
-        if delay >= max_delay {
-            return max_delay;
+        match delay >= max_delay {
+            true => return max_delay,
+            false => {}
         }
     }
     delay.min(max_delay)
 }
 
 /// Retry loop that respects a circuit breaker.
-///
-/// Wraps an async `operation` closure. On retryable HTTP status codes (429/502/503/504)
-/// the call is retried with exponential backoff. Non-retryable errors are returned
-/// immediately. The circuit breaker is updated on each attempt.
-///
-/// # Arguments
-/// * `breaker` — Shared circuit breaker.
-/// * `max_retries` — Maximum number of retry attempts (not counting the initial call).
-/// * `base_delay` — Initial backoff delay (doubled each retry).
-/// * `max_delay` — Upper bound for backoff.
-/// * `provider_name` — Used in error messages.
-/// * `operation` — Async closure that returns `Result<T, (u16, String)>` where the
-///   tuple is `(http_status, error_body)`.
 pub async fn retry_with_backoff<F, T, Fut>(
     breaker: &CircuitBreaker,
     max_retries: usize,
@@ -165,21 +156,26 @@ where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Result<T, (u16, String)>>,
 {
-    // Check circuit breaker before the first attempt.
-    if let Err(msg) = breaker.check() {
-        return Err(anyhow::anyhow!(
-            "Provider '{}' error (HTTP 503): {}",
-            provider_name,
-            msg
-        ));
+    match breaker.check() {
+        Ok(()) => {}
+        Err(msg) => {
+            return Err(anyhow::anyhow!(
+                "Provider '{}' error (HTTP 503): {}",
+                provider_name,
+                msg
+            ));
+        }
     }
 
     let mut last_err = None;
 
     for attempt in 0..=max_retries {
-        if attempt > 0 {
-            let delay = backoff_duration(attempt, base_delay, max_delay);
-            tokio::time::sleep(delay).await;
+        match attempt > 0 {
+            true => {
+                let delay = backoff_duration(attempt, base_delay, max_delay);
+                tokio::time::sleep(delay).await;
+            }
+            false => {}
         }
 
         match operation().await {
@@ -190,33 +186,36 @@ where
             Err((status, error_text)) => {
                 last_err = Some((status, error_text.clone()));
 
-                if is_retryable_status(status) {
-                    breaker.record_failure();
-                    // If the circuit opened during this attempt, stop retrying.
-                    if breaker.check().is_err() {
+                match is_retryable_status(status) {
+                    true => {
+                        breaker.record_failure();
+                        match breaker.check().is_err() {
+                            true => {
+                                return Err(anyhow::anyhow!(
+                                    "Provider '{}' error (HTTP {}): Circuit breaker opened after {}/{} retries. Last error: {}",
+                                    provider_name,
+                                    status,
+                                    attempt,
+                                    max_retries,
+                                    error_text
+                                ));
+                            }
+                            false => {}
+                        }
+                    }
+                    false => {
                         return Err(anyhow::anyhow!(
-                            "Provider '{}' error (HTTP {}): Circuit breaker opened after {}/{} retries. Last error: {}",
+                            "Provider '{}' error (HTTP {}): {}",
                             provider_name,
                             status,
-                            attempt,
-                            max_retries,
                             error_text
                         ));
                     }
-                } else {
-                    // Non-retryable — return the error immediately.
-                    return Err(anyhow::anyhow!(
-                        "Provider '{}' error (HTTP {}): {}",
-                        provider_name,
-                        status,
-                        error_text
-                    ));
                 }
             }
         }
     }
 
-    // All retries exhausted.
     let (status, error_text) = last_err.unwrap_or((0, "Unknown error".into()));
     Err(anyhow::anyhow!(
         "Provider '{}' error (HTTP {}): All retries exhausted ({max_retries} attempts). Last error: {}",
@@ -229,4 +228,3 @@ where
 #[cfg(test)]
 #[path = "circuit_breaker_tests.rs"]
 mod tests;
-

@@ -48,10 +48,9 @@ pub(crate) fn build_provider_client_with_config(config: ProviderHttpConfig) -> C
 }
 
 pub(crate) fn openai_chat_endpoint(api_base: &str) -> String {
-    if api_base.contains("/openai/deployments") || api_base.contains("azure") {
-        api_base.to_string()
-    } else {
-        format!("{}/chat/completions", api_base.trim_end_matches('/'))
+    match api_base.contains("/openai/deployments") || api_base.contains("azure") {
+        true => api_base.to_string(),
+        false => format!("{}/chat/completions", api_base.trim_end_matches('/')),
     }
 }
 
@@ -100,12 +99,13 @@ pub(crate) async fn post_json_with_retry(
                     .send()
                     .await
                     .map_err(|error| (0u16, format!("Network error: {error}")))?;
-                if !response.status().is_success() {
-                    let status = response.status().as_u16();
-                    let error_text = response.text().await.unwrap_or_default();
-                    Err((status, error_text))
-                } else {
-                    Ok(response)
+                match response.status().is_success() {
+                    true => Ok(response),
+                    false => {
+                        let status = response.status().as_u16();
+                        let error_text = response.text().await.unwrap_or_default();
+                        Err((status, error_text))
+                    }
                 }
             }
         },
@@ -116,4 +116,3 @@ pub(crate) async fn post_json_with_retry(
 #[cfg(test)]
 #[path = "transport_tests.rs"]
 mod tests;
-

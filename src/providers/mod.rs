@@ -339,11 +339,13 @@ pub trait LLMProvider: Send + Sync {
     {
         let resp = self.chat(system_prompt, messages, tools, settings).await?;
         let mut chunks = Vec::new();
-        if let Some(reasoning) = resp.reasoning_content {
-            chunks.push(ChatStreamChunk::Reasoning(reasoning));
+        match resp.reasoning_content {
+            Some(reasoning) => chunks.push(ChatStreamChunk::Reasoning(reasoning)),
+            None => {}
         }
-        if let Some(content) = resp.content {
-            chunks.push(ChatStreamChunk::Content(content));
+        match resp.content {
+            Some(content) => chunks.push(ChatStreamChunk::Content(content)),
+            None => {}
         }
         for (idx, tc) in resp.tool_calls.into_iter().enumerate() {
             chunks.push(ChatStreamChunk::ToolCall {

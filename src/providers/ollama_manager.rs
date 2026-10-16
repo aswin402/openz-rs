@@ -18,13 +18,10 @@ static LOCAL_OLLAMA: Mutex<LocalOllamaState> = Mutex::new(LocalOllamaState {
 static ACTIVE_OLLAMA_MODEL: Mutex<Option<String>> = Mutex::new(None);
 
 fn parse_addr(api_base: &str) -> String {
-    let without_scheme = if let Some(stripped) = api_base.strip_prefix("http://") {
-        stripped
-    } else if let Some(stripped) = api_base.strip_prefix("https://") {
-        stripped
-    } else {
-        api_base
-    };
+    let without_scheme = api_base
+        .strip_prefix("http://")
+        .or_else(|| api_base.strip_prefix("https://"))
+        .unwrap_or(api_base);
     let host_port = match without_scheme.find('/') {
         Some(idx) => &without_scheme[..idx],
         None => without_scheme,
@@ -33,14 +30,20 @@ fn parse_addr(api_base: &str) -> String {
 }
 
 pub fn is_port_open(addr: &str) -> bool {
-    if let Ok(addrs) = addr.to_socket_addrs() {
-        for socket_addr in addrs {
-            if TcpStream::connect_timeout(&socket_addr, Duration::from_millis(500)).is_ok() {
-                return true;
-            }
-        }
+    addr.to_socket_addrs()
+        .map(| mut addrs| {
+            addrs.any(|socket_addr| {
+                TcpStream::connect_timeout(&socket_addr, Duration::from_millis(500)).is_ok()
+            })
+        })
+        .unwrap_or(false)
+}
+
+fn log_ollama_status(silent: bool, msg: String) {
+    match silent {
+        true => {}
+        false => crate::tui_println!("{}", msg),
     }
-    false
 }
 
 pub fn ensure_local_ollama(config: &Config) {
@@ -53,26 +56,23 @@ pub fn ensure_local_ollama(config: &Config) {
 
     let addr = parse_addr(&api_base);
 
-    // Atomic check: verify port is open OR we already have a child running
     {
         let state = LOCAL_OLLAMA.lock().unwrap_or_else(|e| e.into_inner());
-        if is_port_open(&addr) || state.child.is_some() {
-            return;
+        match is_port_open(&addr) || state.child.is_some() {
+            true => return,
+            false => {}
         }
     }
 
     let silent = std::env::var("OPENZ_SILENT").is_ok();
-
-    if !silent {
-        crate::tui_println!(
+    log_ollama_status(
+        silent,
+        format!(
             "{}◇ Local Ollama service is not running on {}. Starting it...{}",
-            AURA_SLATE,
-            addr,
-            COLOR_RESET
-        );
-    }
+            AURA_SLATE, addr, COLOR_RESET
+        ),
+    );
 
-    // Spawn "ollama serve"
     match Command::new("ollama")
         .arg("serve")
         .stdout(Stdio::null())
@@ -86,71 +86,68 @@ pub fn ensure_local_ollama(config: &Config) {
                 state.child = Some(child);
             }
 
-            // Poll until it starts listening or we timeout (up to 6 seconds)
             let mut started = false;
             for _ in 0..60 {
                 std::thread::sleep(Duration::from_millis(100));
-                if is_port_open(&addr) {
-                    started = true;
-                    break;
+                match is_port_open(&addr) {
+                    true => {
+                        started = true;
+                        break;
+                    }
+                    false => {}
                 }
             }
 
-            if started {
-                if !silent {
-                    crate::tui_println!(
-                        "{}✓ Local Ollama service started successfully.{}",
-                        EMERALD_GREEN,
-                        COLOR_RESET
-                    );
-                }
-            } else {
-                if !silent {
-                    crate::tui_println!(
-                        "{}✕ Local Ollama service started but failed to bind within timeout.{}",
-                        AURA_GOLD,
-                        COLOR_RESET
-                    );
-                }
-            }
+            let msg = match started {
+                true => format!(
+                    "{}✓ Local Ollama service started successfully.{}",
+                    EMERALD_GREEN, COLOR_RESET
+                ),
+                false => format!(
+                    "{}✕ Local Ollama service started but failed to bind within timeout.{}",
+                    AURA_GOLD, COLOR_RESET
+                ),
+            };
+            log_ollama_status(silent, msg);
         }
         Err(e) => {
-            if !silent {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    crate::tui_println!(
-                        "{}✕ 'ollama' executable not found in PATH. Please install Ollama or start it manually.{}",
-                        ERROR_RED,
-                        COLOR_RESET
-                    );
-                } else {
-                    crate::tui_println!(
-                        "{}✕ Failed to spawn 'ollama serve': {}{}",
-                        ERROR_RED,
-                        e,
-                        COLOR_RESET
-                    );
-                }
-            }
+            let msg = match e.kind() {
+                std::io::ErrorKind::NotFound => format!(
+                    "{}✕ 'ollama' executable not found in PATH. Please install Ollama or start it manually.{}",
+                    ERROR_RED, COLOR_RESET
+                ),
+                _ => format!(
+                    "{}✕ Failed to spawn 'ollama serve': {}{}",
+                    ERROR_RED, e, COLOR_RESET
+                ),
+            };
+            log_ollama_status(silent, msg);
         }
     }
 }
 
 pub fn stop_local_ollama() {
     let mut state = LOCAL_OLLAMA.lock().unwrap_or_else(|e| e.into_inner());
-    if state.spawned_by_us {
-        if let Some(mut child) = state.child.take() {
-            let silent = std::env::var("OPENZ_SILENT").is_ok();
-            if !silent {
-                crate::tui_println!(
-                    "{}◇ Stopping local Ollama service...{}",
-                    AURA_SLATE,
-                    COLOR_RESET
-                );
+    match state.spawned_by_us {
+        false => {}
+        true => {
+            match state.child.take() {
+                Some(mut child) => {
+                    let silent = std::env::var("OPENZ_SILENT").is_ok();
+                    log_ollama_status(
+                        silent,
+                        format!(
+                            "{}◇ Stopping local Ollama service...{}",
+                            AURA_SLATE, COLOR_RESET
+                        ),
+                    );
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+                None => {}
             }
-            let _ = child.kill();
-            let _ = child.wait();
+            state.spawned_by_us = false;
         }
-        state.spawned_by_us = false;
     }
 }
 
@@ -168,6 +165,16 @@ pub fn set_active_ollama_model(model: Option<String>) {
     *guard = model;
 }
 
+fn ollama_native_generate_url(api_base: &str) -> String {
+    match api_base
+        .strip_suffix("/v1")
+        .or_else(|| api_base.strip_suffix("/v1/"))
+    {
+        Some(prefix) => format!("{prefix}/generate"),
+        None => format!("{api_base}/api/generate"),
+    }
+}
+
 pub async fn unload_ollama_model(config: &Config, model: &str) {
     let api_base = config
         .providers
@@ -176,15 +183,7 @@ pub async fn unload_ollama_model(config: &Config, model: &str) {
         .and_then(|x| x.api_base.clone())
         .unwrap_or_else(|| default_api_base_for_provider("ollama").to_string());
 
-    // Send keep_alive: 0 to /api/generate or /api/chat. Ollama's native port for generate is usually localhost:11434
-    // If it's http://localhost:11434/v1, native generate endpoint is http://localhost:11434/api/generate
-    let native_url = if api_base.ends_with("/v1") {
-        format!("{}/generate", &api_base[..api_base.len() - 3])
-    } else if api_base.ends_with("/v1/") {
-        format!("{}/generate", &api_base[..api_base.len() - 4])
-    } else {
-        format!("{}/api/generate", api_base)
-    };
+    let native_url = ollama_native_generate_url(&api_base);
 
     let client = reqwest::Client::builder()
         .use_rustls_tls()
@@ -201,8 +200,8 @@ pub async fn unload_ollama_model(config: &Config, model: &str) {
 }
 
 pub async fn unload_active_ollama_model(config: &Config) {
-    let active = get_active_ollama_model();
-    if let Some(model) = active {
-        unload_ollama_model(config, &model).await;
+    match get_active_ollama_model() {
+        Some(model) => unload_ollama_model(config, &model).await,
+        None => {}
     }
 }

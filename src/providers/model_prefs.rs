@@ -40,8 +40,9 @@ pub fn save_model_prefs(prefs: &ModelPrefs) -> anyhow::Result<()> {
 
 pub fn save_model_prefs_at(dir: &std::path::Path, prefs: &ModelPrefs) -> anyhow::Result<()> {
     let path = model_prefs_path_at(dir);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+    match path.parent() {
+        Some(parent) => std::fs::create_dir_all(parent)?,
+        None => {}
     }
     let temp_file = path.with_extension(format!("tmp.{}", uuid::Uuid::new_v4()));
     let write_res = (|| -> anyhow::Result<()> {
@@ -53,17 +54,21 @@ pub fn save_model_prefs_at(dir: &std::path::Path, prefs: &ModelPrefs) -> anyhow:
         Ok(())
     })();
 
-    if let Err(e) = write_res {
-        let _ = std::fs::remove_file(&temp_file);
-        return Err(e);
+    match write_res {
+        Ok(()) => {}
+        Err(e) => {
+            let _ = std::fs::remove_file(&temp_file);
+            return Err(e);
+        }
     }
 
-    if let Err(e) = std::fs::rename(&temp_file, &path) {
-        let _ = std::fs::remove_file(&temp_file);
-        return Err(e.into());
+    match std::fs::rename(&temp_file, &path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = std::fs::remove_file(&temp_file);
+            Err(e.into())
+        }
     }
-
-    Ok(())
 }
 
 pub fn record_recent_model(provider: &str, model: &str) {
@@ -73,8 +78,9 @@ pub fn record_recent_model(provider: &str, model: &str) {
 pub fn record_recent_model_at(dir: &std::path::Path, provider: &str, model: &str) {
     let provider = provider.trim();
     let model = model.trim();
-    if provider.is_empty() || model.is_empty() {
-        return;
+    match provider.is_empty() || model.is_empty() {
+        true => return,
+        false => {}
     }
     let mut prefs = load_model_prefs_at(dir);
     prefs
@@ -88,8 +94,9 @@ pub fn record_recent_model_at(dir: &std::path::Path, provider: &str, model: &str
         },
     );
     prefs.recent.truncate(12);
-    if let Err(err) = save_model_prefs_at(dir, &prefs) {
-        tracing::warn!(error = ?err, "failed to save recent model prefs");
+    match save_model_prefs_at(dir, &prefs) {
+        Ok(()) => {}
+        Err(err) => tracing::warn!(error = ?err, "failed to save recent model prefs"),
     }
 }
 
@@ -101,27 +108,32 @@ pub fn toggle_favorite_model_at(dir: &std::path::Path, provider: &str, model: &s
     let provider = provider.trim();
     let model = model.trim();
     let mut prefs = load_model_prefs_at(dir);
-    if provider.is_empty() || model.is_empty() {
-        return prefs;
+    match provider.is_empty() || model.is_empty() {
+        true => return prefs,
+        false => {}
     }
-    if let Some(idx) = prefs
+    let existing = prefs
         .favorites
         .iter()
-        .position(|entry| entry.provider == provider && entry.model == model)
-    {
-        prefs.favorites.remove(idx);
-    } else {
-        prefs.favorites.insert(
-            0,
-            ModelRef {
-                provider: provider.to_string(),
-                model: model.to_string(),
-            },
-        );
-        prefs.favorites.truncate(24);
+        .position(|entry| entry.provider == provider && entry.model == model);
+    match existing {
+        Some(idx) => {
+            prefs.favorites.remove(idx);
+        }
+        None => {
+            prefs.favorites.insert(
+                0,
+                ModelRef {
+                    provider: provider.to_string(),
+                    model: model.to_string(),
+                },
+            );
+            prefs.favorites.truncate(24);
+        }
     }
-    if let Err(err) = save_model_prefs_at(dir, &prefs) {
-        tracing::warn!(error = ?err, "failed to save favorite model prefs");
+    match save_model_prefs_at(dir, &prefs) {
+        Ok(()) => {}
+        Err(err) => tracing::warn!(error = ?err, "failed to save favorite model prefs"),
     }
     prefs
 }
@@ -129,4 +141,3 @@ pub fn toggle_favorite_model_at(dir: &std::path::Path, provider: &str, model: &s
 #[cfg(test)]
 #[path = "model_prefs_tests.rs"]
 mod tests;
-

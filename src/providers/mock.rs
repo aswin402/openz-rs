@@ -85,16 +85,6 @@ impl From<MockResponse> for crate::providers::LLMResponse {
 }
 
 /// A mock LLM provider with configurable response sequences.
-///
-/// # Usage
-///
-/// ```ignore
-/// let provider = MockProvider::new()
-///     .with_response(MockResponse::text("Hello"))
-///     .with_response(MockResponse::tool_call("get_weather", json!({"city": "NYC"})));
-///
-/// // First call returns "Hello", second call returns the tool call, third returns default.
-/// ```
 #[derive(Debug)]
 pub struct MockProvider {
     /// Ordered list of responses. Index advances on each successful `chat()` call.
@@ -168,19 +158,14 @@ impl crate::providers::LLMProvider for MockProvider {
         _tools: &[serde_json::Value],
         _settings: &crate::providers::GenerationSettings,
     ) -> anyhow::Result<crate::providers::LLMResponse> {
-        // Inject error if remaining (without advancing the response counter).
-        // Use fetch_update for atomic compare-and-swap to avoid race conditions.
         let prev = self
             .inject_errors
             .try_update(Ordering::SeqCst, Ordering::SeqCst, |current| {
-                if current > 0 {
-                    Some(current - 1)
-                } else {
-                    None
-                }
+                (current > 0).then(|| current - 1)
             });
-        if prev.is_ok() {
-            anyhow::bail!("MockProvider injected error");
+        match prev.is_ok() {
+            true => anyhow::bail!("MockProvider injected error"),
+            false => {}
         }
 
         let count = self.call_count.fetch_add(1, Ordering::SeqCst);
@@ -214,8 +199,9 @@ impl crate::providers::LLMProvider for BlockingMockProvider {
         let _ = self.started_tx.send(true);
         let mut release_rx = self.release_rx.clone();
         while !*release_rx.borrow() {
-            if release_rx.changed().await.is_err() {
-                break;
+            match release_rx.changed().await {
+                Ok(()) => {}
+                Err(_) => break,
             }
         }
         Ok(crate::providers::LLMResponse {
@@ -255,4 +241,3 @@ impl crate::providers::LLMProvider for LoopMockProvider {
 #[cfg(test)]
 #[path = "mock_tests.rs"]
 mod tests;
-
