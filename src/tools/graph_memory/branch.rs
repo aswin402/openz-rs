@@ -63,10 +63,13 @@ impl Tool for CreateDatabaseBranchTool {
         let mut active = get_active_branch()
             .lock()
             .map_err(|e| anyhow!("Branch lock error: {}", e))?;
-        if active.is_some() {
-            return Err(anyhow!(
-                "A database branch is already active. Commit or rollback first."
-            ));
+        match active.is_some() {
+            true => {
+                return Err(anyhow!(
+                    "A database branch is already active. Commit or rollback first."
+                ));
+            }
+            false => {}
         }
 
         let src = get_db_path();
@@ -77,10 +80,13 @@ impl Tool for CreateDatabaseBranchTool {
 
         std::thread::sleep(std::time::Duration::from_millis(10));
 
-        // If src doesn't exist yet (e.g. in tests), create a fresh DB with schema
-        if !src.exists() {
-            let fresh = init_db()?;
-            drop(fresh);
+        // Ensure source DB exists with schema before copying
+        match src.exists() {
+            false => {
+                let fresh = init_db()?;
+                drop(fresh);
+            }
+            true => {}
         }
 
         std::fs::copy(&src, &dst)?;
@@ -195,8 +201,9 @@ impl Tool for RollbackDatabaseBranchTool {
         *db_guard = main_conn;
 
         // Remove branch file
-        if branch_path.exists() {
-            std::fs::remove_file(&branch_path)?;
+        match branch_path.exists() {
+            true => std::fs::remove_file(&branch_path)?,
+            false => {}
         }
 
         *active = None;

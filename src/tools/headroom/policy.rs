@@ -6,16 +6,19 @@ pub const MAX_CACHE_ALIGN_PADDING: usize = 65_536;
 pub const MAX_RUN_OUTPUT_BYTES: usize = 512_000;
 pub const MAX_RUN_TIMEOUT_SECS: u64 = 120;
 
-pub fn resolve_user_path(input: &str) -> Result<PathBuf> {
+pub(crate) fn to_absolute_path(input: &str) -> Result<PathBuf> {
     let raw = input.trim_start_matches("file://");
     let path = Path::new(raw);
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
+    match path.is_absolute() {
+        true => Ok(path.to_path_buf()),
+        false => Ok(std::env::current_dir()
             .map_err(|e| anyhow!("failed to get cwd: {}", e))?
-            .join(path)
-    };
+            .join(path)),
+    }
+}
+
+pub fn resolve_user_path(input: &str) -> Result<PathBuf> {
+    let absolute = to_absolute_path(input)?;
     absolute
         .canonicalize()
         .map_err(|e| anyhow!("failed to resolve path '{}': {}", input, e))
@@ -52,24 +55,19 @@ pub fn command_is_allowed(command: &str) -> bool {
 }
 
 pub fn resolve_output_path(input: &str) -> Result<PathBuf> {
-    let raw = input.trim_start_matches("file://");
-    let path = Path::new(raw);
-    let absolute = if path.is_absolute() {
-        path.to_path_buf()
-    } else {
-        std::env::current_dir()
-            .map_err(|e| anyhow!("failed to get cwd: {}", e))?
-            .join(path)
-    };
+    let absolute = to_absolute_path(input)?;
 
-    if let Some(parent) = absolute.parent() {
-        parent.canonicalize().map_err(|e| {
-            anyhow!(
-                "failed to resolve parent directory '{}': {}",
-                parent.display(),
-                e
-            )
-        })?;
+    match absolute.parent() {
+        Some(parent) => {
+            parent.canonicalize().map_err(|e| {
+                anyhow!(
+                    "failed to resolve parent directory '{}': {}",
+                    parent.display(),
+                    e
+                )
+            })?;
+        }
+        None => {}
     }
 
     ensure_path_is_safe_for_headroom(&absolute)?;

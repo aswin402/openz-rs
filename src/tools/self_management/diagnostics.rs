@@ -1,7 +1,7 @@
+use super::{extract_first_str, parse_bool_value};
 use crate::tools::Tool;
 use anyhow::Result;
 use serde_json::Value;
-
 
 pub struct DiagnoseToolTool {
     registry: crate::tools::ToolRegistry,
@@ -46,22 +46,21 @@ fn minimal_openmedia_video_scene() -> Value {
 }
 
 pub(crate) fn normalize_diagnose_mock_args(tool_name: &str, mock_args: Value) -> Value {
-    if !is_placeholder_mock_args(&mock_args) {
-        return mock_args;
-    }
-
-    match tool_name {
-        "openmedia_video_create" => serde_json::json!({
-            "scene": minimal_openmedia_video_scene()
-        }),
-        "openmedia_video_preview" => serde_json::json!({
-            "scene": minimal_openmedia_video_scene(),
-            "time": 0.0,
-            "width": 160,
-            "height": 120,
-            "output_format": "png"
-        }),
-        _ => mock_args,
+    match is_placeholder_mock_args(&mock_args) {
+        false => mock_args,
+        true => match tool_name {
+            "openmedia_video_create" => serde_json::json!({
+                "scene": minimal_openmedia_video_scene()
+            }),
+            "openmedia_video_preview" => serde_json::json!({
+                "scene": minimal_openmedia_video_scene(),
+                "time": 0.0,
+                "width": 160,
+                "height": 120,
+                "output_format": "png"
+            }),
+            _ => mock_args,
+        },
     }
 }
 
@@ -100,29 +99,20 @@ impl Tool for DiagnoseToolTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let (raw_tool_name, mock_args) = if let Some(s) = arguments.as_str() {
-            (Some(s), serde_json::json!({}))
-        } else {
-            (
-                arguments
-                    .get("tool_name")
-                    .or_else(|| arguments.get("toolName"))
-                    .or_else(|| arguments.get("name"))
-                    .or_else(|| arguments.get("tool"))
-                    .and_then(|v| v.as_str()),
-                arguments
-                    .get("mock_args")
-                    .or_else(|| arguments.get("mockArgs"))
-                    .or_else(|| arguments.get("args"))
-                    .cloned()
+        let (raw_tool_name, mock_args) = match arguments.as_str() {
+            Some(s) => (Some(s), serde_json::json!({})),
+            None => (
+                extract_first_str(arguments, &["tool_name", "toolName", "name", "tool"]),
+                ["mock_args", "mockArgs", "args"]
+                    .iter()
+                    .find_map(|&k| arguments.get(k).cloned())
                     .unwrap_or_else(|| serde_json::json!({})),
-            )
+            ),
         };
         let raw_tool_name = raw_tool_name.ok_or_else(|| anyhow::anyhow!("Missing tool_name"))?;
         let tool_name = raw_tool_name.trim();
         let mock_args = normalize_diagnose_mock_args(tool_name, mock_args);
 
-        // Retrieve tool bypassing filter_scope
         let tool = {
             let filter_scope_backup = {
                 let mut g = self
@@ -133,8 +123,9 @@ impl Tool for DiagnoseToolTool {
                 g.take()
             };
             let t = self.registry.get(tool_name);
-            if let Ok(mut g) = self.registry.filter_scope.lock() {
-                *g = filter_scope_backup;
+            match self.registry.filter_scope.lock() {
+                Ok(mut g) => *g = filter_scope_backup,
+                Err(_) => {}
             }
             t
         };
@@ -171,22 +162,23 @@ impl Tool for DiagnoseToolTool {
     }
 }
 
-
 fn dir_size_and_count(path: &std::path::Path) -> (u64, usize) {
     let mut total_size = 0;
     let mut file_count = 0;
-    if let Ok(entries) = std::fs::read_dir(path) {
-        for entry in entries.flatten() {
-            if let Ok(meta) = entry.metadata() {
-                if meta.is_dir() {
+    for entry in std::fs::read_dir(path).into_iter().flatten().flatten() {
+        match entry.metadata() {
+            Ok(meta) => match meta.is_dir() {
+                true => {
                     let (size, count) = dir_size_and_count(&entry.path());
                     total_size += size;
                     file_count += count;
-                } else {
+                }
+                false => {
                     total_size += meta.len();
                     file_count += 1;
                 }
-            }
+            },
+            Err(_) => {}
         }
     }
     (total_size, file_count)
@@ -202,14 +194,11 @@ async fn check_endpoint_latency(client: &reqwest::Client, url: &str) -> (Option<
     {
         Ok(resp) => {
             let elapsed = start.elapsed().as_millis();
-            let status = if resp.status().is_success()
-                || resp.status().as_u16() == 401
-                || resp.status().as_u16() == 404
-                || resp.status().as_u16() == 400
-            {
-                "reachable".to_string()
-            } else {
-                format!("status {}", resp.status())
+            let reachable = resp.status().is_success()
+                || matches!(resp.status().as_u16(), 400 | 401 | 404);
+            let status = match reachable {
+                true => "reachable".to_string(),
+                false => format!("status {}", resp.status()),
             };
             (Some(elapsed), status)
         }
@@ -218,61 +207,57 @@ async fn check_endpoint_latency(client: &reqwest::Client, url: &str) -> (Option<
 }
 
 fn check_db(path: &std::path::Path, run_integrity: bool) -> Value {
-    let exists = path.exists();
-    if !exists {
-        return serde_json::json!({
+    match path.exists() {
+        false => serde_json::json!({
             "exists": false,
             "connectable": false,
             "size_bytes": 0,
             "integrity": "N/A"
-        });
-    }
-
-    let size_bytes = path.metadata().map(|m| m.len()).unwrap_or(0);
-    match rusqlite::Connection::open(path) {
-        Ok(conn) => {
-            let integrity = if run_integrity {
-                match conn.query_row("PRAGMA integrity_check;", [], |row| row.get::<_, String>(0)) {
-                    Ok(s) => s,
-                    Err(e) => format!("check error: {}", e),
+        }),
+        true => {
+            let size_bytes = path.metadata().map(|m| m.len()).unwrap_or(0);
+            match rusqlite::Connection::open(path) {
+                Ok(conn) => {
+                    let integrity = match run_integrity {
+                        true => match conn.query_row("PRAGMA integrity_check;", [], |row| {
+                            row.get::<_, String>(0)
+                        }) {
+                            Ok(s) => s,
+                            Err(e) => format!("check error: {}", e),
+                        },
+                        false => "skipped".to_string(),
+                    };
+                    serde_json::json!({
+                        "exists": true,
+                        "connectable": true,
+                        "size_bytes": size_bytes,
+                        "integrity": integrity
+                    })
                 }
-            } else {
-                "skipped".to_string()
-            };
-            serde_json::json!({
-                "exists": true,
-                "connectable": true,
-                "size_bytes": size_bytes,
-                "integrity": integrity
-            })
-        }
-        Err(e) => {
-            serde_json::json!({
-                "exists": true,
-                "connectable": false,
-                "size_bytes": size_bytes,
-                "integrity": format!("connection error: {}", e)
-            })
+                Err(e) => serde_json::json!({
+                    "exists": true,
+                    "connectable": false,
+                    "size_bytes": size_bytes,
+                    "integrity": format!("connection error: {}", e)
+                }),
+            }
         }
     }
 }
 
 fn parse_bool_param(arguments: &Value, keys: &[&str], default: bool) -> bool {
-    for &key in keys {
-        if let Some(v) = arguments.get(key) {
-            if let Some(b) = v.as_bool() {
-                return b;
-            }
-            if let Some(s) = v.as_str() {
-                match s.trim().to_lowercase().as_str() {
-                    "true" | "1" | "yes" | "on" => return true,
-                    "false" | "0" | "no" | "off" => return false,
-                    _ => {}
-                }
-            }
-        }
-    }
-    default
+    keys.iter()
+        .find_map(|&key| arguments.get(key).and_then(parse_bool_value))
+        .unwrap_or(default)
+}
+
+fn dir_stat_json(path: &std::path::Path) -> Value {
+    let (size_bytes, file_count) = dir_size_and_count(path);
+    serde_json::json!({
+        "path": path.to_string_lossy(),
+        "size_bytes": size_bytes,
+        "file_count": file_count
+    })
 }
 
 pub struct DiagnoseSystemTool;
@@ -304,18 +289,29 @@ impl Tool for DiagnoseSystemTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let (check_latency, check_db_integrity) = if let Some(s) = arguments.as_str() {
-            let lower = s.trim().to_lowercase();
-            match lower.as_str() {
+        let (check_latency, check_db_integrity) = match arguments.as_str() {
+            Some(s) => match s.trim().to_lowercase().as_str() {
                 "full" | "integrity" => (true, true),
                 "quick" | "fast" => (false, false),
                 _ => (true, false),
-            }
-        } else {
-            (
-                parse_bool_param(arguments, &["check_latency", "checkLatency", "latency"], true),
-                parse_bool_param(arguments, &["check_db_integrity", "checkDbIntegrity", "integrity", "db_integrity"], false),
-            )
+            },
+            None => (
+                parse_bool_param(
+                    arguments,
+                    &["check_latency", "checkLatency", "latency"],
+                    true,
+                ),
+                parse_bool_param(
+                    arguments,
+                    &[
+                        "check_db_integrity",
+                        "checkDbIntegrity",
+                        "integrity",
+                        "db_integrity",
+                    ],
+                    false,
+                ),
+            ),
         };
 
         let os_type = std::env::consts::OS.to_string();
@@ -325,119 +321,43 @@ impl Tool for DiagnoseSystemTool {
             .unwrap_or(1);
 
         let openz_dir = crate::config::loader::runtime_data_dir();
-        let sessions_dir = openz_dir.join("sessions");
-        let outputs_dir = openz_dir.join("tool_outputs");
-        let traces_dir = openz_dir.join("traces");
-        let skills_dir = openz_dir.join("skills");
-
-        let (sessions_sz, sessions_ct) = dir_size_and_count(&sessions_dir);
-        let (outputs_sz, outputs_ct) = dir_size_and_count(&outputs_dir);
-        let (traces_sz, traces_ct) = dir_size_and_count(&traces_dir);
-        let (skills_sz, skills_ct) = dir_size_and_count(&skills_dir);
 
         let directories = serde_json::json!({
-            "sessions": {
-                "path": sessions_dir.to_string_lossy(),
-                "size_bytes": sessions_sz,
-                "file_count": sessions_ct
-            },
-            "tool_outputs": {
-                "path": outputs_dir.to_string_lossy(),
-                "size_bytes": outputs_sz,
-                "file_count": outputs_ct
-            },
-            "traces": {
-                "path": traces_dir.to_string_lossy(),
-                "size_bytes": traces_sz,
-                "file_count": traces_ct
-            },
-            "skills": {
-                "path": skills_dir.to_string_lossy(),
-                "size_bytes": skills_sz,
-                "file_count": skills_ct
-            }
+            "sessions": dir_stat_json(&openz_dir.join("sessions")),
+            "tool_outputs": dir_stat_json(&openz_dir.join("tool_outputs")),
+            "traces": dir_stat_json(&openz_dir.join("traces")),
+            "skills": dir_stat_json(&openz_dir.join("skills")),
         });
 
-        let db_memory = openz_dir.join("memory.db");
-        let db_docs = openz_dir.join("docs.db");
-        let db_graph = openz_dir.join("graph_memory.db");
-        let db_ccr = openz_dir.join("ccr_cache.db");
-        let db_thoughts = openz_dir.join("thoughts.db");
-
         let databases = serde_json::json!({
-            "memory": check_db(&db_memory, check_db_integrity),
-            "docs": check_db(&db_docs, check_db_integrity),
-            "graph_memory": check_db(&db_graph, check_db_integrity),
-            "ccr_cache": check_db(&db_ccr, check_db_integrity),
-            "thoughts": check_db(&db_thoughts, check_db_integrity)
+            "memory": check_db(&openz_dir.join("memory.db"), check_db_integrity),
+            "docs": check_db(&openz_dir.join("docs.db"), check_db_integrity),
+            "graph_memory": check_db(&openz_dir.join("graph_memory.db"), check_db_integrity),
+            "ccr_cache": check_db(&openz_dir.join("ccr_cache.db"), check_db_integrity),
+            "thoughts": check_db(&openz_dir.join("thoughts.db"), check_db_integrity)
         });
 
         let mut network_status = serde_json::Map::new();
-        if check_latency {
-            if let Ok(config) = crate::config::loader::load_config() {
+        match (check_latency, crate::config::loader::load_config()) {
+            (true, Ok(config)) => {
                 let client = crate::core::http::default_http_client();
-                let mut endpoints = Vec::new();
-
-                if let Some(ref openai) = config.providers.openai {
-                    if let Some(ref api_key) = openai.api_key {
-                        if !api_key.is_empty() {
-                            let base = openai
-                                .api_base
-                                .as_deref()
-                                .unwrap_or_else(|| {
-                                    crate::config::provider_catalog::default_api_base_for_provider(
-                                        "openai",
-                                    )
-                                });
-                            endpoints.push(("openai", base.to_string()));
-                        }
-                    }
-                }
-                if let Some(ref anthropic) = config.providers.anthropic {
-                    if let Some(ref api_key) = anthropic.api_key {
-                        if !api_key.is_empty() {
-                            let base = anthropic
-                                .api_base
-                                .as_deref()
-                                .unwrap_or_else(|| {
-                                    crate::config::provider_catalog::default_api_base_for_provider(
-                                        "anthropic",
-                                    )
-                                });
-                            endpoints.push(("anthropic", base.to_string()));
-                        }
-                    }
-                }
-                if let Some(ref openrouter) = config.providers.openrouter {
-                    if let Some(ref api_key) = openrouter.api_key {
-                        if !api_key.is_empty() {
-                            let base = openrouter
-                                .api_base
-                                .as_deref()
-                                .unwrap_or_else(|| {
-                                    crate::config::provider_catalog::default_api_base_for_provider(
-                                        "openrouter",
-                                    )
-                                });
-                            endpoints.push(("openrouter", base.to_string()));
-                        }
-                    }
-                }
-                if let Some(ref deepseek) = config.providers.deepseek {
-                    if let Some(ref api_key) = deepseek.api_key {
-                        if !api_key.is_empty() {
-                            let base = deepseek
-                                .api_base
-                                .as_deref()
-                                .unwrap_or_else(|| {
-                                    crate::config::provider_catalog::default_api_base_for_provider(
-                                        "deepseek",
-                                    )
-                                });
-                            endpoints.push(("deepseek", base.to_string()));
-                        }
-                    }
-                }
+                let providers = [
+                    ("openai", config.providers.openai.as_ref()),
+                    ("anthropic", config.providers.anthropic.as_ref()),
+                    ("openrouter", config.providers.openrouter.as_ref()),
+                    ("deepseek", config.providers.deepseek.as_ref()),
+                ];
+                let endpoints: Vec<(&str, String)> = providers
+                    .into_iter()
+                    .filter_map(|(name, p_opt)| {
+                        let p = p_opt?;
+                        p.api_key.as_ref().filter(|k| !k.is_empty())?;
+                        let base = p.api_base.as_deref().unwrap_or_else(|| {
+                            crate::config::provider_catalog::default_api_base_for_provider(name)
+                        });
+                        Some((name, base.to_string()))
+                    })
+                    .collect();
 
                 for (name, url) in endpoints {
                     let (latency, status) = check_endpoint_latency(&client, &url).await;
@@ -451,6 +371,7 @@ impl Tool for DiagnoseSystemTool {
                     );
                 }
             }
+            _ => {}
         }
 
         Ok(serde_json::json!({

@@ -6,67 +6,104 @@ use serde_json::{json, Value};
 
 // ─── Extraction Helpers ─────────────────────────────────────────
 
+fn coerce_non_empty_string(v: &Value) -> Option<String> {
+    match v {
+        Value::String(s) => {
+            let trimmed = s.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        }
+        Value::Number(_) | Value::Bool(_) => {
+            let s = v.to_string();
+            let trimmed = s.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn extract_string_field(val: &Value, keys: &[&str]) -> Option<String> {
-    for key in keys {
-        if let Some(v) = val.get(*key) {
-            if let Some(s) = v.as_str() {
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
-            } else if v.is_number() || v.is_boolean() {
-                let s = v.to_string();
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
+    keys.iter()
+        .find_map(|key| val.get(*key).and_then(coerce_non_empty_string))
+}
+
+fn value_to_string_list(v: &Value) -> Option<Vec<String>> {
+    match v {
+        Value::Array(arr) => {
+            let list: Vec<String> = arr.iter().filter_map(coerce_non_empty_string).collect();
+            (!list.is_empty()).then_some(list)
+        }
+        Value::String(s) => {
+            let trimmed = s.trim();
+            match (!trimmed.is_empty(), trimmed.contains(',')) {
+                (false, _) => None,
+                (true, true) => Some(
+                    trimmed
+                        .split(',')
+                        .map(|part| part.trim().to_string())
+                        .filter(|p| !p.is_empty())
+                        .collect(),
+                ),
+                (true, false) => Some(vec![trimmed.to_string()]),
             }
         }
+        _ => None,
     }
-    None
 }
 
 pub(crate) fn extract_string_list_field(val: &Value, keys: &[&str]) -> Vec<String> {
-    for key in keys {
-        if let Some(v) = val.get(*key) {
-            if let Some(arr) = v.as_array() {
-                let list: Vec<String> = arr
-                    .iter()
-                    .filter_map(|item| {
-                        if let Some(s) = item.as_str() {
-                            let trimmed = s.trim();
-                            if !trimmed.is_empty() {
-                                Some(trimmed.to_string())
-                            } else {
-                                None
-                            }
-                        } else if item.is_number() || item.is_boolean() {
-                            Some(item.to_string())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if !list.is_empty() {
-                    return list;
-                }
-            } else if let Some(s) = v.as_str() {
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    if trimmed.contains(',') {
-                        return trimmed
-                            .split(',')
-                            .map(|part| part.trim().to_string())
-                            .filter(|p| !p.is_empty())
-                            .collect();
-                    } else {
-                        return vec![trimmed.to_string()];
-                    }
-                }
-            }
-        }
+    keys.iter()
+        .find_map(|key| val.get(*key).and_then(value_to_string_list))
+        .unwrap_or_default()
+}
+
+fn extract_object_list_arg(
+    arguments: &Value,
+    array_keys: &[&str],
+    object_keys: &[&str],
+    fallback_check: impl FnOnce(&Value) -> bool,
+    err_msg: &'static str,
+) -> Result<Vec<Value>> {
+    array_keys
+        .iter()
+        .find_map(|k| arguments.get(*k).and_then(Value::as_array).cloned())
+        .or_else(|| {
+            object_keys.iter().find_map(|k| {
+                arguments
+                    .get(*k)
+                    .and_then(Value::as_object)
+                    .map(|obj| vec![Value::Object(obj.clone())])
+            })
+        })
+        .or_else(|| fallback_check(arguments).then(|| vec![arguments.clone()]))
+        .ok_or_else(|| anyhow!(err_msg))
+}
+
+fn collect_node_entities(mut rows: rusqlite::Rows<'_>) -> Result<Vec<Value>> {
+    let mut entities = Vec::new();
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(0)?;
+        let entity_type: String = row.get(1)?;
+        let obs_json: String = row.get(2)?;
+        let observations: Vec<String> = serde_json::from_str(&obs_json).unwrap_or_default();
+        entities.push(json!({
+            "name": name,
+            "entityType": entity_type,
+            "observations": observations
+        }));
     }
-    Vec::new()
+    Ok(entities)
+}
+
+fn collect_edge_relations(mut rows: rusqlite::Rows<'_>) -> Result<Vec<Value>> {
+    let mut relations = Vec::new();
+    while let Some(row) = rows.next()? {
+        relations.push(json!({
+            "from": row.get::<_, String>(0)?,
+            "to": row.get::<_, String>(1)?,
+            "relationType": row.get::<_, String>(2)?
+        }));
+    }
+    Ok(relations)
 }
 
 // ─── Tool 1: CreateEntitiesTool ─────────────────────────────────
@@ -109,28 +146,17 @@ impl Tool for CreateEntitiesTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let entities: Vec<Value> = if let Some(arr) = arguments
-            .get("entities")
-            .or_else(|| arguments.get("entity"))
-            .or_else(|| arguments.get("nodes"))
-            .or_else(|| arguments.get("items"))
-            .and_then(|v| v.as_array())
-        {
-            arr.clone()
-        } else if let Some(obj) = arguments
-            .get("entity")
-            .or_else(|| arguments.get("node"))
-            .and_then(|v| v.as_object())
-        {
-            vec![Value::Object(obj.clone())]
-        } else if arguments.get("name").is_some()
-            || arguments.get("entity_name").is_some()
-            || arguments.get("entityName").is_some()
-        {
-            vec![arguments.clone()]
-        } else {
-            return Err(anyhow!("Missing 'entities' array or entity object"));
-        };
+        let entities = extract_object_list_arg(
+            arguments,
+            &["entities", "entity", "nodes", "items"],
+            &["entity", "node"],
+            |args| {
+                args.get("name").is_some()
+                    || args.get("entity_name").is_some()
+                    || args.get("entityName").is_some()
+            },
+            "Missing 'entities' array or entity object",
+        )?;
         let (user_id, session_id, agent_id) = scope_from_args(arguments);
 
         let mut created = Vec::new();
@@ -161,34 +187,38 @@ impl Tool for CreateEntitiesTool {
                     )
                     .ok();
 
-                if let Some(existing_obs_json) = existing_obs {
-                    let mut current_obs: Vec<String> =
-                        serde_json::from_str(&existing_obs_json).unwrap_or_default();
-                    for o in &obs {
-                        if !current_obs.contains(o) {
-                            current_obs.push(o.clone());
+                match existing_obs {
+                    Some(existing_obs_json) => {
+                        let mut current_obs: Vec<String> =
+                            serde_json::from_str(&existing_obs_json).unwrap_or_default();
+                        for o in &obs {
+                            match current_obs.contains(o) {
+                                false => current_obs.push(o.clone()),
+                                true => {}
+                            }
                         }
+                        let updated_obs_json = serde_json::to_string(&current_obs)?;
+                        tx.execute(
+                            "UPDATE graph_nodes SET observations = ?1, entity_type = CASE WHEN ?2 != 'Entity' THEN ?2 ELSE entity_type END WHERE name = ?3 AND user_id = ?4 AND session_id = ?5 AND agent_id = ?6",
+                            params![updated_obs_json, entity_type, name, user_id, session_id, agent_id],
+                        )?;
+                        created.push(json!({
+                            "name": name,
+                            "entityType": entity_type,
+                            "observations": current_obs
+                        }));
                     }
-                    let updated_obs_json = serde_json::to_string(&current_obs)?;
-                    tx.execute(
-                        "UPDATE graph_nodes SET observations = ?1, entity_type = CASE WHEN ?2 != 'Entity' THEN ?2 ELSE entity_type END WHERE name = ?3 AND user_id = ?4 AND session_id = ?5 AND agent_id = ?6",
-                        params![updated_obs_json, entity_type, name, user_id, session_id, agent_id],
-                    )?;
-                    created.push(json!({
-                        "name": name,
-                        "entityType": entity_type,
-                        "observations": current_obs
-                    }));
-                } else {
-                    tx.execute(
-                        "INSERT INTO graph_nodes (name, entity_type, observations, user_id, session_id, agent_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                        params![name, entity_type, obs_json, user_id, session_id, agent_id],
-                    )?;
-                    created.push(json!({
-                        "name": name,
-                        "entityType": entity_type,
-                        "observations": obs
-                    }));
+                    None => {
+                        tx.execute(
+                            "INSERT INTO graph_nodes (name, entity_type, observations, user_id, session_id, agent_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                            params![name, entity_type, obs_json, user_id, session_id, agent_id],
+                        )?;
+                        created.push(json!({
+                            "name": name,
+                            "entityType": entity_type,
+                            "observations": obs
+                        }));
+                    }
                 }
             }
             tx.commit()?;
@@ -238,29 +268,16 @@ impl Tool for CreateRelationsTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let relations: Vec<Value> = if let Some(arr) = arguments
-            .get("relations")
-            .or_else(|| arguments.get("relation"))
-            .or_else(|| arguments.get("edges"))
-            .or_else(|| arguments.get("links"))
-            .or_else(|| arguments.get("relationships"))
-            .and_then(|v| v.as_array())
-        {
-            arr.clone()
-        } else if let Some(obj) = arguments
-            .get("relation")
-            .or_else(|| arguments.get("edge"))
-            .or_else(|| arguments.get("link"))
-            .and_then(|v| v.as_object())
-        {
-            vec![Value::Object(obj.clone())]
-        } else if (arguments.get("from").is_some() || arguments.get("source").is_some())
-            && (arguments.get("to").is_some() || arguments.get("target").is_some())
-        {
-            vec![arguments.clone()]
-        } else {
-            return Err(anyhow!("Missing 'relations' array or relation object"));
-        };
+        let relations = extract_object_list_arg(
+            arguments,
+            &["relations", "relation", "edges", "links", "relationships"],
+            &["relation", "edge", "link"],
+            |args| {
+                (args.get("from").is_some() || args.get("source").is_some())
+                    && (args.get("to").is_some() || args.get("target").is_some())
+            },
+            "Missing 'relations' array or relation object",
+        )?;
         let (user_id, session_id, agent_id) = scope_from_args(arguments);
 
         let mut created = Vec::new();
@@ -297,16 +314,19 @@ impl Tool for CreateRelationsTool {
                     |row| row.get(0),
                 )?;
 
-                if !exists {
-                    tx.execute(
-                        "INSERT INTO graph_edges (from_name, to_name, relation_type, user_id, session_id, agent_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                        params![from, to, rel_type, user_id, session_id, agent_id],
-                    )?;
-                    created.push(json!({
-                        "from": from,
-                        "to": to,
-                        "relationType": rel_type
-                    }));
+                match exists {
+                    false => {
+                        tx.execute(
+                            "INSERT INTO graph_edges (from_name, to_name, relation_type, user_id, session_id, agent_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                            params![from, to, rel_type, user_id, session_id, agent_id],
+                        )?;
+                        created.push(json!({
+                            "from": from,
+                            "to": to,
+                            "relationType": rel_type
+                        }));
+                    }
+                    true => {}
                 }
             }
             tx.commit()?;
@@ -328,7 +348,7 @@ impl Tool for AddObservationsTool {
     }
 
     fn description(&self) -> &str {
-        "Add new observations to existing entities in the knowledge graph. Automatically creates the entity if not found."
+        "Add new observations to existing entities in the knowledge graph. Automatically creates the entity when not found."
     }
 
     fn parameters(&self) -> Value {
@@ -355,28 +375,18 @@ impl Tool for AddObservationsTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let observations: Vec<Value> = if let Some(arr) = arguments
-            .get("observations")
-            .or_else(|| arguments.get("observation"))
-            .or_else(|| arguments.get("items"))
-            .and_then(|v| v.as_array())
-        {
-            arr.clone()
-        } else if let Some(obj) = arguments
-            .get("observation")
-            .or_else(|| arguments.get("item"))
-            .and_then(|v| v.as_object())
-        {
-            vec![Value::Object(obj.clone())]
-        } else if arguments.get("entityName").is_some()
-            || arguments.get("entity_name").is_some()
-            || arguments.get("name").is_some()
-            || arguments.get("entity").is_some()
-        {
-            vec![arguments.clone()]
-        } else {
-            return Err(anyhow!("Missing 'observations' array or observation object"));
-        };
+        let observations = extract_object_list_arg(
+            arguments,
+            &["observations", "observation", "items"],
+            &["observation", "item"],
+            |args| {
+                args.get("entityName").is_some()
+                    || args.get("entity_name").is_some()
+                    || args.get("name").is_some()
+                    || args.get("entity").is_some()
+            },
+            "Missing 'observations' array or observation object",
+        )?;
         let (user_id, session_id, agent_id) = scope_from_args(arguments);
 
         let mut results = Vec::new();
@@ -407,9 +417,12 @@ impl Tool for AddObservationsTool {
                             serde_json::from_str(&obs_json).unwrap_or_default();
                         let mut added = Vec::new();
                         for content in &contents {
-                            if !current_obs.contains(content) {
-                                current_obs.push(content.clone());
-                                added.push(content.clone());
+                            match current_obs.contains(content) {
+                                false => {
+                                    current_obs.push(content.clone());
+                                    added.push(content.clone());
+                                }
+                                true => {}
                             }
                         }
                         let new_obs_json = serde_json::to_string(&current_obs)?;
@@ -473,8 +486,9 @@ impl Tool for DeleteEntitiesTool {
             arguments,
             &["entityNames", "entity_names", "names", "name", "entities", "entity", "entity_name"],
         );
-        if names.is_empty() {
-            return Ok(json!({ "status": "deleted", "count": 0 }));
+        match names.is_empty() {
+            true => return Ok(json!({ "status": "deleted", "count": 0 })),
+            false => {}
         }
         let (user_id, session_id, agent_id) = scope_from_args(arguments);
 
@@ -536,25 +550,18 @@ impl Tool for DeleteObservationsTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let deletions: Vec<Value> = if let Some(arr) = arguments
-            .get("deletions")
-            .or_else(|| arguments.get("deletion"))
-            .or_else(|| arguments.get("observations"))
-            .or_else(|| arguments.get("items"))
-            .and_then(|v| v.as_array())
-        {
-            arr.clone()
-        } else if let Some(obj) = arguments.get("deletion").and_then(|v| v.as_object()) {
-            vec![Value::Object(obj.clone())]
-        } else if arguments.get("entityName").is_some()
-            || arguments.get("entity_name").is_some()
-            || arguments.get("name").is_some()
-            || arguments.get("entity").is_some()
-        {
-            vec![arguments.clone()]
-        } else {
-            return Err(anyhow!("Missing 'deletions' array or deletion object"));
-        };
+        let deletions = extract_object_list_arg(
+            arguments,
+            &["deletions", "deletion", "observations", "items"],
+            &["deletion"],
+            |args| {
+                args.get("entityName").is_some()
+                    || args.get("entity_name").is_some()
+                    || args.get("name").is_some()
+                    || args.get("entity").is_some()
+            },
+            "Missing 'deletions' array or deletion object",
+        )?;
         let (user_id, session_id, agent_id) = scope_from_args(arguments);
 
         with_db(|conn| {
@@ -578,17 +585,20 @@ impl Tool for DeleteObservationsTool {
                     )
                     .ok();
 
-                if let Some(obs_json) = current_obs_str {
-                    let current_obs: Vec<String> = serde_json::from_str(&obs_json)?;
-                    let filtered: Vec<String> = current_obs
-                        .into_iter()
-                        .filter(|o| !to_remove.contains(o))
-                        .collect();
-                    let new_obs_json = serde_json::to_string(&filtered)?;
-                    tx.execute(
-                        "UPDATE graph_nodes SET observations = ?1 WHERE name = ?2 AND user_id = ?3 AND session_id = ?4 AND agent_id = ?5",
-                        params![new_obs_json, entity_name, user_id, session_id, agent_id],
-                    )?;
+                match current_obs_str {
+                    Some(obs_json) => {
+                        let current_obs: Vec<String> = serde_json::from_str(&obs_json)?;
+                        let filtered: Vec<String> = current_obs
+                            .into_iter()
+                            .filter(|o| !to_remove.contains(o))
+                            .collect();
+                        let new_obs_json = serde_json::to_string(&filtered)?;
+                        tx.execute(
+                            "UPDATE graph_nodes SET observations = ?1 WHERE name = ?2 AND user_id = ?3 AND session_id = ?4 AND agent_id = ?5",
+                            params![new_obs_json, entity_name, user_id, session_id, agent_id],
+                        )?;
+                    }
+                    None => {}
                 }
             }
             tx.commit()?;
@@ -610,7 +620,7 @@ impl Tool for DeleteRelationsTool {
     }
 
     fn description(&self) -> &str {
-        "Delete multiple relations from the knowledge graph. If relationType is omitted, deletes all relations between source and target."
+        "Delete multiple relations from the knowledge graph. When relationType is omitted, deletes all relations between source and target."
     }
 
     fn parameters(&self) -> Value {
@@ -624,7 +634,7 @@ impl Tool for DeleteRelationsTool {
                         "properties": {
                             "from": { "type": "string", "description": "The source entity (alias: source)" },
                             "to": { "type": "string", "description": "The target entity (alias: target)" },
-                            "relationType": { "type": "string", "description": "Optional relation type. If omitted, all relations between from and to are removed." }
+                            "relationType": { "type": "string", "description": "Optional relation type. When omitted, all relations between from and to are removed." }
                         },
                         "required": ["from", "to"]
                     }
@@ -638,24 +648,16 @@ impl Tool for DeleteRelationsTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let relations: Vec<Value> = if let Some(arr) = arguments
-            .get("relations")
-            .or_else(|| arguments.get("relation"))
-            .or_else(|| arguments.get("edges"))
-            .or_else(|| arguments.get("links"))
-            .or_else(|| arguments.get("relationships"))
-            .and_then(|v| v.as_array())
-        {
-            arr.clone()
-        } else if let Some(obj) = arguments.get("relation").and_then(|v| v.as_object()) {
-            vec![Value::Object(obj.clone())]
-        } else if (arguments.get("from").is_some() || arguments.get("source").is_some())
-            && (arguments.get("to").is_some() || arguments.get("target").is_some())
-        {
-            vec![arguments.clone()]
-        } else {
-            return Err(anyhow!("Missing 'relations' array or relation object"));
-        };
+        let relations = extract_object_list_arg(
+            arguments,
+            &["relations", "relation", "edges", "links", "relationships"],
+            &["relation"],
+            |args| {
+                (args.get("from").is_some() || args.get("source").is_some())
+                    && (args.get("to").is_some() || args.get("target").is_some())
+            },
+            "Missing 'relations' array or relation object",
+        )?;
         let (user_id, session_id, agent_id) = scope_from_args(arguments);
 
         with_db(|conn| {
@@ -683,16 +685,19 @@ impl Tool for DeleteRelationsTool {
                     ],
                 );
 
-                if let Some(rt) = rel_type {
-                    tx.execute(
-                        "UPDATE graph_edges SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE from_name = ?1 AND to_name = ?2 AND relation_type = ?3 AND user_id = ?4 AND session_id = ?5 AND agent_id = ?6 AND valid_until IS NULL",
-                        params![from, to, rt, user_id, session_id, agent_id],
-                    )?;
-                } else {
-                    tx.execute(
-                        "UPDATE graph_edges SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE from_name = ?1 AND to_name = ?2 AND user_id = ?3 AND session_id = ?4 AND agent_id = ?5 AND valid_until IS NULL",
-                        params![from, to, user_id, session_id, agent_id],
-                    )?;
+                match rel_type {
+                    Some(rt) => {
+                        tx.execute(
+                            "UPDATE graph_edges SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE from_name = ?1 AND to_name = ?2 AND relation_type = ?3 AND user_id = ?4 AND session_id = ?5 AND agent_id = ?6 AND valid_until IS NULL",
+                            params![from, to, rt, user_id, session_id, agent_id],
+                        )?;
+                    }
+                    None => {
+                        tx.execute(
+                            "UPDATE graph_edges SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE from_name = ?1 AND to_name = ?2 AND user_id = ?3 AND session_id = ?4 AND agent_id = ?5 AND valid_until IS NULL",
+                            params![from, to, user_id, session_id, agent_id],
+                        )?;
+                    }
                 }
             }
             tx.commit()?;
@@ -735,24 +740,14 @@ impl Tool for ReadGraphTool {
             let mut stmt_nodes = conn.prepare(
                 "SELECT name, entity_type, observations FROM graph_nodes WHERE (?1 IS NULL OR user_id = ?1 OR user_id = '*') AND (?2 IS NULL OR session_id = ?2 OR session_id = '*') AND (?3 IS NULL OR agent_id = ?3 OR agent_id = '*')"
             )?;
-            let mut node_rows = stmt_nodes.query(params![user_id, session_id, agent_id])?;
-            let mut entities = Vec::new();
-            while let Some(row) = node_rows.next()? {
-                let name: String = row.get(0)?;
-                let entity_type: String = row.get(1)?;
-                let obs_json: String = row.get(2)?;
-                let observations: Vec<String> = serde_json::from_str(&obs_json).unwrap_or_default();
-                entities.push(json!({ "name": name, "entityType": entity_type, "observations": observations }));
-            }
+            let entities =
+                collect_node_entities(stmt_nodes.query(params![user_id, session_id, agent_id])?)?;
 
             let mut stmt_edges = conn.prepare(
                 "SELECT from_name, to_name, relation_type FROM graph_edges WHERE (?1 IS NULL OR user_id = ?1 OR user_id = '*') AND (?2 IS NULL OR session_id = ?2 OR session_id = '*') AND (?3 IS NULL OR agent_id = ?3 OR agent_id = '*') AND valid_until IS NULL"
             )?;
-            let mut edge_rows = stmt_edges.query(params![user_id, session_id, agent_id])?;
-            let mut relations = Vec::new();
-            while let Some(row) = edge_rows.next()? {
-                relations.push(json!({ "from": row.get::<_, String>(0)?, "to": row.get::<_, String>(1)?, "relationType": row.get::<_, String>(2)? }));
-            }
+            let relations =
+                collect_edge_relations(stmt_edges.query(params![user_id, session_id, agent_id])?)?;
 
             Ok(json!({ "entities": entities, "relations": relations }))
         })
@@ -799,26 +794,16 @@ impl Tool for SearchNodesTool {
             let mut stmt_nodes = conn.prepare(
                 "SELECT name, entity_type, observations FROM graph_nodes WHERE (LOWER(name) LIKE ?1 OR LOWER(entity_type) LIKE ?1 OR LOWER(observations) LIKE ?1) AND (?2 IS NULL OR user_id = ?2 OR user_id = '*') AND (?3 IS NULL OR session_id = ?3 OR session_id = '*') AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')"
             )?;
-            let mut node_rows =
-                stmt_nodes.query(params![query_pattern, user_id, session_id, agent_id])?;
-            let mut entities = Vec::new();
-            while let Some(row) = node_rows.next()? {
-                let name: String = row.get(0)?;
-                let entity_type: String = row.get(1)?;
-                let obs_json: String = row.get(2)?;
-                let observations: Vec<String> = serde_json::from_str(&obs_json).unwrap_or_default();
-                entities.push(json!({ "name": name, "entityType": entity_type, "observations": observations }));
-            }
+            let entities = collect_node_entities(
+                stmt_nodes.query(params![query_pattern, user_id, session_id, agent_id])?,
+            )?;
 
             let mut stmt_edges = conn.prepare(
                 "SELECT DISTINCT from_name, to_name, relation_type FROM graph_edges WHERE (from_name IN (SELECT name FROM graph_nodes WHERE (LOWER(name) LIKE ?1 OR LOWER(entity_type) LIKE ?1 OR LOWER(observations) LIKE ?1)) OR to_name IN (SELECT name FROM graph_nodes WHERE (LOWER(name) LIKE ?1 OR LOWER(entity_type) LIKE ?1 OR LOWER(observations) LIKE ?1))) AND (?2 IS NULL OR user_id = ?2 OR user_id = '*') AND (?3 IS NULL OR session_id = ?3 OR session_id = '*') AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*') AND valid_until IS NULL"
             )?;
-            let mut edge_rows =
-                stmt_edges.query(params![query_pattern, user_id, session_id, agent_id])?;
-            let mut relations = Vec::new();
-            while let Some(row) = edge_rows.next()? {
-                relations.push(json!({ "from": row.get::<_, String>(0)?, "to": row.get::<_, String>(1)?, "relationType": row.get::<_, String>(2)? }));
-            }
+            let relations = collect_edge_relations(
+                stmt_edges.query(params![query_pattern, user_id, session_id, agent_id])?,
+            )?;
 
             Ok(json!({ "entities": entities, "relations": relations }))
         })
@@ -861,8 +846,9 @@ impl Tool for OpenNodesTool {
             arguments,
             &["names", "name", "entityNames", "entity_names", "entities", "entity", "nodes"],
         );
-        if names.is_empty() {
-            return Ok(json!({ "entities": [], "relations": [] }));
+        match names.is_empty() {
+            true => return Ok(json!({ "entities": [], "relations": [] })),
+            false => {}
         }
         let (user_id, session_id, agent_id) = scope_from_args(arguments);
 
@@ -873,37 +859,35 @@ impl Tool for OpenNodesTool {
                     "SELECT entity_type, observations FROM graph_nodes WHERE name = ?1 AND (?2 IS NULL OR user_id = ?2 OR user_id = '*') AND (?3 IS NULL OR session_id = ?3 OR session_id = '*') AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')"
                 )?;
                 let mut rows = stmt.query(params![name, user_id, session_id, agent_id])?;
-                if let Some(row) = rows.next()? {
-                    let entity_type: String = row.get(0)?;
-                    let obs_json: String = row.get(1)?;
-                    let observations: Vec<String> =
-                        serde_json::from_str(&obs_json).unwrap_or_default();
-                    entities.push(json!({ "name": name, "entityType": entity_type, "observations": observations }));
+                match rows.next()? {
+                    Some(row) => {
+                        let entity_type: String = row.get(0)?;
+                        let obs_json: String = row.get(1)?;
+                        let observations: Vec<String> =
+                            serde_json::from_str(&obs_json).unwrap_or_default();
+                        entities.push(json!({ "name": name, "entityType": entity_type, "observations": observations }));
+                    }
+                    None => {}
                 }
             }
 
-            let mut relations = Vec::new();
-            if !names.is_empty() {
-                let placeholders: Vec<String> =
-                    (0..names.len()).map(|i| format!("?{}", i + 4)).collect();
-                let placeholders_str = placeholders.join(", ");
-                let sql = format!(
-                    "SELECT DISTINCT from_name, to_name, relation_type FROM graph_edges WHERE (from_name IN ({0}) OR to_name IN ({0})) AND (?1 IS NULL OR user_id = ?1 OR user_id = '*') AND (?2 IS NULL OR session_id = ?2 OR session_id = '*') AND (?3 IS NULL OR agent_id = ?3 OR agent_id = '*') AND valid_until IS NULL",
-                    placeholders_str
-                );
-                let mut stmt_edges = conn.prepare(&sql)?;
-                let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
-                    vec![Box::new(user_id), Box::new(session_id), Box::new(agent_id)];
-                for name in &names {
-                    param_values.push(Box::new(name.clone()));
-                }
-                let params_refs: Vec<&dyn rusqlite::types::ToSql> =
-                    param_values.iter().map(|p| p.as_ref()).collect();
-                let mut edge_rows = stmt_edges.query(params_refs.as_slice())?;
-                while let Some(row) = edge_rows.next()? {
-                    relations.push(json!({ "from": row.get::<_, String>(0)?, "to": row.get::<_, String>(1)?, "relationType": row.get::<_, String>(2)? }));
-                }
+            let placeholders: Vec<String> =
+                (0..names.len()).map(|i| format!("?{}", i + 4)).collect();
+            let placeholders_str = placeholders.join(", ");
+            let sql = format!(
+                "SELECT DISTINCT from_name, to_name, relation_type FROM graph_edges WHERE (from_name IN ({0}) OR to_name IN ({0})) AND (?1 IS NULL OR user_id = ?1 OR user_id = '*') AND (?2 IS NULL OR session_id = ?2 OR session_id = '*') AND (?3 IS NULL OR agent_id = ?3 OR agent_id = '*') AND valid_until IS NULL",
+                placeholders_str
+            );
+            let mut stmt_edges = conn.prepare(&sql)?;
+            let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> =
+                vec![Box::new(user_id), Box::new(session_id), Box::new(agent_id)];
+            for name in &names {
+                param_values.push(Box::new(name.clone()));
             }
+            let params_refs: Vec<&dyn rusqlite::types::ToSql> =
+                param_values.iter().map(|p| p.as_ref()).collect();
+            let relations =
+                collect_edge_relations(stmt_edges.query(params_refs.as_slice())?)?;
 
             Ok(json!({ "entities": entities, "relations": relations }))
         })

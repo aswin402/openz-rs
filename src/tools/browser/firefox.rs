@@ -1,3 +1,7 @@
+use super::common::{
+    extract_first_str, extract_trimmed_non_empty_str, ACTION_ALIASES, PATH_ALIASES,
+    SCRIPT_ALIASES, SELECTOR_ALIASES, TEXT_ALIASES, URL_ALIASES,
+};
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -43,49 +47,38 @@ async fn ensure_geckodriver_running(port: u16, connect_existing: bool) -> Result
         Duration::from_secs(2),
         Duration::from_secs(3),
     );
+    let status_url = format!("http://127.0.0.1:{}/status", port);
 
-    if client
-        .get(format!("http://127.0.0.1:{}/status", port))
-        .send()
-        .await
-        .is_ok()
-    {
-        return Ok(());
+    match client.get(&status_url).send().await.is_ok() {
+        true => return Ok(()),
+        false => {}
     }
 
-    if let Ok(child_handle) = Command::new("geckodriver")
-        .args({
-            let mut args = vec!["--port".to_string(), port.to_string()];
-            if connect_existing {
-                args.push("--connect-existing".to_string());
-            }
-            args
-        })
+    let mut args = vec!["--port".to_string(), port.to_string()];
+    args.extend(connect_existing.then(|| "--connect-existing".to_string()));
+    let cmd_desc = match connect_existing {
+        true => "geckodriver --connect-existing",
+        false => "geckodriver --port 4444",
+    };
+
+    match Command::new("geckodriver")
+        .args(&args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
     {
-        crate::shutdown::register_child_with_metadata(
-            child_handle,
-            if connect_existing {
-                "geckodriver --connect-existing"
-            } else {
-                "geckodriver --port 4444"
-            },
-            "geckodriver",
-        );
-        for _ in 0..15 {
-            sleep(Duration::from_millis(200)).await;
-            if client
-                .get(format!("http://127.0.0.1:{}/status", port))
-                .send()
-                .await
-                .is_ok()
-            {
-                return Ok(());
+        Ok(child_handle) => {
+            crate::shutdown::register_child_with_metadata(child_handle, cmd_desc, "geckodriver");
+            for _ in 0..15 {
+                sleep(Duration::from_millis(200)).await;
+                match client.get(&status_url).send().await.is_ok() {
+                    true => return Ok(()),
+                    false => {}
+                }
             }
         }
+        Err(_) => {}
     }
 
     Err(anyhow!(geckodriver_missing_preflight_error().to_string()))
@@ -96,31 +89,31 @@ fn requested_mode(arguments: &Value) -> Result<&str> {
         .get("mode")
         .and_then(|v| v.as_str())
         .unwrap_or("headless");
-    if !matches!(mode, "headless" | "visible" | "attach") {
-        return Err(anyhow!(
-            "Unsupported Firefox mode {}; use headless, visible, or attach",
-            mode
-        ));
-    }
-    Ok(mode)
+    matches!(mode, "headless" | "visible" | "attach")
+        .then_some(mode)
+        .ok_or_else(|| {
+            anyhow!(
+                "Unsupported Firefox mode {}; use headless, visible, or attach",
+                mode
+            )
+        })
 }
 
 fn webdriver_port(mode: &str) -> u16 {
     let config = crate::config::loader::load_config().ok();
-    let (variable, configured) = if mode == "attach" {
-        (
+    let (variable, configured) = match mode {
+        "attach" => (
             "OPENZ_FIREFOX_ATTACH_PORT",
             config
                 .map(|value| value.browser.firefox_attach_port)
                 .unwrap_or(4445),
-        )
-    } else {
-        (
+        ),
+        _ => (
             "OPENZ_FIREFOX_WEBDRIVER_PORT",
             config
                 .map(|value| value.browser.firefox_webdriver_port)
                 .unwrap_or(4444),
-        )
+        ),
     };
     std::env::var(variable)
         .ok()
@@ -133,13 +126,21 @@ async fn get_or_create_driver(mode: &str) -> Result<WebDriver> {
     let mutex = get_driver_mutex();
     let mut guard = mutex.lock().await;
 
-    if let Some(session) = guard.as_ref() {
-        if session.mode == mode && session.driver.title().await.is_ok() {
-            return Ok(session.driver.clone());
+    match guard.as_ref() {
+        Some(session) => {
+            let reusable = session.mode == mode && session.driver.title().await.is_ok();
+            match reusable {
+                true => return Ok(session.driver.clone()),
+                false => {}
+            }
         }
+        None => {}
     }
-    if let Some(session) = guard.take() {
-        let _ = session.driver.quit().await;
+    match guard.take() {
+        Some(session) => {
+            let _ = session.driver.quit().await;
+        }
+        None => {}
     }
 
     let connect_existing = mode == "attach";
@@ -147,8 +148,9 @@ async fn get_or_create_driver(mode: &str) -> Result<WebDriver> {
     ensure_geckodriver_running(port, connect_existing).await?;
 
     let mut caps = DesiredCapabilities::firefox();
-    if mode == "headless" {
-        caps.add_arg("--headless")?;
+    match mode {
+        "headless" => caps.add_arg("--headless")?,
+        _ => {}
     }
 
     let driver = WebDriver::new(&format!("http://localhost:{}", port), caps).await?;
@@ -163,8 +165,11 @@ async fn get_or_create_driver(mode: &str) -> Result<WebDriver> {
 async fn reset_driver() {
     let mutex = get_driver_mutex();
     let mut guard = mutex.lock().await;
-    if let Some(session) = guard.take() {
-        let _ = session.driver.quit().await;
+    match guard.take() {
+        Some(session) => {
+            let _ = session.driver.quit().await;
+        }
+        None => {}
     }
 }
 
@@ -177,18 +182,20 @@ async fn wait_for_element(
     loop {
         match driver.find(By::Css(selector)).await {
             Ok(element) => return Ok(element),
-            Err(error) if tokio::time::Instant::now() < deadline => {
-                let _ = error;
-                sleep(Duration::from_millis(250)).await;
-            }
-            Err(error) => {
-                return Err(anyhow!(
-                    "Element {} was not found within {} seconds: {}",
-                    selector,
-                    timeout_secs,
-                    error
-                ))
-            }
+            Err(error) => match tokio::time::Instant::now() < deadline {
+                true => {
+                    let _ = error;
+                    sleep(Duration::from_millis(250)).await;
+                }
+                false => {
+                    return Err(anyhow!(
+                        "Element {} was not found within {} seconds: {}",
+                        selector,
+                        timeout_secs,
+                        error
+                    ));
+                }
+            },
         }
     }
 }
@@ -208,58 +215,27 @@ impl FirefoxBrowserTool {
 }
 
 pub fn resolve_firefox_action_and_url(arguments: &Value) -> (String, Option<String>) {
-    if let Some(s) = arguments.as_str() {
-        let trimmed = s.trim();
-        let lower = trimmed.to_lowercase();
-        if lower == "close" || lower == "quit" || lower == "stop" || lower == "exit" {
-            return ("close".to_string(), None);
-        } else if lower == "render" || lower == "view" || lower == "source" || lower == "snapshot" {
-            return ("render".to_string(), None);
-        } else if lower == "media_status" || lower == "media" || lower == "status" {
-            return ("media_status".to_string(), None);
-        } else {
-            return ("navigate".to_string(), Some(trimmed.to_string()));
+    match arguments.as_str() {
+        Some(s) => {
+            let trimmed = s.trim();
+            let lower = trimmed.to_lowercase();
+            return match lower.as_str() {
+                "close" | "quit" | "stop" | "exit" => ("close".to_string(), None),
+                "render" | "view" | "source" | "snapshot" => ("render".to_string(), None),
+                "media_status" | "media" | "status" => ("media_status".to_string(), None),
+                _ => ("navigate".to_string(), Some(trimmed.to_string())),
+            };
         }
+        None => {}
     }
 
-    let url_opt = arguments
-        .get("url")
-        .or_else(|| arguments.get("target_url"))
-        .or_else(|| arguments.get("targetUrl"))
-        .or_else(|| arguments.get("uri"))
-        .or_else(|| arguments.get("link"))
-        .or_else(|| arguments.get("target"))
-        .or_else(|| arguments.get("site"))
-        .or_else(|| arguments.get("website"))
-        .or_else(|| arguments.get("domain"))
-        .or_else(|| arguments.get("host"))
-        .or_else(|| arguments.get("href"))
-        .or_else(|| arguments.get("page"))
-        .or_else(|| arguments.get("address"))
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
-
-    let explicit_action = arguments
-        .get("action")
-        .or_else(|| arguments.get("act"))
-        .or_else(|| arguments.get("command"))
-        .or_else(|| arguments.get("cmd"))
-        .or_else(|| arguments.get("method"))
-        .and_then(|v| v.as_str())
-        .map(str::trim);
-
-    let action = match explicit_action {
-        Some(a) if !a.is_empty() => a.to_string(),
-        _ => {
-            if url_opt.is_some() {
-                "navigate".to_string()
-            } else {
-                "render".to_string()
-            }
-        }
-    };
+    let url_opt = extract_trimmed_non_empty_str(arguments, URL_ALIASES).map(ToString::to_string);
+    let action = extract_trimmed_non_empty_str(arguments, ACTION_ALIASES)
+        .map(ToString::to_string)
+        .unwrap_or_else(|| match url_opt.is_some() {
+            true => "navigate".to_string(),
+            false => "render".to_string(),
+        });
 
     (action, url_opt)
 }
@@ -336,19 +312,20 @@ impl Tool for FirefoxBrowserTool {
             .or_else(|| arguments.get("timeout"))
             .or_else(|| arguments.get("timeoutSecs"))
             .and_then(|v| {
-                v.as_u64().or_else(|| {
-                    v.as_str()
-                        .and_then(|s| s.trim().parse::<u64>().ok())
-                })
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
             })
             .unwrap_or(10);
 
-        if action == "close" {
-            reset_driver().await;
-            return Ok(json!({
-                "status": "success",
-                "message": "Successfully closed the Firefox browser instance"
-            }));
+        match action.as_str() {
+            "close" => {
+                reset_driver().await;
+                return Ok(json!({
+                    "status": "success",
+                    "message": "Successfully closed the Firefox browser instance"
+                }));
+            }
+            _ => {}
         }
 
         let driver = match get_or_create_driver(mode).await {
@@ -364,9 +341,12 @@ impl Tool for FirefoxBrowserTool {
                 let raw_url = url_arg
                     .ok_or_else(|| anyhow!("Missing 'url' parameter for navigate action"))?;
                 let url = crate::tools::web::normalize_web_url(&raw_url);
-                if let Err(e) = driver.goto(&url).await {
-                    reset_driver().await;
-                    return Err(anyhow!("Navigation failed: {:?}", e));
+                match driver.goto(&url).await {
+                    Ok(()) => {}
+                    Err(e) => {
+                        reset_driver().await;
+                        return Err(anyhow!("Navigation failed: {:?}", e));
+                    }
                 }
                 json!({
                     "status": "success",
@@ -374,15 +354,7 @@ impl Tool for FirefoxBrowserTool {
                 })
             }
             "wait_for" => {
-                let selector = arguments
-                    .get("selector")
-                    .or_else(|| arguments.get("css_selector"))
-                    .or_else(|| arguments.get("cssSelector"))
-                    .or_else(|| arguments.get("css"))
-                    .or_else(|| arguments.get("element"))
-                    .or_else(|| arguments.get("query"))
-                    .or_else(|| arguments.get("target"))
-                    .and_then(|v| v.as_str())
+                let selector = extract_first_str(arguments, SELECTOR_ALIASES)
                     .ok_or_else(|| anyhow!("Missing selector for wait_for"))?
                     .trim();
                 let _ = wait_for_element(&driver, selector, timeout_secs).await?;
@@ -398,15 +370,7 @@ impl Tool for FirefoxBrowserTool {
                 json!({ "status": "success", "media": value.json() })
             }
             "click" => {
-                let selector = arguments
-                    .get("selector")
-                    .or_else(|| arguments.get("css_selector"))
-                    .or_else(|| arguments.get("cssSelector"))
-                    .or_else(|| arguments.get("css"))
-                    .or_else(|| arguments.get("element"))
-                    .or_else(|| arguments.get("query"))
-                    .or_else(|| arguments.get("target"))
-                    .and_then(|v| v.as_str())
+                let selector = extract_first_str(arguments, SELECTOR_ALIASES)
                     .ok_or_else(|| anyhow!("Missing 'selector' parameter for click action"))?
                     .trim();
                 let elem = wait_for_element(&driver, selector, timeout_secs).await?;
@@ -417,25 +381,10 @@ impl Tool for FirefoxBrowserTool {
                 })
             }
             "fill" => {
-                let selector = arguments
-                    .get("selector")
-                    .or_else(|| arguments.get("css_selector"))
-                    .or_else(|| arguments.get("cssSelector"))
-                    .or_else(|| arguments.get("css"))
-                    .or_else(|| arguments.get("element"))
-                    .or_else(|| arguments.get("query"))
-                    .or_else(|| arguments.get("target"))
-                    .and_then(|v| v.as_str())
+                let selector = extract_first_str(arguments, SELECTOR_ALIASES)
                     .ok_or_else(|| anyhow!("Missing 'selector' parameter for fill action"))?
                     .trim();
-                let text = arguments
-                    .get("text")
-                    .or_else(|| arguments.get("value"))
-                    .or_else(|| arguments.get("query"))
-                    .or_else(|| arguments.get("content"))
-                    .or_else(|| arguments.get("input"))
-                    .or_else(|| arguments.get("string"))
-                    .and_then(|v| v.as_str())
+                let text = extract_first_str(arguments, TEXT_ALIASES)
                     .ok_or_else(|| anyhow!("Missing 'text' parameter for fill action"))?;
                 let elem = wait_for_element(&driver, selector, timeout_secs).await?;
                 elem.clear().await?;
@@ -446,14 +395,7 @@ impl Tool for FirefoxBrowserTool {
                 })
             }
             "screenshot" => {
-                let path = arguments
-                    .get("path")
-                    .or_else(|| arguments.get("output"))
-                    .or_else(|| arguments.get("output_path"))
-                    .or_else(|| arguments.get("outputPath"))
-                    .or_else(|| arguments.get("file_path"))
-                    .or_else(|| arguments.get("file"))
-                    .and_then(|v| v.as_str())
+                let path = extract_first_str(arguments, PATH_ALIASES)
                     .ok_or_else(|| anyhow!("Missing 'path' parameter for screenshot action"))?
                     .trim();
                 driver.screenshot(std::path::Path::new(path)).await?;
@@ -463,36 +405,40 @@ impl Tool for FirefoxBrowserTool {
                     .and_then(|v| {
                         v.as_bool().or_else(|| {
                             v.as_str().map(|s| {
-                                let trimmed = s.trim().to_lowercase();
-                                trimmed == "true" || trimmed == "1" || trimmed == "yes"
+                                matches!(s.trim().to_lowercase().as_str(), "true" | "1" | "yes")
                             })
                         })
                     })
                     .unwrap_or(false);
-                let device_inventory_recorded = if opened {
-                    let target = path.to_string();
-                    tokio::task::spawn_blocking(move || open::that(&target)).await??;
-                    crate::tools::device_inventory::record_successful_default_open(path)
+                let (device_inventory_recorded, message) = match opened {
+                    true => {
+                        let target = path.to_string();
+                        tokio::task::spawn_blocking(move || open::that(&target)).await??;
+                        let rec = crate::tools::device_inventory::record_successful_default_open(
+                            path,
+                        )
                         .ok()
-                        .flatten()
-                } else {
-                    None
+                        .flatten();
+                        (
+                            rec,
+                            format!(
+                                "Screenshot saved and opened with the system viewer: {}",
+                                path
+                            ),
+                        )
+                    }
+                    false => (None, format!("Screenshot saved to {}", path)),
                 };
                 json!({
                     "status": "success",
                     "path": path,
                     "opened": opened,
                     "device_inventory_recorded": device_inventory_recorded,
-                    "message": if opened { format!("Screenshot saved and opened with the system viewer: {}", path) } else { format!("Screenshot saved to {}", path) }
+                    "message": message
                 })
             }
             "eval" | "eval_js" | "evaluate" | "js" => {
-                let script = arguments
-                    .get("script")
-                    .or_else(|| arguments.get("expression"))
-                    .or_else(|| arguments.get("code"))
-                    .or_else(|| arguments.get("js"))
-                    .and_then(|v| v.as_str())
+                let script = extract_first_str(arguments, SCRIPT_ALIASES)
                     .ok_or_else(|| anyhow!("Missing 'script' parameter for eval action"))?;
                 let val = driver.execute(script, vec![]).await?;
                 json!({
@@ -502,29 +448,20 @@ impl Tool for FirefoxBrowserTool {
             }
             "render" | "snapshot" => {
                 let url_opt = url_arg.or_else(|| {
-                    arguments
-                        .get("url")
-                        .or_else(|| arguments.get("target_url"))
-                        .or_else(|| arguments.get("targetUrl"))
-                        .or_else(|| arguments.get("uri"))
-                        .or_else(|| arguments.get("link"))
-                        .or_else(|| arguments.get("target"))
-                        .or_else(|| arguments.get("site"))
-                        .or_else(|| arguments.get("website"))
-                        .or_else(|| arguments.get("domain"))
-                        .or_else(|| arguments.get("host"))
-                        .or_else(|| arguments.get("href"))
-                        .or_else(|| arguments.get("page"))
-                        .or_else(|| arguments.get("address"))
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
+                    extract_first_str(arguments, URL_ALIASES).map(ToString::to_string)
                 });
-                if let Some(ref raw_url) = url_opt {
-                    let url = crate::tools::web::normalize_web_url(raw_url);
-                    if let Err(e) = driver.goto(&url).await {
-                        reset_driver().await;
-                        return Err(anyhow!("Navigation failed: {:?}", e));
+                match url_opt {
+                    Some(ref raw_url) => {
+                        let url = crate::tools::web::normalize_web_url(raw_url);
+                        match driver.goto(&url).await {
+                            Ok(()) => {}
+                            Err(e) => {
+                                reset_driver().await;
+                                return Err(anyhow!("Navigation failed: {:?}", e));
+                            }
+                        }
                     }
+                    None => {}
                 }
                 let html = driver.source().await?;
                 let md = html2md::parse_html(&html);
@@ -543,4 +480,3 @@ impl Tool for FirefoxBrowserTool {
 #[cfg(test)]
 #[path = "firefox_tests.rs"]
 mod tests;
-

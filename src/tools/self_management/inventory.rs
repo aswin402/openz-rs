@@ -1,21 +1,10 @@
+use super::parse_bool_value;
 use crate::tools::Tool;
 use anyhow::Result;
 use serde_json::Value;
 
 pub struct OpenZInventoryTool {
     registry: crate::tools::ToolRegistry,
-}
-
-fn parse_bool_value(v: Option<&Value>, default: bool) -> bool {
-    match v {
-        Some(Value::Bool(b)) => *b,
-        Some(Value::String(s)) => match s.trim().to_lowercase().as_str() {
-            "true" | "1" | "yes" | "on" => true,
-            "false" | "0" | "no" | "off" => false,
-            _ => default,
-        },
-        _ => default,
-    }
 }
 
 impl OpenZInventoryTool {
@@ -55,10 +44,16 @@ impl Tool for OpenZInventoryTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let str_arg = arguments.as_str().map(|s| s.trim()).unwrap_or("");
-        let include_tools = parse_bool_value(arguments.get("include_tools"), false)
+        let str_arg = arguments.as_str().map(str::trim).unwrap_or("");
+        let include_tools = arguments
+            .get("include_tools")
+            .and_then(parse_bool_value)
+            .unwrap_or(false)
             || str_arg.contains("tool");
-        let include_subagents = parse_bool_value(arguments.get("include_subagents"), false)
+        let include_subagents = arguments
+            .get("include_subagents")
+            .and_then(parse_bool_value)
+            .unwrap_or(false)
             || str_arg.contains("subagent");
         let prompt = arguments
             .get("prompt")
@@ -74,9 +69,7 @@ impl Tool for OpenZInventoryTool {
             let name = entry["name"].as_str().unwrap_or("unknown").to_string();
             let domain = entry["domain"].as_str().unwrap_or("general").to_string();
             let risk = entry["risk"].as_str().unwrap_or("low").to_string();
-            if entry["exposed_to_model"].as_bool().unwrap_or(false) {
-                exposed_count += 1;
-            }
+            exposed_count += usize::from(entry["exposed_to_model"].as_bool().unwrap_or(false));
             *domains.entry(domain.clone()).or_default() += 1;
             *risks.entry(risk).or_default() += 1;
             tools_by_domain.entry(domain).or_default().push(name);
@@ -85,13 +78,13 @@ impl Tool for OpenZInventoryTool {
             names.sort();
         }
 
-        let subagents = if include_subagents {
-            crate::subagents::load_profiles()
-                .map(|profiles| profiles.into_iter().map(|p| p.name).collect::<Vec<_>>())
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
+        let subagents = include_subagents
+            .then(|| {
+                crate::subagents::load_profiles()
+                    .map(|profiles| profiles.into_iter().map(|p| p.name).collect::<Vec<_>>())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
         let active_servers = crate::shutdown::list_registered_children();
 
         let runtime_identity = match crate::config::loader::load_config() {
@@ -176,6 +169,13 @@ impl Tool for OpenZInventoryTool {
             "rust_cargo_tools",
         ];
 
+        let subagents_json = include_subagents
+            .then(|| serde_json::json!(subagents))
+            .unwrap_or(serde_json::Value::Null);
+        let tools_by_domain_json = include_tools
+            .then(|| serde_json::json!(tools_by_domain))
+            .unwrap_or(serde_json::Value::Null);
+
         Ok(serde_json::json!({
             "success": true,
             "version": env!("CARGO_PKG_VERSION"),
@@ -191,7 +191,7 @@ impl Tool for OpenZInventoryTool {
             "command_count": commands.len(),
             "core_capabilities": core_capabilities,
             "subagent_count": subagents.len(),
-            "subagents": if include_subagents { serde_json::json!(subagents) } else { serde_json::Value::Null },
+            "subagents": subagents_json,
             "active_server_count": active_servers.len(),
             "active_servers": active_servers.iter().map(|s| serde_json::json!({
                 "id": s.id,
@@ -200,7 +200,7 @@ impl Tool for OpenZInventoryTool {
                 "command": s.command,
                 "started_at": s.started_at,
             })).collect::<Vec<_>>(),
-            "tools_by_domain": if include_tools { serde_json::json!(tools_by_domain) } else { serde_json::Value::Null },
+            "tools_by_domain": tools_by_domain_json,
             "guidance": "Use this compact live inventory instead of guessing feature/tool counts or model/provider identity from memory. Call again with include_tools=true or include_subagents=true only if exact names are needed."
         }))
     }
@@ -209,4 +209,3 @@ impl Tool for OpenZInventoryTool {
 #[cfg(test)]
 #[path = "inventory_tests.rs"]
 mod tests;
-

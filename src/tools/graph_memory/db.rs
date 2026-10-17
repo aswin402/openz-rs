@@ -160,8 +160,11 @@ pub(crate) fn db_static() -> &'static OnceLock<Mutex<Connection>> {
 
 pub(crate) fn init_db() -> Result<Connection> {
     let path = get_db_path();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    match path.parent() {
+        Some(parent) => {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        None => {}
     }
     let conn = Connection::open(&path).or_else(|file_err| {
         Connection::open_in_memory().map_err(|memory_err| {
@@ -178,12 +181,13 @@ pub(crate) fn init_db() -> Result<Connection> {
 }
 
 pub(crate) fn db_mutex() -> Result<&'static Mutex<Connection>> {
-    if let Some(mtx) = db_static().get() {
-        return Ok(mtx);
+    match db_static().get() {
+        Some(mtx) => Ok(mtx),
+        None => {
+            let conn = init_db()?;
+            Ok(db_static().get_or_init(|| Mutex::new(conn)))
+        }
     }
-
-    let conn = init_db()?;
-    Ok(db_static().get_or_init(|| Mutex::new(conn)))
 }
 
 // ─── DB helpers ─────────────────────────────────────────────────

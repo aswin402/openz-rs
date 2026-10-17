@@ -3,7 +3,8 @@ use super::policy::{
     command_is_allowed, ensure_path_is_safe_for_headroom, resolve_user_path, MAX_RUN_OUTPUT_BYTES,
     MAX_RUN_TIMEOUT_SECS,
 };
-use super::{estimate_tokens, MAX_INPUT_SIZE};
+pub use super::is_binary_file;
+use super::{estimate_tokens, floor_char_boundary, MAX_INPUT_SIZE};
 use crate::agent::context_compactor;
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
@@ -26,6 +27,21 @@ pub struct DiffFile {
     pub is_new: bool,
     pub is_deleted: bool,
     pub contexts: Vec<String>,
+}
+
+impl DiffFile {
+    fn new(path: String, is_new: bool, is_binary: bool) -> Self {
+        Self {
+            path,
+            insertions: 0,
+            deletions: 0,
+            hunks_count: 0,
+            is_binary,
+            is_new,
+            is_deleted: false,
+            contexts: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -57,34 +73,35 @@ struct CompTreeNode {
 
 impl CompTreeNode {
     fn insert(&mut self, parts: &[String], info: CompTreeFile) {
-        if parts.is_empty() {
-            return;
-        }
-        if parts.len() == 1 {
-            let child = self
-                .children
-                .entry(parts[0].clone())
-                .or_insert_with(|| CompTreeNode {
-                    name: parts[0].clone(),
-                    is_dir: false,
-                    files_count: 0,
-                    file_info: None,
-                    children: BTreeMap::new(),
-                });
-            child.file_info = Some(info);
-            child.files_count = 1;
-        } else {
-            let child = self
-                .children
-                .entry(parts[0].clone())
-                .or_insert_with(|| CompTreeNode {
-                    name: parts[0].clone(),
-                    is_dir: true,
-                    files_count: 0,
-                    file_info: None,
-                    children: BTreeMap::new(),
-                });
-            child.insert(&parts[1..], info);
+        match parts {
+            [] => {}
+            [only] => {
+                let child = self
+                    .children
+                    .entry(only.clone())
+                    .or_insert_with(|| CompTreeNode {
+                        name: only.clone(),
+                        is_dir: false,
+                        files_count: 0,
+                        file_info: None,
+                        children: BTreeMap::new(),
+                    });
+                child.file_info = Some(info);
+                child.files_count = 1;
+            }
+            [first, rest @ ..] => {
+                let child = self
+                    .children
+                    .entry(first.clone())
+                    .or_insert_with(|| CompTreeNode {
+                        name: first.clone(),
+                        is_dir: true,
+                        files_count: 0,
+                        file_info: None,
+                        children: BTreeMap::new(),
+                    });
+                child.insert(rest, info);
+            }
         }
     }
 
@@ -94,45 +111,51 @@ impl CompTreeNode {
             child.update_counts();
             self.files_count += child.files_count;
         }
-        if self.file_info.is_some() {
-            self.files_count += 1;
-        }
+        self.files_count += usize::from(self.file_info.is_some());
     }
 
     fn format_tree(&self, prefix: &str, is_last: bool, depth: usize, max_depth: usize) -> String {
-        if depth > max_depth {
-            if self.files_count > 0 {
-                return format!("{}└── {} ({} files)\n", prefix, self.name, self.files_count);
+        match depth > max_depth {
+            true => {
+                return match self.files_count > 0 {
+                    true => format!("{}└── {} ({} files)\n", prefix, self.name, self.files_count),
+                    false => String::new(),
+                };
             }
-            return String::new();
+            false => {}
         }
-        let connector = if is_last { "└── " } else { "├── " };
+        let connector = match is_last {
+            true => "└── ",
+            false => "├── ",
+        };
         let mut result = format!("{}{}{}", prefix, connector, self.name);
-        if let Some(ref info) = self.file_info {
-            result.push_str(&format!(
+        match (&self.file_info, self.is_dir && depth > 0) {
+            (Some(info), _) => result.push_str(&format!(
                 " [{} tokens -> {} tokens, saved {}]",
                 info.original_tokens, info.compressed_tokens, info.saved_pct
-            ));
-        } else if self.is_dir && depth > 0 {
-            result.push('/');
+            )),
+            (None, true) => result.push('/'),
+            (None, false) => {}
         }
         result.push('\n');
 
-        let child_prefix = if is_last {
-            format!("{}    ", prefix)
-        } else {
-            format!("{}│   ", prefix)
+        let child_prefix = match is_last {
+            true => format!("{}    ", prefix),
+            false => format!("{}│   ", prefix),
         };
         let children: Vec<&str> = self.children.keys().map(|k| k.as_str()).collect();
         for (i, child_name) in children.iter().enumerate() {
-            if let Some(child) = self.children.get(*child_name) {
-                let is_last_child = i == children.len() - 1;
-                result.push_str(&child.format_tree(
-                    &child_prefix,
-                    is_last_child,
-                    depth + 1,
-                    max_depth,
-                ));
+            match self.children.get(*child_name) {
+                Some(child) => {
+                    let is_last_child = i == children.len() - 1;
+                    result.push_str(&child.format_tree(
+                        &child_prefix,
+                        is_last_child,
+                        depth + 1,
+                        max_depth,
+                    ));
+                }
+                None => {}
             }
         }
         result
@@ -141,44 +164,69 @@ impl CompTreeNode {
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
+const CODE_KEYWORDS: &[&str] = &[
+    "fn ",
+    "def ",
+    "function ",
+    "class ",
+    "import ",
+    "const ",
+    "let ",
+    "var ",
+    "pub ",
+    "impl ",
+];
+
+const GIT_NOISE_PREFIXES: &[&str] = &[
+    "Enumerating objects:",
+    "Counting objects:",
+    "Compressing objects:",
+    "remote: Resolving deltas:",
+    "Writing objects:",
+    "remote: Counting objects:",
+    "remote: Compressing objects:",
+];
+
+const PYTHON_INSTALL_PREFIXES: &[&str] = &[
+    "Collecting ",
+    "Downloading ",
+    "Installing collected packages",
+    "Requirement already satisfied:",
+];
+
 pub fn auto_detect_type(text: &str) -> &'static str {
     let trimmed = text.trim();
-    if trimmed.starts_with('{') || trimmed.starts_with('[') {
-        return "json";
+    match trimmed.starts_with('{') || trimmed.starts_with('[') {
+        true => return "json",
+        false => {}
     }
     let lines: Vec<&str> = trimmed.lines().collect();
-    if lines.len() > 1 {
-        let first_line = lines[0].trim();
-        if first_line.len() <= 3 && lines.len() > 3 {
-            return "csv";
+    match lines.len() > 1 {
+        true => {
+            let first_line = lines[0].trim();
+            match first_line.len() <= 3 && lines.len() > 3 {
+                true => return "csv",
+                false => {}
+            }
+            let log_line_count = lines
+                .iter()
+                .filter(|l| {
+                    l.len() >= 19
+                        && (l.as_bytes().get(4) == Some(&b'-')
+                            || l.as_bytes().get(10) == Some(&b':'))
+                })
+                .count();
+            match log_line_count as f64 > lines.len() as f64 * 0.3 {
+                true => return "text_logs",
+                false => {}
+            }
         }
-        let log_line_count = lines
-            .iter()
-            .filter(|l| {
-                l.len() >= 19
-                    && (l.as_bytes().get(4) == Some(&b'-') || l.as_bytes().get(10) == Some(&b':'))
-            })
-            .count();
-        if log_line_count as f64 > lines.len() as f64 * 0.3 {
-            return "text_logs";
-        }
+        false => {}
     }
-    let code_keywords = [
-        "fn ",
-        "def ",
-        "function ",
-        "class ",
-        "import ",
-        "const ",
-        "let ",
-        "var ",
-        "pub ",
-        "impl ",
-    ];
-    if code_keywords.iter().any(|kw| trimmed.contains(kw)) {
-        return "code";
+    match CODE_KEYWORDS.iter().any(|kw| trimmed.contains(kw)) {
+        true => "code",
+        false => "text_logs",
     }
-    "text_logs"
 }
 
 pub fn detect_content_type_from_ext(path: &Path) -> Option<&'static str> {
@@ -195,29 +243,34 @@ pub fn detect_content_type_from_ext(path: &Path) -> Option<&'static str> {
     }
 }
 
-pub fn is_binary_file(path: &Path) -> bool {
-    if let Ok(content) = std::fs::read(path) {
-        content.iter().take(4096).any(|&b| b == 0x00)
-    } else {
-        false
-    }
-}
-
 pub fn compress_csv(raw_csv: &str) -> String {
     let mut lines = raw_csv.lines();
     let mut result = String::new();
-    if let Some(header) = lines.next() {
-        result.push_str(&format!("Headers: {}\n", header));
+    match lines.next() {
+        Some(header) => result.push_str(&format!("Headers: {}\n", header)),
+        None => {}
     }
     let mut count = 0;
     for line in lines.by_ref() {
-        if count < 3 {
-            result.push_str(&format!("Row {}: {}\n", count + 1, line));
+        match count < 3 {
+            true => result.push_str(&format!("Row {}: {}\n", count + 1, line)),
+            false => {}
         }
         count += 1;
     }
     result.push_str(&format!("[CCR Summary: CSV contains {} rows total]", count));
     result
+}
+
+pub(crate) fn format_saved_pct(original_tokens: usize, compressed_tokens: usize) -> String {
+    match original_tokens > 0 {
+        true => format!(
+            "{:.1}%",
+            ((original_tokens as f64 - compressed_tokens as f64) / original_tokens as f64 * 100.0)
+                .max(0.0)
+        ),
+        false => "0.0%".to_string(),
+    }
 }
 
 pub fn format_ccr_result(
@@ -228,15 +281,7 @@ pub fn format_ccr_result(
 ) -> Value {
     let original_tokens = estimate_tokens(raw_text);
     let compressed_tokens = estimate_tokens(compressed);
-    let saved_pct = if original_tokens > 0 {
-        format!(
-            "{:.1}%",
-            ((original_tokens as f64 - compressed_tokens as f64) / original_tokens as f64 * 100.0)
-                .max(0.0)
-        )
-    } else {
-        "0.0%".to_string()
-    };
+    let saved_pct = format_saved_pct(original_tokens, compressed_tokens);
     format_ccr_result_detailed(
         compressed,
         raw_text,
@@ -264,11 +309,14 @@ pub fn format_ccr_result_detailed(
         "compressed_tokens": compressed_tokens,
         "saved": saved_pct,
     });
-    if let Some(id) = ccr_id {
-        result["note"] = json!(format!(
-            "CCR Ref: {} | Use retrieve_original tool to inspect full content",
-            id
-        ));
+    match ccr_id {
+        Some(id) => {
+            result["note"] = json!(format!(
+                "CCR Ref: {} | Use retrieve_original tool to inspect full content",
+                id
+            ));
+        }
+        None => {}
     }
     result
 }
@@ -277,18 +325,79 @@ pub fn format_ccr_result_detailed(
 
 fn clean_path(p: &str) -> String {
     let p = p.split('\t').next().unwrap_or(p).trim();
-    if (p.starts_with("a/") || p.starts_with("b/")) && p.len() > 2 {
-        p[2..].to_string()
-    } else {
-        p.to_string()
+    match (p.starts_with("a/") || p.starts_with("b/")) && p.len() > 2 {
+        true => p[2..].to_string(),
+        false => p.to_string(),
     }
 }
 
 fn commit_current_file(files: &mut Vec<DiffFile>, current: &mut Option<DiffFile>) {
-    if let Some(f) = current.take() {
-        if !f.path.is_empty() && f.path != "/dev/null" {
-            files.push(f);
+    match current.take() {
+        Some(f) => match !f.path.is_empty() && f.path != "/dev/null" {
+            true => files.push(f),
+            false => {}
+        },
+        None => {}
+    }
+}
+
+fn handle_diff_minus_header(
+    cleaned: String,
+    files: &mut Vec<DiffFile>,
+    current_file: &mut Option<DiffFile>,
+) {
+    match cleaned == "/dev/null" {
+        true => match current_file.as_mut() {
+            Some(f) => f.is_new = true,
+            None => *current_file = Some(DiffFile::new("/dev/null".to_string(), true, false)),
+        },
+        false => match current_file.take() {
+            None => *current_file = Some(DiffFile::new(cleaned, false, false)),
+            Some(mut f) => match f.path.as_str() {
+                "/dev/null" => {
+                    f.path = cleaned;
+                    *current_file = Some(f);
+                }
+                existing => match existing == cleaned {
+                    true => *current_file = Some(f),
+                    false => {
+                        files.push(f);
+                        *current_file = Some(DiffFile::new(cleaned, false, false));
+                    }
+                },
+            },
+        },
+    }
+}
+
+fn handle_diff_plus_header(cleaned: String, current_file: &mut Option<DiffFile>) {
+    match cleaned == "/dev/null" {
+        true => match current_file.as_mut() {
+            Some(f) => f.is_deleted = true,
+            None => {}
+        },
+        false => match current_file.as_mut() {
+            Some(f) => match f.path == "/dev/null" {
+                true => f.path = cleaned,
+                false => {}
+            },
+            None => *current_file = Some(DiffFile::new(cleaned, false, false)),
+        },
+    }
+}
+
+fn handle_diff_hunk_header(line: &str, current_file: &mut Option<DiffFile>) {
+    match (line.rfind("@@"), current_file.as_mut()) {
+        (Some(pos), Some(f)) => {
+            let context = line[pos + 2..].trim();
+            f.hunks_count += 1;
+            let ctx_str = context.to_string();
+            match !context.is_empty() && !f.contexts.contains(&ctx_str) {
+                true => f.contexts.push(ctx_str),
+                false => {}
+            }
         }
+        _ => {}
     }
 }
 
@@ -297,119 +406,59 @@ pub fn parse_unified_diff(text: &str) -> DiffSummary {
     let mut current_file: Option<DiffFile> = None;
 
     for line in text.lines() {
-        if line.starts_with("diff --git ") {
-            commit_current_file(&mut files, &mut current_file);
-        } else if let Some(path_part) = line.strip_prefix("--- ") {
-            let cleaned = clean_path(path_part);
-            if cleaned == "/dev/null" {
-                if let Some(ref mut f) = current_file {
-                    f.is_new = true;
-                } else {
-                    current_file = Some(DiffFile {
-                        path: "/dev/null".to_string(),
-                        insertions: 0,
-                        deletions: 0,
-                        hunks_count: 0,
-                        is_binary: false,
-                        is_new: true,
-                        is_deleted: false,
-                        contexts: Vec::new(),
-                    });
-                }
-            } else {
-                if current_file.is_none() {
-                    current_file = Some(DiffFile {
-                        path: cleaned,
-                        insertions: 0,
-                        deletions: 0,
-                        hunks_count: 0,
-                        is_binary: false,
-                        is_new: false,
-                        is_deleted: false,
-                        contexts: Vec::new(),
-                    });
-                } else if let Some(mut f) = current_file.take() {
-                    if f.path == "/dev/null" {
-                        f.path = cleaned;
-                    } else if f.path != cleaned {
-                        files.push(f);
-                        current_file = Some(DiffFile {
-                            path: cleaned,
-                            insertions: 0,
-                            deletions: 0,
-                            hunks_count: 0,
-                            is_binary: false,
-                            is_new: false,
-                            is_deleted: false,
-                            contexts: Vec::new(),
-                        });
-                        continue;
-                    }
-                    current_file = Some(f);
-                }
-            }
-        } else if let Some(path_part) = line.strip_prefix("+++ ") {
-            let cleaned = clean_path(path_part);
-            if cleaned == "/dev/null" {
-                if let Some(ref mut f) = current_file {
-                    f.is_deleted = true;
-                }
-            } else {
-                if let Some(ref mut f) = current_file {
-                    if f.path == "/dev/null" {
-                        f.path = cleaned;
-                    }
-                } else {
-                    current_file = Some(DiffFile {
-                        path: cleaned,
-                        insertions: 0,
-                        deletions: 0,
-                        hunks_count: 0,
-                        is_binary: false,
-                        is_new: false,
-                        is_deleted: false,
-                        contexts: Vec::new(),
-                    });
-                }
-            }
-        } else if line.starts_with("@@") {
-            if let Some(pos) = line.rfind("@@") {
-                let context = line[pos + 2..].trim();
-                if let Some(ref mut f) = current_file {
-                    f.hunks_count += 1;
-                    if !context.is_empty() && !f.contexts.contains(&context.to_string()) {
-                        f.contexts.push(context.to_string());
-                    }
-                }
-            }
-        } else if line.starts_with("Binary files ") && line.contains(" differ") {
-            commit_current_file(&mut files, &mut current_file);
-            let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 5 && parts[1] == "files" && parts[3] == "and" {
-                current_file = Some(DiffFile {
-                    path: clean_path(parts[2]),
-                    insertions: 0,
-                    deletions: 0,
-                    hunks_count: 0,
-                    is_binary: true,
-                    is_new: false,
-                    is_deleted: false,
-                    contexts: Vec::new(),
-                });
+        match line.starts_with("diff --git ") {
+            true => {
                 commit_current_file(&mut files, &mut current_file);
+                continue;
             }
-        } else if line.starts_with('+') {
-            if let Some(ref mut f) = current_file {
-                if !f.is_binary {
-                    f.insertions += 1;
+            false => {}
+        }
+        match line.strip_prefix("--- ") {
+            Some(path_part) => {
+                handle_diff_minus_header(clean_path(path_part), &mut files, &mut current_file);
+                continue;
+            }
+            None => {}
+        }
+        match line.strip_prefix("+++ ") {
+            Some(path_part) => {
+                handle_diff_plus_header(clean_path(path_part), &mut current_file);
+                continue;
+            }
+            None => {}
+        }
+        match line.starts_with("@@") {
+            true => {
+                handle_diff_hunk_header(line, &mut current_file);
+                continue;
+            }
+            false => {}
+        }
+        match line.starts_with("Binary files ") && line.contains(" differ") {
+            true => {
+                commit_current_file(&mut files, &mut current_file);
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                match parts.len() >= 5 && parts[1] == "files" && parts[3] == "and" {
+                    true => {
+                        current_file = Some(DiffFile::new(clean_path(parts[2]), false, true));
+                        commit_current_file(&mut files, &mut current_file);
+                    }
+                    false => {}
                 }
+                continue;
             }
-        } else if line.starts_with('-') {
-            if let Some(ref mut f) = current_file {
-                if !f.is_binary {
-                    f.deletions += 1;
-                }
-            }
+            false => {}
+        }
+        match (line.starts_with('+'), line.starts_with('-')) {
+            (true, _) => match current_file.as_mut() {
+                Some(f) => f.insertions += usize::from(!f.is_binary),
+                None => {}
+            },
+            (false, true) => match current_file.as_mut() {
+                Some(f) => f.deletions += usize::from(!f.is_binary),
+                None => {}
+            },
+            _ => {}
         }
     }
     commit_current_file(&mut files, &mut current_file);
@@ -427,54 +476,59 @@ pub fn parse_unified_diff(text: &str) -> DiffSummary {
     }
 }
 
+fn plural_suffix(count: usize) -> &'static str {
+    match count == 1 {
+        true => "",
+        false => "s",
+    }
+}
+
 pub fn compress_diff_text(diff_text: &str) -> String {
     let summary = parse_unified_diff(diff_text);
-    if summary.files.is_empty() {
-        return "No files changed in diff.".to_string();
+    match summary.files.is_empty() {
+        true => return "No files changed in diff.".to_string(),
+        false => {}
     }
     let files_count = summary.files.len();
     let mut output = format!(
         "Diff Summary: {} file{} changed, {} insertion{}(+), {} deletion{}(-)\n\nModified files:",
         files_count,
-        if files_count == 1 { "" } else { "s" },
+        plural_suffix(files_count),
         summary.total_insertions,
-        if summary.total_insertions == 1 {
-            ""
-        } else {
-            "s"
-        },
+        plural_suffix(summary.total_insertions),
         summary.total_deletions,
-        if summary.total_deletions == 1 {
-            ""
-        } else {
-            "s"
-        }
+        plural_suffix(summary.total_deletions)
     );
     for f in summary.files {
         output.push_str("\n- ");
         output.push_str(&f.path);
         output.push_str(": ");
-        if f.is_binary {
-            output.push_str("binary file changed");
-        } else {
-            output.push_str(&format!("+{}/-{}", f.insertions, f.deletions));
-            if f.hunks_count > 0 {
-                output.push_str(&format!(
-                    " ({} hunk{})",
-                    f.hunks_count,
-                    if f.hunks_count == 1 { "" } else { "s" }
-                ));
-            }
-            if !f.contexts.is_empty() {
-                output.push_str(" (modified: ");
-                output.push_str(&f.contexts.join(", "));
-                output.push(')');
+        match f.is_binary {
+            true => output.push_str("binary file changed"),
+            false => {
+                output.push_str(&format!("+{}/-{}", f.insertions, f.deletions));
+                match f.hunks_count > 0 {
+                    true => output.push_str(&format!(
+                        " ({} hunk{})",
+                        f.hunks_count,
+                        plural_suffix(f.hunks_count)
+                    )),
+                    false => {}
+                }
+                match !f.contexts.is_empty() {
+                    true => {
+                        output.push_str(" (modified: ");
+                        output.push_str(&f.contexts.join(", "));
+                        output.push(')');
+                    }
+                    false => {}
+                }
             }
         }
-        if f.is_new {
-            output.push_str(" [NEW]");
-        } else if f.is_deleted {
-            output.push_str(" [DELETED]");
+        match (f.is_new, f.is_deleted) {
+            (true, _) => output.push_str(" [NEW]"),
+            (false, true) => output.push_str(" [DELETED]"),
+            _ => {}
         }
     }
     output
@@ -505,27 +559,34 @@ pub fn filter_cargo_output(raw: &str) -> String {
     let mut omitted_warnings = 0;
     for line in raw.lines() {
         let trimmed_start = line.trim_start();
-        if trimmed_start.starts_with("Compiling ") || trimmed_start.starts_with("Downloading ") {
-            continue;
+        match trimmed_start.starts_with("Compiling ") || trimmed_start.starts_with("Downloading ") {
+            true => continue,
+            false => {}
         }
-        if trimmed_start.starts_with("test ") && line.trim_end().ends_with("... ok") {
-            continue;
+        match trimmed_start.starts_with("test ") && line.trim_end().ends_with("... ok") {
+            true => continue,
+            false => {}
         }
         let is_warning = trimmed_start.starts_with("warning:") || line.contains("warning: ");
-        if is_warning {
-            if warning_count < 5 {
-                warning_count += 1;
-                result.push(line);
-            } else {
-                omitted_warnings += 1;
+        match is_warning {
+            true => {
+                match warning_count < 5 {
+                    true => {
+                        warning_count += 1;
+                        result.push(line);
+                    }
+                    false => omitted_warnings += 1,
+                }
+                continue;
             }
-            continue;
+            false => {}
         }
         result.push(line);
     }
     let mut output = result.join("\n");
-    if omitted_warnings > 0 {
-        output.push_str(&format!("\n[{} more warnings omitted]", omitted_warnings));
+    match omitted_warnings > 0 {
+        true => output.push_str(&format!("\n[{} more warnings omitted]", omitted_warnings)),
+        false => {}
     }
     output
 }
@@ -536,22 +597,26 @@ fn filter_npm_output(raw: &str) -> String {
     for line in raw.lines() {
         let trimmed = line.trim();
         let lower = trimmed.to_lowercase();
-        if lower.contains("warn deprecated") || lower.contains("warning deprecated") {
-            if deprecated_count < 3 {
-                deprecated_count += 1;
-                result.push(line);
+        match lower.contains("warn deprecated") || lower.contains("warning deprecated") {
+            true => {
+                match deprecated_count < 3 {
+                    true => {
+                        deprecated_count += 1;
+                        result.push(line);
+                    }
+                    false => {}
+                }
+                continue;
             }
-            continue;
+            false => {}
         }
-        if lower.contains("npm warn") || lower.contains("npm notice") {
-            continue;
-        }
-        if trimmed.starts_with('✓') || trimmed.starts_with("PASS") {
-            continue;
-        }
-        if trimmed.ends_with('=') || trimmed.ends_with('.') {
-            /* spinner chars */
-            let _ = 0;
+        match lower.contains("npm warn")
+            || lower.contains("npm notice")
+            || trimmed.starts_with('✓')
+            || trimmed.starts_with("PASS")
+        {
+            true => continue,
+            false => {}
         }
         result.push(line);
     }
@@ -559,58 +624,44 @@ fn filter_npm_output(raw: &str) -> String {
 }
 
 pub fn filter_git_output(raw: &str) -> String {
-    let mut result = Vec::new();
-    for line in raw.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("Enumerating objects:")
-            || trimmed.starts_with("Counting objects:")
-            || trimmed.starts_with("Compressing objects:")
-            || trimmed.starts_with("remote: Resolving deltas:")
-            || trimmed.starts_with("Writing objects:")
-            || trimmed.starts_with("remote: Counting objects:")
-            || trimmed.starts_with("remote: Compressing objects:")
-        {
-            continue;
-        }
-        result.push(line);
-    }
-    result.join("\n")
+    raw.lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            !GIT_NOISE_PREFIXES.iter().any(|p| trimmed.starts_with(p))
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 pub fn filter_python_output(raw: &str) -> String {
-    let mut result = Vec::new();
-    for line in raw.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("Collecting ")
-            || trimmed.starts_with("Downloading ")
-            || trimmed.starts_with("Installing collected packages")
-            || trimmed.starts_with("Requirement already satisfied:")
-        {
-            continue;
-        }
-        if is_python_noise(trimmed) {
-            continue;
-        }
-        result.push(line);
-    }
-    result.join("\n")
+    raw.lines()
+        .filter(|line| {
+            let trimmed = line.trim();
+            !PYTHON_INSTALL_PREFIXES
+                .iter()
+                .any(|p| trimmed.starts_with(p))
+                && !is_python_noise(trimmed)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 fn is_python_noise(trimmed: &str) -> bool {
     let lower = trimmed.to_lowercase();
-    if lower.contains("failed") || lower.contains("error") || lower.contains("traceback") {
-        return false;
+    match lower.contains("failed") || lower.contains("error") || lower.contains("traceback") {
+        true => return false,
+        false => {}
     }
-    if trimmed.ends_with("PASSED") || lower.contains("passed [") || lower.contains("passed  [") {
-        return true;
+    match trimmed.ends_with("PASSED")
+        || lower.contains("passed [")
+        || lower.contains("passed  [")
+    {
+        true => return true,
+        false => {}
     }
-    if trimmed.contains('.')
+    trimmed.contains('.')
         && trimmed.contains('%')
         && (trimmed.contains("test_") || trimmed.contains(".py"))
-    {
-        return true;
-    }
-    false
 }
 
 // ─── Requested wrappers ──────────────────────────────────────────
@@ -655,25 +706,24 @@ fn compress_by_type(
 fn compress_json_with_threshold(raw_json: &str, threshold: Option<usize>) -> String {
     let compressed =
         context_compactor::compress_json(raw_json).unwrap_or_else(|_| raw_json.to_string());
-    if let Some(limit) = threshold {
-        safe_threshold_text(&compressed, limit)
-    } else {
-        compressed
+    match threshold {
+        Some(limit) => safe_threshold_text(&compressed, limit),
+        None => compressed,
     }
 }
 
 fn compress_logs_with_threshold(raw_logs: &str, threshold: Option<usize>) -> String {
     let compressed = context_compactor::compress_logs(raw_logs);
-    if let Some(limit) = threshold {
-        safe_threshold_text(&compressed, limit)
-    } else {
-        compressed
+    match threshold {
+        Some(limit) => safe_threshold_text(&compressed, limit),
+        None => compressed,
     }
 }
 
 fn safe_threshold_text(text: &str, limit: usize) -> String {
-    if limit == 0 || text.chars().count() <= limit {
-        return text.to_string();
+    match limit == 0 || text.chars().count() <= limit {
+        true => return text.to_string(),
+        false => {}
     }
     let head_len = (limit / 2).max(1);
     let tail_len = (limit / 2).max(1);
@@ -690,85 +740,74 @@ fn safe_threshold_text(text: &str, limit: usize) -> String {
 }
 
 fn extract_string_arg(arguments: &Value, keys: &[&str]) -> Option<String> {
-    if let Some(s) = arguments.as_str() {
-        let trimmed = s.trim();
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
-        }
-    }
-    for key in keys {
-        if let Some(val) = arguments.get(key) {
-            if let Some(s) = val.as_str() {
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
-            }
-        }
-    }
-    None
+    arguments
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            keys.iter().find_map(|key| {
+                arguments
+                    .get(key)
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned)
+            })
+        })
 }
 
 fn extract_bool_arg(arguments: &Value, keys: &[&str]) -> Option<bool> {
-    for key in keys {
-        if let Some(val) = arguments.get(key) {
-            if let Some(b) = val.as_bool() {
-                return Some(b);
+    keys.iter().find_map(|key| {
+        let val = arguments.get(key)?;
+        val.as_bool().or_else(|| {
+            let s = val.as_str()?;
+            match s.trim().to_lowercase().as_str() {
+                "true" | "1" | "yes" => Some(true),
+                "false" | "0" | "no" => Some(false),
+                _ => None,
             }
-            if let Some(s) = val.as_str() {
-                match s.trim().to_lowercase().as_str() {
-                    "true" | "1" | "yes" => return Some(true),
-                    "false" | "0" | "no" => return Some(false),
-                    _ => {}
-                }
-            }
-        }
-    }
-    None
+        })
+    })
 }
 
 fn extract_usize_arg(arguments: &Value, keys: &[&str]) -> Option<usize> {
-    for key in keys {
-        if let Some(val) = arguments.get(key) {
-            if let Some(n) = val.as_u64() {
-                return Some(n as usize);
-            }
-            if let Some(s) = val.as_str() {
-                if let Ok(n) = s.trim().parse::<usize>() {
-                    return Some(n);
-                }
-            }
-        }
-    }
-    None
+    keys.iter().find_map(|key| {
+        let val = arguments.get(key)?;
+        val.as_u64()
+            .map(|n| n as usize)
+            .or_else(|| val.as_str()?.trim().parse::<usize>().ok())
+    })
 }
 
+const CCR_REF_PREFIXES: &[&str] = &[
+    "CCR Ref:",
+    "ccr ref:",
+    "CCR Ref",
+    "ccr ref",
+    "CCR:",
+    "ccr:",
+    "Ref:",
+    "ref:",
+];
+
 fn clean_ccr_id_token(raw: &str) -> String {
-    let mut s = raw.trim();
-    s = s
+    let mut s = raw
+        .trim()
         .trim_start_matches('[')
         .trim_start_matches('<')
         .trim_start_matches('"')
-        .trim_start_matches('\'');
-    s = s
+        .trim_start_matches('\'')
         .trim_end_matches(']')
         .trim_end_matches('>')
         .trim_end_matches('"')
-        .trim_end_matches('\'');
-    s = s.trim();
+        .trim_end_matches('\'')
+        .trim();
 
-    for prefix in &[
-        "CCR Ref:",
-        "ccr ref:",
-        "CCR Ref",
-        "ccr ref",
-        "CCR:",
-        "ccr:",
-        "Ref:",
-        "ref:",
-    ] {
-        if let Some(stripped) = s.strip_prefix(prefix) {
-            s = stripped.trim();
+    for prefix in CCR_REF_PREFIXES {
+        match s.strip_prefix(prefix) {
+            Some(stripped) => s = stripped.trim(),
+            None => {}
         }
     }
     s.to_string()
@@ -819,17 +858,23 @@ impl Tool for CompressContentTool {
         .trim()
         .to_string();
 
-        if raw_text.is_empty() {
-            return Ok(
-                json!({ "compressed": "", "ccr_id": null, "note": "Empty content provided." }),
-            );
+        match raw_text.is_empty() {
+            true => {
+                return Ok(
+                    json!({ "compressed": "", "ccr_id": null, "note": "Empty content provided." }),
+                )
+            }
+            false => {}
         }
 
-        if raw_text.len() > MAX_INPUT_SIZE {
-            return Err(anyhow!(
-                "Content size exceeds maximum allowed size of {} bytes",
-                MAX_INPUT_SIZE
-            ));
+        match raw_text.len() > MAX_INPUT_SIZE {
+            true => {
+                return Err(anyhow!(
+                    "Content size exceeds maximum allowed size of {} bytes",
+                    MAX_INPUT_SIZE
+                ))
+            }
+            false => {}
         }
 
         let raw_content_type = arguments
@@ -853,25 +898,27 @@ impl Tool for CompressContentTool {
         };
 
         let threshold = extract_usize_arg(arguments, &["threshold", "limit", "max_lines"]);
-        let signatures_only = extract_bool_arg(arguments, &["signatures_only", "signatures"]).unwrap_or(false);
+        let signatures_only =
+            extract_bool_arg(arguments, &["signatures_only", "signatures"]).unwrap_or(false);
         let compressed = compress_by_type(&raw_text, content_type, threshold, signatures_only, "");
 
         let is_preview = extract_bool_arg(arguments, &["preview", "dry_run"]).unwrap_or(false);
 
-        let ccr_id = if is_preview {
-            None
-        } else {
-            let id = cache_content(&raw_text)?;
-            let _ = log_compression(
-                "compress_content",
-                raw_text.len(),
-                compressed.len(),
-                estimate_tokens(&raw_text),
-                estimate_tokens(&compressed),
-                content_type,
-                arguments["model_hint"].as_str(),
-            );
-            Some(id)
+        let ccr_id = match is_preview {
+            true => None,
+            false => {
+                let id = cache_content(&raw_text)?;
+                let _ = log_compression(
+                    "compress_content",
+                    raw_text.len(),
+                    compressed.len(),
+                    estimate_tokens(&raw_text),
+                    estimate_tokens(&compressed),
+                    content_type,
+                    arguments["model_hint"].as_str(),
+                );
+                Some(id)
+            }
         };
 
         Ok(format_ccr_result(
@@ -888,6 +935,14 @@ impl Tool for CompressContentTool {
 // ═══════════════════════════════════════════════════════════════════
 
 pub struct RetrieveOriginalTool;
+
+fn is_path_like_ref(input: &str) -> bool {
+    input.starts_with("file://")
+        || input.starts_with('/')
+        || input.starts_with('~')
+        || input.contains('/')
+        || input.contains('\\')
+}
 
 #[async_trait::async_trait]
 impl Tool for RetrieveOriginalTool {
@@ -920,38 +975,36 @@ impl Tool for RetrieveOriginalTool {
         .ok_or_else(|| anyhow!("Missing ccr_id parameter"))?;
         let input = clean_ccr_id_token(&raw_input);
 
-        if input.starts_with("file://")
-            || input.starts_with('/')
-            || input.starts_with('~')
-            || input.contains('/')
-            || input.contains('\\')
-        {
-            let path_str = input.trim_start_matches("file://");
-            let absolute = resolve_user_path(path_str)?;
-            ensure_path_is_safe_for_headroom(&absolute)?;
-            let content = std::fs::read_to_string(&absolute)
-                .map_err(|e| anyhow!("Failed to read file '{}': {}", path_str, e))?;
-            Ok(json!({ "content": content, "source": "file", "path": absolute.to_string_lossy() }))
-        } else {
-            let conn = get_cache_connection()?;
-            let now = Utc::now().to_rfc3339();
-            let result: Result<String, _> = conn.query_row(
-                "SELECT content FROM cache_entries WHERE ccr_id = ?1",
-                params![input],
-                |row| row.get(0),
-            );
-            match result {
-                Ok(content) => {
-                    let _ = conn.execute(
-                        "UPDATE cache_entries SET accessed_at = ?1 WHERE ccr_id = ?2",
-                        params![now, input],
-                    );
-                    Ok(json!({ "content": content, "source": "cache", "ccr_id": input }))
+        match is_path_like_ref(&input) {
+            true => {
+                let path_str = input.trim_start_matches("file://");
+                let absolute = resolve_user_path(path_str)?;
+                ensure_path_is_safe_for_headroom(&absolute)?;
+                let content = std::fs::read_to_string(&absolute)
+                    .map_err(|e| anyhow!("Failed to read file '{}': {}", path_str, e))?;
+                Ok(json!({ "content": content, "source": "file", "path": absolute.to_string_lossy() }))
+            }
+            false => {
+                let conn = get_cache_connection()?;
+                let now = Utc::now().to_rfc3339();
+                let result: Result<String, _> = conn.query_row(
+                    "SELECT content FROM cache_entries WHERE ccr_id = ?1",
+                    params![input],
+                    |row| row.get(0),
+                );
+                match result {
+                    Ok(content) => {
+                        let _ = conn.execute(
+                            "UPDATE cache_entries SET accessed_at = ?1 WHERE ccr_id = ?2",
+                            params![now, input],
+                        );
+                        Ok(json!({ "content": content, "source": "cache", "ccr_id": input }))
+                    }
+                    Err(_) => Err(anyhow!(
+                        "CCR reference ID '{}' not found or expired.",
+                        input
+                    )),
                 }
-                Err(_) => Err(anyhow!(
-                    "CCR reference ID '{}' not found or expired.",
-                    input
-                )),
             }
         }
     }
@@ -1046,42 +1099,33 @@ impl Tool for CompressFileTool {
         let path_str = arguments["file_path"]
             .as_str()
             .ok_or_else(|| anyhow!("Missing file_path parameter"))?;
-        let path = Path::new(path_str);
-        let absolute = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            std::env::current_dir()
-                .map_err(|e| anyhow!("Failed to get cwd: {}", e))?
-                .join(path)
-        };
-        let canonical = absolute
-            .canonicalize()
-            .map_err(|e| anyhow!("Failed to resolve path '{}': {}", path_str, e))?;
+        let canonical = resolve_user_path(path_str)?;
         ensure_path_is_safe_for_headroom(&canonical)?;
 
         let raw_text = std::fs::read_to_string(&canonical)
             .map_err(|e| anyhow!("Failed to read file '{}': {}", path_str, e))?;
 
-        if raw_text.len() > MAX_INPUT_SIZE {
-            return Err(anyhow!(
-                "File size exceeds maximum allowed size of {} bytes",
-                MAX_INPUT_SIZE
-            ));
+        match raw_text.len() > MAX_INPUT_SIZE {
+            true => {
+                return Err(anyhow!(
+                    "File size exceeds maximum allowed size of {} bytes",
+                    MAX_INPUT_SIZE
+                ))
+            }
+            false => {}
         }
 
-        let content_type = arguments["content_type"]
+        let content_type_raw = arguments["content_type"]
             .as_str()
             .unwrap_or("auto")
             .to_lowercase();
-        let content_type = if content_type == "auto" || content_type.is_empty() {
-            detect_content_type_from_ext(&canonical).unwrap_or_else(|| auto_detect_type(&raw_text))
-        } else {
-            match content_type.as_str() {
-                "json" | "code" | "text_logs" | "csv" | "markdown" | "yaml" => {
-                    content_type.as_str()
-                }
-                other => return Err(anyhow!("Unknown content_type '{}'.", other)),
+        let content_type = match content_type_raw.as_str() {
+            "auto" | "" => detect_content_type_from_ext(&canonical)
+                .unwrap_or_else(|| auto_detect_type(&raw_text)),
+            "json" | "code" | "text_logs" | "csv" | "markdown" | "yaml" => {
+                content_type_raw.as_str()
             }
+            other => return Err(anyhow!("Unknown content_type '{}'.", other)),
         };
 
         let threshold = arguments["threshold"].as_u64().map(|v| v as usize);
@@ -1089,10 +1133,9 @@ impl Tool for CompressFileTool {
         let compressed = compress_by_type(&raw_text, content_type, threshold, signatures_only, "");
 
         let is_preview = arguments["preview"].as_bool().unwrap_or(false);
-        let ccr_id = if is_preview {
-            None
-        } else {
-            Some(cache_content(&raw_text)?)
+        let ccr_id = match is_preview {
+            true => None,
+            false => Some(cache_content(&raw_text)?),
         };
 
         Ok(format_ccr_result(
@@ -1136,32 +1179,37 @@ impl Tool for CompressDiffTool {
             .as_str()
             .ok_or_else(|| anyhow!("Missing diff_text parameter"))?
             .trim();
-        if diff_text.is_empty() {
-            return Ok(json!({ "compressed": "Empty diff provided.", "ccr_id": null }));
+        match diff_text.is_empty() {
+            true => return Ok(json!({ "compressed": "Empty diff provided.", "ccr_id": null })),
+            false => {}
         }
-        if diff_text.len() > MAX_INPUT_SIZE {
-            return Err(anyhow!(
-                "Diff size exceeds maximum allowed size of {} bytes",
-                MAX_INPUT_SIZE
-            ));
+        match diff_text.len() > MAX_INPUT_SIZE {
+            true => {
+                return Err(anyhow!(
+                    "Diff size exceeds maximum allowed size of {} bytes",
+                    MAX_INPUT_SIZE
+                ))
+            }
+            false => {}
         }
 
         let compressed = compress_diff_text(diff_text);
         let is_preview = arguments["preview"].as_bool().unwrap_or(false);
-        let ccr_id = if is_preview {
-            None
-        } else {
-            let id = cache_content(diff_text)?;
-            let _ = log_compression(
-                "compress_diff",
-                diff_text.len(),
-                compressed.len(),
-                estimate_tokens(diff_text),
-                estimate_tokens(&compressed),
-                "diff",
-                arguments["model_hint"].as_str(),
-            );
-            Some(id)
+        let ccr_id = match is_preview {
+            true => None,
+            false => {
+                let id = cache_content(diff_text)?;
+                let _ = log_compression(
+                    "compress_diff",
+                    diff_text.len(),
+                    compressed.len(),
+                    estimate_tokens(diff_text),
+                    estimate_tokens(&compressed),
+                    "diff",
+                    arguments["model_hint"].as_str(),
+                );
+                Some(id)
+            }
         };
 
         Ok(format_ccr_result(
@@ -1178,6 +1226,33 @@ impl Tool for CompressDiffTool {
 // ═══════════════════════════════════════════════════════════════════
 
 pub struct CompressUrlTool;
+
+fn compress_fetched_url_body(trimmed: &str, content_type: &str) -> (String, &'static str) {
+    match (
+        content_type.contains("html"),
+        content_type.contains("json"),
+    ) {
+        (true, _) => {
+            let md = html2md::parse_html(trimmed);
+            (context_compactor::compress_code(&md), "markdown")
+        }
+        (false, true) => (
+            context_compactor::compress_json(trimmed).unwrap_or_else(|_| trimmed.to_string()),
+            "json",
+        ),
+        (false, false) => {
+            let detected = auto_detect_type(trimmed);
+            let comp = match detected {
+                "json" => context_compactor::compress_json(trimmed)
+                    .unwrap_or_else(|_| trimmed.to_string()),
+                "code" | "markdown" => context_compactor::compress_code(trimmed),
+                "csv" => compress_csv(trimmed),
+                _ => context_compactor::compress_logs(trimmed),
+            };
+            (comp, detected)
+        }
+    }
+}
 
 #[async_trait::async_trait]
 impl Tool for CompressUrlTool {
@@ -1204,10 +1279,9 @@ impl Tool for CompressUrlTool {
         crate::tools::web::validate_url(url).await?;
 
         let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
-            if crate::tools::web::validate_url_sync(attempt.url()).is_err() {
-                attempt.stop()
-            } else {
-                attempt.follow()
+            match crate::tools::web::validate_url_sync(attempt.url()).is_err() {
+                true => attempt.stop(),
+                false => attempt.follow(),
             }
         });
         let client = reqwest::Client::builder()
@@ -1223,14 +1297,18 @@ impl Tool for CompressUrlTool {
             .await
             .map_err(|e| anyhow!("Failed to fetch URL: {}", e))?;
 
-        if let Some(content_length) = res.content_length() {
-            if content_length as usize > MAX_INPUT_SIZE {
+        match res
+            .content_length()
+            .filter(|&len| len as usize > MAX_INPUT_SIZE)
+        {
+            Some(content_length) => {
                 return Err(anyhow!(
                     "URL content size ({} bytes) exceeds maximum allowed size of {} bytes",
                     content_length,
                     MAX_INPUT_SIZE
-                ));
+                ))
             }
+            None => {}
         }
 
         let content_type = res
@@ -1245,38 +1323,26 @@ impl Tool for CompressUrlTool {
             .await
             .map_err(|e| anyhow!("Failed to read response body: {}", e))?;
 
-        if raw_text.len() > MAX_INPUT_SIZE {
-            return Err(anyhow!(
-                "Fetched content size ({} bytes) exceeds maximum allowed size of {} bytes",
-                raw_text.len(),
-                MAX_INPUT_SIZE
-            ));
+        match raw_text.len() > MAX_INPUT_SIZE {
+            true => {
+                return Err(anyhow!(
+                    "Fetched content size ({} bytes) exceeds maximum allowed size of {} bytes",
+                    raw_text.len(),
+                    MAX_INPUT_SIZE
+                ))
+            }
+            false => {}
         }
 
         let trimmed = raw_text.trim();
-        if trimmed.is_empty() {
-            return Ok(json!({ "compressed": "URL returned empty content.", "ccr_id": null }));
+        match trimmed.is_empty() {
+            true => {
+                return Ok(json!({ "compressed": "URL returned empty content.", "ccr_id": null }))
+            }
+            false => {}
         }
 
-        let (compressed, derived_type) = if content_type.contains("html") {
-            let md = html2md::parse_html(trimmed);
-            (context_compactor::compress_code(&md), "markdown")
-        } else if content_type.contains("json") {
-            (
-                context_compactor::compress_json(trimmed).unwrap_or_else(|_| trimmed.to_string()),
-                "json",
-            )
-        } else {
-            let detected = auto_detect_type(trimmed);
-            let comp = match detected {
-                "json" => context_compactor::compress_json(trimmed)
-                    .unwrap_or_else(|_| trimmed.to_string()),
-                "code" | "markdown" => context_compactor::compress_code(trimmed),
-                "csv" => compress_csv(trimmed),
-                _ => context_compactor::compress_logs(trimmed),
-            };
-            (comp, detected)
-        };
+        let (compressed, derived_type) = compress_fetched_url_body(trimmed, &content_type);
 
         let ccr_id = cache_content(trimmed)?;
         let _ = log_compression(
@@ -1325,11 +1391,14 @@ impl Tool for RunAndCompressTool {
         let command = arguments["command"]
             .as_str()
             .ok_or_else(|| anyhow!("Missing command parameter"))?;
-        if !command_is_allowed(command) {
-            return Err(anyhow!(
-                "command '{}' is not allowed by run_and_compress; use exec_command with approval for privileged or shell commands",
-                command
-            ));
+        match command_is_allowed(command) {
+            true => {}
+            false => {
+                return Err(anyhow!(
+                    "command '{}' is not allowed by run_and_compress; use exec_command with approval for privileged or shell commands",
+                    command
+                ))
+            }
         }
 
         let args: Vec<String> =
@@ -1347,8 +1416,11 @@ impl Tool for RunAndCompressTool {
         let mut cmd = tokio::process::Command::new(command);
         cmd.env("PAGER", "cat");
         cmd.kill_on_drop(true);
-        if !args.is_empty() {
-            cmd.args(&args);
+        match args.is_empty() {
+            true => {}
+            false => {
+                cmd.args(&args);
+            }
         }
 
         let output = tokio::time::timeout(Duration::from_secs(timeout_secs), cmd.output())
@@ -1366,17 +1438,21 @@ impl Tool for RunAndCompressTool {
         let stderr_str = String::from_utf8_lossy(&output.stderr);
         let mut combined = format!("{}{}", stdout_str, stderr_str);
         let output_truncated = combined.len() > max_output_bytes;
-        if output_truncated {
-            combined.truncate(floor_char_boundary(&combined, max_output_bytes));
+        match output_truncated {
+            true => combined.truncate(floor_char_boundary(&combined, max_output_bytes)),
+            false => {}
         }
         let trimmed = combined.trim();
 
-        if trimmed.is_empty() {
-            return Ok(json!({
-                "compressed": format!("Command exited with status {}. No output was produced.", output.status),
-                "exit_code": output.status.code().unwrap_or(-1),
-                "ccr_id": null,
-            }));
+        match trimmed.is_empty() {
+            true => {
+                return Ok(json!({
+                    "compressed": format!("Command exited with status {}. No output was produced.", output.status),
+                    "exit_code": output.status.code().unwrap_or(-1),
+                    "ccr_id": null,
+                }))
+            }
+            false => {}
         }
 
         let filtered = filter_command_output(command, trimmed);
@@ -1398,14 +1474,6 @@ impl Tool for RunAndCompressTool {
         result["output_truncated"] = json!(output_truncated);
         Ok(result)
     }
-}
-
-fn floor_char_boundary(s: &str, mut idx: usize) -> usize {
-    idx = idx.min(s.len());
-    while idx > 0 && !s.is_char_boundary(idx) {
-        idx -= 1;
-    }
-    idx
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -1438,21 +1506,12 @@ impl Tool for CompressDirectoryTool {
         let dir_path_str = arguments["dir_path"]
             .as_str()
             .ok_or_else(|| anyhow!("Missing dir_path parameter"))?;
-        let root = Path::new(dir_path_str);
-        let resolved_root = if root.is_absolute() {
-            root.to_path_buf()
-        } else {
-            std::env::current_dir()
-                .map_err(|e| anyhow!("{}", e))?
-                .join(root)
-        };
-        let resolved_root = resolved_root
-            .canonicalize()
-            .map_err(|e| anyhow!("Failed to resolve path '{}': {}", dir_path_str, e))?;
+        let resolved_root = resolve_user_path(dir_path_str)?;
         ensure_path_is_safe_for_headroom(&resolved_root)?;
 
-        if !resolved_root.is_dir() {
-            return Err(anyhow!("'{}' is not a directory", dir_path_str));
+        match resolved_root.is_dir() {
+            true => {}
+            false => return Err(anyhow!("'{}' is not a directory", dir_path_str)),
         }
 
         let extensions: Vec<String> =
@@ -1476,15 +1535,16 @@ impl Tool for CompressDirectoryTool {
         };
 
         let mut processed = 0usize;
-        let mut walk_dir = Vec::new();
-        walk_dir.push((resolved_root.clone(), 0usize));
+        let mut walk_dir = vec![(resolved_root.clone(), 0usize)];
 
         while let Some((dir_path, depth)) = walk_dir.pop() {
-            if depth > max_depth {
-                continue;
+            match depth > max_depth {
+                true => continue,
+                false => {}
             }
-            if processed >= file_limit {
-                break;
+            match processed >= file_limit {
+                true => break,
+                false => {}
             }
 
             let entries = match std::fs::read_dir(&dir_path) {
@@ -1495,33 +1555,41 @@ impl Tool for CompressDirectoryTool {
             let mut dirs = Vec::new();
             for entry in entries.filter_map(|e| e.ok()) {
                 let path = entry.path();
-                if path.components().any(|c| c.as_os_str() == ".git") {
-                    continue;
+                match path.components().any(|c| c.as_os_str() == ".git") {
+                    true => continue,
+                    false => {}
                 }
 
-                if path.is_dir() {
-                    if depth < max_depth {
-                        dirs.push(path);
-                    }
-                    continue;
-                }
-
-                if !extensions.is_empty() {
-                    let ext = path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or("")
-                        .to_lowercase();
-                    if !extensions.iter().any(|f| f.to_lowercase() == ext) {
+                match path.is_dir() {
+                    true => {
+                        match depth < max_depth {
+                            true => dirs.push(path),
+                            false => {}
+                        }
                         continue;
                     }
+                    false => {}
                 }
 
-                if is_binary_file(&path) {
-                    continue;
+                let ext_matches = match extensions.is_empty() {
+                    true => true,
+                    false => {
+                        let ext = path
+                            .extension()
+                            .and_then(|e| e.to_str())
+                            .unwrap_or("")
+                            .to_lowercase();
+                        extensions.iter().any(|f| f.to_lowercase() == ext)
+                    }
+                };
+                match ext_matches {
+                    true => {}
+                    false => continue,
                 }
-                if ensure_path_is_safe_for_headroom(&path).is_err() {
-                    continue;
+
+                match is_binary_file(&path) || ensure_path_is_safe_for_headroom(&path).is_err() {
+                    true => continue,
+                    false => {}
                 }
 
                 let raw_text = match std::fs::read_to_string(&path) {
@@ -1529,8 +1597,9 @@ impl Tool for CompressDirectoryTool {
                     Err(_) => continue,
                 };
 
-                if raw_text.len() > MAX_INPUT_SIZE {
-                    continue;
+                match raw_text.len() > MAX_INPUT_SIZE {
+                    true => continue,
+                    false => {}
                 }
 
                 let content_type = detect_content_type_from_ext(&path)
@@ -1539,34 +1608,25 @@ impl Tool for CompressDirectoryTool {
                 let compressed =
                     compress_by_type(&raw_text, content_type, threshold, signatures_only, ext);
 
-                let ccr_id = if is_preview {
-                    "PREVIEW".to_string()
-                } else {
-                    let id = cache_content(&raw_text)?;
-                    let _ = log_compression(
-                        "compress_directory",
-                        raw_text.len(),
-                        compressed.len(),
-                        estimate_tokens(&raw_text),
-                        estimate_tokens(&compressed),
-                        content_type,
-                        arguments["model_hint"].as_str(),
-                    );
-                    id
+                let ccr_id = match is_preview {
+                    true => "PREVIEW".to_string(),
+                    false => {
+                        let id = cache_content(&raw_text)?;
+                        let _ = log_compression(
+                            "compress_directory",
+                            raw_text.len(),
+                            compressed.len(),
+                            estimate_tokens(&raw_text),
+                            estimate_tokens(&compressed),
+                            content_type,
+                            arguments["model_hint"].as_str(),
+                        );
+                        id
+                    }
                 };
                 let original_tokens = estimate_tokens(&raw_text);
                 let compressed_tokens = estimate_tokens(&compressed);
-                let saved_pct = if original_tokens > 0 {
-                    format!(
-                        "{:.1}%",
-                        ((original_tokens as f64 - compressed_tokens as f64)
-                            / original_tokens as f64
-                            * 100.0)
-                            .max(0.0)
-                    )
-                } else {
-                    "0.0%".to_string()
-                };
+                let saved_pct = format_saved_pct(original_tokens, compressed_tokens);
 
                 let file_info = CompTreeFile {
                     ccr_id,
@@ -1575,17 +1635,21 @@ impl Tool for CompressDirectoryTool {
                     saved_pct,
                 };
 
-                if let Ok(rel_path) = path.strip_prefix(&resolved_root) {
-                    let parts: Vec<String> = rel_path
-                        .components()
-                        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-                        .collect();
-                    tree_root.insert(&parts, file_info);
+                match path.strip_prefix(&resolved_root) {
+                    Ok(rel_path) => {
+                        let parts: Vec<String> = rel_path
+                            .components()
+                            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                            .collect();
+                        tree_root.insert(&parts, file_info);
+                    }
+                    Err(_) => {}
                 }
 
                 processed += 1;
-                if processed >= file_limit {
-                    break;
+                match processed >= file_limit {
+                    true => break,
+                    false => {}
                 }
             }
 
@@ -1598,18 +1662,16 @@ impl Tool for CompressDirectoryTool {
         tree_root.update_counts();
         let tree_str = tree_root.format_tree("", true, 0, max_depth);
 
-        let preview_label = if is_preview {
-            " [PREVIEW - not cached]"
-        } else {
-            ""
+        let preview_label = match is_preview {
+            true => " [PREVIEW - not cached]",
+            false => "",
         };
-        let suffix = if processed >= file_limit {
-            format!(
+        let suffix = match processed >= file_limit {
+            true => format!(
                 "\nWarning: Walk stopped early because file count limit ({}) was reached.",
                 file_limit
-            )
-        } else {
-            String::new()
+            ),
+            false => String::new(),
         };
 
         Ok(json!({

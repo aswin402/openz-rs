@@ -1,3 +1,7 @@
+use super::{
+    extract_first_str, parse_bool_value, parse_f64_value, parse_u64_value, to_non_empty_trimmed,
+    ACTION_KEYS,
+};
 use crate::tools::Tool;
 use anyhow::Result;
 use serde_json::Value;
@@ -6,10 +10,9 @@ pub(crate) fn redact_secrets(val: &mut Value) {
     match val {
         Value::Object(map) => {
             for (key, value) in map.iter_mut() {
-                if crate::core::secrets::is_secret_key(key) && !value.is_null() {
-                    *value = Value::String("********".to_string());
-                } else {
-                    redact_secrets(value);
+                match crate::core::secrets::is_secret_key(key) && !value.is_null() {
+                    true => *value = Value::String("********".to_string()),
+                    false => redact_secrets(value),
                 }
             }
         }
@@ -22,61 +25,58 @@ pub(crate) fn redact_secrets(val: &mut Value) {
     }
 }
 
+fn assign_optional_string_field(
+    slot: &mut Option<String>,
+    credential: &serde_json::Map<String, Value>,
+    keys: &[&str],
+) {
+    match keys
+        .iter()
+        .find_map(|&k| credential.get(k).and_then(|v| v.as_str()))
+    {
+        Some(raw) => *slot = to_non_empty_trimmed(Some(raw)),
+        None => {}
+    }
+}
+
+fn assign_trimmed_string(slot: &mut String, val: &Value) {
+    match to_non_empty_trimmed(val.as_str()) {
+        Some(s) => *slot = s,
+        None => {}
+    }
+}
+
+fn assign_bool_field(slot: &mut bool, val: &Value) {
+    match parse_bool_value(val) {
+        Some(b) => *slot = b,
+        None => {}
+    }
+}
+
 fn merge_provider_credential(
     config: &mut crate::config::schema::Config,
     provider_name: &str,
     credential: &serde_json::Map<String, Value>,
 ) -> Result<()> {
-    let provider_name = provider_name.trim();
-    if provider_name.is_empty() {
-        anyhow::bail!("provider_name is required for provider credentials");
-    }
+    let provider_name = Some(provider_name.trim())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("provider_name is required for provider credentials"))?;
 
     let mut provider = config
         .get_provider_config(provider_name)
         .cloned()
         .unwrap_or_default();
-    if let Some(api_key) = credential
-        .get("api_key")
-        .or_else(|| credential.get("apiKey"))
-        .or_else(|| credential.get("key"))
-        .or_else(|| credential.get("token"))
-        .and_then(|v| v.as_str())
-    {
-        provider.api_key = if api_key.trim().is_empty() {
-            None
-        } else {
-            Some(api_key.to_string())
-        };
-    }
-    if let Some(api_key_env) = credential.get("api_key_env").and_then(|v| v.as_str()) {
-        provider.api_key_env = if api_key_env.trim().is_empty() {
-            None
-        } else {
-            Some(api_key_env.to_string())
-        };
-    }
-    if let Some(api_key_file) = credential.get("api_key_file").and_then(|v| v.as_str()) {
-        provider.api_key_file = if api_key_file.trim().is_empty() {
-            None
-        } else {
-            Some(api_key_file.to_string())
-        };
-    }
-    if let Some(api_base) = credential.get("api_base").and_then(|v| v.as_str()) {
-        provider.api_base = if api_base.trim().is_empty() {
-            None
-        } else {
-            Some(api_base.to_string())
-        };
-    }
-    if let Some(default_model) = credential.get("default_model").and_then(|v| v.as_str()) {
-        provider.default_model = if default_model.trim().is_empty() {
-            None
-        } else {
-            Some(default_model.to_string())
-        };
-    }
+
+    assign_optional_string_field(
+        &mut provider.api_key,
+        credential,
+        &["api_key", "apiKey", "key", "token"],
+    );
+    assign_optional_string_field(&mut provider.api_key_env, credential, &["api_key_env"]);
+    assign_optional_string_field(&mut provider.api_key_file, credential, &["api_key_file"]);
+    assign_optional_string_field(&mut provider.api_base, credential, &["api_base"]);
+    assign_optional_string_field(&mut provider.default_model, credential, &["default_model"]);
+
     config.set_provider_config(provider_name, provider);
     Ok(())
 }
@@ -92,42 +92,21 @@ fn merge_git_credential(
         other => anyhow::bail!("Unsupported git credential service '{}'", other),
     };
 
-    if let Some(token) = credential
-        .get("token")
-        .or_else(|| credential.get("github_token"))
-        .or_else(|| credential.get("gitlab_token"))
-        .or_else(|| credential.get("github_pat"))
-        .or_else(|| credential.get("gitlab_pat"))
-        .or_else(|| credential.get("access_token"))
-        .and_then(|v| v.as_str())
-    {
-        git_config.token = if token.trim().is_empty() {
-            None
-        } else {
-            Some(token.to_string())
-        };
-    }
-    if let Some(token_env) = credential.get("token_env").and_then(|v| v.as_str()) {
-        git_config.token_env = if token_env.trim().is_empty() {
-            None
-        } else {
-            Some(token_env.to_string())
-        };
-    }
-    if let Some(token_file) = credential.get("token_file").and_then(|v| v.as_str()) {
-        git_config.token_file = if token_file.trim().is_empty() {
-            None
-        } else {
-            Some(token_file.to_string())
-        };
-    }
-    if let Some(api_base) = credential.get("api_base").and_then(|v| v.as_str()) {
-        git_config.api_base = if api_base.trim().is_empty() {
-            None
-        } else {
-            Some(api_base.to_string())
-        };
-    }
+    assign_optional_string_field(
+        &mut git_config.token,
+        credential,
+        &[
+            "token",
+            "github_token",
+            "gitlab_token",
+            "github_pat",
+            "gitlab_pat",
+            "access_token",
+        ],
+    );
+    assign_optional_string_field(&mut git_config.token_env, credential, &["token_env"]);
+    assign_optional_string_field(&mut git_config.token_file, credential, &["token_file"]);
+    assign_optional_string_field(&mut git_config.api_base, credential, &["api_base"]);
 
     match service {
         "github" => config.integrations.github = Some(git_config),
@@ -140,14 +119,14 @@ fn merge_git_credential(
 fn extract_credential_map(
     arguments: &serde_json::Map<String, Value>,
 ) -> (String, serde_json::Map<String, Value>) {
-    let mut cred = serde_json::Map::new();
-    if let Some(nested) = arguments.get("credential").and_then(|v| v.as_object()) {
-        cred = nested.clone();
-    }
+    let mut cred = arguments
+        .get("credential")
+        .and_then(|v| v.as_object())
+        .cloned()
+        .unwrap_or_default();
 
-    // Merge flattened top-level arguments
     for (k, v) in arguments {
-        if matches!(
+        let is_meta_key = matches!(
             k.as_str(),
             "credential"
                 | "action"
@@ -160,76 +139,94 @@ fn extract_credential_map(
                 | "config"
                 | "settings"
                 | "params"
-        ) {
-            continue;
-        }
-        if !cred.contains_key(k) {
-            cred.insert(k.clone(), v.clone());
+        );
+        match is_meta_key {
+            true => {}
+            false => {
+                cred.entry(k.clone()).or_insert_with(|| v.clone());
+            }
         }
     }
 
-    // Aliases for GitHub
-    if let Some(tok) = arguments
+    match arguments
         .get("github_token")
         .or_else(|| arguments.get("github_pat"))
         .or_else(|| arguments.get("github_access_token"))
     {
-        cred.entry("target".to_string())
-            .or_insert_with(|| Value::String("github".to_string()));
-        cred.insert("token".to_string(), tok.clone());
+        Some(tok) => {
+            cred.entry("target".to_string())
+                .or_insert_with(|| Value::String("github".to_string()));
+            cred.insert("token".to_string(), tok.clone());
+        }
+        None => {}
     }
 
-    // Aliases for GitLab
-    if let Some(tok) = arguments
+    match arguments
         .get("gitlab_token")
         .or_else(|| arguments.get("gitlab_pat"))
     {
-        cred.entry("target".to_string())
-            .or_insert_with(|| Value::String("gitlab".to_string()));
-        cred.insert("token".to_string(), tok.clone());
-    }
-
-    // Aliases for bot_token
-    if let Some(tok) = arguments.get("bot_token") {
-        if !cred.contains_key("target") {
-            if let Some(chan) = arguments.get("channel").and_then(|c| c.as_str()) {
-                cred.insert("target".to_string(), Value::String(chan.to_lowercase()));
-            }
+        Some(tok) => {
+            cred.entry("target".to_string())
+                .or_insert_with(|| Value::String("gitlab".to_string()));
+            cred.insert("token".to_string(), tok.clone());
         }
-        cred.insert("bot_token".to_string(), tok.clone());
+        None => {}
     }
 
-    // Aliases for provider
-    if let Some(pname) = arguments
+    match arguments.get("bot_token") {
+        Some(tok) => {
+            match (
+                cred.contains_key("target"),
+                arguments.get("channel").and_then(|c| c.as_str()),
+            ) {
+                (false, Some(chan)) => {
+                    cred.insert("target".to_string(), Value::String(chan.to_lowercase()));
+                }
+                _ => {}
+            }
+            cred.insert("bot_token".to_string(), tok.clone());
+        }
+        None => {}
+    }
+
+    match arguments
         .get("provider_name")
         .or_else(|| arguments.get("provider"))
     {
-        cred.entry("target".to_string())
-            .or_insert_with(|| Value::String("provider".to_string()));
-        cred.insert("provider_name".to_string(), pname.clone());
+        Some(pname) => {
+            cred.entry("target".to_string())
+                .or_insert_with(|| Value::String("provider".to_string()));
+            cred.insert("provider_name".to_string(), pname.clone());
+        }
+        None => {}
     }
 
-    let mut target = cred
+    let explicit_target = cred
         .get("target")
         .and_then(|v| v.as_str())
         .map(|s| s.trim().to_lowercase())
-        .unwrap_or_default();
+        .filter(|s| !s.is_empty());
 
-    // Fallback deduction if target was not explicitly named
-    if target.is_empty() {
-        if cred.contains_key("provider_name") {
-            target = "provider".to_string();
-        } else if cred.contains_key("token")
-            || cred.contains_key("github_token")
-            || cred.contains_key("github_pat")
-        {
-            target = "github".to_string();
-        } else if cred.contains_key("phone_number_id") || cred.contains_key("verify_token") {
-            target = "whatsapp".to_string();
-        } else if cred.contains_key("bot_token") {
-            target = "telegram".to_string();
-        }
-    }
+    let target = explicit_target.unwrap_or_else(|| {
+        let inferred = [
+            (cred.contains_key("provider_name"), "provider"),
+            (
+                cred.contains_key("token")
+                    || cred.contains_key("github_token")
+                    || cred.contains_key("github_pat"),
+                "github",
+            ),
+            (
+                cred.contains_key("phone_number_id") || cred.contains_key("verify_token"),
+                "whatsapp",
+            ),
+            (cred.contains_key("bot_token"), "telegram"),
+        ]
+        .into_iter()
+        .find_map(|(matched, name)| matched.then_some(name))
+        .unwrap_or("");
+        inferred.to_string()
+    });
 
     (target, cred)
 }
@@ -242,43 +239,56 @@ fn merge_channel_credential(
     match channel {
         "telegram" => {
             let mut cfg = config.channels.telegram.clone().unwrap_or_default();
-            if let Some(enabled) = credential.get("enabled").and_then(|v| v.as_bool()) {
-                cfg.enabled = enabled;
-            }
-            if let Some(token) = credential.get("bot_token").and_then(|v| v.as_str()) {
-                cfg.bot_token = token.to_string();
-            }
+            cfg.enabled = credential
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(cfg.enabled);
+            cfg.bot_token = credential
+                .get("bot_token")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .unwrap_or(cfg.bot_token);
             config.channels.telegram = Some(cfg);
         }
         "discord" => {
             let mut cfg = config.channels.discord.clone().unwrap_or_default();
-            if let Some(enabled) = credential.get("enabled").and_then(|v| v.as_bool()) {
-                cfg.enabled = enabled;
-            }
-            if let Some(token) = credential.get("bot_token").and_then(|v| v.as_str()) {
-                cfg.bot_token = token.to_string();
-            }
+            cfg.enabled = credential
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(cfg.enabled);
+            cfg.bot_token = credential
+                .get("bot_token")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .unwrap_or(cfg.bot_token);
             config.channels.discord = Some(cfg);
         }
         "whatsapp" => {
             let mut cfg = config.channels.whatsapp.clone().unwrap_or_default();
-            if let Some(enabled) = credential.get("enabled").and_then(|v| v.as_bool()) {
-                cfg.enabled = enabled;
-            }
-            if let Some(api_key) = credential.get("api_key").and_then(|v| v.as_str()) {
-                cfg.api_key = api_key.to_string();
-            }
-            if let Some(phone_number_id) =
-                credential.get("phone_number_id").and_then(|v| v.as_str())
-            {
-                cfg.phone_number_id = phone_number_id.to_string();
-            }
-            if let Some(verify_token) = credential.get("verify_token").and_then(|v| v.as_str()) {
-                cfg.verify_token = verify_token.to_string();
-            }
-            if let Some(webhook_port) = credential.get("webhook_port").and_then(|v| v.as_u64()) {
-                cfg.webhook_port = webhook_port as u16;
-            }
+            cfg.enabled = credential
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(cfg.enabled);
+            cfg.api_key = credential
+                .get("api_key")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .unwrap_or(cfg.api_key);
+            cfg.phone_number_id = credential
+                .get("phone_number_id")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .unwrap_or(cfg.phone_number_id);
+            cfg.verify_token = credential
+                .get("verify_token")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string)
+                .unwrap_or(cfg.verify_token);
+            cfg.webhook_port = credential
+                .get("webhook_port")
+                .and_then(|v| v.as_u64())
+                .map(|p| p as u16)
+                .unwrap_or(cfg.webhook_port);
             config.channels.whatsapp = Some(cfg);
         }
         other => anyhow::bail!("Unsupported channel credential target '{}'", other),
@@ -286,41 +296,21 @@ fn merge_channel_credential(
     Ok(())
 }
 
-fn parse_bool_value(v: &Value) -> Option<bool> {
-    if let Some(b) = v.as_bool() {
-        return Some(b);
-    }
-    if let Some(s) = v.as_str() {
-        match s.trim().to_lowercase().as_str() {
-            "true" | "1" | "yes" | "on" => Some(true),
-            "false" | "0" | "no" | "off" => Some(false),
-            _ => None,
-        }
-    } else {
-        None
-    }
-}
-
-fn parse_u64_value(v: &Value) -> Option<u64> {
-    if let Some(n) = v.as_u64() {
-        return Some(n);
-    }
-    if let Some(s) = v.as_str() {
-        s.trim().parse::<u64>().ok()
-    } else {
-        None
-    }
-}
-
-fn parse_f64_value(v: &Value) -> Option<f64> {
-    if let Some(f) = v.as_f64() {
-        return Some(f);
-    }
-    if let Some(s) = v.as_str() {
-        s.trim().parse::<f64>().ok()
-    } else {
-        None
-    }
+fn insert_git_integration_summary(
+    integrations_map: &mut serde_json::Map<String, Value>,
+    key: &str,
+    git_cfg: Option<&crate::config::schema::GitIntegrationConfig>,
+) {
+    integrations_map
+        .entry(key.to_string())
+        .or_insert_with(|| {
+            serde_json::json!({
+                "token_configured": git_cfg.and_then(|g| g.token.as_ref()).is_some(),
+                "token_env": git_cfg.and_then(|g| g.token_env.as_ref()),
+                "token_file": git_cfg.and_then(|g| g.token_file.as_ref()),
+                "api_base": git_cfg.and_then(|g| g.api_base.as_ref()),
+            })
+        });
 }
 
 pub struct ManageConfigTool;
@@ -486,22 +476,14 @@ impl Tool for ManageConfigTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let mut obj_map = serde_json::Map::new();
-        let (action_str, direct_updates) = if let Some(s) = arguments.as_str() {
-            (Some(s.to_string()), None)
-        } else if let Some(obj) = arguments.as_object() {
-            obj_map = obj.clone();
-            let act = obj
-                .get("action")
-                .or_else(|| obj.get("act"))
-                .or_else(|| obj.get("command"))
-                .or_else(|| obj.get("cmd"))
-                .or_else(|| obj.get("op"))
-                .or_else(|| obj.get("mode"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string());
-            (act, Some(obj))
-        } else {
-            (None, None)
+        let (action_str, direct_updates) = match arguments {
+            Value::String(s) => (Some(s.to_string()), None),
+            Value::Object(obj) => {
+                obj_map = obj.clone();
+                let act = extract_first_str(arguments, ACTION_KEYS).map(ToString::to_string);
+                (act, Some(obj))
+            }
+            _ => (None, None),
         };
 
         let has_credential_material = obj_map.contains_key("credential")
@@ -523,24 +505,19 @@ impl Tool for ManageConfigTool {
         let normalized_action = match action_str {
             Some(a) => {
                 let trimmed = a.trim().to_lowercase();
-                if (trimmed == "update" || trimmed == "set")
+                let redirect_to_cred = matches!(trimmed.as_str(), "update" | "set")
                     && has_credential_material
-                    && !obj_map.contains_key("updates")
-                {
-                    "set_credential".to_string()
-                } else {
-                    trimmed
+                    && !obj_map.contains_key("updates");
+                match redirect_to_cred {
+                    true => "set_credential".to_string(),
+                    false => trimmed,
                 }
             }
-            None => {
-                if has_credential_material {
-                    "set_credential".to_string()
-                } else if obj_map.contains_key("updates") {
-                    "update".to_string()
-                } else {
-                    "view".to_string()
-                }
-            }
+            None => match (has_credential_material, obj_map.contains_key("updates")) {
+                (true, _) => "set_credential".to_string(),
+                (false, true) => "update".to_string(),
+                (false, false) => "view".to_string(),
+            },
         };
 
         let action = match normalized_action.as_str() {
@@ -556,32 +533,23 @@ impl Tool for ManageConfigTool {
                 let mut config_val = serde_json::to_value(&config)?;
                 redact_secrets(&mut config_val);
 
-                // Explicitly expose integration slots even if unconfigured so LLMs recognize supported credentials
-                if let Some(integrations_map) =
-                    config_val.get_mut("integrations").and_then(|v| v.as_object_mut())
+                match config_val
+                    .get_mut("integrations")
+                    .and_then(|v| v.as_object_mut())
                 {
-                    if !integrations_map.contains_key("github") {
-                        integrations_map.insert(
-                            "github".to_string(),
-                            serde_json::json!({
-                                "token_configured": config.integrations.github.as_ref().and_then(|g| g.token.as_ref()).is_some(),
-                                "token_env": config.integrations.github.as_ref().and_then(|g| g.token_env.as_ref()),
-                                "token_file": config.integrations.github.as_ref().and_then(|g| g.token_file.as_ref()),
-                                "api_base": config.integrations.github.as_ref().and_then(|g| g.api_base.as_ref()),
-                            }),
+                    Some(integrations_map) => {
+                        insert_git_integration_summary(
+                            integrations_map,
+                            "github",
+                            config.integrations.github.as_ref(),
+                        );
+                        insert_git_integration_summary(
+                            integrations_map,
+                            "gitlab",
+                            config.integrations.gitlab.as_ref(),
                         );
                     }
-                    if !integrations_map.contains_key("gitlab") {
-                        integrations_map.insert(
-                            "gitlab".to_string(),
-                            serde_json::json!({
-                                "token_configured": config.integrations.gitlab.as_ref().and_then(|g| g.token.as_ref()).is_some(),
-                                "token_env": config.integrations.gitlab.as_ref().and_then(|g| g.token_env.as_ref()),
-                                "token_file": config.integrations.gitlab.as_ref().and_then(|g| g.token_file.as_ref()),
-                                "api_base": config.integrations.gitlab.as_ref().and_then(|g| g.api_base.as_ref()),
-                            }),
-                        );
-                    }
+                    None => {}
                 }
 
                 Ok(serde_json::json!({
@@ -599,12 +567,9 @@ impl Tool for ManageConfigTool {
                 }))
             }
             "update" => {
-                let updates_opt = arguments
-                    .get("updates")
-                    .or_else(|| arguments.get("config"))
-                    .or_else(|| arguments.get("settings"))
-                    .or_else(|| arguments.get("params"))
-                    .and_then(|v| v.as_object());
+                let updates_opt = ["updates", "config", "settings", "params"]
+                    .iter()
+                    .find_map(|&k| arguments.get(k).and_then(|v| v.as_object()));
                 let updates = match updates_opt {
                     Some(m) => m,
                     None => direct_updates
@@ -617,65 +582,62 @@ impl Tool for ManageConfigTool {
                     match k.as_str() {
                         "action" | "act" | "command" | "cmd" | "op" | "mode" => {}
                         "firefox_webdriver_port" | "firefox_attach_port" => {
-                            let Some(port) = parse_u64_value(v).and_then(|value| u16::try_from(value).ok())
-                            else {
-                                return Ok(
-                                    serde_json::json!({"success": false, "error": format!("{} must be an integer port", k)}),
-                                );
+                            let port = match parse_u64_value(v)
+                                .and_then(|value| u16::try_from(value).ok())
+                            {
+                                Some(p) => p,
+                                None => {
+                                    return Ok(serde_json::json!({
+                                        "success": false,
+                                        "error": format!("{} must be an integer port", k)
+                                    }));
+                                }
                             };
-                            if !(1024..=65535).contains(&port) {
-                                return Ok(
-                                    serde_json::json!({"success": false, "error": format!("{} must be between 1024 and 65535", k)}),
-                                );
-                            }
-                            if k == "firefox_webdriver_port" {
-                                config.browser.firefox_webdriver_port = port;
-                            } else {
-                                config.browser.firefox_attach_port = port;
+                            match (1024..=65535).contains(&port) {
+                                false => {
+                                    return Ok(serde_json::json!({
+                                        "success": false,
+                                        "error": format!("{} must be between 1024 and 65535", k)
+                                    }));
+                                }
+                                true => match k.as_str() {
+                                    "firefox_webdriver_port" => {
+                                        config.browser.firefox_webdriver_port = port;
+                                    }
+                                    _ => {
+                                        config.browser.firefox_attach_port = port;
+                                    }
+                                },
                             }
                         }
-                        "model" => {
-                            if let Some(s) = v.as_str().map(str::trim).filter(|s| !s.is_empty()) {
-                                config.agents.defaults.model = s.to_string();
-                            }
-                        }
+                        "model" => assign_trimmed_string(&mut config.agents.defaults.model, v),
                         "provider" => {
-                            if let Some(s) = v.as_str().map(str::trim).filter(|s| !s.is_empty()) {
-                                config.agents.defaults.provider = s.to_string();
-                            }
+                            assign_trimmed_string(&mut config.agents.defaults.provider, v)
                         }
-                        "max_tokens" => {
-                            if let Some(n) = parse_u64_value(v) {
-                                config.agents.defaults.max_tokens = n as usize;
-                            }
-                        }
-                        "temperature" => {
-                            if let Some(f) = parse_f64_value(v) {
-                                config.agents.defaults.temperature = f as f32;
-                            }
-                        }
+                        "max_tokens" => match parse_u64_value(v) {
+                            Some(n) => config.agents.defaults.max_tokens = n as usize,
+                            None => {}
+                        },
+                        "temperature" => match parse_f64_value(v) {
+                            Some(f) => config.agents.defaults.temperature = f as f32,
+                            None => {}
+                        },
                         "caveman_mode" => {
-                            if let Some(b) = parse_bool_value(v) {
-                                config.agents.defaults.caveman_mode = b;
-                            }
+                            assign_bool_field(&mut config.agents.defaults.caveman_mode, v)
                         }
-                        "tool_timeout_secs" => {
-                            if let Some(n) = parse_u64_value(v) {
-                                config.agents.defaults.tool_timeout_secs = n;
-                            }
-                        }
-                        "streaming" => {
-                            if let Some(b) = parse_bool_value(v) {
-                                config.agents.defaults.streaming = b;
-                            }
-                        }
+                        "tool_timeout_secs" => match parse_u64_value(v) {
+                            Some(n) => config.agents.defaults.tool_timeout_secs = n,
+                            None => {}
+                        },
+                        "streaming" => assign_bool_field(&mut config.agents.defaults.streaming, v),
                         "show_tool_router_status" => {
-                            if let Some(b) = parse_bool_value(v) {
-                                config.agents.defaults.show_tool_router_status = b;
-                            }
+                            assign_bool_field(
+                                &mut config.agents.defaults.show_tool_router_status,
+                                v,
+                            )
                         }
-                        "tui_thought_display" => {
-                            if let Some(s) = v.as_str() {
+                        "tui_thought_display" => match v.as_str() {
+                            Some(s) => {
                                 let mode = match s.trim().to_lowercase().as_str() {
                                     "full" | "on" | "default" => "full",
                                     "compact" | "summary" => "compact",
@@ -689,96 +651,89 @@ impl Tool for ManageConfigTool {
                                 };
                                 config.agents.defaults.tui_thought_display = mode.to_string();
                             }
-                        }
-                        "min_free_disk_gb" => {
-                            if let Some(n) = parse_f64_value(v) {
-                                config.agents.defaults.min_free_disk_gb = n;
-                            }
-                        }
+                            None => {}
+                        },
+                        "min_free_disk_gb" => match parse_f64_value(v) {
+                            Some(n) => config.agents.defaults.min_free_disk_gb = n,
+                            None => {}
+                        },
                         "allow_network_tools" => {
-                            if let Some(b) = parse_bool_value(v) {
-                                config.agents.defaults.allow_network_tools = b;
-                            }
+                            assign_bool_field(&mut config.agents.defaults.allow_network_tools, v)
                         }
-                        "max_concurrent_process_tools" => {
-                            if let Some(n) = parse_u64_value(v) {
-                                config.agents.defaults.max_concurrent_process_tools = n as usize;
+                        "max_concurrent_process_tools" => match parse_u64_value(v) {
+                            Some(n) => {
+                                config.agents.defaults.max_concurrent_process_tools = n as usize
                             }
-                        }
+                            None => {}
+                        },
                         "warn_before_expensive_tools" => {
-                            if let Some(b) = parse_bool_value(v) {
-                                config.agents.defaults.warn_before_expensive_tools = b;
-                            }
+                            assign_bool_field(
+                                &mut config.agents.defaults.warn_before_expensive_tools,
+                                v,
+                            )
                         }
-                        "max_tool_iterations" => {
-                            if let Some(n) = parse_u64_value(v) {
-                                config.agents.defaults.max_tool_iterations = n as usize;
-                            }
-                        }
+                        "max_tool_iterations" => match parse_u64_value(v) {
+                            Some(n) => config.agents.defaults.max_tool_iterations = n as usize,
+                            None => {}
+                        },
                         "skills_workspace_skills_enabled" => {
-                            if let Some(b) = parse_bool_value(v) {
-                                config.skills.workspace_skills_enabled = b;
-                            }
+                            assign_bool_field(&mut config.skills.workspace_skills_enabled, v)
                         }
-                        "skills_external_dirs" => {
-                            if let Some(values) = v.as_array() {
+                        "skills_external_dirs" => match v.as_array() {
+                            Some(values) => {
                                 config.skills.external_dirs = values
                                     .iter()
                                     .filter_map(|value| value.as_str().map(str::to_string))
                                     .collect();
                             }
-                        }
+                            None => {}
+                        },
                         "skills_write_approval" => {
-                            if let Some(b) = parse_bool_value(v) {
-                                config.skills.write_approval = b;
-                            }
+                            assign_bool_field(&mut config.skills.write_approval, v)
                         }
                         "github_token" | "github_pat" | "github_access_token" => {
-                            let mut git_config = config.integrations.github.clone().unwrap_or_default();
-                            git_config.token = v.as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+                            let mut git_config =
+                                config.integrations.github.clone().unwrap_or_default();
+                            git_config.token = to_non_empty_trimmed(v.as_str());
                             config.integrations.github = Some(git_config);
                         }
                         "gitlab_token" | "gitlab_pat" => {
-                            let mut git_config = config.integrations.gitlab.clone().unwrap_or_default();
-                            git_config.token = v.as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+                            let mut git_config =
+                                config.integrations.gitlab.clone().unwrap_or_default();
+                            git_config.token = to_non_empty_trimmed(v.as_str());
                             config.integrations.gitlab = Some(git_config);
                         }
                         "vault_path" | "vault_dir" => {
-                            if let Some(s) = v.as_str().map(str::trim).filter(|s| !s.is_empty()) {
-                                config.vault.path = s.to_string();
-                            }
+                            assign_trimmed_string(&mut config.vault.path, v)
                         }
-                        "vault_name" => {
-                            if let Some(s) = v.as_str().map(str::trim).filter(|s| !s.is_empty()) {
-                                config.vault.name = s.to_string();
-                            }
-                        }
-                        "vault_enabled" => {
-                            if let Some(b) = parse_bool_value(v) {
-                                config.vault.enabled = b;
-                            }
-                        }
-                        "vault_auto_create" => {
-                            if let Some(b) = parse_bool_value(v) {
-                                config.vault.auto_create = b;
-                            }
-                        }
-                        "vault" => {
-                            if let Some(obj) = v.as_object() {
-                                if let Some(path) = obj.get("path").and_then(|p| p.as_str()) {
-                                    config.vault.path = path.trim().to_string();
+                        "vault_name" => assign_trimmed_string(&mut config.vault.name, v),
+                        "vault_enabled" => assign_bool_field(&mut config.vault.enabled, v),
+                        "vault_auto_create" => assign_bool_field(&mut config.vault.auto_create, v),
+                        "vault" => match v.as_object() {
+                            Some(obj) => {
+                                match obj.get("path").and_then(|p| p.as_str()) {
+                                    Some(path) => config.vault.path = path.trim().to_string(),
+                                    None => {}
                                 }
-                                if let Some(name) = obj.get("name").and_then(|p| p.as_str()) {
-                                    config.vault.name = name.trim().to_string();
+                                match obj.get("name").and_then(|p| p.as_str()) {
+                                    Some(name) => config.vault.name = name.trim().to_string(),
+                                    None => {}
                                 }
-                                if let Some(enabled) = obj.get("enabled").and_then(|p| p.as_bool()) {
-                                    config.vault.enabled = enabled;
+                                match obj.get("enabled").and_then(|p| p.as_bool()) {
+                                    Some(enabled) => config.vault.enabled = enabled,
+                                    None => {}
                                 }
-                                if let Some(auto_create) = obj.get("auto_create").or_else(|| obj.get("autoCreate")).and_then(|p| p.as_bool()) {
-                                    config.vault.auto_create = auto_create;
+                                match obj
+                                    .get("auto_create")
+                                    .or_else(|| obj.get("autoCreate"))
+                                    .and_then(|p| p.as_bool())
+                                {
+                                    Some(auto_create) => config.vault.auto_create = auto_create,
+                                    None => {}
                                 }
                             }
-                        }
+                            None => {}
+                        },
                         "target" => {
                             let target_str = v.as_str().unwrap_or("").trim().to_lowercase();
                             match target_str.as_str() {
@@ -786,8 +741,11 @@ impl Tool for ManageConfigTool {
                                     merge_git_credential(&mut config, &target_str, updates)?;
                                 }
                                 "provider" => {
-                                    if let Some(pname) = updates.get("provider_name").and_then(|p| p.as_str()) {
-                                        merge_provider_credential(&mut config, pname, updates)?;
+                                    match updates.get("provider_name").and_then(|p| p.as_str()) {
+                                        Some(pname) => {
+                                            merge_provider_credential(&mut config, pname, updates)?;
+                                        }
+                                        None => {}
                                     }
                                 }
                                 "telegram" | "discord" | "whatsapp" => {
@@ -796,9 +754,7 @@ impl Tool for ManageConfigTool {
                                 _ => {}
                             }
                         }
-                        "token" | "provider_name" | "bot_token" | "credential" => {
-                            // Handled together with target or aliases
-                        }
+                        "token" | "provider_name" | "bot_token" | "credential" => {}
                         other => {
                             return Ok(serde_json::json!({
                                 "success": false,
@@ -817,11 +773,14 @@ impl Tool for ManageConfigTool {
             }
             "set_credential" => {
                 let (target, credential) = extract_credential_map(&obj_map);
-                if target.is_empty() {
-                    return Ok(serde_json::json!({
-                        "success": false,
-                        "error": "Missing credential target. Specify target ('github', 'gitlab', 'provider', 'telegram', 'discord', 'whatsapp') or use a dedicated token field (e.g. 'github_token')."
-                    }));
+                match target.is_empty() {
+                    true => {
+                        return Ok(serde_json::json!({
+                            "success": false,
+                            "error": "Missing credential target. Specify target ('github', 'gitlab', 'provider', 'telegram', 'discord', 'whatsapp') or use a dedicated token field (e.g. 'github_token')."
+                        }));
+                    }
+                    false => {}
                 }
 
                 let mut config = crate::config::loader::load_config()?;
@@ -863,4 +822,3 @@ impl Tool for ManageConfigTool {
 #[cfg(test)]
 #[path = "config_tests.rs"]
 mod tests;
-

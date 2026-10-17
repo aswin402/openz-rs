@@ -1,3 +1,4 @@
+use super::gsd::{first_non_empty_stream, gsd_browser_bin_path};
 use crate::tools::Tool;
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -57,26 +58,21 @@ impl BrowserHealth {
     }
 
     pub fn actionable_summary(&self) -> String {
-        if recommended_browser_backend(self).is_none() {
-            return "No browser backend available. Run inspect_browsers, install/start Chrome CDP, gsd-browser, or geckodriver, then retry browser fallback once.".to_string();
+        match recommended_browser_backend(self) {
+            Some(backend) => format!("Browser preflight ok: recommended backend is {:?}.", backend),
+            None => "No browser backend available. Run inspect_browsers, install/start Chrome CDP, gsd-browser, or geckodriver, then retry browser fallback once.".to_string(),
         }
-        format!(
-            "Browser preflight ok: recommended backend is {:?}.",
-            recommended_browser_backend(self).expect("checked above")
-        )
     }
 }
 
 pub fn recommended_browser_backend(health: &BrowserHealth) -> Option<BrowserBackend> {
-    if health.chrome_cdp == BrowserBackendStatus::Running {
-        Some(BrowserBackend::ChromeCdp)
-    } else if health.gsd_browser == BrowserBackendStatus::Running {
-        Some(BrowserBackend::GsdBrowser)
-    } else if health.geckodriver == BrowserBackendStatus::Running {
-        Some(BrowserBackend::GeckoDriver)
-    } else {
-        None
-    }
+    [
+        (health.chrome_cdp, BrowserBackend::ChromeCdp),
+        (health.gsd_browser, BrowserBackend::GsdBrowser),
+        (health.geckodriver, BrowserBackend::GeckoDriver),
+    ]
+    .into_iter()
+    .find_map(|(status, backend)| (status == BrowserBackendStatus::Running).then_some(backend))
 }
 
 pub fn browser_preflight_value(health: &BrowserHealth) -> Value {
@@ -107,16 +103,16 @@ fn status_value_to_backend_status(value: &Value, missing_text: &[&str]) -> Brows
         .unwrap_or("")
         .to_lowercase();
 
-    match status {
-        "running" if !error_or_message.contains("unhealthy") => BrowserBackendStatus::Running,
-        "unhealthy" => BrowserBackendStatus::Broken,
-        _ if missing_text
-            .iter()
-            .any(|needle| error_or_message.contains(needle)) =>
-        {
-            BrowserBackendStatus::Missing
-        }
-        _ if !error_or_message.is_empty() => BrowserBackendStatus::Broken,
+    let is_unhealthy = error_or_message.contains("unhealthy");
+    let is_missing = missing_text
+        .iter()
+        .any(|needle| error_or_message.contains(needle));
+
+    match (status, is_unhealthy, is_missing, !error_or_message.is_empty()) {
+        ("running", false, _, _) => BrowserBackendStatus::Running,
+        ("unhealthy", _, _, _) | ("running", true, _, _) => BrowserBackendStatus::Broken,
+        (_, _, true, _) => BrowserBackendStatus::Missing,
+        (_, _, false, true) => BrowserBackendStatus::Broken,
         _ => BrowserBackendStatus::Stopped,
     }
 }
@@ -125,33 +121,57 @@ pub struct InspectBrowsersTool;
 
 fn get_recent_browser_errors() -> Result<Vec<Value>> {
     let db_path = crate::config::config_dir().join("logs.db");
-    if !db_path.exists() {
-        return Ok(vec![]);
-    }
-    let conn = rusqlite::Connection::open(&db_path)?;
-    let mut stmt = conn.prepare(
-        "SELECT timestamp, level, target, message 
-         FROM logs 
-         WHERE (message LIKE '%firefox%' OR message LIKE '%gsd-browser%' OR message LIKE '%obscura%' OR message LIKE '%browser%') 
-           AND (level = 'ERROR' OR level = 'WARN') 
-         ORDER BY timestamp DESC 
-         LIMIT 10"
-    )?;
+    match db_path.exists() {
+        false => Ok(vec![]),
+        true => {
+            let conn = rusqlite::Connection::open(&db_path)?;
+            let mut stmt = conn.prepare(
+                "SELECT timestamp, level, target, message 
+                 FROM logs 
+                 WHERE (message LIKE '%firefox%' OR message LIKE '%gsd-browser%' OR message LIKE '%obscura%' OR message LIKE '%browser%') 
+                   AND (level = 'ERROR' OR level = 'WARN') 
+                 ORDER BY timestamp DESC 
+                 LIMIT 10",
+            )?;
 
-    let rows = stmt.query_map([], |row| {
-        Ok(json!({
-            "timestamp": row.get::<_, String>(0)?,
-            "level": row.get::<_, String>(1)?,
-            "target": row.get::<_, String>(2)?,
-            "message": row.get::<_, String>(3)?,
-        }))
-    })?;
+            let rows = stmt.query_map([], |row| {
+                Ok(json!({
+                    "timestamp": row.get::<_, String>(0)?,
+                    "level": row.get::<_, String>(1)?,
+                    "target": row.get::<_, String>(2)?,
+                    "message": row.get::<_, String>(3)?,
+                }))
+            })?;
 
-    let mut errors = Vec::new();
-    for entry in rows.flatten() {
-        errors.push(entry);
+            Ok(rows.flatten().collect())
+        }
     }
-    Ok(errors)
+}
+
+async fn probe_json_endpoint(
+    client: &reqwest::Client,
+    url: &str,
+    port: u16,
+    ok_key: &str,
+    parse_err_msg: &str,
+    unresponsive_msg: &str,
+) -> Value {
+    match client.get(url).send().await {
+        Ok(res) => match res.json::<Value>().await {
+            Ok(val) => json!({
+                "status": "running",
+                ok_key: val
+            }),
+            Err(_) => json!({ "status": "running", "message": parse_err_msg }),
+        },
+        Err(_) => match tokio::net::TcpStream::connect(format!("127.0.0.1:{port}"))
+            .await
+            .is_ok()
+        {
+            true => json!({ "status": "running", "message": unresponsive_msg }),
+            false => json!({ "status": "stopped" }),
+        },
+    }
 }
 
 #[async_trait::async_trait]
@@ -185,108 +205,72 @@ impl Tool for InspectBrowsersTool {
             Duration::from_secs(2),
         );
 
-        // 1. Check Firefox (GeckoDriver)
-        let firefox_status = match client.get("http://127.0.0.1:4444/status").send().await {
-            Ok(res) => {
-                if let Ok(val) = res.json::<Value>().await {
-                    json!({
-                        "status": "running",
-                        "details": val
-                    })
-                } else {
-                    json!({ "status": "running", "message": "Failed to parse geckodriver status JSON" })
-                }
-            }
-            Err(_) => {
-                if tokio::net::TcpStream::connect("127.0.0.1:4444")
-                    .await
-                    .is_ok()
-                {
-                    json!({ "status": "running", "message": "Port 4444 open, geckodriver status endpoint unresponsive" })
-                } else {
-                    json!({ "status": "stopped" })
-                }
-            }
-        };
+        let firefox_status = probe_json_endpoint(
+            &client,
+            "http://127.0.0.1:4444/status",
+            4444,
+            "details",
+            "Failed to parse geckodriver status JSON",
+            "Port 4444 open, geckodriver status endpoint unresponsive",
+        )
+        .await;
 
-        // 2. Check Chrome (Obscura CDP)
         let cdp_port = super::common::browser_cdp_port();
-        let obscura_status = match client
-            .get(format!("http://127.0.0.1:{cdp_port}/json/list"))
-            .send()
-            .await
-        {
-            Ok(res) => {
-                if let Ok(val) = res.json::<Value>().await {
-                    json!({
-                        "status": "running",
-                        "pages": val
-                    })
-                } else {
-                    json!({ "status": "running", "message": "Failed to parse Chrome JSON target list" })
-                }
-            }
-            Err(_) => {
-                if tokio::net::TcpStream::connect(format!("127.0.0.1:{cdp_port}"))
-                    .await
-                    .is_ok()
-                {
-                    json!({ "status": "running", "message": format!("Port {cdp_port} open, Chrome list endpoint unresponsive") })
-                } else {
-                    json!({ "status": "stopped" })
-                }
-            }
-        };
+        let obscura_status = probe_json_endpoint(
+            &client,
+            &format!("http://127.0.0.1:{cdp_port}/json/list"),
+            cdp_port,
+            "pages",
+            "Failed to parse Chrome JSON target list",
+            &format!("Port {cdp_port} open, Chrome list endpoint unresponsive"),
+        )
+        .await;
 
-        // 3. Check gsd_browser
-        let bin_path = if let Some(home) = dirs::home_dir() {
-            let p = home.join(".cargo").join("bin").join("gsd-browser");
-            if p.exists() {
-                p
-            } else {
-                std::path::PathBuf::from("gsd-browser")
-            }
-        } else {
-            std::path::PathBuf::from("gsd-browser")
-        };
-
+        let bin_path = gsd_browser_bin_path();
         let mut gsd_health_cmd = Command::new(&bin_path);
         gsd_health_cmd.arg("daemon").arg("health");
         let gsd_status = match gsd_health_cmd.output().await {
             Ok(out) => {
                 let stdout = String::from_utf8_lossy(&out.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-                if out.status.success() {
-                    let is_unhealthy = stdout.to_lowercase().contains("unhealthy");
-                    let mut gsd_pages_cmd = Command::new(&bin_path);
-                    gsd_pages_cmd.arg("list-pages").arg("--json");
-                    let pages_val = match gsd_pages_cmd.output().await {
-                        Ok(p_out) if p_out.status.success() => {
-                            let p_stdout = String::from_utf8_lossy(&p_out.stdout).to_string();
-                            serde_json::from_str::<Value>(&p_stdout)
-                                .unwrap_or_else(|_| json!(p_stdout.trim()))
-                        }
-                        _ => json!([]),
-                    };
+                match out.status.success() {
+                    true => {
+                        let is_unhealthy = stdout.to_lowercase().contains("unhealthy");
+                        let mut gsd_pages_cmd = Command::new(&bin_path);
+                        gsd_pages_cmd.arg("list-pages").arg("--json");
+                        let pages_val = gsd_pages_cmd
+                            .output()
+                            .await
+                            .ok()
+                            .filter(|p_out| p_out.status.success())
+                            .map(|p_out| {
+                                let p_stdout =
+                                    String::from_utf8_lossy(&p_out.stdout).to_string();
+                                serde_json::from_str::<Value>(&p_stdout)
+                                    .unwrap_or_else(|_| json!(p_stdout.trim()))
+                            })
+                            .unwrap_or_else(|| json!([]));
 
-                    json!({
-                        "status": if is_unhealthy { "unhealthy" } else { "running" },
-                        "health": stdout.trim(),
-                        "pages": pages_val
-                    })
-                } else {
-                    json!({
+                        let status_str = match is_unhealthy {
+                            true => "unhealthy",
+                            false => "running",
+                        };
+                        json!({
+                            "status": status_str,
+                            "health": stdout.trim(),
+                            "pages": pages_val
+                        })
+                    }
+                    false => json!({
                         "status": "stopped",
-                        "error": if stderr.trim().is_empty() { stdout.trim().to_string() } else { stderr.trim().to_string() }
-                    })
+                        "error": first_non_empty_stream(&stderr, &stdout)
+                    }),
                 }
             }
-            Err(e) => {
-                json!({
-                    "status": "stopped",
-                    "error": format!("Failed to run gsd-browser binary: {:?}", e)
-                })
-            }
+            Err(e) => json!({
+                "status": "stopped",
+                "error": format!("Failed to run gsd-browser binary: {:?}", e)
+            }),
         };
 
         let recent_errors = get_recent_browser_errors().unwrap_or_else(|_| vec![]);
@@ -320,4 +304,3 @@ impl Tool for InspectBrowsersTool {
 #[cfg(test)]
 #[path = "status_tests.rs"]
 mod tests;
-

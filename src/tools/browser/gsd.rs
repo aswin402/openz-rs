@@ -1,3 +1,7 @@
+use super::common::{
+    extract_first_str, extract_trimmed_non_empty_str, ACTION_ALIASES, PATH_ALIASES,
+    REF_ID_ALIASES, SCRIPT_ALIASES, TEXT_ALIASES, URL_ALIASES,
+};
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -6,14 +10,11 @@ use tokio::process::Command;
 
 pub struct GsdBrowserTool;
 
-fn gsd_browser_bin_path() -> PathBuf {
-    if let Some(home) = dirs::home_dir() {
-        let p = home.join(".cargo").join("bin").join("gsd-browser");
-        if p.exists() {
-            return p;
-        }
-    }
-    PathBuf::from("gsd-browser")
+pub(crate) fn gsd_browser_bin_path() -> PathBuf {
+    dirs::home_dir()
+        .map(|home| home.join(".cargo").join("bin").join("gsd-browser"))
+        .filter(|p| p.exists())
+        .unwrap_or_else(|| PathBuf::from("gsd-browser"))
 }
 
 fn is_gsd_browser_disconnected_error(text: &str) -> bool {
@@ -31,17 +32,25 @@ fn is_gsd_browser_disconnected_error(text: &str) -> bool {
 }
 
 fn gsd_browser_disconnected_error_value(error: &str, recovered: bool) -> Value {
+    let next_step = match recovered {
+        true => "The gsd-browser daemon was restarted and the action was retried once, but the retry still failed. Use inspect_browsers, or switch to firefox_browser/obscura_browser for this task.",
+        false => "The gsd-browser daemon connection is stale. Restart it with `gsd-browser daemon stop` then `gsd-browser daemon start`, or use inspect_browsers.",
+    };
     json!({
         "error": error.trim(),
         "error_kind": "browser_disconnected",
         "retryable": !recovered,
         "recovered": recovered,
-        "next_step": if recovered {
-            "The gsd-browser daemon was restarted and the action was retried once, but the retry still failed. Use inspect_browsers, or switch to firefox_browser/obscura_browser for this task."
-        } else {
-            "The gsd-browser daemon connection is stale. Restart it with `gsd-browser daemon stop` then `gsd-browser daemon start`, or use inspect_browsers."
-        }
+        "next_step": next_step,
     })
+}
+
+pub(crate) fn first_non_empty_stream(stderr: &str, stdout: &str) -> String {
+    let err_trimmed = stderr.trim();
+    match err_trimmed.is_empty() {
+        true => stdout.trim().to_string(),
+        false => err_trimmed.to_string(),
+    }
 }
 
 pub async fn stop_gsd_browser_daemon() {
@@ -67,49 +76,18 @@ async fn restart_gsd_browser_daemon(bin_path: &PathBuf) {
 }
 
 fn resolve_gsd_browser_action_and_url(arguments: &Value) -> (String, Option<String>) {
-    if let Some(s) = arguments.as_str() {
-        return ("navigate".to_string(), Some(s.trim().to_string()));
+    match arguments.as_str() {
+        Some(s) => return ("navigate".to_string(), Some(s.trim().to_string())),
+        None => {}
     }
 
-    let url_opt = arguments
-        .get("url")
-        .or_else(|| arguments.get("target_url"))
-        .or_else(|| arguments.get("targetUrl"))
-        .or_else(|| arguments.get("uri"))
-        .or_else(|| arguments.get("link"))
-        .or_else(|| arguments.get("target"))
-        .or_else(|| arguments.get("site"))
-        .or_else(|| arguments.get("website"))
-        .or_else(|| arguments.get("domain"))
-        .or_else(|| arguments.get("host"))
-        .or_else(|| arguments.get("page"))
-        .or_else(|| arguments.get("endpoint"))
-        .or_else(|| arguments.get("href"))
-        .or_else(|| arguments.get("address"))
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(|s| s.to_string());
-
-    let explicit_action = arguments
-        .get("action")
-        .or_else(|| arguments.get("act"))
-        .or_else(|| arguments.get("command"))
-        .or_else(|| arguments.get("cmd"))
-        .or_else(|| arguments.get("method"))
-        .and_then(|v| v.as_str())
-        .map(str::trim);
-
-    let action = match explicit_action {
-        Some(a) if !a.is_empty() => a.to_string(),
-        _ => {
-            if url_opt.is_some() {
-                "navigate".to_string()
-            } else {
-                "snapshot".to_string()
-            }
-        }
-    };
+    let url_opt = extract_trimmed_non_empty_str(arguments, URL_ALIASES).map(ToString::to_string);
+    let action = extract_trimmed_non_empty_str(arguments, ACTION_ALIASES)
+        .map(ToString::to_string)
+        .unwrap_or_else(|| match url_opt.is_some() {
+            true => "navigate".to_string(),
+            false => "snapshot".to_string(),
+        });
 
     (action, url_opt)
 }
@@ -131,83 +109,37 @@ fn build_gsd_browser_command(bin_path: &PathBuf, arguments: &Value) -> Result<Co
             cmd.arg("snapshot");
         }
         "click" | "click_ref" | "press" => {
-            let ref_id = arguments
-                .get("ref_id")
-                .or_else(|| arguments.get("refId"))
-                .or_else(|| arguments.get("ref"))
-                .or_else(|| arguments.get("element"))
-                .or_else(|| arguments.get("id"))
-                .or_else(|| arguments.get("target_ref"))
-                .or_else(|| arguments.get("targetRef"))
-                .and_then(|v| v.as_str())
+            let ref_id = extract_first_str(arguments, REF_ID_ALIASES)
                 .ok_or_else(|| anyhow!("Missing 'ref_id' parameter for click action"))?
                 .trim();
             cmd.arg("click-ref").arg(ref_id);
         }
         "hover" | "hover_ref" => {
-            let ref_id = arguments
-                .get("ref_id")
-                .or_else(|| arguments.get("refId"))
-                .or_else(|| arguments.get("ref"))
-                .or_else(|| arguments.get("element"))
-                .or_else(|| arguments.get("id"))
-                .or_else(|| arguments.get("target_ref"))
-                .or_else(|| arguments.get("targetRef"))
-                .and_then(|v| v.as_str())
+            let ref_id = extract_first_str(arguments, REF_ID_ALIASES)
                 .ok_or_else(|| anyhow!("Missing 'ref_id' parameter for hover action"))?
                 .trim();
             cmd.arg("hover-ref").arg(ref_id);
         }
         "fill" | "fill_ref" | "type" | "input" => {
-            let ref_id = arguments
-                .get("ref_id")
-                .or_else(|| arguments.get("refId"))
-                .or_else(|| arguments.get("ref"))
-                .or_else(|| arguments.get("element"))
-                .or_else(|| arguments.get("id"))
-                .or_else(|| arguments.get("target_ref"))
-                .or_else(|| arguments.get("targetRef"))
-                .and_then(|v| v.as_str())
+            let ref_id = extract_first_str(arguments, REF_ID_ALIASES)
                 .ok_or_else(|| anyhow!("Missing 'ref_id' parameter for fill action"))?
                 .trim();
-            let text = arguments
-                .get("text")
-                .or_else(|| arguments.get("value"))
-                .or_else(|| arguments.get("query"))
-                .or_else(|| arguments.get("content"))
-                .or_else(|| arguments.get("input"))
-                .or_else(|| arguments.get("string"))
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    anyhow!(
-                        "Missing fill text. Pass 'text' (preferred), or alias 'value', 'query', or 'content' for fill action"
-                    )
-                })?;
+            let text = extract_first_str(arguments, TEXT_ALIASES).ok_or_else(|| {
+                anyhow!(
+                    "Missing fill text. Pass 'text' (preferred), or alias 'value', 'query', or 'content' for fill action"
+                )
+            })?;
             cmd.arg("fill-ref").arg(ref_id).arg(text);
         }
         "screenshot" | "capture" => {
-            let path = arguments
-                .get("path")
-                .or_else(|| arguments.get("output"))
-                .or_else(|| arguments.get("output_path"))
-                .or_else(|| arguments.get("outputPath"))
-                .or_else(|| arguments.get("file_path"))
-                .or_else(|| arguments.get("file"))
-                .or_else(|| arguments.get("dest"))
-                .and_then(|v| v.as_str())
+            let path = extract_first_str(arguments, PATH_ALIASES)
                 .ok_or_else(|| anyhow!("Missing 'path' parameter for screenshot action"))?
                 .trim();
             let resolved = crate::config::resolve_path(path);
             cmd.arg("screenshot").arg("--output").arg(resolved);
         }
         "eval" | "eval_js" | "evaluate" | "js" => {
-            let script = arguments
-                .get("script")
-                .or_else(|| arguments.get("expression"))
-                .or_else(|| arguments.get("code"))
-                .or_else(|| arguments.get("js"))
-                .or_else(|| arguments.get("expr"))
-                .and_then(|v| v.as_str())
+            let script = extract_first_str(arguments, SCRIPT_ALIASES)
                 .ok_or_else(|| anyhow!("Missing 'script' parameter for eval action"))?;
             cmd.arg("eval").arg(script);
         }
@@ -218,15 +150,7 @@ fn build_gsd_browser_command(bin_path: &PathBuf, arguments: &Value) -> Result<Co
             cmd.arg("page-source");
         }
         "save_pdf" | "pdf" => {
-            let path = arguments
-                .get("path")
-                .or_else(|| arguments.get("output"))
-                .or_else(|| arguments.get("output_path"))
-                .or_else(|| arguments.get("outputPath"))
-                .or_else(|| arguments.get("file_path"))
-                .or_else(|| arguments.get("file"))
-                .or_else(|| arguments.get("dest"))
-                .and_then(|v| v.as_str())
+            let path = extract_first_str(arguments, PATH_ALIASES)
                 .ok_or_else(|| anyhow!("Missing 'path' parameter for save_pdf action"))?
                 .trim();
             let resolved = crate::config::resolve_path(path);
@@ -307,10 +231,11 @@ impl Tool for GsdBrowserTool {
         let output = match cmd.output().await {
             Ok(output) => output,
             Err(e) => {
-                let status = if e.kind() == std::io::ErrorKind::NotFound {
-                    crate::tools::browser_status::BrowserBackendStatus::Missing
-                } else {
-                    crate::tools::browser_status::BrowserBackendStatus::Broken
+                let status = match e.kind() {
+                    std::io::ErrorKind::NotFound => {
+                        crate::tools::browser_status::BrowserBackendStatus::Missing
+                    }
+                    _ => crate::tools::browser_status::BrowserBackendStatus::Broken,
                 };
                 let payload = crate::tools::browser_status::browser_preflight_error_value(
                     &format!("gsd-browser startup failed: {}", e),
@@ -326,54 +251,58 @@ impl Tool for GsdBrowserTool {
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-        if !output.status.success() {
-            let error_text = if stderr.trim().is_empty() {
-                stdout.trim().to_string()
-            } else {
-                stderr.trim().to_string()
-            };
-            if is_gsd_browser_disconnected_error(&error_text) {
-                restart_gsd_browser_daemon(&bin_path).await;
-                let retry_output = build_gsd_browser_command(&bin_path, arguments)?
-                    .output()
-                    .await;
-                if let Ok(retry_output) = retry_output {
-                    let retry_stdout = String::from_utf8_lossy(&retry_output.stdout).to_string();
-                    let retry_stderr = String::from_utf8_lossy(&retry_output.stderr).to_string();
-                    if retry_output.status.success() {
-                        return Ok(json!({
-                            "status": "success",
-                            "recovered": true,
-                            "recovery_action": "restarted_gsd_browser_daemon",
-                            "output": retry_stdout.trim()
-                        }));
+        match output.status.success() {
+            true => Ok(json!({
+                "status": "success",
+                "output": stdout.trim()
+            })),
+            false => {
+                let error_text = first_non_empty_stream(&stderr, &stdout);
+                match is_gsd_browser_disconnected_error(&error_text) {
+                    false => Err(anyhow!("gsd-browser error: {}", error_text)),
+                    true => {
+                        restart_gsd_browser_daemon(&bin_path).await;
+                        let retry_output = build_gsd_browser_command(&bin_path, arguments)?
+                            .output()
+                            .await;
+                        match retry_output {
+                            Ok(retry_output) => {
+                                let retry_stdout =
+                                    String::from_utf8_lossy(&retry_output.stdout).to_string();
+                                let retry_stderr =
+                                    String::from_utf8_lossy(&retry_output.stderr).to_string();
+                                match retry_output.status.success() {
+                                    true => Ok(json!({
+                                        "status": "success",
+                                        "recovered": true,
+                                        "recovery_action": "restarted_gsd_browser_daemon",
+                                        "output": retry_stdout.trim()
+                                    })),
+                                    false => {
+                                        let retry_error_text =
+                                            first_non_empty_stream(&retry_stderr, &retry_stdout);
+                                        Err(anyhow!(
+                                            "{}",
+                                            gsd_browser_disconnected_error_value(
+                                                &retry_error_text,
+                                                true
+                                            )
+                                        ))
+                                    }
+                                }
+                            }
+                            Err(_) => Err(anyhow!(
+                                "{}",
+                                gsd_browser_disconnected_error_value(&error_text, false)
+                            )),
+                        }
                     }
-                    let retry_error_text = if retry_stderr.trim().is_empty() {
-                        retry_stdout.trim().to_string()
-                    } else {
-                        retry_stderr.trim().to_string()
-                    };
-                    return Err(anyhow!(
-                        "{}",
-                        gsd_browser_disconnected_error_value(&retry_error_text, true)
-                    ));
                 }
-                return Err(anyhow!(
-                    "{}",
-                    gsd_browser_disconnected_error_value(&error_text, false)
-                ));
             }
-            return Err(anyhow!("gsd-browser error: {}", error_text));
         }
-
-        Ok(json!({
-            "status": "success",
-            "output": stdout.trim()
-        }))
     }
 }
 
 #[cfg(test)]
 #[path = "gsd_tests.rs"]
 mod tests;
-

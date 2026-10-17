@@ -1,5 +1,5 @@
 use super::policy::{resolve_output_path, resolve_user_path, MAX_CACHE_ALIGN_PADDING};
-use super::CACHE_CAPACITY;
+use super::{ceil_char_boundary, floor_char_boundary, CACHE_CAPACITY};
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -24,12 +24,16 @@ fn get_db_path() -> PathBuf {
 
 pub fn get_cache_connection() -> Result<std::sync::MutexGuard<'static, Connection>> {
     static DB: OnceLock<std::sync::Mutex<Connection>> = OnceLock::new();
-    if let Some(mtx) = DB.get() {
-        return mtx.lock().map_err(|e| anyhow!("Cache lock error: {}", e));
+    match DB.get() {
+        Some(mtx) => return mtx.lock().map_err(|e| anyhow!("Cache lock error: {}", e)),
+        None => {}
     }
     let path = get_db_path();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    match path.parent() {
+        Some(parent) => {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        None => {}
     }
     let conn = Connection::open(&path).map_err(|e| {
         anyhow!(
@@ -89,23 +93,29 @@ pub fn generate_ccr_id() -> String {
 }
 
 pub fn evict_lru_if_needed() {
-    if let Ok(conn) = get_cache_connection() {
-        let count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM cache_entries", [], |r| r.get(0))
-            .unwrap_or(0);
-        if count > CACHE_CAPACITY as i64 {
+    let conn = match get_cache_connection() {
+        Ok(conn) => conn,
+        Err(_) => return,
+    };
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM cache_entries", [], |r| r.get(0))
+        .unwrap_or(0);
+    match count > CACHE_CAPACITY as i64 {
+        true => {
             let ids =
                 oldest_ids(&conn, (count - CACHE_CAPACITY as i64) as usize).unwrap_or_default();
             for id in ids {
                 let _ = delete_cache_id(&conn, &id);
             }
         }
+        false => {}
     }
 }
 
 pub fn evict_expired_entries(max_age_hours: u64) -> Result<usize> {
-    if max_age_hours == 0 {
-        return Ok(0);
+    match max_age_hours == 0 {
+        true => return Ok(0),
+        false => {}
     }
     let threshold = Utc::now() - ChronoDuration::hours(max_age_hours as i64);
     let conn = get_cache_connection()?;
@@ -119,9 +129,12 @@ pub fn evict_expired_entries(max_age_hours: u64) -> Result<usize> {
         let is_old = DateTime::parse_from_rfc3339(&accessed_at)
             .map(|dt| dt.with_timezone(&Utc) < threshold)
             .unwrap_or(false);
-        if is_old {
-            delete_cache_id(&conn, &id)?;
-            removed += 1;
+        match is_old {
+            true => {
+                delete_cache_id(&conn, &id)?;
+                removed += 1;
+            }
+            false => {}
         }
     }
     Ok(removed)
@@ -136,14 +149,16 @@ pub fn evict_by_max_bytes(max_bytes: usize) -> Result<usize> {
             [],
             |r| r.get(0),
         )?;
-        if total <= max_bytes as i64 {
-            break;
+        match total <= max_bytes as i64 {
+            true => break,
+            false => {}
         }
         let ids = oldest_ids(&conn, 1)?;
-        if ids.is_empty() {
-            break;
-        }
-        delete_cache_id(&conn, &ids[0])?;
+        let first_id = match ids.first() {
+            Some(first_id) => first_id,
+            None => break,
+        };
+        delete_cache_id(&conn, first_id)?;
         removed += 1;
     }
     Ok(removed)
@@ -183,19 +198,23 @@ pub fn cache_content_with_session(content: &str, session: Option<&str>) -> Resul
         );
     }
     evict_lru_if_needed();
-    if let Ok(max_bytes) = std::env::var("HEADROOM_MAX_CACHE_BYTES")
+    match std::env::var("HEADROOM_MAX_CACHE_BYTES")
         .or_else(|_| {
             std::env::var("HEADROOM_MAX_CACHE_MB")
                 .map(|mb| format!("{}", mb.parse::<usize>().unwrap_or(100) * 1024 * 1024))
         })
         .map(|s| s.parse::<usize>().unwrap_or(100 * 1024 * 1024))
     {
-        let _ = evict_by_max_bytes(max_bytes);
+        Ok(max_bytes) => {
+            let _ = evict_by_max_bytes(max_bytes);
+        }
+        Err(_) => {}
     }
-    if let Ok(ttl) =
-        std::env::var("HEADROOM_CACHE_TTL_HOURS").map(|s| s.parse::<u64>().unwrap_or(0))
-    {
-        let _ = evict_expired_entries(ttl);
+    match std::env::var("HEADROOM_CACHE_TTL_HOURS").map(|s| s.parse::<u64>().unwrap_or(0)) {
+        Ok(ttl) => {
+            let _ = evict_expired_entries(ttl);
+        }
+        Err(_) => {}
     }
     Ok(id)
 }
@@ -275,35 +294,35 @@ impl Tool for CacheStatsTool {
             .unwrap_or("")
             .trim();
 
-        let items: Vec<Value> = if query.is_empty() {
-            let mut stmt = conn.prepare(
-                "SELECT ccr_id, size_bytes FROM cache_entries ORDER BY accessed_at DESC LIMIT ?1",
-            )?;
-            let rows: Vec<Value> = stmt
-                .query_map([limit], |row| {
-                    Ok(json!({
-                        "ccr_id": row.get::<_, String>(0)?,
-                        "size_bytes": row.get::<_, i64>(1)?,
-                    }))
-                })?
-                .filter_map(|r| r.ok())
-                .collect();
-            rows
-        } else {
-            let pattern = format!("%{}%", query);
-            let mut stmt = conn.prepare(
-                "SELECT ccr_id, size_bytes FROM cache_entries WHERE ccr_id LIKE ?1 OR content LIKE ?1 ORDER BY accessed_at DESC LIMIT ?2",
-            )?;
-            let rows: Vec<Value> = stmt
-                .query_map(rusqlite::params![pattern, limit], |row| {
-                    Ok(json!({
-                        "ccr_id": row.get::<_, String>(0)?,
-                        "size_bytes": row.get::<_, i64>(1)?,
-                    }))
-                })?
-                .filter_map(|r| r.ok())
-                .collect();
-            rows
+        let map_item_row = |row: &rusqlite::Row<'_>| -> rusqlite::Result<Value> {
+            Ok(json!({
+                "ccr_id": row.get::<_, String>(0)?,
+                "size_bytes": row.get::<_, i64>(1)?,
+            }))
+        };
+
+        let items: Vec<Value> = match query.is_empty() {
+            true => {
+                let mut stmt = conn.prepare(
+                    "SELECT ccr_id, size_bytes FROM cache_entries ORDER BY accessed_at DESC LIMIT ?1",
+                )?;
+                let rows: Vec<Value> = stmt
+                    .query_map([limit], map_item_row)?
+                    .filter_map(|r| r.ok())
+                    .collect();
+                rows
+            }
+            false => {
+                let pattern = format!("%{}%", query);
+                let mut stmt = conn.prepare(
+                    "SELECT ccr_id, size_bytes FROM cache_entries WHERE ccr_id LIKE ?1 OR content LIKE ?1 ORDER BY accessed_at DESC LIMIT ?2",
+                )?;
+                let rows: Vec<Value> = stmt
+                    .query_map(rusqlite::params![pattern, limit], map_item_row)?
+                    .filter_map(|r| r.ok())
+                    .collect();
+                rows
+            }
         };
 
         Ok(json!({
@@ -338,10 +357,13 @@ impl Tool for ClearCacheTool {
         })
     }
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        if !arguments["confirm"].as_bool().unwrap_or(false) {
-            return Err(anyhow!(
-                "clear_cache requires confirm=true because it deletes all CCR cache entries"
-            ));
+        match arguments["confirm"].as_bool().unwrap_or(false) {
+            true => {}
+            false => {
+                return Err(anyhow!(
+                    "clear_cache requires confirm=true because it deletes all CCR cache entries"
+                ))
+            }
         }
         let conn = get_cache_connection()?;
         let count: i64 = conn
@@ -400,19 +422,22 @@ impl Tool for SearchCacheTool {
             "SELECT ccr_id, content FROM cache_entries WHERE content LIKE ?1 ESCAPE '\\' ORDER BY accessed_at DESC LIMIT ?2"
         )?;
 
+        let query_lower = query.to_lowercase();
         let results: Vec<Value> = stmt
             .query_map(params![search_pattern, max_results as i64], |row| {
                 let id: String = row.get(0)?;
                 let content: String = row.get(1)?;
-                let snippet = if let Some(idx) = content.to_lowercase().find(&query.to_lowercase())
-                {
-                    let start = floor_char_boundary(&content, idx.saturating_sub(30));
-                    let end =
-                        ceil_char_boundary(&content, (idx + query.len() + 50).min(content.len()));
-                    let sub = &content[start..end];
-                    format!("...{}...", sub.replace('\n', " "))
-                } else {
-                    content.chars().take(80).collect::<String>()
+                let snippet = match content.to_lowercase().find(&query_lower) {
+                    Some(idx) => {
+                        let start = floor_char_boundary(&content, idx.saturating_sub(30));
+                        let end = ceil_char_boundary(
+                            &content,
+                            (idx + query.len() + 50).min(content.len()),
+                        );
+                        let sub = &content[start..end];
+                        format!("...{}...", sub.replace('\n', " "))
+                    }
+                    None => content.chars().take(80).collect::<String>(),
                 };
                 Ok(json!({ "ccr_id": id, "snippet": snippet }))
             })?
@@ -425,22 +450,6 @@ impl Tool for SearchCacheTool {
             "results": results,
         }))
     }
-}
-
-fn floor_char_boundary(s: &str, mut idx: usize) -> usize {
-    idx = idx.min(s.len());
-    while idx > 0 && !s.is_char_boundary(idx) {
-        idx -= 1;
-    }
-    idx
-}
-
-fn ceil_char_boundary(s: &str, mut idx: usize) -> usize {
-    idx = idx.min(s.len());
-    while idx < s.len() && !s.is_char_boundary(idx) {
-        idx += 1;
-    }
-    idx
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -478,15 +487,19 @@ impl Tool for CacheAlignTool {
         let chunks: Vec<String> = serde_json::from_value(arguments["chunks"].clone())
             .map_err(|_| anyhow!("Invalid chunks: expected array of strings"))?;
         let size = arguments["padding_size"].as_u64().unwrap_or(1024) as usize;
-        if size == 0 {
-            return Err(anyhow!("Padding size must be greater than 0"));
+        match size == 0 {
+            true => return Err(anyhow!("Padding size must be greater than 0")),
+            false => {}
         }
-        if size > MAX_CACHE_ALIGN_PADDING {
-            return Err(anyhow!(
-                "Padding size {} exceeds maximum allowed size of {} bytes",
-                size,
-                MAX_CACHE_ALIGN_PADDING
-            ));
+        match size > MAX_CACHE_ALIGN_PADDING {
+            true => {
+                return Err(anyhow!(
+                    "Padding size {} exceeds maximum allowed size of {} bytes",
+                    size,
+                    MAX_CACHE_ALIGN_PADDING
+                ))
+            }
+            false => {}
         }
 
         let mut sorted_chunks = chunks;
@@ -502,7 +515,10 @@ impl Tool for CacheAlignTool {
 
             let len = trimmed.len();
             let rem = len % size;
-            let pad = if rem == 0 { 0 } else { size - rem };
+            let pad = match rem == 0 {
+                true => 0,
+                false => size - rem,
+            };
             let padded = format!("{}{}", trimmed, " ".repeat(pad));
 
             aligned_output.push_str(&format!(
@@ -609,18 +625,21 @@ impl Tool for ImportCacheTool {
             let content = entry["content"].as_str().unwrap_or("");
             let created_at = entry["created_at"].as_str().unwrap_or("");
             let session = entry["session"].as_str();
-            if !id.is_empty() && !content.is_empty() {
-                let now = Utc::now().to_rfc3339();
-                let _ = conn.execute(
-                    "INSERT OR REPLACE INTO cache_entries (ccr_id, content, session, created_at, accessed_at, size_bytes) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![id, content, session, created_at, now, content.len() as i64],
-                );
-                let _ = conn.execute("DELETE FROM cache_fts WHERE ccr_id = ?1", params![id]);
-                let _ = conn.execute(
-                    "INSERT INTO cache_fts (ccr_id, content) VALUES (?1, ?2)",
-                    params![id, content],
-                );
-                count += 1;
+            match !id.is_empty() && !content.is_empty() {
+                true => {
+                    let now = Utc::now().to_rfc3339();
+                    let _ = conn.execute(
+                        "INSERT OR REPLACE INTO cache_entries (ccr_id, content, session, created_at, accessed_at, size_bytes) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                        params![id, content, session, created_at, now, content.len() as i64],
+                    );
+                    let _ = conn.execute("DELETE FROM cache_fts WHERE ccr_id = ?1", params![id]);
+                    let _ = conn.execute(
+                        "INSERT INTO cache_fts (ccr_id, content) VALUES (?1, ?2)",
+                        params![id, content],
+                    );
+                    count += 1;
+                }
+                false => {}
             }
         }
 

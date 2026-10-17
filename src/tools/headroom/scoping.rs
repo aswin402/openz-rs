@@ -1,3 +1,5 @@
+use super::is_binary_file;
+use super::policy::{resolve_user_path, to_absolute_path};
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -12,6 +14,27 @@ const SCOPE_FILES: &[&str] = &[
     "GEMINI.md",
     "CURSOR.md",
     ".cursorrules",
+];
+
+const PROJECT_MARKERS: &[(&[&str], &str)] = &[
+    (&["Cargo.toml"], "Rust"),
+    (&["package.json"], "Node.js"),
+    (&["go.mod"], "Go"),
+    (&["pom.xml", "build.gradle"], "Java"),
+    (&["pyproject.toml", "setup.py"], "Python"),
+    (&["Gemfile"], "Ruby"),
+    (&["CMakeLists.txt"], "C/C++"),
+    (&[".csproj"], "C#"),
+];
+
+const SCOPE_PATH_KEYS: &[&str] = &[
+    "target_path",
+    "path",
+    "target",
+    "dir",
+    "directory",
+    "file",
+    "filepath",
 ];
 
 pub const YAGNI_DIRECTIVES: &str = r#"
@@ -35,43 +58,46 @@ The code should be small because it is *necessary*, not golfed.
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
-fn is_binary_file(path: &Path) -> bool {
-    if let Ok(content) = std::fs::read(path) {
-        content.iter().take(4096).any(|&b| b == 0x00)
-    } else {
-        false
+pub fn detect_project_type(root: &Path) -> &'static str {
+    PROJECT_MARKERS
+        .iter()
+        .find_map(|(markers, project_type)| {
+            markers
+                .iter()
+                .any(|m| root.join(m).exists())
+                .then_some(*project_type)
+        })
+        .unwrap_or("Unknown")
+}
+
+fn canonical_dir_or_parent(canonical: PathBuf, fallback: &Path) -> PathBuf {
+    match canonical.is_dir() {
+        true => canonical,
+        false => canonical
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| fallback.to_path_buf()),
     }
 }
 
-pub fn detect_project_type(root: &Path) -> &'static str {
-    if root.join("Cargo.toml").exists() {
-        return "Rust";
+fn resolve_nearest_existing_dir(absolute_path: &Path, cwd: &Path) -> PathBuf {
+    match absolute_path.canonicalize() {
+        Ok(canonical) => canonical_dir_or_parent(canonical, cwd),
+        Err(_) => {
+            let mut ancestor = absolute_path.parent();
+            let mut resolved = None;
+            while let Some(parent) = ancestor {
+                match parent.canonicalize() {
+                    Ok(canonical) => {
+                        resolved = Some(canonical_dir_or_parent(canonical, cwd));
+                        break;
+                    }
+                    Err(_) => ancestor = parent.parent(),
+                }
+            }
+            resolved.unwrap_or_else(|| cwd.to_path_buf())
+        }
     }
-    if root.join("package.json").exists() {
-        return "Node.js";
-    }
-    if root.join("go.mod").exists() {
-        return "Go";
-    }
-    if root.join("pom.xml").exists() || root.join("build.gradle").exists() {
-        return "Java";
-    }
-    if root.join("pyproject.toml").exists() || root.join("setup.py").exists() {
-        return "Python";
-    }
-    if root.join("Gemfile").exists() {
-        return "Ruby";
-    }
-    if root.join("CMakeLists.txt").exists() {
-        return "C/C++";
-    }
-    if root.join(".csproj").exists() {
-        return "C#";
-    }
-    if root.join("Cargo.toml").exists() {
-        return "Rust";
-    }
-    "Unknown"
 }
 
 // ─── TreeNode for summarize_codebase ────────────────────────────
@@ -87,34 +113,35 @@ struct TreeNode {
 
 impl TreeNode {
     fn insert(&mut self, parts: &[String], is_dir: bool, line_count: usize) {
-        if parts.is_empty() {
-            return;
-        }
-        if parts.len() == 1 {
-            let child = self
-                .children
-                .entry(parts[0].clone())
-                .or_insert_with(|| TreeNode {
-                    name: parts[0].clone(),
-                    is_dir,
-                    line_count: 0,
-                    files_count: 0,
-                    children: BTreeMap::new(),
-                });
-            child.line_count = line_count;
-            child.files_count = 1;
-        } else {
-            let child = self
-                .children
-                .entry(parts[0].clone())
-                .or_insert_with(|| TreeNode {
-                    name: parts[0].clone(),
-                    is_dir: true,
-                    line_count: 0,
-                    files_count: 0,
-                    children: BTreeMap::new(),
-                });
-            child.insert(&parts[1..], is_dir, line_count);
+        match parts {
+            [] => {}
+            [only] => {
+                let child = self
+                    .children
+                    .entry(only.clone())
+                    .or_insert_with(|| TreeNode {
+                        name: only.clone(),
+                        is_dir,
+                        line_count: 0,
+                        files_count: 0,
+                        children: BTreeMap::new(),
+                    });
+                child.line_count = line_count;
+                child.files_count = 1;
+            }
+            [first, rest @ ..] => {
+                let child = self
+                    .children
+                    .entry(first.clone())
+                    .or_insert_with(|| TreeNode {
+                        name: first.clone(),
+                        is_dir: true,
+                        line_count: 0,
+                        files_count: 0,
+                        children: BTreeMap::new(),
+                    });
+                child.insert(rest, is_dir, line_count);
+            }
         }
     }
 
@@ -129,39 +156,47 @@ impl TreeNode {
     }
 
     fn format_tree(&self, prefix: &str, is_last: bool, depth: usize, max_depth: usize) -> String {
-        if depth > max_depth {
-            if self.files_count > 0 {
-                return format!(
-                    "{}└── {} ({} files, {} lines)\n",
-                    prefix, self.name, self.files_count, self.line_count
-                );
+        match depth > max_depth {
+            true => {
+                return match self.files_count > 0 {
+                    true => format!(
+                        "{}└── {} ({} files, {} lines)\n",
+                        prefix, self.name, self.files_count, self.line_count
+                    ),
+                    false => String::new(),
+                };
             }
-            return String::new();
+            false => {}
         }
-        let connector = if is_last { "└── " } else { "├── " };
+        let connector = match is_last {
+            true => "└── ",
+            false => "├── ",
+        };
         let mut result = format!("{}{}{}", prefix, connector, self.name);
-        if !self.is_dir && depth > 0 {
-            result.push_str(&format!(" ({} lines)", self.line_count));
-        } else if depth > 0 {
-            result.push('/');
+        match (self.is_dir, depth > 0) {
+            (false, true) => result.push_str(&format!(" ({} lines)", self.line_count)),
+            (true, true) => result.push('/'),
+            _ => {}
         }
         result.push('\n');
 
-        let child_prefix = if is_last {
-            format!("{}    ", prefix)
-        } else {
-            format!("{}│   ", prefix)
+        let child_prefix = match is_last {
+            true => format!("{}    ", prefix),
+            false => format!("{}│   ", prefix),
         };
         let children: Vec<&str> = self.children.keys().map(|k| k.as_str()).collect();
         for (i, child_name) in children.iter().enumerate() {
-            if let Some(child) = self.children.get(*child_name) {
-                let is_last_child = i == children.len() - 1;
-                result.push_str(&child.format_tree(
-                    &child_prefix,
-                    is_last_child,
-                    depth + 1,
-                    max_depth,
-                ));
+            match self.children.get(*child_name) {
+                Some(child) => {
+                    let is_last_child = i == children.len() - 1;
+                    result.push_str(&child.format_tree(
+                        &child_prefix,
+                        is_last_child,
+                        depth + 1,
+                        max_depth,
+                    ));
+                }
+                None => {}
             }
         }
         result
@@ -197,61 +232,19 @@ impl Tool for ScopeContextTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let target_path = if let Some(s) = arguments.as_str() {
-            s.trim()
-        } else if let Some(s) = arguments
-            .get("target_path")
-            .or_else(|| arguments.get("path"))
-            .or_else(|| arguments.get("target"))
-            .or_else(|| arguments.get("dir"))
-            .or_else(|| arguments.get("directory"))
-            .or_else(|| arguments.get("file"))
-            .or_else(|| arguments.get("filepath"))
-            .and_then(|v| v.as_str())
-        {
-            s.trim()
-        } else {
-            "."
-        };
+        let target_path = arguments
+            .as_str()
+            .or_else(|| {
+                SCOPE_PATH_KEYS
+                    .iter()
+                    .find_map(|&k| arguments.get(k).and_then(|v| v.as_str()))
+            })
+            .map(str::trim)
+            .unwrap_or(".");
 
         let cwd = std::env::current_dir().map_err(|e| anyhow!("Failed to get cwd: {}", e))?;
-        let path = Path::new(target_path);
-        let absolute_path = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            cwd.join(path)
-        };
-
-        // If path exists, canonicalize. If path is a planned or non-existent file,
-        // walk up parent directories to find the nearest existing directory.
-        let target_dir = if let Ok(canonical) = absolute_path.canonicalize() {
-            if canonical.is_dir() {
-                canonical
-            } else {
-                canonical
-                    .parent()
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_else(|| cwd.clone())
-            }
-        } else {
-            let mut ancestor = absolute_path.parent();
-            let mut resolved = None;
-            while let Some(parent) = ancestor {
-                if let Ok(canonical) = parent.canonicalize() {
-                    resolved = Some(if canonical.is_dir() {
-                        canonical
-                    } else {
-                        canonical
-                            .parent()
-                            .map(|p| p.to_path_buf())
-                            .unwrap_or_else(|| cwd.clone())
-                    });
-                    break;
-                }
-                ancestor = parent.parent();
-            }
-            resolved.unwrap_or_else(|| cwd.clone())
-        };
+        let absolute_path = to_absolute_path(target_path)?;
+        let target_dir = resolve_nearest_existing_dir(&absolute_path, &cwd);
 
         let mut found_files: Vec<PathBuf> = Vec::new();
         let mut current_dir = Some(target_dir.as_path());
@@ -259,34 +252,41 @@ impl Tool for ScopeContextTool {
         while let Some(dir) = current_dir {
             for filename in SCOPE_FILES {
                 let file_path = dir.join(filename);
-                if file_path.is_file() {
-                    found_files.push(file_path);
+                match file_path.is_file() {
+                    true => found_files.push(file_path),
+                    false => {}
                 }
             }
-            if dir.join(".git").exists() || dir.parent().is_none() {
-                break;
+            match dir.join(".git").exists() || dir.parent().is_none() {
+                true => break,
+                false => current_dir = dir.parent(),
             }
-            current_dir = dir.parent();
         }
 
         found_files.reverse();
 
-        if found_files.is_empty() {
-            return Ok(json!({
-                "status": "empty",
-                "content": "No context files (AGENTS.md, CLAUDE.md, etc.) found in the path hierarchy."
-            }));
+        match found_files.is_empty() {
+            true => {
+                return Ok(json!({
+                    "status": "empty",
+                    "content": "No context files (AGENTS.md, CLAUDE.md, etc.) found in the path hierarchy."
+                }))
+            }
+            false => {}
         }
 
         let mut combined = String::new();
         for fp in &found_files {
-            if let Ok(content) = std::fs::read_to_string(fp) {
-                let relative = fp.strip_prefix(&cwd).unwrap_or(fp);
-                combined.push_str(&format!(
-                    "### Context File: {}\n\n{}\n\n",
-                    relative.display(),
-                    content
-                ));
+            match std::fs::read_to_string(fp) {
+                Ok(content) => {
+                    let relative = fp.strip_prefix(&cwd).unwrap_or(fp);
+                    combined.push_str(&format!(
+                        "### Context File: {}\n\n{}\n\n",
+                        relative.display(),
+                        content
+                    ));
+                }
+                Err(_) => {}
             }
         }
 
@@ -294,13 +294,16 @@ impl Tool for ScopeContextTool {
             .map(|val| val.to_lowercase() == "true")
             .unwrap_or(false);
 
-        if enforce_yagni {
-            combined.push_str(YAGNI_DIRECTIVES);
+        match enforce_yagni {
+            true => combined.push_str(YAGNI_DIRECTIVES),
+            false => {}
         }
 
-        Ok(
-            json!({ "status": "ok", "files": found_files.iter().filter_map(|f| f.to_str()).collect::<Vec<_>>(), "content": combined }),
-        )
+        Ok(json!({
+            "status": "ok",
+            "files": found_files.iter().filter_map(|f| f.to_str()).collect::<Vec<_>>(),
+            "content": combined
+        }))
     }
 }
 
@@ -328,20 +331,11 @@ impl Tool for SummarizeCodebaseTool {
     }
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let root_path_str = arguments["root_path"].as_str().unwrap_or(".");
-        let root = Path::new(root_path_str);
-        let resolved_root = if root.is_absolute() {
-            root.to_path_buf()
-        } else {
-            std::env::current_dir()
-                .map_err(|e| anyhow!("{}", e))?
-                .join(root)
-        };
-        let resolved_root = resolved_root
-            .canonicalize()
-            .map_err(|e| anyhow!("Failed to resolve path '{}': {}", root_path_str, e))?;
+        let resolved_root = resolve_user_path(root_path_str)?;
 
-        if !resolved_root.is_dir() {
-            return Err(anyhow!("'{}' is not a directory", root_path_str));
+        match resolved_root.is_dir() {
+            true => {}
+            false => return Err(anyhow!("'{}' is not a directory", root_path_str)),
         }
 
         let file_limit = 1000usize;
@@ -365,11 +359,13 @@ impl Tool for SummarizeCodebaseTool {
 
         let mut walk_dir = vec![(resolved_root.clone(), 0usize)];
         while let Some((dir_path, depth)) = walk_dir.pop() {
-            if depth > 10 {
-                continue;
+            match depth > 10 {
+                true => continue,
+                false => {}
             }
-            if total_files >= file_limit {
-                break;
+            match total_files >= file_limit {
+                true => break,
+                false => {}
             }
 
             let entries = match std::fs::read_dir(&dir_path) {
@@ -380,17 +376,22 @@ impl Tool for SummarizeCodebaseTool {
             let mut dirs = Vec::new();
             for entry in entries.filter_map(|e| e.ok()) {
                 let path = entry.path();
-                if path.components().any(|c| c.as_os_str() == ".git") {
-                    continue;
+                match path.components().any(|c| c.as_os_str() == ".git") {
+                    true => continue,
+                    false => {}
                 }
 
-                if path.is_dir() {
-                    dirs.push(path);
-                    continue;
+                match path.is_dir() {
+                    true => {
+                        dirs.push(path);
+                        continue;
+                    }
+                    false => {}
                 }
 
-                if is_binary_file(&path) {
-                    continue;
+                match is_binary_file(&path) {
+                    true => continue,
+                    false => {}
                 }
 
                 let content = match std::fs::read_to_string(&path) {
@@ -411,16 +412,20 @@ impl Tool for SummarizeCodebaseTool {
                 entry.0 += 1;
                 entry.1 += file_lines;
 
-                if let Ok(rel_path) = path.strip_prefix(&resolved_root) {
-                    let parts: Vec<String> = rel_path
-                        .components()
-                        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-                        .collect();
-                    tree_root.insert(&parts, false, file_lines);
+                match path.strip_prefix(&resolved_root) {
+                    Ok(rel_path) => {
+                        let parts: Vec<String> = rel_path
+                            .components()
+                            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                            .collect();
+                        tree_root.insert(&parts, false, file_lines);
+                    }
+                    Err(_) => {}
                 }
 
-                if total_files >= file_limit {
-                    break;
+                match total_files >= file_limit {
+                    true => break,
+                    false => {}
                 }
             }
 
@@ -446,13 +451,12 @@ impl Tool for SummarizeCodebaseTool {
                 .cmp(&a["lines"].as_u64().unwrap_or(0))
         });
 
-        let suffix = if total_files >= file_limit {
-            format!(
+        let suffix = match total_files >= file_limit {
+            true => format!(
                 "\nWarning: Walk stopped early because file limit ({}) was reached.",
                 file_limit
-            )
-        } else {
-            String::new()
+            ),
+            false => String::new(),
         };
 
         Ok(json!({

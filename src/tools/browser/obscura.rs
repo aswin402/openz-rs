@@ -1,6 +1,7 @@
-use crate::tools::browser_common::{
-    browser_cdp_port, connect_to_tab, ensure_browser_running, kill_browser_on_cdp_port,
-    send_cdp_cmd,
+use super::common::{
+    browser_cdp_port, connect_to_tab, ensure_browser_running, extract_first_str,
+    kill_browser_on_cdp_port, request_new_cdp_tab, send_cdp_cmd, ACTION_ALIASES, SCRIPT_ALIASES,
+    URL_ALIASES,
 };
 use crate::tools::web::is_safe_ip;
 use crate::tools::Tool;
@@ -70,103 +71,90 @@ impl ObscuraBrowserTool {
             )
             .await?;
 
-            if let Some(state) = eval_res
+            let ready = eval_res
                 .get("result")
                 .and_then(|r| r.get("result"))
                 .and_then(|res| res.get("value"))
                 .and_then(|v| v.as_str())
-            {
-                if state == "complete" {
-                    break;
-                }
+                == Some("complete");
+            match ready {
+                true => break,
+                false => {}
             }
         }
 
-        if is_eval {
-            let script_expr = script_str
-                .ok_or_else(|| anyhow!("Missing 'script' parameter for eval_js action"))?;
-            let eval_res = send_cdp_cmd(
-                &mut write,
-                &mut read,
-                &mut message_id,
-                "Runtime.evaluate",
-                json!({
-                    "expression": script_expr,
-                    "returnByValue": true
-                }),
-            )
-            .await?;
+        match is_eval {
+            true => {
+                let script_expr = script_str
+                    .ok_or_else(|| anyhow!("Missing 'script' parameter for eval_js action"))?;
+                let eval_res = send_cdp_cmd(
+                    &mut write,
+                    &mut read,
+                    &mut message_id,
+                    "Runtime.evaluate",
+                    json!({
+                        "expression": script_expr,
+                        "returnByValue": true
+                    }),
+                )
+                .await?;
 
-            let val = eval_res
-                .get("result")
-                .and_then(|r| r.get("result"))
-                .and_then(|res| res.get("value"));
-            match val {
-                Some(v) => Ok(v.to_string()),
-                None => {
-                    if let Some(exception) = eval_res
+                let val = eval_res
+                    .get("result")
+                    .and_then(|r| r.get("result"))
+                    .and_then(|res| res.get("value"));
+                match val {
+                    Some(v) => Ok(v.to_string()),
+                    None => match eval_res
                         .get("result")
                         .and_then(|r| r.get("exceptionDetails"))
                     {
-                        return Err(anyhow!("JavaScript exception: {}", exception));
-                    }
-                    Ok("null".to_string())
+                        Some(exception) => Err(anyhow!("JavaScript exception: {}", exception)),
+                        None => Ok("null".to_string()),
+                    },
                 }
             }
-        } else {
-            let eval_res = send_cdp_cmd(
-                &mut write,
-                &mut read,
-                &mut message_id,
-                "Runtime.evaluate",
-                json!({
-                    "expression": "document.documentElement.outerHTML",
-                    "returnByValue": true
-                }),
-            )
-            .await?;
+            false => {
+                let eval_res = send_cdp_cmd(
+                    &mut write,
+                    &mut read,
+                    &mut message_id,
+                    "Runtime.evaluate",
+                    json!({
+                        "expression": "document.documentElement.outerHTML",
+                        "returnByValue": true
+                    }),
+                )
+                .await?;
 
-            let html_str = eval_res
-                .get("result")
-                .and_then(|r| r.get("result"))
-                .and_then(|res| res.get("value"))
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow!("Failed to retrieve document.documentElement.outerHTML"))?;
+                let html_str = eval_res
+                    .get("result")
+                    .and_then(|r| r.get("result"))
+                    .and_then(|res| res.get("value"))
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        anyhow!("Failed to retrieve document.documentElement.outerHTML")
+                    })?;
 
-            Ok(html2md::parse_html(html_str))
+                Ok(html2md::parse_html(html_str))
+            }
         }
     }
 }
 
 pub fn extract_obscura_url(arguments: &Value) -> Result<String> {
-    let raw_url = if let Some(s) = arguments.as_str() {
-        s.trim()
-    } else {
-        arguments
-            .get("url")
-            .or_else(|| arguments.get("target_url"))
-            .or_else(|| arguments.get("targetUrl"))
-            .or_else(|| arguments.get("uri"))
-            .or_else(|| arguments.get("link"))
-            .or_else(|| arguments.get("target"))
-            .or_else(|| arguments.get("page"))
-            .or_else(|| arguments.get("endpoint"))
-            .or_else(|| arguments.get("href"))
-            .or_else(|| arguments.get("address"))
-            .or_else(|| arguments.get("site"))
-            .or_else(|| arguments.get("website"))
-            .or_else(|| arguments.get("domain"))
-            .or_else(|| arguments.get("host"))
-            .and_then(|v| v.as_str())
+    let raw_url = match arguments.as_str() {
+        Some(s) => s.trim(),
+        None => extract_first_str(arguments, URL_ALIASES)
             .ok_or_else(|| anyhow!("Missing 'url' parameter"))?
-            .trim()
+            .trim(),
     };
 
-    if raw_url.is_empty() {
-        return Err(anyhow!("Missing 'url' parameter (received empty string)"));
-    }
+    let non_empty = Some(raw_url)
+        .filter(|u| !u.is_empty())
+        .ok_or_else(|| anyhow!("Missing 'url' parameter (received empty string)"))?;
 
-    Ok(crate::tools::web::normalize_web_url(raw_url))
+    Ok(crate::tools::web::normalize_web_url(non_empty))
 }
 
 pub fn is_obscura_eval_action(action: &str) -> bool {
@@ -219,38 +207,22 @@ impl Tool for ObscuraBrowserTool {
 
         validate_url(url_str).await?;
 
-        let raw_action = arguments
-            .get("action")
-            .or_else(|| arguments.get("act"))
-            .or_else(|| arguments.get("command"))
-            .or_else(|| arguments.get("cmd"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("render");
+        let raw_action = extract_first_str(arguments, ACTION_ALIASES).unwrap_or("render");
         let is_eval = is_obscura_eval_action(raw_action);
-
-        let script_str = arguments
-            .get("script")
-            .or_else(|| arguments.get("expression"))
-            .or_else(|| arguments.get("code"))
-            .or_else(|| arguments.get("js"))
-            .or_else(|| arguments.get("expr"))
-            .and_then(|v| v.as_str());
+        let script_str = extract_first_str(arguments, SCRIPT_ALIASES);
 
         let timeout_secs = arguments
             .get("timeout")
             .or_else(|| arguments.get("timeout_secs"))
             .or_else(|| arguments.get("timeoutSecs"))
             .and_then(|v| {
-                v.as_u64().or_else(|| {
-                    v.as_str()
-                        .and_then(|s| s.trim().parse::<u64>().ok())
-                })
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
             })
             .unwrap_or(15)
             .clamp(1, 300);
 
-        // Ensure browser is running
-        if let Err(e) = ensure_browser_running().await {
+        ensure_browser_running().await.map_err(|e| {
             let payload = crate::tools::browser_status::browser_preflight_error_value(
                 &format!("Chrome CDP browser startup failed: {}", e),
                 crate::tools::browser_status::BrowserHealth {
@@ -259,37 +231,32 @@ impl Tool for ObscuraBrowserTool {
                     geckodriver: crate::tools::browser_status::BrowserBackendStatus::Stopped,
                 },
             );
-            return Err(anyhow!(payload.to_string()));
-        }
+            anyhow!(payload.to_string())
+        })?;
 
         let cdp_port = browser_cdp_port();
         let client = crate::core::http::default_http_client();
         let new_tab_url = format!("http://127.0.0.1:{cdp_port}/json/new");
 
-        // Open a new tab
-        let mut res = client.put(&new_tab_url).send().await;
-
-        if !matches!(&res, Ok(r) if r.status().is_success()) {
-            res = client.get(&new_tab_url).send().await;
-        }
-
-        if !matches!(&res, Ok(r) if r.status().is_success()) {
-            tracing::warn!("CDP HTTP API failed, attempting browser restart...");
-            kill_browser_on_cdp_port();
-            sleep(Duration::from_millis(500)).await;
-            ensure_browser_running().await?;
-            res = client.put(&new_tab_url).send().await;
-            if !matches!(&res, Ok(r) if r.status().is_success()) {
-                res = client.get(&new_tab_url).send().await;
+        let first_attempt = request_new_cdp_tab(&client, &new_tab_url).await;
+        let res = match first_attempt
+            .as_ref()
+            .is_ok_and(|r| r.status().is_success())
+        {
+            true => first_attempt?,
+            false => {
+                tracing::warn!("CDP HTTP API failed, attempting browser restart...");
+                kill_browser_on_cdp_port();
+                sleep(Duration::from_millis(500)).await;
+                ensure_browser_running().await?;
+                request_new_cdp_tab(&client, &new_tab_url).await?
             }
-        }
+        };
 
-        let res = res?;
-        if !res.status().is_success() {
-            return Err(anyhow!(
-                "Failed to create a new tab via CDP HTTP API after restart"
-            ));
-        }
+        res.status()
+            .is_success()
+            .then_some(())
+            .ok_or_else(|| anyhow!("Failed to create a new tab via CDP HTTP API after restart"))?;
 
         let tab_info: Value = res.json().await?;
         let tab_id = tab_info
@@ -314,7 +281,6 @@ impl Tool for ObscuraBrowserTool {
             )
             .await;
 
-        // Always close the tab, even on error
         let close_url = format!("http://127.0.0.1:{cdp_port}/json/close/{}", tab_id);
         let _ = client.get(&close_url).send().await;
 
@@ -333,25 +299,29 @@ async fn validate_url(url: &str) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("URL has no host"))?
         .to_lowercase();
 
-    if parsed.scheme() != "http" && parsed.scheme() != "https" {
-        return Err(anyhow::anyhow!(
-            "SSRF blocked: only http/https URLs are allowed (got '{}')",
-            parsed.scheme()
-        ));
-    }
+    matches!(parsed.scheme(), "http" | "https")
+        .then_some(())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "SSRF blocked: only http/https URLs are allowed (got '{}')",
+                parsed.scheme()
+            )
+        })?;
 
-    if host == "169.254.169.254" || host == "metadata.google.internal" {
-        return Err(anyhow::anyhow!(
-            "SSRF blocked: cloud metadata endpoints are not allowed"
-        ));
-    }
+    (!matches!(
+        host.as_str(),
+        "169.254.169.254" | "metadata.google.internal"
+    ))
+    .then_some(())
+    .ok_or_else(|| anyhow::anyhow!("SSRF blocked: cloud metadata endpoints are not allowed"))?;
 
-    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        if !is_safe_ip(&ip) {
-            return Err(anyhow::anyhow!(
-                "SSRF blocked: private/reserved IP addresses are not allowed"
-            ));
+    match host.parse::<std::net::IpAddr>() {
+        Ok(ip) => {
+            is_safe_ip(&ip).then_some(()).ok_or_else(|| {
+                anyhow::anyhow!("SSRF blocked: private/reserved IP addresses are not allowed")
+            })?;
         }
+        Err(_) => {}
     }
 
     let resolved: Vec<_> = match tokio::net::lookup_host(format!("{}:0", host)).await {
@@ -359,27 +329,22 @@ async fn validate_url(url: &str) -> Result<()> {
         Err(_) => Vec::new(),
     };
 
-    for ip in &resolved {
-        if !is_safe_ip(ip) {
+    match resolved.iter().find(|ip| !is_safe_ip(ip)) {
+        Some(unsafe_ip) => {
             return Err(anyhow::anyhow!(
                 "SSRF blocked: hostname '{}' resolved to private/reserved IP {}",
                 host,
-                ip
+                unsafe_ip
             ));
         }
+        None => {}
     }
 
-    if resolved.is_empty() {
-        return Err(anyhow::anyhow!(
-            "SSRF blocked: hostname '{}' could not be resolved",
-            host
-        ));
-    }
-
-    Ok(())
+    (!resolved.is_empty()).then_some(()).ok_or_else(|| {
+        anyhow::anyhow!("SSRF blocked: hostname '{}' could not be resolved", host)
+    })
 }
 
 #[cfg(test)]
 #[path = "obscura_tests.rs"]
 mod tests;
-

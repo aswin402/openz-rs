@@ -13,6 +13,73 @@ use tokio_tungstenite::{
 pub type WsSink = SplitSink<WebSocketStream<MaybeTlsStream<TcpStream>>, Message>;
 pub type WsStream = SplitStream<WebSocketStream<MaybeTlsStream<TcpStream>>>;
 
+pub(crate) const URL_ALIASES: &[&str] = &[
+    "url",
+    "target_url",
+    "targetUrl",
+    "uri",
+    "link",
+    "target",
+    "site",
+    "website",
+    "domain",
+    "host",
+    "page",
+    "endpoint",
+    "href",
+    "address",
+];
+
+pub(crate) const ACTION_ALIASES: &[&str] = &["action", "act", "command", "cmd", "method"];
+
+pub(crate) const SELECTOR_ALIASES: &[&str] = &[
+    "selector",
+    "css_selector",
+    "cssSelector",
+    "css",
+    "element",
+    "query",
+    "target",
+];
+
+pub(crate) const REF_ID_ALIASES: &[&str] = &[
+    "ref_id",
+    "refId",
+    "ref",
+    "element",
+    "id",
+    "target_ref",
+    "targetRef",
+];
+
+pub(crate) const TEXT_ALIASES: &[&str] = &["text", "value", "query", "content", "input", "string"];
+
+pub(crate) const PATH_ALIASES: &[&str] = &[
+    "path",
+    "output",
+    "output_path",
+    "outputPath",
+    "file_path",
+    "file",
+    "dest",
+];
+
+pub(crate) const SCRIPT_ALIASES: &[&str] = &["script", "expression", "code", "js", "expr"];
+
+pub(crate) fn extract_first_str<'a>(arguments: &'a Value, keys: &[&str]) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|&key| arguments.get(key).and_then(|v| v.as_str()))
+}
+
+pub(crate) fn extract_trimmed_non_empty_str<'a>(
+    arguments: &'a Value,
+    keys: &[&str],
+) -> Option<&'a str> {
+    extract_first_str(arguments, keys)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
 pub fn browser_cdp_port() -> u16 {
     crate::config::loader::load_config()
         .map(|c| c.browser.cdp_port)
@@ -55,13 +122,9 @@ pub async fn ensure_browser_running() -> Result<()> {
 
     let list_url = format!("http://127.0.0.1:{port}/json/list");
 
-    if client
-        .get(&list_url)
-        .send()
-        .await
-        .is_ok()
-    {
-        return Ok(());
+    match client.get(&list_url).send().await.is_ok() {
+        true => return Ok(()),
+        false => {}
     }
 
     let chrome_paths = [
@@ -74,56 +137,51 @@ pub async fn ensure_browser_running() -> Result<()> {
     let port_str = port.to_string();
     let port_arg = format!("--remote-debugging-port={port}");
     for path in chrome_paths {
-        let args = if path == "obscura" {
-            vec!["serve", "--port", &port_str]
-        } else {
-            vec![
+        let args: Vec<&str> = match path {
+            "obscura" => vec!["serve", "--port", &port_str],
+            _ => vec![
                 "--headless",
                 &port_arg,
                 "--disable-gpu",
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
-            ]
+            ],
         };
-        if let Ok(child_handle) = Command::new(path)
+        match Command::new(path)
             .args(&args)
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
         {
-            crate::shutdown::register_child_with_metadata(
-                child_handle,
-                format!("{} {}", path, args.join(" ")),
-                "browser_daemon",
-            );
-            for _ in 0..25 {
-                sleep(Duration::from_millis(200)).await;
-                if client
-                    .get(&list_url)
-                    .send()
-                    .await
-                    .is_ok()
-                {
-                    return Ok(());
+            Ok(child_handle) => {
+                crate::shutdown::register_child_with_metadata(
+                    child_handle,
+                    format!("{} {}", path, args.join(" ")),
+                    "browser_daemon",
+                );
+                for _ in 0..25 {
+                    sleep(Duration::from_millis(200)).await;
+                    match client.get(&list_url).send().await.is_ok() {
+                        true => return Ok(()),
+                        false => {}
+                    }
                 }
+                break;
             }
-            break;
+            Err(_) => {}
         }
     }
 
-    if client
+    client
         .get(&list_url)
         .send()
         .await
         .is_ok()
-    {
-        Ok(())
-    } else {
-        Err(anyhow!(
-            "Failed to start any headless browser (obscura, chrome, chromium) on port {port}"
-        ))
-    }
+        .then_some(())
+        .ok_or_else(|| {
+            anyhow!("Failed to start any headless browser (obscura, chrome, chromium) on port {port}")
+        })
 }
 
 pub async fn send_cdp_cmd(
@@ -147,12 +205,15 @@ pub async fn send_cdp_cmd(
     tokio::time::timeout(timeout, async {
         while let Some(msg) = read.next().await {
             let msg = msg?;
-            if let Message::Text(text) = msg {
-                if let Ok(resp) = serde_json::from_str::<Value>(&text) {
-                    if resp.get("id").and_then(|v| v.as_u64()) == Some(id) {
-                        return Ok::<Value, anyhow::Error>(resp);
-                    }
-                }
+            let matched = match msg {
+                Message::Text(text) => serde_json::from_str::<Value>(&text)
+                    .ok()
+                    .filter(|resp| resp.get("id").and_then(|v| v.as_u64()) == Some(id)),
+                _ => None,
+            };
+            match matched {
+                Some(resp) => return Ok::<Value, anyhow::Error>(resp),
+                None => {}
             }
         }
         Err(anyhow!(
@@ -175,28 +236,39 @@ pub async fn connect_to_tab(ws_url: &str) -> Result<(WsSink, WsStream)> {
     Ok(ws_stream.split())
 }
 
+pub(crate) async fn request_new_cdp_tab(
+    client: &reqwest::Client,
+    new_tab_url: &str,
+) -> std::result::Result<reqwest::Response, reqwest::Error> {
+    let put_res = client.put(new_tab_url).send().await;
+    match put_res.as_ref().is_ok_and(|r| r.status().is_success()) {
+        true => put_res,
+        false => client.get(new_tab_url).send().await,
+    }
+}
+
 pub async fn obtain_tab_websocket_url(cdp_port: u16) -> Result<(String, String)> {
     let client = crate::core::http::default_http_client();
     let new_tab_url = format!("http://127.0.0.1:{cdp_port}/json/new");
 
-    let mut res = client.put(&new_tab_url).send().await;
-    if !matches!(&res, Ok(r) if r.status().is_success()) {
-        res = client.get(&new_tab_url).send().await;
-    }
+    let res = request_new_cdp_tab(&client, &new_tab_url).await;
 
-    if let Ok(r) = res {
-        if r.status().is_success() {
-            if let Ok(tab_info) = r.json::<Value>().await {
-                let tid = tab_info
-                    .get("id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("page-1")
-                    .to_string();
-                if let Some(ws_url) = tab_info.get("webSocketDebuggerUrl").and_then(|v| v.as_str()) {
-                    return Ok((tid, ws_url.to_string()));
-                }
-            }
-        }
+    match res.ok().filter(|r| r.status().is_success()) {
+        Some(r) => match r.json::<Value>().await.ok().and_then(|tab_info| {
+            let tid = tab_info
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("page-1")
+                .to_string();
+            tab_info
+                .get("webSocketDebuggerUrl")
+                .and_then(|v| v.as_str())
+                .map(|ws| (tid, ws.to_string()))
+        }) {
+            Some((tid, ws_url)) => return Ok((tid, ws_url)),
+            None => {}
+        },
+        None => {}
     }
 
     // Fallback: /json/list (e.g. for Obscura or existing browser daemon tabs)
@@ -223,5 +295,3 @@ pub async fn obtain_tab_websocket_url(cdp_port: u16) -> Result<(String, String)>
 #[cfg(test)]
 #[path = "common_tests.rs"]
 mod tests;
-
-

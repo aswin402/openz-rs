@@ -1,14 +1,13 @@
 use anyhow::{anyhow, Result};
 use chrono::Utc;
-use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, OnceLock};
 
-use super::engine::{analyze_quality, generate_mermaid};
-use super::store::{
-    get_db_path, MemoryThoughtStore, SqliteThoughtStore, ThoughtData, ThoughtStore, ToolResult,
+use super::engine::{
+    analyze_quality, classify_thought_node, export_session_as_markdown, generate_mermaid,
 };
+use super::store::{open_thought_store, ThoughtData, ThoughtStore, ToolResult};
 use crate::tools::Tool;
 
 // ─── Engine (shared mutable state) ───────────────────────────────
@@ -24,19 +23,8 @@ static ENGINE: OnceLock<Arc<tokio::sync::Mutex<SequentialThinkingEngine>>> = Onc
 
 pub(crate) fn get_engine() -> &'static Arc<tokio::sync::Mutex<SequentialThinkingEngine>> {
     ENGINE.get_or_init(|| {
-        let db_path = get_db_path();
-        if let Some(parent) = db_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let store: Box<dyn ThoughtStore> = match Connection::open(&db_path) {
-            Ok(conn) => match SqliteThoughtStore::new(conn) {
-                Ok(s) => Box::new(s),
-                Err(_) => Box::new(MemoryThoughtStore::new()),
-            },
-            Err(_) => Box::new(MemoryThoughtStore::new()),
-        };
         Arc::new(tokio::sync::Mutex::new(SequentialThinkingEngine {
-            store,
+            store: open_thought_store(),
             current_session_id: String::new(),
             thought_history: Vec::new(),
             branches: HashMap::new(),
@@ -46,45 +34,90 @@ pub(crate) fn get_engine() -> &'static Arc<tokio::sync::Mutex<SequentialThinking
 
 impl SequentialThinkingEngine {
     pub(crate) fn load_session(&mut self, session_id: &str) -> Result<(), String> {
-        if self.current_session_id != session_id {
-            let thoughts = self.store.load_session(session_id)?;
-            self.current_session_id = session_id.to_string();
-            self.thought_history = thoughts;
-            self.branches.clear();
-            for t in &self.thought_history {
-                if let (Some(_), Some(branch_id)) = (t.branch_from_thought, t.branch_id.as_ref()) {
-                    self.branches
-                        .entry(branch_id.clone())
-                        .or_default()
-                        .push(t.clone());
+        match self.current_session_id == session_id {
+            true => Ok(()),
+            false => {
+                let thoughts = self.store.load_session(session_id)?;
+                self.current_session_id = session_id.to_string();
+                self.thought_history = thoughts;
+                self.branches.clear();
+                for t in &self.thought_history {
+                    match (t.branch_from_thought, t.branch_id.as_ref()) {
+                        (Some(_), Some(branch_id)) => {
+                            self.branches
+                                .entry(branch_id.clone())
+                                .or_default()
+                                .push(t.clone());
+                        }
+                        _ => {}
+                    }
                 }
+                Ok(())
             }
         }
-        Ok(())
+    }
+
+    pub(crate) fn resolve_and_load_session(
+        &mut self,
+        session_id_arg: Option<String>,
+        no_session_msg: &str,
+    ) -> std::result::Result<String, Value> {
+        let resolved = session_id_arg
+            .filter(|id| !id.trim().is_empty())
+            .or_else(|| {
+                (!self.current_session_id.is_empty()).then(|| self.current_session_id.clone())
+            })
+            .or_else(|| {
+                self.store
+                    .list_sessions()
+                    .ok()
+                    .and_then(|list| list.into_iter().next().map(|s| s.id))
+            })
+            .filter(|id| !id.trim().is_empty());
+
+        let session_id = resolved.ok_or_else(|| {
+            json!({
+                "status": "no_session",
+                "message": no_session_msg,
+            })
+        })?;
+
+        self.load_session(&session_id).map_err(|e| {
+            json!({
+                "status": "not_found",
+                "sessionId": session_id,
+                "error": format!("Session not found: {}", e),
+            })
+        })?;
+
+        Ok(session_id)
     }
 
     pub(crate) fn process_thought(&mut self, mut input: ThoughtData) -> Result<ToolResult, String> {
-        let session_id = match input.session_id.as_ref() {
-            Some(id) if !id.trim().is_empty() => id.clone(),
-            _ => {
+        let session_id = input
+            .session_id
+            .as_ref()
+            .map(|id| id.trim())
+            .filter(|id| !id.is_empty())
+            .map(ToString::to_string)
+            .unwrap_or_else(|| {
                 let generated = uuid::Uuid::new_v4().to_string();
                 input.session_id = Some(generated.clone());
                 generated
-            }
-        };
+            });
+
         self.load_session(&session_id)?;
-        if input.thought_number > input.total_thoughts {
-            input.total_thoughts = input.thought_number;
-        }
-        if input.timestamp.is_none() {
-            input.timestamp = Some(Utc::now());
-        }
+        input.total_thoughts = input.total_thoughts.max(input.thought_number);
+        input.timestamp = Some(input.timestamp.unwrap_or_else(Utc::now));
         self.store.save_thought(&session_id, &input)?;
-        if let (Some(_), Some(branch_id)) = (input.branch_from_thought, input.branch_id.as_ref()) {
-            self.branches
-                .entry(branch_id.clone())
-                .or_default()
-                .push(input.clone());
+        match (input.branch_from_thought, input.branch_id.as_ref()) {
+            (Some(_), Some(branch_id)) => {
+                self.branches
+                    .entry(branch_id.clone())
+                    .or_default()
+                    .push(input.clone());
+            }
+            _ => {}
         }
 
         let thought_number = input.thought_number;
@@ -118,148 +151,125 @@ impl SequentialThinkingEngine {
 
 // ─── Input Normalization Helpers ─────────────────────────────────
 
-fn get_string_field(map: &serde_json::Map<String, Value>, aliases: &[&str]) -> Option<String> {
-    for &k in aliases {
-        if let Some(v) = map.get(k) {
-            if let Some(s) = v.as_str() {
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
-            } else if v.is_number() || v.is_boolean() {
-                return Some(v.to_string());
-            }
+fn value_to_non_empty_string(v: &Value) -> Option<String> {
+    match v {
+        Value::String(s) => {
+            let trimmed = s.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
         }
+        Value::Number(_) | Value::Bool(_) => Some(v.to_string()),
+        _ => None,
     }
-    None
+}
+
+fn value_to_usize(v: &Value) -> Option<usize> {
+    v.as_u64()
+        .map(|n| n as usize)
+        .or_else(|| {
+            v.as_i64()
+                .and_then(|n| usize::try_from(n).ok())
+        })
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse::<usize>().ok()))
+}
+
+fn get_string_field(map: &serde_json::Map<String, Value>, aliases: &[&str]) -> Option<String> {
+    aliases
+        .iter()
+        .find_map(|&k| map.get(k).and_then(value_to_non_empty_string))
 }
 
 fn get_usize_field(map: &serde_json::Map<String, Value>, aliases: &[&str]) -> Option<usize> {
-    for &k in aliases {
-        if let Some(v) = map.get(k) {
-            if let Some(n) = v.as_u64() {
-                return Some(n as usize);
-            } else if let Some(n) = v.as_i64() {
-                if n >= 0 {
-                    return Some(n as usize);
-                }
-            } else if let Some(s) = v.as_str() {
-                if let Ok(n) = s.trim().parse::<usize>() {
-                    return Some(n);
-                }
-            }
-        }
-    }
-    None
+    aliases
+        .iter()
+        .find_map(|&k| map.get(k).and_then(value_to_usize))
 }
 
 fn get_f64_field(map: &serde_json::Map<String, Value>, aliases: &[&str]) -> Option<f64> {
-    for &k in aliases {
-        if let Some(v) = map.get(k) {
-            if let Some(f) = v.as_f64() {
-                return Some(f);
-            } else if let Some(s) = v.as_str() {
-                if let Ok(f) = s.trim().parse::<f64>() {
-                    return Some(f);
-                }
-            }
-        }
-    }
-    None
+    aliases.iter().find_map(|&k| {
+        map.get(k).and_then(|v| {
+            v.as_f64()
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
+        })
+    })
 }
 
 fn get_bool_field(map: &serde_json::Map<String, Value>, aliases: &[&str]) -> Option<bool> {
-    for &k in aliases {
-        if let Some(v) = map.get(k) {
-            if let Some(b) = v.as_bool() {
-                return Some(b);
-            } else if let Some(s) = v.as_str() {
-                match s.trim().to_lowercase().as_str() {
-                    "true" | "1" | "yes" | "y" => return Some(true),
-                    "false" | "0" | "no" | "n" => return Some(false),
-                    _ => {}
-                }
-            } else if let Some(n) = v.as_i64() {
-                return Some(n != 0);
-            }
-        }
-    }
-    None
+    aliases.iter().find_map(|&k| {
+        map.get(k).and_then(|v| {
+            v.as_bool()
+                .or_else(|| {
+                    v.as_str().and_then(|s| match s.trim().to_lowercase().as_str() {
+                        "true" | "1" | "yes" | "y" => Some(true),
+                        "false" | "0" | "no" | "n" => Some(false),
+                        _ => None,
+                    })
+                })
+                .or_else(|| v.as_i64().map(|n| n != 0))
+        })
+    })
 }
 
-fn get_string_vec_field(map: &serde_json::Map<String, Value>, aliases: &[&str]) -> Option<Vec<String>> {
-    for &k in aliases {
-        if let Some(v) = map.get(k) {
-            if let Some(arr) = v.as_array() {
-                let items: Vec<String> = arr
-                    .iter()
-                    .filter_map(|item| {
-                        if let Some(s) = item.as_str() {
-                            let trimmed = s.trim();
-                            if !trimmed.is_empty() {
-                                Some(trimmed.to_string())
-                            } else {
-                                None
-                            }
-                        } else if item.is_number() || item.is_boolean() {
-                            Some(item.to_string())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if !items.is_empty() {
-                    return Some(items);
-                }
-            } else if let Some(s) = v.as_str() {
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    return Some(vec![trimmed.to_string()]);
-                }
+fn get_string_vec_field(
+    map: &serde_json::Map<String, Value>,
+    aliases: &[&str],
+) -> Option<Vec<String>> {
+    aliases.iter().find_map(|&k| {
+        map.get(k).and_then(|v| match v {
+            Value::Array(arr) => {
+                let items: Vec<String> =
+                    arr.iter().filter_map(value_to_non_empty_string).collect();
+                (!items.is_empty()).then_some(items)
             }
-        }
-    }
-    None
+            _ => value_to_non_empty_string(v).map(|s| vec![s]),
+        })
+    })
 }
 
-fn get_usize_vec_field(map: &serde_json::Map<String, Value>, aliases: &[&str]) -> Option<Vec<usize>> {
-    for &k in aliases {
-        if let Some(v) = map.get(k) {
-            if let Some(arr) = v.as_array() {
-                let items: Vec<usize> = arr
-                    .iter()
-                    .filter_map(|item| {
-                        if let Some(n) = item.as_u64() {
-                            Some(n as usize)
-                        } else if let Some(s) = item.as_str() {
-                            s.trim().parse::<usize>().ok()
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if !items.is_empty() {
-                    return Some(items);
-                }
-            } else if let Some(n) = v.as_u64() {
-                return Some(vec![n as usize]);
-            } else if let Some(s) = v.as_str() {
-                if let Ok(n) = s.trim().parse::<usize>() {
-                    return Some(vec![n]);
-                }
+fn get_usize_vec_field(
+    map: &serde_json::Map<String, Value>,
+    aliases: &[&str],
+) -> Option<Vec<usize>> {
+    aliases.iter().find_map(|&k| {
+        map.get(k).and_then(|v| match v {
+            Value::Array(arr) => {
+                let items: Vec<usize> = arr.iter().filter_map(value_to_usize).collect();
+                (!items.is_empty()).then_some(items)
             }
+            _ => value_to_usize(v).map(|n| vec![n]),
+        })
+    })
+}
+
+fn collect_unverified_assumptions(thoughts: &[ThoughtData]) -> Vec<String> {
+    let mut assumed = HashSet::new();
+    let mut verified = HashSet::new();
+    for t in thoughts {
+        for a in t.assumptions.iter().flatten() {
+            assumed.insert(a.clone());
+        }
+        for v in t.verified_assumptions.iter().flatten() {
+            let vc = v
+                .replace("verified:", "")
+                .replace("refuted:", "")
+                .replace("false:", "")
+                .trim()
+                .to_string();
+            verified.insert(vc);
+            verified.insert(v.clone());
         }
     }
-    None
+    assumed
+        .into_iter()
+        .filter(|a| !verified.contains(a))
+        .collect()
 }
 
 fn parse_thought_data(arguments: &Value, current_len: usize) -> Result<ThoughtData> {
     match arguments {
         Value::String(s) => {
-            let thought = s.trim().to_string();
-            if thought.is_empty() {
-                return Err(anyhow!("Missing 'thought' parameter"));
-            }
+            let thought = Some(s.trim().to_string())
+                .filter(|t| !t.is_empty())
+                .ok_or_else(|| anyhow!("Missing 'thought' parameter"))?;
             let thought_number = current_len + 1;
             let total_thoughts = std::cmp::max(thought_number + 2, 3);
             let next_thought_needed = thought_number < total_thoughts;
@@ -454,17 +464,21 @@ impl Tool for SequentialThinkingTool {
         let engine = get_engine();
         let mut guard = engine.lock().await;
 
-        if let Value::Object(map) = arguments {
-            if let Some(sid) = get_string_field(map, &["sessionId", "session_id", "session", "id"]) {
+        match arguments
+            .as_object()
+            .and_then(|map| get_string_field(map, &["sessionId", "session_id", "session", "id"]))
+        {
+            Some(sid) => {
                 let _ = guard.load_session(&sid);
             }
+            None => {}
         }
 
         let current_len = guard.thought_history.len();
         let mut thought_data = parse_thought_data(arguments, current_len)?;
-        if thought_data.session_id.is_none() && !guard.current_session_id.is_empty() {
-            thought_data.session_id = Some(guard.current_session_id.clone());
-        }
+        thought_data.session_id = thought_data.session_id.or_else(|| {
+            (!guard.current_session_id.is_empty()).then(|| guard.current_session_id.clone())
+        });
 
         let result = guard
             .process_thought(thought_data)
@@ -526,36 +540,13 @@ impl Tool for AnalyzeGraphTool {
             _ => (None, None, None),
         };
 
-        let session_id = session_id_arg
-            .or_else(|| {
-                if !guard.current_session_id.is_empty() {
-                    Some(guard.current_session_id.clone())
-                } else {
-                    guard
-                        .store
-                        .list_sessions()
-                        .ok()
-                        .and_then(|list| list.into_iter().next().map(|s| s.id))
-                }
-            });
-
-        let session_id = match session_id {
-            Some(id) if !id.trim().is_empty() => id,
-            _ => {
-                return Ok(json!({
-                    "status": "no_session",
-                    "message": "No active thinking session found. Create thoughts using sequentialthinking first."
-                }));
-            }
+        let session_id = match guard.resolve_and_load_session(
+            session_id_arg,
+            "No active thinking session found. Create thoughts using sequentialthinking first.",
+        ) {
+            Ok(id) => id,
+            Err(err_val) => return Ok(err_val),
         };
-
-        if let Err(e) = guard.load_session(&session_id) {
-            return Ok(json!({
-                "status": "not_found",
-                "sessionId": session_id,
-                "error": format!("Session not found: {}", e)
-            }));
-        }
 
         let raw_query = query_arg.unwrap_or_else(|| "summary_stats".to_string());
         let normalized = raw_query.trim().to_lowercase().replace('-', "_");
@@ -584,30 +575,24 @@ impl Tool for AnalyzeGraphTool {
                 let mut assumed = HashSet::new();
                 let mut refuted = HashSet::new();
                 for t in &guard.thought_history {
-                    if let Some(ref ass) = t.assumptions {
-                        for a in ass {
-                            assumed.insert(a.trim().to_lowercase());
-                        }
+                    for a in t.assumptions.iter().flatten() {
+                        assumed.insert(a.trim().to_lowercase());
                     }
-                    if let Some(ref ver) = t.verified_assumptions {
-                        for v in ver {
-                            let vc = v.trim().to_lowercase();
-                            if vc.contains("refuted")
-                                || vc.contains("false")
-                                || vc.contains("falsified")
-                            {
-                                refuted.insert(
-                                    vc.replace("refuted:", "")
-                                        .replace("refuted", "")
-                                        .replace("false:", "")
-                                        .replace("false", "")
-                                        .replace("falsified:", "")
-                                        .replace("falsified", "")
-                                        .trim()
-                                        .to_string(),
-                                );
-                            }
-                        }
+                    for v in t.verified_assumptions.iter().flatten() {
+                        let vc = v.trim().to_lowercase();
+                        let is_refuted = vc.contains("refuted")
+                            || vc.contains("false")
+                            || vc.contains("falsified");
+                        refuted.extend(is_refuted.then(|| {
+                            vc.replace("refuted:", "")
+                                .replace("refuted", "")
+                                .replace("false:", "")
+                                .replace("false", "")
+                                .replace("falsified:", "")
+                                .replace("falsified", "")
+                                .trim()
+                                .to_string()
+                        }));
                     }
                 }
                 let contradictions: Vec<String> = assumed
@@ -622,73 +607,46 @@ impl Tool for AnalyzeGraphTool {
                 Ok(json!(contradictions))
             }
             "unverified_assumptions" => {
-                let mut assumed = HashSet::new();
-                let mut verified = HashSet::new();
-                for t in &guard.thought_history {
-                    if let Some(ref ass) = t.assumptions {
-                        for a in ass {
-                            assumed.insert(a.clone());
-                        }
-                    }
-                    if let Some(ref ver) = t.verified_assumptions {
-                        for v in ver {
-                            let vc = v
-                                .replace("verified:", "")
-                                .replace("refuted:", "")
-                                .replace("false:", "")
-                                .trim()
-                                .to_string();
-                            verified.insert(vc);
-                            verified.insert(v.clone());
-                        }
-                    }
-                }
-                Ok(json!(assumed
-                    .into_iter()
-                    .filter(|a| !verified.contains(a))
-                    .collect::<Vec<String>>()))
+                Ok(json!(collect_unverified_assumptions(&guard.thought_history)))
             }
-            "dead_branches" => {
-                if guard.thought_history.is_empty() {
-                    return Ok(json!([]));
-                }
-                let last = &guard.thought_history[guard.thought_history.len() - 1];
-                let mut main_chain = HashSet::new();
-                let mut queue = vec![last.thought_number];
-                while let Some(tn) = queue.pop() {
-                    if main_chain.insert(tn) {
-                        if let Some(t) = guard
-                            .thought_history
-                            .iter()
-                            .find(|x| x.thought_number == tn)
-                        {
-                            if let Some(ref parents) = t.parent_thoughts {
-                                queue.extend(parents.iter().copied());
+            "dead_branches" => match guard.thought_history.last() {
+                None => Ok(json!([])),
+                Some(last) => {
+                    let mut main_chain = HashSet::new();
+                    let mut queue = vec![last.thought_number];
+                    while let Some(tn) = queue.pop() {
+                        let newly_inserted = main_chain.insert(tn);
+                        let found_thought = newly_inserted
+                            .then(|| {
+                                guard
+                                    .thought_history
+                                    .iter()
+                                    .find(|x| x.thought_number == tn)
+                            })
+                            .flatten();
+                        match found_thought {
+                            Some(t) => {
+                                queue.extend(t.parent_thoughts.iter().flatten().copied());
+                                queue.extend(t.branch_from_thought);
+                                queue.extend(t.revises_thought);
+                                let needs_prev_step = t.parent_thoughts.is_none()
+                                    && t.branch_from_thought.is_none()
+                                    && !t.is_revision.unwrap_or(false)
+                                    && t.thought_number > 1;
+                                queue.extend(needs_prev_step.then(|| t.thought_number - 1));
                             }
-                            if let Some(bf) = t.branch_from_thought {
-                                queue.push(bf);
-                            }
-                            if let Some(rev) = t.revises_thought {
-                                queue.push(rev);
-                            }
-                            if t.parent_thoughts.is_none()
-                                && t.branch_from_thought.is_none()
-                                && !t.is_revision.unwrap_or(false)
-                                && t.thought_number > 1
-                            {
-                                queue.push(t.thought_number - 1);
-                            }
+                            None => {}
                         }
                     }
+                    let dead: Vec<ThoughtData> = guard
+                        .thought_history
+                        .iter()
+                        .filter(|t| !main_chain.contains(&t.thought_number))
+                        .cloned()
+                        .collect();
+                    Ok(json!(dead))
                 }
-                let dead: Vec<ThoughtData> = guard
-                    .thought_history
-                    .iter()
-                    .filter(|t| !main_chain.contains(&t.thought_number))
-                    .cloned()
-                    .collect();
-                Ok(json!(dead))
-            }
+            },
             "summary_stats" => {
                 let report = analyze_quality(&session_id, &guard.thought_history);
                 Ok(json!({
@@ -714,6 +672,24 @@ impl Tool for AnalyzeGraphTool {
 // ─── Tool 3: ExportSessionTool ───────────────────────────────────
 
 pub struct ExportSessionTool;
+
+fn collect_thought_edges(t: &ThoughtData, prev_thought_number: Option<usize>) -> Vec<(&'static str, usize)> {
+    match t.parent_thoughts.as_ref().filter(|p| !p.is_empty()) {
+        Some(parents) => parents.iter().map(|&p| ("parent", p)).collect(),
+        None => match (
+            t.branch_from_thought,
+            t.is_revision.unwrap_or(false),
+            t.revises_thought,
+            prev_thought_number,
+        ) {
+            (Some(bf), _, _, _) => vec![("branch", bf)],
+            (None, true, Some(rev), _) => vec![("revision", rev)],
+            (None, true, None, _) => Vec::new(),
+            (None, false, _, Some(prev)) => vec![("standard", prev)],
+            (None, false, _, None) => Vec::new(),
+        },
+    }
+}
 
 #[async_trait::async_trait]
 impl Tool for ExportSessionTool {
@@ -746,13 +722,9 @@ impl Tool for ExportSessionTool {
         let (format_arg, session_id_arg) = match arguments {
             Value::String(s) => {
                 let lower = s.trim().to_lowercase();
-                if matches!(
-                    lower.as_str(),
-                    "mermaid" | "json" | "markdown" | "md" | "dot" | "graph"
-                ) {
-                    (Some(lower), None)
-                } else {
-                    (None, Some(s.trim().to_string()))
+                match lower.as_str() {
+                    "mermaid" | "json" | "markdown" | "md" | "dot" | "graph" => (Some(lower), None),
+                    _ => (None, Some(s.trim().to_string())),
                 }
             }
             Value::Object(map) => {
@@ -763,36 +735,13 @@ impl Tool for ExportSessionTool {
             _ => (None, None),
         };
 
-        let session_id = session_id_arg
-            .or_else(|| {
-                if !guard.current_session_id.is_empty() {
-                    Some(guard.current_session_id.clone())
-                } else {
-                    guard
-                        .store
-                        .list_sessions()
-                        .ok()
-                        .and_then(|list| list.into_iter().next().map(|s| s.id))
-                }
-            });
-
-        let session_id = match session_id {
-            Some(id) if !id.trim().is_empty() => id,
-            _ => {
-                return Ok(json!({
-                    "status": "no_session",
-                    "message": "No thinking sessions found to export. Create thoughts using sequentialthinking first."
-                }));
-            }
+        let session_id = match guard.resolve_and_load_session(
+            session_id_arg,
+            "No thinking sessions found to export. Create thoughts using sequentialthinking first.",
+        ) {
+            Ok(id) => id,
+            Err(err_val) => return Ok(err_val),
         };
-
-        if let Err(e) = guard.load_session(&session_id) {
-            return Ok(json!({
-                "status": "not_found",
-                "sessionId": session_id,
-                "error": format!("Session not found: {}", e)
-            }));
-        }
 
         let raw_format = format_arg.unwrap_or_else(|| "markdown".to_string());
         let normalized = raw_format.trim().to_lowercase().replace('-', "_");
@@ -817,20 +766,16 @@ impl Tool for ExportSessionTool {
                         "id": format!("T{}", t.thought_number), "thoughtNumber": t.thought_number,
                         "thought": t.thought, "confidenceScore": t.confidence_score, "timestamp": t.timestamp,
                     }));
-                    if let Some(ref parents) = t.parent_thoughts {
-                        for p in parents {
-                            edges.push(json!({ "source": format!("T{}", p), "target": format!("T{}", t.thought_number), "type": "parent" }));
-                        }
-                        continue;
-                    }
-                    if let Some(bf) = t.branch_from_thought {
-                        edges.push(json!({ "source": format!("T{}", bf), "target": format!("T{}", t.thought_number), "type": "branch" }));
-                    } else if t.is_revision.unwrap_or(false) {
-                        if let Some(rev) = t.revises_thought {
-                            edges.push(json!({ "source": format!("T{}", rev), "target": format!("T{}", t.thought_number), "type": "revision" }));
-                        }
-                    } else if i > 0 {
-                        edges.push(json!({ "source": format!("T{}", guard.thought_history[i - 1].thought_number), "target": format!("T{}", t.thought_number), "type": "standard" }));
+                    let prev_tn = i
+                        .checked_sub(1)
+                        .and_then(|prev_idx| guard.thought_history.get(prev_idx))
+                        .map(|prev| prev.thought_number);
+                    for (edge_type, src_tn) in collect_thought_edges(t, prev_tn) {
+                        edges.push(json!({
+                            "source": format!("T{}", src_tn),
+                            "target": format!("T{}", t.thought_number),
+                            "type": edge_type,
+                        }));
                     }
                 }
                 Ok(
@@ -838,63 +783,7 @@ impl Tool for ExportSessionTool {
                 )
             }
             "markdown" => {
-                let mut md = String::new();
-                md.push_str(&format!(
-                    "# Reasoning Session History - Session `{}`\n\n",
-                    session_id
-                ));
-                for t in &guard.thought_history {
-                    let kind = if t.is_revision.unwrap_or(false) {
-                        "Revision"
-                    } else if t.branch_from_thought.is_some() {
-                        "Branch"
-                    } else {
-                        "Thought"
-                    };
-                    md.push_str(&format!("## {} {}\n", kind, t.thought_number));
-                    if let Some(ts) = t.timestamp {
-                        md.push_str(&format!(
-                            "*Timestamp: {}*\n\n",
-                            ts.format("%Y-%m-%d %H:%M:%S UTC")
-                        ));
-                    }
-                    md.push_str(&format!("{}\n\n", t.thought));
-                    if let Some(ref ass) = t.assumptions {
-                        if !ass.is_empty() {
-                            md.push_str("### Assumptions\n");
-                            for a in ass {
-                                md.push_str(&format!("- 🤔 {}\n", a));
-                            }
-                            md.push('\n');
-                        }
-                    }
-                    if let Some(ref ver) = t.verified_assumptions {
-                        if !ver.is_empty() {
-                            md.push_str("### Verified Assumptions\n");
-                            for v in ver {
-                                md.push_str(&format!("- ✅ {}\n", v));
-                            }
-                            md.push('\n');
-                        }
-                    }
-                    if let Some(conf) = t.confidence_score {
-                        md.push_str(&format!(
-                            "*Confidence Score: {}/5 ({:.0}%)*\n\n",
-                            (conf * 5.0).round(),
-                            conf * 100.0
-                        ));
-                    }
-                    if let Some(ref c) = t.criticism {
-                        md.push_str(&format!("> **🧐 Self-Criticism:** {}\n\n", c));
-                    }
-                    if let Some(ref h) = t.hypothesis {
-                        md.push_str(&format!("> **🔬 Hypothesis:** {}\n\n", h));
-                    }
-                    if let Some(ref vm) = t.verification_method {
-                        md.push_str(&format!("> **🧪 Verification:** {}\n\n", vm));
-                    }
-                    md.push_str("---\n\n");
-                }
+                let md = export_session_as_markdown(&session_id, &guard.thought_history);
                 Ok(json!({ "format": "markdown", "sessionId": session_id, "data": md }))
             }
             "dot" => {
@@ -904,38 +793,28 @@ impl Tool for ExportSessionTool {
                 for (i, t) in guard.thought_history.iter().enumerate() {
                     let id = format!("T{}", t.thought_number);
                     let preview: String = t.thought.chars().take(20).collect();
-                    let color = if t.is_revision.unwrap_or(false) {
-                        "\"#fafd7c\""
-                    } else if t.branch_from_thought.is_some() {
-                        "\"#a1e887\""
-                    } else {
-                        "\"#a5ccf7\""
+                    let color = match classify_thought_node(t).0 {
+                        "revision" => "\"#fafd7c\"",
+                        "branch" => "\"#a1e887\"",
+                        _ => "\"#a5ccf7\"",
                     };
                     dot.push_str(&format!(
                         "  {} [label=\"T{}: {}...\", fillcolor={}];\n",
                         id, t.thought_number, preview, color
                     ));
-                    if let Some(ref parents) = t.parent_thoughts {
-                        for p in parents {
-                            dot.push_str(&format!("  T{} -> {};\n", p, id));
-                        }
-                        continue;
-                    }
-                    if let Some(bf) = t.branch_from_thought {
-                        dot.push_str(&format!("  T{} -> {};\n", bf, id));
-                    } else if t.is_revision.unwrap_or(false) {
-                        if let Some(rev) = t.revises_thought {
-                            dot.push_str(&format!(
+                    let prev_tn = i
+                        .checked_sub(1)
+                        .and_then(|prev_idx| guard.thought_history.get(prev_idx))
+                        .map(|prev| prev.thought_number);
+                    for (edge_type, src_tn) in collect_thought_edges(t, prev_tn) {
+                        let line = match edge_type {
+                            "revision" => format!(
                                 "  T{} -> {} [style=dotted, label=\"revises\"];\n",
-                                rev, id
-                            ));
-                        }
-                    } else if i > 0 {
-                        dot.push_str(&format!(
-                            "  T{} -> {};\n",
-                            guard.thought_history[i - 1].thought_number,
-                            id
-                        ));
+                                src_tn, id
+                            ),
+                            _ => format!("  T{} -> {};\n", src_tn, id),
+                        };
+                        dot.push_str(&line);
                     }
                 }
                 dot.push_str("}\n");
@@ -981,36 +860,13 @@ impl Tool for SummarizeReasoningTool {
             _ => None,
         };
 
-        let session_id = session_id_arg
-            .or_else(|| {
-                if !guard.current_session_id.is_empty() {
-                    Some(guard.current_session_id.clone())
-                } else {
-                    guard
-                        .store
-                        .list_sessions()
-                        .ok()
-                        .and_then(|list| list.into_iter().next().map(|s| s.id))
-                }
-            });
-
-        let session_id = match session_id {
-            Some(id) if !id.trim().is_empty() => id,
-            _ => {
-                return Ok(json!({
-                    "status": "no_session",
-                    "message": "No thinking sessions found to summarize. Create thoughts using sequentialthinking first."
-                }));
-            }
+        let session_id = match guard.resolve_and_load_session(
+            session_id_arg,
+            "No thinking sessions found to summarize. Create thoughts using sequentialthinking first.",
+        ) {
+            Ok(id) => id,
+            Err(err_val) => return Ok(err_val),
         };
-
-        if let Err(e) = guard.load_session(&session_id) {
-            return Ok(json!({
-                "status": "not_found",
-                "sessionId": session_id,
-                "error": format!("Session not found: {}", e)
-            }));
-        }
 
         let total_thoughts = guard.thought_history.len();
         let total_branches = guard.branches.len();
@@ -1020,46 +876,19 @@ impl Tool for SummarizeReasoningTool {
             .iter()
             .filter_map(|t| t.confidence_score)
             .collect();
-        let average_confidence = if confidences.is_empty() {
-            0.0
-        } else {
-            confidences.iter().sum::<f64>() / confidences.len() as f64
+        let average_confidence = match confidences.is_empty() {
+            true => 0.0,
+            false => confidences.iter().sum::<f64>() / confidences.len() as f64,
         };
 
-        let mut merge_points = Vec::new();
-        for t in &guard.thought_history {
-            if let Some(ref parents) = t.parent_thoughts {
-                if parents.len() > 1 {
-                    merge_points.push(t.thought_number);
-                }
-            }
-        }
-
-        let mut assumed = HashSet::new();
-        let mut verified = HashSet::new();
-        for t in &guard.thought_history {
-            if let Some(ref ass) = t.assumptions {
-                for a in ass {
-                    assumed.insert(a.clone());
-                }
-            }
-            if let Some(ref ver) = t.verified_assumptions {
-                for v in ver {
-                    let vc = v
-                        .replace("verified:", "")
-                        .replace("refuted:", "")
-                        .replace("false:", "")
-                        .trim()
-                        .to_string();
-                    verified.insert(vc);
-                    verified.insert(v.clone());
-                }
-            }
-        }
-        let unverified_assumptions: Vec<String> = assumed
-            .into_iter()
-            .filter(|a| !verified.contains(a))
+        let merge_points: Vec<usize> = guard
+            .thought_history
+            .iter()
+            .filter(|t| t.parent_thoughts.as_ref().is_some_and(|p| p.len() > 1))
+            .map(|t| t.thought_number)
             .collect();
+
+        let unverified_assumptions = collect_unverified_assumptions(&guard.thought_history);
 
         let open_todos = guard
             .thought_history
@@ -1067,24 +896,31 @@ impl Tool for SummarizeReasoningTool {
             .and_then(|t| t.left_to_be_done.clone())
             .unwrap_or_default();
 
-        let mut parts = Vec::new();
-        for t in &guard.thought_history {
-            let mut part = format!("T{}", t.thought_number);
-            if let Some(bf) = t.branch_from_thought {
-                let bid = t.branch_id.as_deref().unwrap_or("unknown");
-                part = format!("{}(branch:{}, from:T{})", part, bid, bf);
-            } else if let Some(ref parents) = t.parent_thoughts {
-                if parents.len() > 1 {
-                    let p_str: Vec<String> = parents.iter().map(|p| format!("T{}", p)).collect();
-                    part = format!("{}(merge:{})", part, p_str.join("+"));
+        let parts: Vec<String> = guard
+            .thought_history
+            .iter()
+            .map(|t| {
+                let base = format!("T{}", t.thought_number);
+                match (
+                    t.branch_from_thought,
+                    t.parent_thoughts.as_ref().filter(|p| p.len() > 1),
+                    t.is_revision.unwrap_or(false),
+                    t.revises_thought,
+                ) {
+                    (Some(bf), _, _, _) => {
+                        let bid = t.branch_id.as_deref().unwrap_or("unknown");
+                        format!("{}(branch:{}, from:T{})", base, bid, bf)
+                    }
+                    (None, Some(parents), _, _) => {
+                        let p_str: Vec<String> =
+                            parents.iter().map(|p| format!("T{}", p)).collect();
+                        format!("{}(merge:{})", base, p_str.join("+"))
+                    }
+                    (None, None, true, Some(rev)) => format!("{}(revises:T{})", base, rev),
+                    _ => base,
                 }
-            } else if t.is_revision.unwrap_or(false) {
-                if let Some(rev) = t.revises_thought {
-                    part = format!("{}(revises:T{})", part, rev);
-                }
-            }
-            parts.push(part);
-        }
+            })
+            .collect();
 
         Ok(json!({
             "sessionId": session_id, "totalThoughts": total_thoughts, "totalBranches": total_branches,

@@ -1,8 +1,12 @@
+use super::{extract_first_str, extract_trimmed_str, ACTION_KEYS};
 use crate::tools::Tool;
 use anyhow::Result;
 use serde_json::Value;
 
 pub struct CurateSkillTool;
+
+const SKILL_NAME_KEYS: &[&str] = &["skill_name", "skillName", "name", "skill", "id"];
+const SKILL_CONTENT_KEYS: &[&str] = &["content", "instructions", "body", "text"];
 
 #[async_trait::async_trait]
 impl Tool for CurateSkillTool {
@@ -41,28 +45,15 @@ impl Tool for CurateSkillTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action_str = if let Some(s) = arguments.as_str() {
-            Some(s)
-        } else if let Some(obj) = arguments.as_object() {
-            obj.get("action")
-                .or_else(|| obj.get("act"))
-                .or_else(|| obj.get("command"))
-                .or_else(|| obj.get("cmd"))
-                .or_else(|| obj.get("op"))
-                .and_then(|v| v.as_str())
-                .or_else(|| {
-                    if obj.contains_key("content")
-                        || obj.contains_key("instructions")
-                        || obj.contains_key("body")
-                        || obj.contains_key("text")
-                    {
-                        Some("add")
-                    } else {
-                        None
-                    }
-                })
-        } else {
-            None
+        let action_str = match arguments {
+            Value::String(s) => Some(s.as_str()),
+            Value::Object(obj) => extract_first_str(arguments, &ACTION_KEYS[..5]).or_else(|| {
+                SKILL_CONTENT_KEYS
+                    .iter()
+                    .any(|&k| obj.contains_key(k))
+                    .then_some("add")
+            }),
+            _ => None,
         };
 
         let normalized_action = action_str
@@ -75,47 +66,28 @@ impl Tool for CurateSkillTool {
             other => other,
         };
 
+        let profile = extract_trimmed_str(arguments, &["profile"]);
+
         match action {
             "list" => {
-                let profile = arguments
-                    .get("profile")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty());
-                let skills = crate::agent::skills::load_skills_with_profile(profile)?;
+                let skills =
+                    crate::agent::skills::load_skills_with_profile(profile.as_deref())?;
                 Ok(serde_json::json!({
                     "success": true,
                     "skills": skills
                 }))
             }
             "add" => {
-                let skill_name = arguments
-                    .get("skill_name")
-                    .or_else(|| arguments.get("skillName"))
-                    .or_else(|| arguments.get("name"))
-                    .or_else(|| arguments.get("skill"))
-                    .or_else(|| arguments.get("id"))
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
+                let skill_name = extract_trimmed_str(arguments, SKILL_NAME_KEYS)
                     .ok_or_else(|| anyhow::anyhow!("Missing skill_name for action 'add'"))?;
-                let content = arguments
-                    .get("content")
-                    .or_else(|| arguments.get("instructions"))
-                    .or_else(|| arguments.get("body"))
-                    .or_else(|| arguments.get("text"))
-                    .and_then(|v| v.as_str())
+                let content = extract_first_str(arguments, SKILL_CONTENT_KEYS)
                     .ok_or_else(|| anyhow::anyhow!("Missing content for action 'add'"))?;
-                let profile = arguments
-                    .get("profile")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty());
 
-                if let Some(prof) = profile {
-                    crate::agent::skills::save_subagent_skill(prof, skill_name, content)?;
-                } else {
-                    crate::agent::skills::save_skill(skill_name, content)?;
+                match profile.as_deref() {
+                    Some(prof) => {
+                        crate::agent::skills::save_subagent_skill(prof, &skill_name, content)?
+                    }
+                    None => crate::agent::skills::save_skill(&skill_name, content)?,
                 }
 
                 Ok(serde_json::json!({
@@ -124,23 +96,10 @@ impl Tool for CurateSkillTool {
                 }))
             }
             "delete" => {
-                let skill_name = arguments
-                    .get("skill_name")
-                    .or_else(|| arguments.get("skillName"))
-                    .or_else(|| arguments.get("name"))
-                    .or_else(|| arguments.get("skill"))
-                    .or_else(|| arguments.get("id"))
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
+                let skill_name = extract_trimmed_str(arguments, SKILL_NAME_KEYS)
                     .ok_or_else(|| anyhow::anyhow!("Missing skill_name for action 'delete'"))?;
-                let profile = arguments
-                    .get("profile")
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty());
 
-                crate::agent::skills::delete_skill_with_profile(skill_name, profile)?;
+                crate::agent::skills::delete_skill_with_profile(&skill_name, profile.as_deref())?;
                 Ok(serde_json::json!({
                     "success": true,
                     "message": format!("Skill '{}' successfully deleted", skill_name)
@@ -154,4 +113,3 @@ impl Tool for CurateSkillTool {
 #[cfg(test)]
 #[path = "skills_tests.rs"]
 mod tests;
-

@@ -78,6 +78,47 @@ impl Tool for ServerInfoTool {
 
 pub struct CountTokensTool;
 
+const COUNT_TEXT_KEYS: &[&str] = &["text", "content", "context", "raw_text", "input", "code"];
+const COUNT_PATH_KEYS: &[&str] = &["path", "file", "filepath"];
+
+fn resolve_count_tokens_text(arguments: &Value) -> Result<String> {
+    let initial = match arguments.as_str() {
+        Some(s) => s.to_string(),
+        None => match COUNT_TEXT_KEYS
+            .iter()
+            .find_map(|&k| arguments.get(k).and_then(|v| v.as_str()))
+        {
+            Some(s) => s.to_string(),
+            None => match COUNT_PATH_KEYS
+                .iter()
+                .find_map(|&k| arguments.get(k).and_then(|v| v.as_str()))
+            {
+                Some(p) => std::fs::read_to_string(std::path::Path::new(p))
+                    .map_err(|e| anyhow!("Failed to read file '{}': {}", p, e))?,
+                None => match arguments.get("parse_error").and_then(|v| v.as_str()) {
+                    Some(err) => err.to_string(),
+                    None => return Err(anyhow!("Missing text or path parameter")),
+                },
+            },
+        },
+    };
+
+    // If text is a single path-like string pointing to a readable file, read the file
+    let can_try_file = initial.len() < 256 && !initial.contains('\n') && !initial.contains(' ');
+    let maybe_file = can_try_file
+        .then(|| std::path::Path::new(&initial))
+        .filter(|path| path.is_file())
+        .and_then(|path| std::fs::read_to_string(path).ok());
+    Ok(maybe_file.unwrap_or(initial))
+}
+
+fn compute_saving_pct(saved_tokens: i64, total_original_tokens: i64) -> f64 {
+    match total_original_tokens > 0 {
+        true => (saved_tokens as f64 / total_original_tokens as f64) * 100.0,
+        false => 0.0,
+    }
+}
+
 #[async_trait::async_trait]
 impl Tool for CountTokensTool {
     fn name(&self) -> &str {
@@ -96,50 +137,18 @@ impl Tool for CountTokensTool {
         })
     }
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut text = if let Some(s) = arguments.as_str() {
-            s.to_string()
-        } else if let Some(s) = arguments
-            .get("text")
-            .or_else(|| arguments.get("content"))
-            .or_else(|| arguments.get("context"))
-            .or_else(|| arguments.get("raw_text"))
-            .or_else(|| arguments.get("input"))
-            .or_else(|| arguments.get("code"))
-            .and_then(|v| v.as_str())
-        {
-            s.to_string()
-        } else if let Some(p) = arguments
-            .get("path")
-            .or_else(|| arguments.get("file"))
-            .or_else(|| arguments.get("filepath"))
-            .and_then(|v| v.as_str())
-        {
-            let path = std::path::Path::new(p);
-            std::fs::read_to_string(path).map_err(|e| anyhow!("Failed to read file '{}': {}", p, e))?
-        } else if let Some(err) = arguments.get("parse_error").and_then(|v| v.as_str()) {
-            err.to_string()
-        } else {
-            return Err(anyhow!("Missing text or path parameter"));
-        };
-
-        // If text is a single path-like string pointing to a readable file, read the file
-        if text.len() < 256 && !text.contains('\n') && !text.contains(' ') {
-            let path = std::path::Path::new(&text);
-            if path.is_file() {
-                if let Ok(content) = std::fs::read_to_string(path) {
-                    text = content;
-                }
-            }
-        }
+        let text = resolve_count_tokens_text(arguments)?;
 
         let tokens = estimate_tokens(&text);
         let chars = text.chars().count();
         let words = text.split_whitespace().count();
-        let lines = if text.is_empty() { 0 } else { text.lines().count() };
-        let density = if tokens > 0 {
-            format!("{:.2} chars/token", chars as f64 / tokens as f64)
-        } else {
-            "0.00 chars/token".to_string()
+        let lines = match text.is_empty() {
+            true => 0,
+            false => text.lines().count(),
+        };
+        let density = match tokens > 0 {
+            true => format!("{:.2} chars/token", chars as f64 / tokens as f64),
+            false => "0.00 chars/token".to_string(),
         };
 
         Ok(json!({
@@ -191,11 +200,7 @@ impl Tool for HeadroomStatsTool {
             .unwrap_or(0);
         let saved_bytes = total_original_bytes.saturating_sub(total_compressed_bytes);
         let saved_tokens = total_original_tokens.saturating_sub(total_compressed_tokens);
-        let saving_pct = if total_original_tokens > 0 {
-            (saved_tokens as f64 / total_original_tokens as f64) * 100.0
-        } else {
-            0.0
-        };
+        let saving_pct = compute_saving_pct(saved_tokens, total_original_tokens);
         Ok(json!({
             "total_compressions": total_compressions,
             "total_original_bytes": total_original_bytes,
@@ -237,21 +242,24 @@ impl Tool for HeadroomUsageTool {
         let model_filter = arguments.get("model").and_then(|v| v.as_str());
         let conn = get_cache_connection()?;
         let mut rows_json = Vec::new();
-        if let Some(model) = model_filter {
-            let mut stmt = conn.prepare(
-                "SELECT COALESCE(NULLIF(model_hint, ''), 'default') AS model, COALESCE(SUM(original_tokens), 0), COALESCE(SUM(original_tokens - compressed_tokens), 0) FROM compression_log WHERE model_hint = ?1 GROUP BY model ORDER BY SUM(original_tokens - compressed_tokens) DESC",
-            )?;
-            let rows = stmt.query_map([model], usage_row_from_sql)?;
-            for row in rows {
-                rows_json.push(row?);
+        match model_filter {
+            Some(model) => {
+                let mut stmt = conn.prepare(
+                    "SELECT COALESCE(NULLIF(model_hint, ''), 'default') AS model, COALESCE(SUM(original_tokens), 0), COALESCE(SUM(original_tokens - compressed_tokens), 0) FROM compression_log WHERE model_hint = ?1 GROUP BY model ORDER BY SUM(original_tokens - compressed_tokens) DESC",
+                )?;
+                let rows = stmt.query_map([model], usage_row_from_sql)?;
+                for row in rows {
+                    rows_json.push(row?);
+                }
             }
-        } else {
-            let mut stmt = conn.prepare(
-                "SELECT COALESCE(NULLIF(model_hint, ''), 'default') AS model, COALESCE(SUM(original_tokens), 0), COALESCE(SUM(original_tokens - compressed_tokens), 0) FROM compression_log GROUP BY model ORDER BY SUM(original_tokens - compressed_tokens) DESC",
-            )?;
-            let rows = stmt.query_map([], usage_row_from_sql)?;
-            for row in rows {
-                rows_json.push(row?);
+            None => {
+                let mut stmt = conn.prepare(
+                    "SELECT COALESCE(NULLIF(model_hint, ''), 'default') AS model, COALESCE(SUM(original_tokens), 0), COALESCE(SUM(original_tokens - compressed_tokens), 0) FROM compression_log GROUP BY model ORDER BY SUM(original_tokens - compressed_tokens) DESC",
+                )?;
+                let rows = stmt.query_map([], usage_row_from_sql)?;
+                for row in rows {
+                    rows_json.push(row?);
+                }
             }
         }
         Ok(json!({ "rows": rows_json, "count": rows_json.len() }))
@@ -262,11 +270,7 @@ fn usage_row_from_sql(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     let model: String = row.get(0)?;
     let total_original_tokens: i64 = row.get(1)?;
     let total_saved_tokens: i64 = row.get(2)?;
-    let saving_pct = if total_original_tokens > 0 {
-        (total_saved_tokens as f64 / total_original_tokens as f64) * 100.0
-    } else {
-        0.0
-    };
+    let saving_pct = compute_saving_pct(total_saved_tokens, total_original_tokens);
     Ok(json!({
         "model": model,
         "total_original_tokens": total_original_tokens.max(0) as u64,

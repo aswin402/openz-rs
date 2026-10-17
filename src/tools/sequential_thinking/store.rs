@@ -154,18 +154,24 @@ impl ThoughtStore for MemoryThoughtStore {
         self.created_at.entry(session_id.to_string()).or_insert(now);
         self.updated_at.insert(session_id.to_string(), now);
 
-        if is_new && self.sessions.len() > 100 {
-            let oldest_key = self
-                .updated_at
-                .iter()
-                .filter(|&(key, _)| key != session_id)
-                .min_by_key(|&(_, time)| time)
-                .map(|(key, _)| key.clone());
-            if let Some(key) = oldest_key {
-                self.sessions.remove(&key);
-                self.created_at.remove(&key);
-                self.updated_at.remove(&key);
+        match is_new && self.sessions.len() > 100 {
+            true => {
+                let oldest_key = self
+                    .updated_at
+                    .iter()
+                    .filter(|&(key, _)| key != session_id)
+                    .min_by_key(|&(_, time)| time)
+                    .map(|(key, _)| key.clone());
+                match oldest_key {
+                    Some(key) => {
+                        self.sessions.remove(&key);
+                        self.created_at.remove(&key);
+                        self.updated_at.remove(&key);
+                    }
+                    None => {}
+                }
             }
+            false => {}
         }
         Ok(())
     }
@@ -317,6 +323,23 @@ pub fn get_db_path() -> PathBuf {
     crate::config::loader::runtime_db_path("thoughts.db")
 }
 
+pub(crate) fn open_thought_store() -> Box<dyn ThoughtStore> {
+    let db_path = get_db_path();
+    match db_path.parent() {
+        Some(parent) => {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        None => {}
+    }
+    match Connection::open(&db_path) {
+        Ok(conn) => match SqliteThoughtStore::new(conn) {
+            Ok(s) => Box::new(s),
+            Err(_) => Box::new(MemoryThoughtStore::new()),
+        },
+        Err(_) => Box::new(MemoryThoughtStore::new()),
+    }
+}
+
 // ─── Shared Database Lock and Store Accessors ────────────────────
 
 pub fn get_db_mutex() -> &'static tokio::sync::Mutex<()> {
@@ -327,18 +350,5 @@ pub fn get_db_mutex() -> &'static tokio::sync::Mutex<()> {
 static STORE: OnceLock<Arc<tokio::sync::Mutex<Box<dyn ThoughtStore>>>> = OnceLock::new();
 
 pub fn get_store() -> &'static Arc<tokio::sync::Mutex<Box<dyn ThoughtStore>>> {
-    STORE.get_or_init(|| {
-        let db_path = get_db_path();
-        if let Some(parent) = db_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let store: Box<dyn ThoughtStore> = match Connection::open(&db_path) {
-            Ok(conn) => match SqliteThoughtStore::new(conn) {
-                Ok(s) => Box::new(s),
-                Err(_) => Box::new(MemoryThoughtStore::new()),
-            },
-            Err(_) => Box::new(MemoryThoughtStore::new()),
-        };
-        Arc::new(tokio::sync::Mutex::new(store))
-    })
+    STORE.get_or_init(|| Arc::new(tokio::sync::Mutex::new(open_thought_store())))
 }

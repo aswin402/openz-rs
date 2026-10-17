@@ -82,7 +82,6 @@ impl Tool for RequestToolScopeTool {
     }
 }
 
-
 pub struct OptimizeToolScopeTool {
     registry: crate::tools::ToolRegistry,
 }
@@ -119,13 +118,16 @@ impl Tool for OptimizeToolScopeTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let prefixes = arguments.get("active_prefixes").and_then(|v| v.as_array());
+        let prefixes = arguments
+            .get("active_prefixes")
+            .and_then(|v| v.as_array())
+            .filter(|arr| !arr.is_empty());
 
         match prefixes {
-            Some(arr) if !arr.is_empty() => {
+            Some(arr) => {
                 let prefixes_vec: Vec<String> = arr
                     .iter()
-                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .filter_map(|v| v.as_str().map(ToString::to_string))
                     .collect();
                 self.registry.set_filter_scope(Some(prefixes_vec.clone()));
                 Ok(serde_json::json!({
@@ -133,7 +135,7 @@ impl Tool for OptimizeToolScopeTool {
                     "message": format!("Tool scope restricted to prefixes: {:?}", prefixes_vec)
                 }))
             }
-            _ => {
+            None => {
                 self.registry.set_filter_scope(None);
                 Ok(serde_json::json!({
                     "success": true,
@@ -147,4 +149,3 @@ impl Tool for OptimizeToolScopeTool {
 #[cfg(test)]
 #[path = "scope_tests.rs"]
 mod tests;
-

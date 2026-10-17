@@ -1,4 +1,5 @@
 use super::*;
+use crate::tools::self_management::TestEnvLock;
 use crate::tools::Tool;
 
 #[test]
@@ -22,45 +23,13 @@ fn redact_secrets_handles_camel_case_and_nested_values() {
     assert_eq!(value["model"], "openai/gpt-4o");
 }
 
-struct TestEnvLock;
-
-impl TestEnvLock {
-    fn acquire() -> Self {
-        let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
-        loop {
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&lock_path)
-            {
-                Ok(_) => break,
-                Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
-            }
-        }
-        TestEnvLock
-    }
-}
-
-impl Drop for TestEnvLock {
-    fn drop(&mut self) {
-        let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
-        let _ = std::fs::remove_file(lock_path);
-    }
-}
-
 #[test]
 fn test_manage_config() {
-    let _env_lock = TestEnvLock::acquire();
-    let previous_config_dir = std::env::var("OPENZ_CONFIG_DIR").ok();
-    let openz_dir =
-        std::env::temp_dir().join(format!("openz_manage_config_{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&openz_dir).unwrap();
-    std::env::set_var("OPENZ_CONFIG_DIR", &openz_dir);
+    let _env_lock = TestEnvLock::acquire("openz_manage_config");
 
     let tool = ManageConfigTool;
     let rt = tokio::runtime::Runtime::new().unwrap();
 
-    // Save original config
     let original_config = crate::config::loader::load_config().unwrap();
 
     // 1. View config
@@ -70,16 +39,15 @@ fn test_manage_config() {
         })))
         .unwrap();
     assert!(view_res["success"].as_bool().unwrap());
-    // Verify redacted api_key / secret key format if they exist
     let config_val = &view_res["config"];
-    if let Some(providers) = config_val.get("providers") {
-        if let Some(openai) = providers.get("openai") {
-            if let Some(api_key) = openai.get("api_key") {
-                if api_key.is_string() {
-                    assert_eq!(api_key.as_str().unwrap(), "********");
-                }
-            }
-        }
+    match config_val
+        .get("providers")
+        .and_then(|p| p.get("openai"))
+        .and_then(|o| o.get("api_key"))
+        .and_then(|k| k.as_str())
+    {
+        Some(api_key) => assert_eq!(api_key, "********"),
+        None => {}
     }
 
     // 2. Update config hyperparameters
@@ -108,23 +76,20 @@ fn test_manage_config() {
     let updated_config = crate::config::loader::load_config().unwrap();
     assert_eq!(updated_config.agents.defaults.max_tokens, 1234);
     assert_eq!(updated_config.agents.defaults.temperature, 0.25f32);
-    assert_eq!(updated_config.agents.defaults.caveman_mode, false);
-    assert_eq!(updated_config.agents.defaults.streaming, false);
+    assert!(!updated_config.agents.defaults.caveman_mode);
+    assert!(!updated_config.agents.defaults.streaming);
     assert_eq!(
         updated_config.agents.defaults.tui_thought_display,
         "compact"
     );
     assert_eq!(updated_config.agents.defaults.min_free_disk_gb, 3.5);
-    assert_eq!(updated_config.agents.defaults.allow_network_tools, false);
+    assert!(!updated_config.agents.defaults.allow_network_tools);
     assert_eq!(
         updated_config.agents.defaults.max_concurrent_process_tools,
         2
     );
-    assert_eq!(
-        updated_config.agents.defaults.warn_before_expensive_tools,
-        false
-    );
-    assert_eq!(updated_config.skills.workspace_skills_enabled, false);
+    assert!(!updated_config.agents.defaults.warn_before_expensive_tools);
+    assert!(!updated_config.skills.workspace_skills_enabled);
     assert_eq!(
         updated_config.skills.external_dirs,
         vec![
@@ -132,7 +97,7 @@ fn test_manage_config() {
             "/tmp/openz-team-skills".to_string()
         ]
     );
-    assert_eq!(updated_config.skills.write_approval, true);
+    assert!(updated_config.skills.write_approval);
 
     // 4. Store credentials through manage_config and verify views redact them.
     let credential_res = rt
@@ -182,31 +147,18 @@ fn test_manage_config() {
             }
         })))
         .unwrap();
-    assert_eq!(invalid_res["success"].as_bool().unwrap(), false);
+    assert!(!invalid_res["success"].as_bool().unwrap());
     assert!(invalid_res["error"]
         .as_str()
         .unwrap()
         .contains("invalid_field"));
 
-    // Restore original config
     crate::config::loader::save_config(&original_config).unwrap();
-
-    if let Some(prev) = previous_config_dir {
-        std::env::set_var("OPENZ_CONFIG_DIR", prev);
-    } else {
-        std::env::remove_var("OPENZ_CONFIG_DIR");
-    }
-    let _ = std::fs::remove_dir_all(&openz_dir);
 }
 
 #[test]
 fn test_manage_config_coercion_and_aliases() {
-    let _env_lock = TestEnvLock::acquire();
-    let previous_config_dir = std::env::var("OPENZ_CONFIG_DIR").ok();
-    let openz_dir =
-        std::env::temp_dir().join(format!("openz_manage_config_coercion_{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&openz_dir).unwrap();
-    std::env::set_var("OPENZ_CONFIG_DIR", &openz_dir);
+    let _env_lock = TestEnvLock::acquire("openz_manage_config_coercion");
 
     let tool = ManageConfigTool;
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -240,8 +192,8 @@ fn test_manage_config_coercion_and_aliases() {
     let updated = crate::config::loader::load_config().unwrap();
     assert_eq!(updated.agents.defaults.max_tokens, 2048);
     assert!((updated.agents.defaults.temperature - 0.35f32).abs() < 1e-4);
-    assert_eq!(updated.agents.defaults.caveman_mode, true);
-    assert_eq!(updated.agents.defaults.streaming, false);
+    assert!(updated.agents.defaults.caveman_mode);
+    assert!(!updated.agents.defaults.streaming);
     assert_eq!(updated.browser.firefox_webdriver_port, 4545);
     assert!((updated.agents.defaults.min_free_disk_gb - 4.2).abs() < 1e-4);
 
@@ -263,27 +215,12 @@ fn test_manage_config_coercion_and_aliases() {
     let updated = crate::config::loader::load_config().unwrap();
     assert_eq!(updated.agents.defaults.max_tokens, 4096);
 
-    // Restore original config
     crate::config::loader::save_config(&original_config).unwrap();
-
-    if let Some(prev) = previous_config_dir {
-        std::env::set_var("OPENZ_CONFIG_DIR", prev);
-    } else {
-        std::env::remove_var("OPENZ_CONFIG_DIR");
-    }
-    let _ = std::fs::remove_dir_all(&openz_dir);
 }
 
 #[test]
 fn test_manage_config_credentials_flattened_and_inferred() {
-    let _env_lock = TestEnvLock::acquire();
-    let previous_config_dir = std::env::var("OPENZ_CONFIG_DIR").ok();
-    let openz_dir = std::env::temp_dir().join(format!(
-        "openz_manage_config_credentials_{}",
-        uuid::Uuid::new_v4()
-    ));
-    std::fs::create_dir_all(&openz_dir).unwrap();
-    std::env::set_var("OPENZ_CONFIG_DIR", &openz_dir);
+    let _env_lock = TestEnvLock::acquire("openz_manage_config_credentials");
 
     let tool = ManageConfigTool;
     let rt = tokio::runtime::Runtime::new().unwrap();
@@ -395,27 +332,12 @@ fn test_manage_config_credentials_flattened_and_inferred() {
         .and_then(|v| v.as_str());
     assert_eq!(groq_key, Some("********"));
 
-    // Restore original config
     crate::config::loader::save_config(&original_config).unwrap();
-
-    if let Some(prev) = previous_config_dir {
-        std::env::set_var("OPENZ_CONFIG_DIR", prev);
-    } else {
-        std::env::remove_var("OPENZ_CONFIG_DIR");
-    }
-    let _ = std::fs::remove_dir_all(&openz_dir);
 }
 
 #[test]
 fn test_manage_config_vault_settings() {
-    let _lock = TestEnvLock::acquire();
-    let previous_config_dir = std::env::var("OPENZ_CONFIG_DIR").ok();
-
-    let openz_dir =
-        std::env::temp_dir().join(format!("openz_config_vault_test_{}", uuid::Uuid::new_v4()));
-    let _ = std::fs::remove_dir_all(&openz_dir);
-    std::fs::create_dir_all(&openz_dir).unwrap();
-    std::env::set_var("OPENZ_CONFIG_DIR", &openz_dir);
+    let _lock = TestEnvLock::acquire("openz_config_vault_test");
 
     let default_config = crate::config::schema::Config::default();
     crate::config::loader::save_config(&default_config).unwrap();
@@ -449,17 +371,7 @@ fn test_manage_config_vault_settings() {
             "action": "view"
         })))
         .unwrap();
-    assert_eq!(
-        view_res["config"]["vault"]["name"],
-        "my_super_vault"
-    );
+    assert_eq!(view_res["config"]["vault"]["name"], "my_super_vault");
 
-    if let Some(prev) = previous_config_dir {
-        std::env::set_var("OPENZ_CONFIG_DIR", prev);
-    } else {
-        std::env::remove_var("OPENZ_CONFIG_DIR");
-    }
-    let _ = std::fs::remove_dir_all(&openz_dir);
     let _ = std::fs::remove_dir_all(&vault_target_dir);
 }
-
