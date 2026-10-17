@@ -9,26 +9,31 @@ const MAX_TELEGRAM_DOCUMENT_BYTES: u64 = 50 * 1024 * 1024;
 pub struct TelegramSendDocumentTool;
 
 fn valid_telegram_target(target: &str) -> bool {
-    if target.is_empty() || target.chars().any(char::is_whitespace) {
-        return false;
-    }
+    let is_valid_non_whitespace = !target.is_empty() && !target.chars().any(char::is_whitespace);
+    is_valid_non_whitespace
+        && match target.strip_prefix('@') {
+            Some(username) => {
+                (5..=32).contains(&username.len())
+                    && username
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            }
+            None => {
+                let is_negative = target.starts_with('-');
+                let numeric = target.strip_prefix('-').unwrap_or(target);
+                !numeric.is_empty()
+                    && numeric.chars().all(|ch| ch.is_ascii_digit())
+                    && (is_negative || numeric.len() <= 10)
+            }
+        }
+}
 
-    if let Some(username) = target.strip_prefix('@') {
-        return (5..=32).contains(&username.len())
-            && username
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
-    }
-
-    let is_negative = target.starts_with('-');
-    let numeric = target.strip_prefix('-').unwrap_or(target);
-    if numeric.is_empty() || !numeric.chars().all(|ch| ch.is_ascii_digit()) {
-        return false;
-    }
-
-    // Positive Telegram user IDs currently fit within ten decimal digits.
-    // Longer positive numbers are commonly phone numbers and are rejected.
-    is_negative || numeric.len() <= 10
+fn ensure_valid_telegram_target(chat_id: &str) -> Result<()> {
+    valid_telegram_target(chat_id).then_some(()).ok_or_else(|| {
+        anyhow!(
+            "Invalid Telegram target. Use an explicit numeric chat ID or @username; phone numbers are not accepted."
+        )
+    })
 }
 
 #[async_trait::async_trait]
@@ -94,29 +99,28 @@ impl Tool for TelegramSendDocumentTool {
             .and_then(Value::as_str)
             .unwrap_or("");
 
-        if !valid_telegram_target(chat_id) {
-            return Err(anyhow!(
-                "Invalid Telegram target. Use an explicit numeric chat ID or @username; phone numbers are not accepted."
-            ));
-        }
-        if caption.chars().count() > 1024 {
-            return Err(anyhow!("Telegram caption exceeds the 1024-character limit"));
-        }
+        ensure_valid_telegram_target(chat_id)?;
+        (caption.chars().count() <= 1024)
+            .then_some(())
+            .ok_or_else(|| anyhow!("Telegram caption exceeds the 1024-character limit"))?;
 
         let resolved = crate::config::resolve_path(path);
         let metadata = tokio::fs::metadata(&resolved)
             .await
             .map_err(|err| anyhow!("Cannot read file '{}': {}", resolved.display(), err))?;
-        if !metadata.is_file() {
-            return Err(anyhow!("Telegram document path is not a regular file"));
-        }
-        if metadata.len() > MAX_TELEGRAM_DOCUMENT_BYTES {
-            return Err(anyhow!(
-                "Telegram document is too large ({} bytes; maximum is {} bytes)",
-                metadata.len(),
-                MAX_TELEGRAM_DOCUMENT_BYTES
-            ));
-        }
+        metadata
+            .is_file()
+            .then_some(())
+            .ok_or_else(|| anyhow!("Telegram document path is not a regular file"))?;
+        (metadata.len() <= MAX_TELEGRAM_DOCUMENT_BYTES)
+            .then_some(())
+            .ok_or_else(|| {
+                anyhow!(
+                    "Telegram document is too large ({} bytes; maximum is {} bytes)",
+                    metadata.len(),
+                    MAX_TELEGRAM_DOCUMENT_BYTES
+                )
+            })?;
 
         let (token, client) =
             crate::channels::telegram::get_telegram_bot_info().ok_or_else(|| {
@@ -132,12 +136,13 @@ impl Tool for TelegramSendDocumentTool {
                     .unwrap_or("document")
                     .to_string(),
             );
-        let mut form = reqwest::multipart::Form::new()
+        let base_form = reqwest::multipart::Form::new()
             .text("chat_id", chat_id.to_string())
             .part("document", file);
-        if !caption.is_empty() {
-            form = form.text("caption", caption.to_string());
-        }
+        let form = match caption.is_empty() {
+            true => base_form,
+            false => base_form.text("caption", caption.to_string()),
+        };
 
         let url = telegram_api_url(&token, "sendDocument");
         let response = client
@@ -154,17 +159,14 @@ impl Tool for TelegramSendDocumentTool {
                 err
             )
         })?;
-        if !status.is_success() || body.get("ok").and_then(Value::as_bool) != Some(true) {
+        let send_ok = status.is_success() && body.get("ok").and_then(Value::as_bool) == Some(true);
+        send_ok.then_some(()).ok_or_else(|| {
             let detail = body
                 .get("description")
                 .and_then(Value::as_str)
                 .unwrap_or("Telegram rejected the document");
-            return Err(anyhow!(
-                "Telegram send failed (HTTP {}): {}",
-                status,
-                detail
-            ));
-        }
+            anyhow!("Telegram send failed (HTTP {}): {}", status, detail)
+        })?;
 
         Ok(json!({
             "status": "sent",
@@ -234,14 +236,10 @@ impl Tool for TelegramSendMessageTool {
             .get("chat_id")
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow!("Missing 'chat_id' parameter"))?;
-        if text.trim().is_empty() {
-            return Err(anyhow!("Telegram message cannot be empty"));
-        }
-        if !valid_telegram_target(chat_id) {
-            return Err(anyhow!(
-                "Invalid Telegram target. Use an explicit numeric chat ID or @username; phone numbers are not accepted."
-            ));
-        }
+        (!text.trim().is_empty())
+            .then_some(())
+            .ok_or_else(|| anyhow!("Telegram message cannot be empty"))?;
+        ensure_valid_telegram_target(chat_id)?;
 
         crate::channels::telegram::send_text_message_to_target(chat_id, text).await?;
         Ok(json!({

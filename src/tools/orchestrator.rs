@@ -58,10 +58,11 @@ struct WebUiWorkflowEventSink {
 
 impl WorkflowEventSink for WebUiWorkflowEventSink {
     fn emit(&self, event: WorkflowEvent) {
-        if let Some(chat_id) = &self.chat_id {
-            if let Ok(payload) = serde_json::to_value(event) {
+        match (&self.chat_id, serde_json::to_value(event)) {
+            (Some(chat_id), Ok(payload)) => {
                 crate::channels::websocket::publish_orchestration_event(chat_id, payload);
             }
+            _ => {}
         }
     }
 }
@@ -85,44 +86,34 @@ fn tool_allowed_by_policy_with_metadata_inner(
     metadata: &crate::tools::ToolMetadata,
     policy: &CapabilityPolicy,
 ) -> bool {
-    if !policy.allowed_tools.is_empty()
-        && !policy
+    let allowed_by_allowlist = policy.allowed_tools.is_empty()
+        || policy
             .allowed_tools
             .iter()
-            .any(|tool| crate::tools::tool_names_match(tool, name))
-    {
-        return false;
-    }
-
-    if policy
+            .any(|tool| crate::tools::tool_names_match(tool, name));
+    let denied_by_denylist = policy
         .denied_tools
         .iter()
-        .any(|tool| crate::tools::tool_names_match(tool, name))
-    {
-        return false;
-    }
+        .any(|tool| crate::tools::tool_names_match(tool, name));
+    let denied_by_shell =
+        policy.deny_shell && (metadata.domain == "shell" || metadata.spawns_process);
+    let denied_by_network = policy.deny_network && metadata.uses_network;
+    let denied_by_write = policy.deny_filesystem_write && metadata.writes_disk;
 
-    if policy.deny_shell && (metadata.domain == "shell" || metadata.spawns_process) {
-        return false;
-    }
-
-    if policy.deny_network && metadata.uses_network {
-        return false;
-    }
-
-    if policy.deny_filesystem_write && metadata.writes_disk {
-        return false;
-    }
-
-    true
+    allowed_by_allowlist
+        && !denied_by_denylist
+        && !denied_by_shell
+        && !denied_by_network
+        && !denied_by_write
 }
 
 pub fn combine_capability_policies(
     inherited: Option<&CapabilityPolicy>,
     workflow: &CapabilityPolicy,
 ) -> CapabilityPolicy {
-    let Some(inherited) = inherited else {
-        return workflow.clone();
+    let inherited = match inherited {
+        Some(policy) => policy,
+        None => return workflow.clone(),
     };
 
     let allowed_tools = match (
@@ -147,8 +138,9 @@ pub fn combine_capability_policies(
 
     let mut denied_tools = inherited.denied_tools.clone();
     for denied in &workflow.denied_tools {
-        if !denied_tools.iter().any(|tool| tool == denied) {
-            denied_tools.push(denied.clone());
+        match denied_tools.iter().any(|tool| tool == denied) {
+            true => {}
+            false => denied_tools.push(denied.clone()),
         }
     }
 
@@ -173,9 +165,7 @@ fn apply_step_grounding_policy(
     mut policy: CapabilityPolicy,
     step_policy: &crate::grounding::StepExecutionPolicy,
 ) -> CapabilityPolicy {
-    if !step_policy.allow_web {
-        policy.deny_network = true;
-    }
+    policy.deny_network = policy.deny_network || !step_policy.allow_web;
     policy
 }
 
@@ -200,12 +190,13 @@ impl StepExecutor for SubagentStepExecutor {
         spec: &WorkflowSpec,
         prior_results: &[String],
     ) -> Result<String> {
-        if self.cancellation_token.is_cancelled() {
-            return Err(anyhow!("cancelled before orchestrator step '{}'", step.id));
+        match self.cancellation_token.is_cancelled() {
+            true => return Err(anyhow!("cancelled before orchestrator step '{}'", step.id)),
+            false => {}
         }
 
         let mut profile = find_step_profile(step)?;
-        if let Some(model) = spec
+        match spec
             .agents
             .iter()
             .find(|agent| agent.name == step.agent)
@@ -213,8 +204,11 @@ impl StepExecutor for SubagentStepExecutor {
             .map(str::trim)
             .filter(|model| !model.is_empty())
         {
-            profile.model = Some(model.to_string());
-            profile.fallbacks = None;
+            Some(model) => {
+                profile.model = Some(model.to_string());
+                profile.fallbacks = None;
+            }
+            None => {}
         }
 
         let effective_policy = combine_capability_policies(
@@ -222,15 +216,18 @@ impl StepExecutor for SubagentStepExecutor {
             &spec.capabilities,
         );
         let profile_metadata = crate::tools::subagent::subagent_tool_metadata(&profile.name);
-        if !tool_allowed_by_policy_with_metadata_inner(
+        match tool_allowed_by_policy_with_metadata_inner(
             &profile.name,
             &profile_metadata,
             &effective_policy,
         ) {
-            return Err(anyhow!(
-                "workflow step agent '{}' denied by capability policy",
-                profile.name
-            ));
+            true => {}
+            false => {
+                return Err(anyhow!(
+                    "workflow step agent '{}' denied by capability policy",
+                    profile.name
+                ));
+            }
         }
 
         let prompt = build_step_prompt(step, &spec.goal, prior_results);

@@ -46,27 +46,22 @@ impl Tool for CheckPortTool {
             }
             Value::String(s) => {
                 let trimmed = s.trim();
-                if let Some((h, p_str)) = trimmed.rsplit_once(':') {
-                    let p = p_str
-                        .trim()
-                        .parse::<u64>()
-                        .map_err(|_| anyhow!("Invalid port in address '{}'", s))?;
-                    let h_clean = h.trim_matches(|c| c == '[' || c == ']').to_string();
-                    (
-                        p,
-                        if h_clean.is_empty() {
-                            "127.0.0.1".to_string()
-                        } else {
-                            h_clean
-                        },
-                        "check_listening".to_string(),
-                    )
-                } else {
-                    let p = trimmed
-                        .parse::<u64>()
-                        .map_err(|_| anyhow!("Invalid port '{}'", s))?;
-                    (p, "127.0.0.1".to_string(), "check_listening".to_string())
-                }
+                let (host, p) = match trimmed.rsplit_once(':') {
+                    Some((h, p_str)) => {
+                        let p = p_str
+                            .trim()
+                            .parse::<u64>()
+                            .map_err(|_| anyhow!("Invalid port in address '{}'", s))?;
+                        (normalize_host_part(h), p)
+                    }
+                    None => {
+                        let p = trimmed
+                            .parse::<u64>()
+                            .map_err(|_| anyhow!("Invalid port '{}'", s))?;
+                        ("127.0.0.1".to_string(), p)
+                    }
+                };
+                (p, host, "check_listening".to_string())
             }
             Value::Object(map) => {
                 let mut host = map
@@ -93,23 +88,17 @@ impl Tool for CheckPortTool {
 
                 let port = match port_opt {
                     Some(p) => p,
-                    None => {
-                        if let Some((h, p_str)) = host.rsplit_once(':') {
+                    None => match host.rsplit_once(':') {
+                        Some((h, p_str)) => {
                             let p = p_str
                                 .trim()
                                 .parse::<u64>()
                                 .map_err(|_| anyhow!("Missing or invalid 'port' parameter"))?;
-                            let h_clean = h.trim_matches(|c| c == '[' || c == ']').to_string();
-                            host = if h_clean.is_empty() {
-                                "127.0.0.1".to_string()
-                            } else {
-                                h_clean
-                            };
+                            host = normalize_host_part(h);
                             p
-                        } else {
-                            return Err(anyhow!("Missing 'port' parameter"));
                         }
-                    }
+                        None => return Err(anyhow!("Missing 'port' parameter")),
+                    },
                 };
 
                 let action_raw = map
@@ -145,24 +134,26 @@ impl Tool for CheckPortTool {
         // Restrict to localhost to prevent internal network enumeration
         let allowed_hosts = ["127.0.0.1", "localhost", "::1", "[::1]"];
         let host_lower = host.to_lowercase();
-        if !allowed_hosts.contains(&host_lower.as_str()) {
-            // Also allow resolving to localhost
-            let host_clone = host.to_string();
-            let resolves_to_localhost = tokio::task::spawn_blocking(move || {
-                use std::net::ToSocketAddrs;
-                format!("{}:0", host_clone)
-                    .to_socket_addrs()
-                    .map(|mut iter| {
-                        iter.any(|addr| addr.ip().is_loopback())
-                    })
-                    .unwrap_or(false)
-            })
-            .await?;
-            if !resolves_to_localhost {
-                return Err(anyhow!(
-                    "Security: check_port only allows localhost targets to prevent internal network enumeration. Got host: {}",
-                    host
-                ));
+        match allowed_hosts.contains(&host_lower.as_str()) {
+            true => {}
+            false => {
+                let host_clone = host.to_string();
+                let resolves_to_localhost = tokio::task::spawn_blocking(move || {
+                    format!("{}:0", host_clone)
+                        .to_socket_addrs()
+                        .map(|mut iter| iter.any(|addr| addr.ip().is_loopback()))
+                        .unwrap_or(false)
+                })
+                .await?;
+                match resolves_to_localhost {
+                    true => {}
+                    false => {
+                        return Err(anyhow!(
+                            "Security: check_port only allows localhost targets to prevent internal network enumeration. Got host: {}",
+                            host
+                        ));
+                    }
+                }
             }
         }
 
@@ -174,61 +165,54 @@ impl Tool for CheckPortTool {
                 let available =
                     tokio::task::spawn_blocking(move || TcpListener::bind(&address_clone).is_ok())
                         .await?;
-
-                if available {
-                    Ok(json!({
-                        "status": "success",
-                        "port": port,
-                        "host": host,
-                        "available": true,
-                        "message": format!("Port {} is free and available to bind.", port)
-                    }))
-                } else {
-                    Ok(json!({
-                        "status": "success",
-                        "port": port,
-                        "host": host,
-                        "available": false,
-                        "message": format!("Port {} is occupied or unavailable to bind.", port)
-                    }))
-                }
+                let message = match available {
+                    true => format!("Port {} is free and available to bind.", port),
+                    false => format!("Port {} is occupied or unavailable to bind.", port),
+                };
+                Ok(json!({
+                    "status": "success",
+                    "port": port,
+                    "host": host,
+                    "available": available,
+                    "message": message
+                }))
             }
             "check_listening" => {
                 let address_clone = address.clone();
                 let listening = tokio::task::spawn_blocking(move || {
-                    if let Ok(mut addrs) = address_clone.to_socket_addrs() {
-                        if let Some(socket_addr) = addrs.next() {
-                            return TcpStream::connect_timeout(
-                                &socket_addr,
-                                Duration::from_millis(1000),
-                            )
-                            .is_ok();
-                        }
-                    }
-                    false
+                    address_clone
+                        .to_socket_addrs()
+                        .ok()
+                        .and_then(|mut addrs| addrs.next())
+                        .map(|socket_addr| {
+                            TcpStream::connect_timeout(&socket_addr, Duration::from_millis(1000))
+                                .is_ok()
+                        })
+                        .unwrap_or(false)
                 })
                 .await?;
-
-                if listening {
-                    Ok(json!({
-                        "status": "success",
-                        "port": port,
-                        "host": host,
-                        "listening": true,
-                        "message": format!("Port {} is active and listening.", port)
-                    }))
-                } else {
-                    Ok(json!({
-                        "status": "success",
-                        "port": port,
-                        "host": host,
-                        "listening": false,
-                        "message": format!("Port {} is not listening or timed out.", port)
-                    }))
-                }
+                let message = match listening {
+                    true => format!("Port {} is active and listening.", port),
+                    false => format!("Port {} is not listening or timed out.", port),
+                };
+                Ok(json!({
+                    "status": "success",
+                    "port": port,
+                    "host": host,
+                    "listening": listening,
+                    "message": message
+                }))
             }
             _ => Err(anyhow!("Invalid action: {}", action)),
         }
+    }
+}
+
+fn normalize_host_part(raw: &str) -> String {
+    let cleaned = raw.trim_matches(|c| c == '[' || c == ']');
+    match cleaned.is_empty() {
+        true => "127.0.0.1".to_string(),
+        false => cleaned.to_string(),
     }
 }
 

@@ -55,50 +55,49 @@ impl Tool for WasmSandboxTool {
                     .map(|s| s.trim().to_string())
                     .ok_or_else(|| anyhow!("Missing 'wasm_path' parameter"))?;
 
-                let mut args = Vec::new();
-                if let Some(args_val) = map.get("args").or_else(|| map.get("arguments")) {
-                    if let Some(arr) = args_val.as_array() {
-                        for arg in arr {
-                            if let Some(s) = arg.as_str() {
-                                args.push(s.to_string());
-                            } else if arg.is_number() || arg.is_boolean() {
-                                args.push(arg.to_string());
-                            }
-                        }
-                    } else if let Some(s) = args_val.as_str() {
-                        args.extend(s.split_whitespace().map(|x| x.to_string()));
+                let args: Vec<String> = match map.get("args").or_else(|| map.get("arguments")) {
+                    Some(Value::Array(arr)) => arr
+                        .iter()
+                        .filter_map(|arg| match arg {
+                            Value::String(s) => Some(s.clone()),
+                            Value::Number(_) | Value::Bool(_) => Some(arg.to_string()),
+                            _ => None,
+                        })
+                        .collect(),
+                    Some(Value::String(s)) => {
+                        s.split_whitespace().map(|x| x.to_string()).collect()
                     }
-                }
+                    _ => Vec::new(),
+                };
                 (p, args)
             }
             _ => return Err(anyhow!("Invalid arguments: expected object or wasm path string")),
         };
 
-        if raw_path.is_empty() {
-            return Err(anyhow!("Missing or empty 'wasm_path' parameter"));
-        }
+        (!raw_path.is_empty())
+            .then_some(())
+            .ok_or_else(|| anyhow!("Missing or empty 'wasm_path' parameter"))?;
 
         let resolved_path = crate::config::resolve_path(&raw_path);
-        let final_path = if resolved_path.exists() {
-            resolved_path
-        } else if !raw_path.ends_with(".wasm") {
-            let with_ext = crate::config::resolve_path(&format!("{}.wasm", raw_path));
-            if with_ext.exists() {
-                with_ext
-            } else {
-                resolved_path
+        let final_path = match (resolved_path.exists(), raw_path.ends_with(".wasm")) {
+            (true, _) | (false, true) => resolved_path,
+            (false, false) => {
+                let with_ext = crate::config::resolve_path(&format!("{}.wasm", raw_path));
+                match with_ext.exists() {
+                    true => with_ext,
+                    false => resolved_path,
+                }
             }
-        } else {
-            resolved_path
         };
 
-        if !final_path.exists() {
-            return Err(anyhow!("WASM file does not exist: {}", raw_path));
-        }
+        final_path
+            .exists()
+            .then_some(())
+            .ok_or_else(|| anyhow!("WASM file does not exist: {}", raw_path))?;
         let metadata = std::fs::metadata(&final_path)?;
-        if metadata.len() > 100 * 1024 * 1024 {
-            return Err(anyhow!("WASM module too large (max 100MB)"));
-        }
+        (metadata.len() <= 100 * 1024 * 1024)
+            .then_some(())
+            .ok_or_else(|| anyhow!("WASM module too large (max 100MB)"))?;
 
         // Run execution in a spawn_blocking task to not block Tokio runtime
         let path = final_path.to_path_buf();
@@ -162,8 +161,12 @@ pub fn execute_wasm(wasm_path: &Path, args: Vec<String>) -> Result<Value> {
                 .downcast_ref::<wasmtime_wasi::I32Exit>()
                 .map(|exit| exit.0)
                 .unwrap_or(1);
+            let status = match exit_code {
+                0 => "success",
+                _ => "error",
+            };
             Ok(json!({
-                "status": if exit_code == 0 { "success" } else { "error" },
+                "status": status,
                 "error": e.to_string(),
                 "stdout": stdout_str,
                 "stderr": stderr_str,

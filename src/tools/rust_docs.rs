@@ -88,27 +88,31 @@ impl Tool for RustDocsTool {
                     .send()
                     .await?;
 
-                if !resp.status().is_success() {
-                    return Err(anyhow!(
-                        "Failed to search crates.io (HTTP {})",
-                        resp.status()
-                    ));
+                match resp.status().is_success() {
+                    true => {}
+                    false => {
+                        return Err(anyhow!(
+                            "Failed to search crates.io (HTTP {})",
+                            resp.status()
+                        ));
+                    }
                 }
 
                 let data: Value = resp.json().await?;
-                let crates = data.get("crates").and_then(|v| v.as_array());
-
-                let mut results = Vec::new();
-                if let Some(arr) = crates {
-                    for item in arr {
-                        results.push(json!({
+                let results: Vec<Value> = data
+                    .get("crates")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .map(|item| {
+                        json!({
                             "name": item.get("name").and_then(|v| v.as_str()).unwrap_or(""),
                             "version": item.get("max_version").and_then(|v| v.as_str()).unwrap_or(""),
                             "description": item.get("description").and_then(|v| v.as_str()).unwrap_or(""),
                             "documentation": item.get("documentation").and_then(|v| v.as_str()).unwrap_or("")
-                        }));
-                    }
-                }
+                        })
+                    })
+                    .collect();
 
                 Ok(json!({
                     "status": "success",
@@ -126,24 +130,22 @@ impl Tool for RustDocsTool {
                     .and_then(|v| v.as_str())
                     .unwrap_or("index.html");
 
-                // Format the URL. Docs.rs uses the structure: https://docs.rs/<crate>/latest/<crate_normalized>/<sub_path>
-                // We'll let docs.rs follow redirect from the base URL if we query: https://docs.rs/<crate>/latest/<crate_normalized>/
-                // Let's normalize name (dashes to underscores for the module name)
-                let module_name = crate_name.replace("-", "_");
-                // SSRF protection: only allow docs.rs and crates.io URLs for sub_path
-                let url = if sub_path.starts_with("https://docs.rs/")
-                    || sub_path.starts_with("https://crates.io/")
-                {
-                    sub_path.to_string()
-                } else if sub_path.starts_with("http://") || sub_path.starts_with("https://") {
-                    return Err(anyhow!(
-                        "SSRF blocked: sub_path can only reference docs.rs or crates.io URLs"
-                    ));
-                } else {
-                    format!(
+                let module_name = crate_name.replace('-', "_");
+                let allowed_direct_url = sub_path.starts_with("https://docs.rs/")
+                    || sub_path.starts_with("https://crates.io/");
+                let blocked_direct_url =
+                    sub_path.starts_with("http://") || sub_path.starts_with("https://");
+                let url = match (allowed_direct_url, blocked_direct_url) {
+                    (true, _) => sub_path.to_string(),
+                    (false, true) => {
+                        return Err(anyhow!(
+                            "SSRF blocked: sub_path can only reference docs.rs or crates.io URLs"
+                        ));
+                    }
+                    (false, false) => format!(
                         "https://docs.rs/{}/latest/{}/{}",
                         crate_name, module_name, sub_path
-                    )
+                    ),
                 };
 
                 let resp = self
@@ -152,27 +154,29 @@ impl Tool for RustDocsTool {
                     .header("User-Agent", USER_AGENT)
                     .send()
                     .await?;
-                if !resp.status().is_success() {
-                    // Fallback to simpler URL if normalized structure failed
-                    let fallback_url =
-                        format!("https://docs.rs/{}/latest/{}/", crate_name, module_name);
-                    let fallback_resp = self
-                        .client
-                        .get(&fallback_url)
-                        .header("User-Agent", USER_AGENT)
-                        .send()
-                        .await?;
-                    if !fallback_resp.status().is_success() {
-                        return Err(anyhow!(
-                            "Failed to fetch docs.rs page for {} (HTTP {})",
-                            crate_name,
-                            fallback_resp.status()
-                        ));
+                match resp.status().is_success() {
+                    true => self.parse_docs_html(resp.text().await?, &url),
+                    false => {
+                        let fallback_url =
+                            format!("https://docs.rs/{}/latest/{}/", crate_name, module_name);
+                        let fallback_resp = self
+                            .client
+                            .get(&fallback_url)
+                            .header("User-Agent", USER_AGENT)
+                            .send()
+                            .await?;
+                        match fallback_resp.status().is_success() {
+                            true => {
+                                self.parse_docs_html(fallback_resp.text().await?, &fallback_url)
+                            }
+                            false => Err(anyhow!(
+                                "Failed to fetch docs.rs page for {} (HTTP {})",
+                                crate_name,
+                                fallback_resp.status()
+                            )),
+                        }
                     }
-                    return self.parse_docs_html(fallback_resp.text().await?, &fallback_url);
                 }
-
-                self.parse_docs_html(resp.text().await?, &url)
             }
             _ => Err(anyhow!("Unsupported action: {}", action)),
         }
@@ -184,29 +188,26 @@ impl RustDocsTool {
         let fragment = Html::parse_document(&html);
 
         // Target only the main content section, discarding sidebars/headers
-        let main_selectors = vec!["main", "#main-content", ".content"];
-        let mut main_html = html.clone();
-
-        for selector_str in main_selectors {
-            if let Ok(selector) = Selector::parse(selector_str) {
-                if let Some(el) = fragment.select(&selector).next() {
-                    main_html = el.html();
-                    break;
-                }
-            }
-        }
+        let main_html = ["main", "#main-content", ".content"]
+            .into_iter()
+            .find_map(|selector_str| {
+                let selector = Selector::parse(selector_str).ok()?;
+                fragment.select(&selector).next().map(|el| el.html())
+            })
+            .unwrap_or_else(|| html.clone());
 
         let markdown = html2md::parse_html(&main_html);
 
         // Limit markdown output size to keep context clean
-        let truncated_md = if markdown.len() > 15000 {
-            let end = markdown.floor_char_boundary(15000);
-            format!(
-                "{}\n\n... (content truncated for size) ...",
-                &markdown[..end]
-            )
-        } else {
-            markdown
+        let truncated_md = match markdown.len() > 15000 {
+            true => {
+                let end = markdown.floor_char_boundary(15000);
+                format!(
+                    "{}\n\n... (content truncated for size) ...",
+                    &markdown[..end]
+                )
+            }
+            false => markdown,
         };
 
         Ok(json!({

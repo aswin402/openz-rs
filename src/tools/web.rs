@@ -2,7 +2,6 @@ use crate::memory::MemoryService;
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use futures_util::StreamExt;
-use regex::Regex;
 use reqwest::{header, Client};
 use rusqlite::OptionalExtension;
 use scraper::node::Node;
@@ -13,14 +12,38 @@ const WEB_CONNECT_TIMEOUT_SECS: u64 = 10;
 const WEB_READ_TIMEOUT_SECS: u64 = 30;
 const WEB_TOTAL_TIMEOUT_SECS: u64 = 45;
 
-fn web_re_whitespace() -> &'static Regex {
-    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r" +").expect("static whitespace regex must compile"))
+fn collapse_spaces(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut prev_space = false;
+    for ch in input.chars() {
+        let is_space = ch == ' ';
+        let _ = (!(is_space && prev_space)).then(|| out.push(ch));
+        prev_space = is_space;
+    }
+    out
 }
 
-fn web_re_newlines() -> &'static Regex {
-    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\n\s*\n").expect("static newline regex must compile"))
+fn collapse_blank_lines(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(nl_pos) = rest.find('\n') {
+        out.push_str(&rest[..nl_pos]);
+        let after_nl = &rest[nl_pos + 1..];
+        let ws_len = after_nl
+            .char_indices()
+            .take_while(|(_, ch)| ch.is_whitespace())
+            .last()
+            .map(|(idx, ch)| idx + ch.len_utf8())
+            .unwrap_or(0);
+        let ws_prefix = &after_nl[..ws_len];
+        out.push('\n');
+        rest = match ws_prefix.rfind('\n') {
+            Some(last_nl_in_ws) => &after_nl[last_nl_in_ws + 1..],
+            None => after_nl,
+        };
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Validate that an IP address is safe (not private, loopback, or reserved).
@@ -34,24 +57,19 @@ pub fn is_safe_ip(ip: &std::net::IpAddr) -> bool {
                 || v4.is_broadcast())
         }
         std::net::IpAddr::V6(v6) => {
-            if let Some(v4) = v6.to_ipv4() {
-                if !is_safe_ip(&std::net::IpAddr::V4(v4)) {
-                    return false;
-                }
-            }
-            if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
-                return false;
-            }
+            let v4_ok = v6
+                .to_ipv4()
+                .map(|v4| is_safe_ip(&std::net::IpAddr::V4(v4)))
+                .unwrap_or(true);
             let segments = v6.segments();
-            // ULA fc00::/7
-            if (segments[0] & 0xfe00) == 0xfc00 {
-                return false;
-            }
-            // Link-local fe80::/10
-            if (segments[0] & 0xffc0) == 0xfe80 {
-                return false;
-            }
-            true
+            let is_ula = (segments[0] & 0xfe00) == 0xfc00;
+            let is_link_local = (segments[0] & 0xffc0) == 0xfe80;
+            v4_ok
+                && !v6.is_loopback()
+                && !v6.is_unspecified()
+                && !v6.is_multicast()
+                && !is_ula
+                && !is_link_local
         }
     }
 }
@@ -63,55 +81,53 @@ pub fn validate_url_sync(url: &reqwest::Url) -> Result<std::net::IpAddr> {
         .to_lowercase();
 
     // Block non-HTTP schemes
-    if url.scheme() != "http" && url.scheme() != "https" {
-        return Err(anyhow!(
-            "SSRF blocked: only http/https URLs are allowed (got '{}')",
-            url.scheme()
-        ));
-    }
+    matches!(url.scheme(), "http" | "https")
+        .then_some(())
+        .ok_or_else(|| {
+            anyhow!(
+                "SSRF blocked: only http/https URLs are allowed (got '{}')",
+                url.scheme()
+            )
+        })?;
 
     // Block cloud metadata endpoints by hostname
-    if host == "169.254.169.254" || host == "metadata.google.internal" {
-        return Err(anyhow!(
-            "SSRF blocked: cloud metadata endpoints are not allowed"
-        ));
-    }
+    (!matches!(host.as_str(), "169.254.169.254" | "metadata.google.internal"))
+        .then_some(())
+        .ok_or_else(|| anyhow!("SSRF blocked: cloud metadata endpoints are not allowed"))?;
 
     // If the host is already a literal IP, check it directly
-    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        if !is_safe_ip(&ip) {
-            return Err(anyhow!(
-                "SSRF blocked: private/reserved IP addresses are not allowed"
-            ));
+    match host.parse::<std::net::IpAddr>() {
+        Ok(ip) => {
+            is_safe_ip(&ip).then_some(ip).ok_or_else(|| {
+                anyhow!("SSRF blocked: private/reserved IP addresses are not allowed")
+            })
         }
-        return Ok(ip);
-    }
+        Err(_) => {
+            // DNS resolution check
+            use std::net::ToSocketAddrs;
+            let resolved_ips = format!("{}:0", host)
+                .to_socket_addrs()
+                .map(|iter| iter.map(|addr| addr.ip()).collect::<Vec<_>>())
+                .unwrap_or_default();
 
-    // DNS resolution check
-    use std::net::ToSocketAddrs;
-    let resolved_ips = format!("{}:0", host)
-        .to_socket_addrs()
-        .map(|iter| iter.map(|addr| addr.ip()).collect::<Vec<_>>())
-        .unwrap_or_default();
+            for ip in &resolved_ips {
+                is_safe_ip(ip).then_some(()).ok_or_else(|| {
+                    anyhow!(
+                        "SSRF blocked: hostname '{}' resolved to private/reserved IP {}",
+                        host,
+                        ip
+                    )
+                })?;
+            }
 
-    for ip in &resolved_ips {
-        if !is_safe_ip(ip) {
-            return Err(anyhow!(
-                "SSRF blocked: hostname '{}' resolved to private/reserved IP {}",
-                host,
-                ip
-            ));
+            resolved_ips.first().copied().ok_or_else(|| {
+                anyhow!(
+                    "SSRF blocked: hostname '{}' could not be resolved to any IP",
+                    host
+                )
+            })
         }
     }
-
-    let first_ip = resolved_ips.first().copied().ok_or_else(|| {
-        anyhow!(
-            "SSRF blocked: hostname '{}' could not be resolved to any IP",
-            host
-        )
-    })?;
-
-    Ok(first_ip)
 }
 
 pub async fn validate_url(url: &str) -> Result<std::net::IpAddr> {
@@ -197,29 +213,31 @@ fn compute_expires_at(
     last_modified: Option<&str>,
     fetched_at: chrono::DateTime<chrono::Utc>,
 ) -> Option<chrono::DateTime<chrono::Utc>> {
-    if let Some(cache_control) = cache_control.map(str::trim).filter(|s| !s.is_empty()) {
-        if cache_control_has(cache_control, "no-store") {
-            return None;
+    match cache_control.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(cc) => {
+            (!cache_control_has(cc, "no-store")).then_some(())?;
+            let immediate_revalidate =
+                cache_control_has(cc, "no-cache") || cache_control_has(cc, "must-revalidate");
+            match immediate_revalidate {
+                true => return Some(fetched_at),
+                false => {}
+            }
+            match cache_control_max_age(cc) {
+                Some(max_age) => return Some(fetched_at + chrono::Duration::seconds(max_age)),
+                None => {}
+            }
         }
-        if cache_control_has(cache_control, "no-cache")
-            || cache_control_has(cache_control, "must-revalidate")
-        {
-            return Some(fetched_at);
-        }
-        if let Some(max_age) = cache_control_max_age(cache_control) {
-            return Some(fetched_at + chrono::Duration::seconds(max_age));
-        }
+        None => {}
     }
 
-    if let Some(last_modified) = last_modified.and_then(parse_http_date) {
-        let age = fetched_at
-            .signed_duration_since(last_modified)
-            .num_seconds()
-            .max(0);
-        let heuristic = (age / 10).clamp(60, 86_400);
-        return Some(fetched_at + chrono::Duration::seconds(heuristic));
-    }
-    Some(fetched_at)
+    last_modified
+        .and_then(parse_http_date)
+        .map(|lm| {
+            let age = fetched_at.signed_duration_since(lm).num_seconds().max(0);
+            let heuristic = (age / 10).clamp(60, 86_400);
+            fetched_at + chrono::Duration::seconds(heuristic)
+        })
+        .or(Some(fetched_at))
 }
 
 fn is_cache_fresh(expires_at: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
@@ -267,12 +285,13 @@ fn save_cached_web_fetch(
     let etag = header_to_string(headers, header::ETAG);
     let last_modified = header_to_string(headers, header::LAST_MODIFIED);
     let cache_control = header_to_string(headers, header::CACHE_CONTROL);
-    let Some(expires_at) = compute_expires_at(
+    let expires_at = match compute_expires_at(
         cache_control.as_deref(),
         last_modified.as_deref(),
         fetched_at,
-    ) else {
-        return Ok(());
+    ) {
+        Some(expires_at) => expires_at,
+        None => return Ok(()),
     };
     MemoryService::current().with_shared_db(|conn| {
         conn.execute(
@@ -299,12 +318,13 @@ fn refresh_cached_web_fetch_validators(url: &str, headers: &header::HeaderMap) -
     let etag = header_to_string(headers, header::ETAG);
     let last_modified = header_to_string(headers, header::LAST_MODIFIED);
     let cache_control = header_to_string(headers, header::CACHE_CONTROL);
-    let Some(expires_at) = compute_expires_at(
+    let expires_at = match compute_expires_at(
         cache_control.as_deref(),
         last_modified.as_deref(),
         fetched_at,
-    ) else {
-        return Ok(());
+    ) {
+        Some(expires_at) => expires_at,
+        None => return Ok(()),
     };
     MemoryService::current().with_shared_db(|conn| {
         conn.execute(
@@ -352,8 +372,8 @@ fn extract_text_from_html(html: &str) -> String {
         .replace("&quot;", "\"")
         .replace("&#39;", "'");
 
-    let clean_text_spaces = web_re_whitespace().replace_all(&clean_text, " ");
-    let final_text = web_re_newlines().replace_all(&clean_text_spaces, "\n");
+    let clean_text_spaces = collapse_spaces(&clean_text);
+    let final_text = collapse_blank_lines(&clean_text_spaces);
     final_text.trim().to_string()
 }
 
@@ -376,33 +396,31 @@ fn web_fetch_should_retry_browser_render(
     extracted_text: &str,
     arguments: &serde_json::Value,
 ) -> bool {
-    if !web_fetch_render_js_enabled(arguments) {
-        return false;
+    web_fetch_render_js_enabled(arguments) && {
+        let visible_chars = extracted_text.trim().chars().count();
+        let normalized = html.to_ascii_lowercase();
+        let script_count = normalized.matches("<script").count();
+        let has_app_root = [
+            "id=\"root\"",
+            "id='root'",
+            "id=\"app\"",
+            "id='app'",
+            "data-reactroot",
+        ]
+        .iter()
+        .any(|needle| normalized.contains(needle));
+        let has_js_required_text = [
+            "enable javascript",
+            "requires javascript",
+            "javascript is required",
+            "you need javascript",
+            "please enable js",
+        ]
+        .iter()
+        .any(|needle| normalized.contains(needle));
+
+        visible_chars < 240 && (has_js_required_text || (has_app_root && script_count > 0))
     }
-
-    let visible_chars = extracted_text.trim().chars().count();
-    let normalized = html.to_ascii_lowercase();
-    let script_count = normalized.matches("<script").count();
-    let has_app_root = [
-        "id=\"root\"",
-        "id='root'",
-        "id=\"app\"",
-        "id='app'",
-        "data-reactroot",
-    ]
-    .iter()
-    .any(|needle| normalized.contains(needle));
-    let has_js_required_text = [
-        "enable javascript",
-        "requires javascript",
-        "javascript is required",
-        "you need javascript",
-        "please enable js",
-    ]
-    .iter()
-    .any(|needle| normalized.contains(needle));
-
-    visible_chars < 240 && (has_js_required_text || (has_app_root && script_count > 0))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -465,11 +483,9 @@ async fn web_fetch_render_with_backend(
                 .and_then(|output| output.as_str())
                 .ok_or_else(|| anyhow!("gsd_browser page_source returned no output"))?;
             let markdown = html2md::parse_html(html).trim().to_string();
-            if markdown.is_empty() {
-                Err(anyhow!("gsd_browser rendered empty text"))
-            } else {
-                Ok(markdown)
-            }
+            (!markdown.is_empty())
+                .then_some(markdown)
+                .ok_or_else(|| anyhow!("gsd_browser rendered empty text"))
         }
         WebFetchBrowserRenderBackend::Firefox => {
             let browser = crate::tools::firefox::FirefoxBrowserTool::new();
@@ -518,6 +534,13 @@ async fn web_fetch_browser_render(url: &str) -> Result<String> {
     ))
 }
 
+fn ssrf_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| match validate_url_sync(attempt.url()) {
+        Ok(_) => attempt.follow(),
+        Err(_) => attempt.stop(),
+    })
+}
+
 pub struct WebFetchTool {
     #[allow(dead_code)]
     client: Client,
@@ -531,17 +554,10 @@ impl Default for WebFetchTool {
 
 impl WebFetchTool {
     pub fn new() -> Self {
-        let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
-            if validate_url_sync(attempt.url()).is_err() {
-                attempt.stop()
-            } else {
-                attempt.follow()
-            }
-        });
         WebFetchTool {
             client: Client::builder()
                 .use_rustls_tls()
-                .redirect(redirect_policy)
+                .redirect(ssrf_redirect_policy())
                 .connect_timeout(Duration::from_secs(WEB_CONNECT_TIMEOUT_SECS))
                 .read_timeout(Duration::from_secs(WEB_READ_TIMEOUT_SECS))
                 .timeout(Duration::from_secs(WEB_TOTAL_TIMEOUT_SECS))
@@ -558,8 +574,9 @@ fn walk_nodes(node: ego_tree::NodeRef<'_, Node>, text: &mut String) {
         }
         Node::Element(e) => {
             let tag_name = e.name();
-            if tag_name == "script" || tag_name == "style" || tag_name == "head" {
-                return;
+            match matches!(tag_name, "script" | "style" | "head") {
+                true => return,
+                false => {}
             }
 
             let is_block = matches!(
@@ -577,15 +594,11 @@ fn walk_nodes(node: ego_tree::NodeRef<'_, Node>, text: &mut String) {
                     | "thead"
                     | "tbody"
             );
-            if is_block {
-                text.push('\n');
-            }
+            let _ = is_block.then(|| text.push('\n'));
             for child in node.children() {
                 walk_nodes(child, text);
             }
-            if is_block {
-                text.push('\n');
-            }
+            let _ = is_block.then(|| text.push('\n'));
         }
         _ => {
             for child in node.children() {
@@ -597,19 +610,18 @@ fn walk_nodes(node: ego_tree::NodeRef<'_, Node>, text: &mut String) {
 
 /// Normalize web URL by trimming, stripping wrapper characters, and auto-prefixing https:// for scheme-less URLs.
 pub fn normalize_web_url(raw: &str) -> String {
-    let mut trimmed = raw.trim();
-    if (trimmed.starts_with('<') && trimmed.ends_with('>'))
-        || (trimmed.starts_with('"') && trimmed.ends_with('"'))
-        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
-    {
-        trimmed = trimmed[1..trimmed.len() - 1].trim();
-    }
-    if trimmed.starts_with("//") {
-        format!("https:{}", trimmed)
-    } else if !trimmed.contains("://") {
-        format!("https://{}", trimmed)
-    } else {
-        trimmed.to_string()
+    let trimmed_outer = raw.trim();
+    let is_wrapped = (trimmed_outer.starts_with('<') && trimmed_outer.ends_with('>'))
+        || (trimmed_outer.starts_with('"') && trimmed_outer.ends_with('"'))
+        || (trimmed_outer.starts_with('\'') && trimmed_outer.ends_with('\''));
+    let trimmed = match is_wrapped {
+        true => trimmed_outer[1..trimmed_outer.len() - 1].trim(),
+        false => trimmed_outer,
+    };
+    match (trimmed.starts_with("//"), trimmed.contains("://")) {
+        (true, _) => format!("https:{}", trimmed),
+        (false, false) => format!("https://{}", trimmed),
+        (false, true) => trimmed.to_string(),
     }
 }
 
@@ -628,24 +640,23 @@ pub fn parse_max_length(arguments: &serde_json::Value) -> Option<usize> {
 }
 
 pub fn truncate_web_fetch_output(text: String, max_length: Option<usize>) -> String {
-    if let Some(limit) = max_length {
-        if limit > 0 && text.chars().count() > limit {
-            let total = text.chars().count();
+    let total = text.chars().count();
+    match max_length.filter(|&limit| limit > 0 && total > limit) {
+        Some(limit) => {
             let truncated: String = text.chars().take(limit).collect();
-            return format!(
+            format!(
                 "{}\n\n[Content truncated at {} chars; total length: {} chars]",
                 truncated, limit, total
-            );
+            )
         }
+        None => text,
     }
-    text
 }
 
 pub fn extract_web_fetch_url(arguments: &serde_json::Value) -> Result<String> {
-    let raw_url = if let Some(s) = arguments.as_str() {
-        s.trim()
-    } else {
-        arguments
+    let raw_url = match arguments.as_str() {
+        Some(s) => s.trim(),
+        None => arguments
             .get("url")
             .or_else(|| arguments.get("target_url"))
             .or_else(|| arguments.get("targetUrl"))
@@ -663,14 +674,21 @@ pub fn extract_web_fetch_url(arguments: &serde_json::Value) -> Result<String> {
             .or_else(|| arguments.get("path"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'url' argument"))?
-            .trim()
+            .trim(),
     };
 
-    if raw_url.is_empty() {
-        return Err(anyhow!("Missing 'url' argument (received empty string)"));
-    }
+    (!raw_url.is_empty())
+        .then(|| normalize_web_url(raw_url))
+        .ok_or_else(|| anyhow!("Missing 'url' argument (received empty string)"))
+}
 
-    Ok(normalize_web_url(raw_url))
+fn return_cached_body(
+    url_str: &str,
+    body_text: String,
+    max_length: Option<usize>,
+) -> serde_json::Value {
+    let _ = mark_cached_web_fetch_used(url_str);
+    serde_json::Value::String(truncate_web_fetch_output(body_text, max_length))
 }
 
 #[async_trait::async_trait]
@@ -716,24 +734,25 @@ impl Tool for WebFetchTool {
             None
         });
 
-        if let Some(cached_item) = cached.as_ref() {
-            match cache_mode {
-                WebFetchCacheMode::PreferCache => {
-                    let _ = mark_cached_web_fetch_used(url_str);
-                    return Ok(serde_json::Value::String(truncate_web_fetch_output(
-                        cached_item.body_text.clone(),
-                        max_length,
-                    )));
+        match cached.as_ref() {
+            Some(cached_item) => {
+                let use_immediately = match cache_mode {
+                    WebFetchCacheMode::PreferCache => true,
+                    WebFetchCacheMode::Auto => is_cache_fresh(&cached_item.expires_at, now_utc()),
+                    _ => false,
+                };
+                match use_immediately {
+                    true => {
+                        return Ok(return_cached_body(
+                            url_str,
+                            cached_item.body_text.clone(),
+                            max_length,
+                        ));
+                    }
+                    false => {}
                 }
-                WebFetchCacheMode::Auto if is_cache_fresh(&cached_item.expires_at, now_utc()) => {
-                    let _ = mark_cached_web_fetch_used(url_str);
-                    return Ok(serde_json::Value::String(truncate_web_fetch_output(
-                        cached_item.body_text.clone(),
-                        max_length,
-                    )));
-                }
-                _ => {}
             }
+            None => {}
         }
 
         let resolved_ip = validate_url(url_str).await?;
@@ -746,75 +765,68 @@ impl Tool for WebFetchTool {
             .to_lowercase();
         let port = parsed_url.port_or_known_default().unwrap_or(80);
 
-        let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
-            if validate_url_sync(attempt.url()).is_err() {
-                attempt.stop()
-            } else {
-                attempt.follow()
-            }
-        });
-
         let socket_addr = std::net::SocketAddr::new(resolved_ip, port);
         let client = Client::builder()
             .use_rustls_tls()
-            .redirect(redirect_policy)
+            .redirect(ssrf_redirect_policy())
             .resolve(&host, socket_addr)
             .connect_timeout(Duration::from_secs(WEB_CONNECT_TIMEOUT_SECS))
             .read_timeout(Duration::from_secs(WEB_READ_TIMEOUT_SECS))
             .timeout(Duration::from_secs(WEB_TOTAL_TIMEOUT_SECS))
             .build()?;
 
-        let mut request = client
+        let base_request = client
             .get(url_str)
             .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
-        if cache_mode != WebFetchCacheMode::Bypass {
-            if let Some(cached_item) = cached.as_ref() {
-                if let Some(etag) = cached_item.etag.as_deref() {
-                    request = request.header(header::IF_NONE_MATCH, etag);
-                }
-                if let Some(last_modified) = cached_item.last_modified.as_deref() {
-                    request = request.header(header::IF_MODIFIED_SINCE, last_modified);
+        let request = match (cache_mode != WebFetchCacheMode::Bypass, cached.as_ref()) {
+            (true, Some(cached_item)) => {
+                let req_with_etag = match cached_item.etag.as_deref() {
+                    Some(etag) => base_request.header(header::IF_NONE_MATCH, etag),
+                    None => base_request,
+                };
+                match cached_item.last_modified.as_deref() {
+                    Some(last_modified) => {
+                        req_with_etag.header(header::IF_MODIFIED_SINCE, last_modified)
+                    }
+                    None => req_with_etag,
                 }
             }
-        }
+            _ => base_request,
+        };
 
         let res = match request.send().await {
             Ok(res) => res,
-            Err(err) => {
-                if let Some(cached_item) = cached {
+            Err(err) => match cached {
+                Some(cached_item) => {
                     tracing::warn!(error = ?err, url = %url_str, "web_fetch live request failed; using stale cached response");
-                    let _ = mark_cached_web_fetch_used(url_str);
-                    return Ok(serde_json::Value::String(truncate_web_fetch_output(
-                        cached_item.body_text,
-                        max_length,
-                    )));
+                    return Ok(return_cached_body(url_str, cached_item.body_text, max_length));
                 }
-                return Err(err.into());
-            }
+                None => return Err(err.into()),
+            },
         };
 
-        if res.status() == reqwest::StatusCode::NOT_MODIFIED {
-            let headers = res.headers().clone();
-            if let Some(cached_item) = cached {
+        match (res.status() == reqwest::StatusCode::NOT_MODIFIED, cached.as_ref()) {
+            (true, Some(cached_item)) => {
+                let headers = res.headers().clone();
                 let _ = refresh_cached_web_fetch_validators(url_str, &headers)
                     .or_else(|_| mark_cached_web_fetch_used(url_str));
                 return Ok(serde_json::Value::String(truncate_web_fetch_output(
-                    cached_item.body_text,
+                    cached_item.body_text.clone(),
                     max_length,
                 )));
             }
+            _ => {}
         }
 
-        if !res.status().is_success() {
-            if let Some(cached_item) = cached {
-                tracing::warn!(status = %res.status(), url = %url_str, "web_fetch live request returned error; using stale cached response");
-                let _ = mark_cached_web_fetch_used(url_str);
-                return Ok(serde_json::Value::String(truncate_web_fetch_output(
-                    cached_item.body_text,
-                    max_length,
-                )));
-            }
-            return Err(anyhow!("Failed to fetch URL: HTTP {}", res.status()));
+        match res.status().is_success() {
+            true => {}
+            false => match cached {
+                Some(cached_item) => {
+                    tracing::warn!(status = %res.status(), url = %url_str, "web_fetch live request returned error; using stale cached response");
+                    return Ok(return_cached_body(url_str, cached_item.body_text, max_length));
+                }
+                None => return Err(anyhow!("Failed to fetch URL: HTTP {}", res.status())),
+            },
         }
 
         let status_code = res.status().as_u16();
@@ -822,44 +834,50 @@ impl Tool for WebFetchTool {
 
         // Check Content-Length to avoid downloading enormous pages
         const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10MB
-        if let Some(content_length) = res.content_length() {
-            if content_length > MAX_RESPONSE_SIZE as u64 {
+        match res
+            .content_length()
+            .filter(|&len| len > MAX_RESPONSE_SIZE as u64)
+        {
+            Some(content_length) => {
                 return Err(anyhow!(
                     "Response too large ({} bytes, max {} bytes)",
                     content_length,
                     MAX_RESPONSE_SIZE
                 ));
             }
+            None => {}
         }
 
         let mut stream = res.bytes_stream();
         let mut body_bytes = Vec::new();
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result?;
-            if body_bytes.len() + chunk.len() > MAX_RESPONSE_SIZE {
-                return Err(anyhow!(
-                    "Response too large (exceeds max {} bytes)",
-                    MAX_RESPONSE_SIZE
-                ));
-            }
+            (body_bytes.len() + chunk.len() <= MAX_RESPONSE_SIZE)
+                .then_some(())
+                .ok_or_else(|| {
+                    anyhow!("Response too large (exceeds max {} bytes)", MAX_RESPONSE_SIZE)
+                })?;
             body_bytes.extend_from_slice(&chunk);
         }
         let html = String::from_utf8_lossy(&body_bytes).into_owned();
         let mut result_text = extract_text_from_html(&html);
 
-        if web_fetch_should_retry_browser_render(&html, &result_text, arguments) {
-            match web_fetch_browser_render(url_str).await {
-                Ok(rendered_text) if !rendered_text.trim().is_empty() => {
-                    tracing::info!(url = %url_str, "web_fetch static output looked like a JS shell; using browser-rendered text");
-                    result_text = rendered_text;
-                }
-                Ok(_) => {
-                    tracing::warn!(url = %url_str, "web_fetch browser render retry returned empty text; using static fetch output");
-                }
+        match web_fetch_should_retry_browser_render(&html, &result_text, arguments) {
+            true => match web_fetch_browser_render(url_str).await {
+                Ok(rendered_text) => match rendered_text.trim().is_empty() {
+                    false => {
+                        tracing::info!(url = %url_str, "web_fetch static output looked like a JS shell; using browser-rendered text");
+                        result_text = rendered_text;
+                    }
+                    true => {
+                        tracing::warn!(url = %url_str, "web_fetch browser render retry returned empty text; using static fetch output");
+                    }
+                },
                 Err(err) => {
                     tracing::warn!(url = %url_str, error = ?err, "web_fetch browser render retry failed; using static fetch output");
                 }
-            }
+            },
+            false => {}
         }
 
         let _ =

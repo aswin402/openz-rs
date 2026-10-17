@@ -59,26 +59,24 @@ fn browser_fallback_engines() -> [&'static str; 2] {
 
 fn native_rescue_results(query: &str) -> Vec<Value> {
     let terms = normalized_terms(query);
-    let mut results = Vec::new();
-
-    if terms.iter().any(|term| term == "rust") {
-        if let Some(crate_name) = detect_rust_crate(&terms) {
-            results.push(json!({
+    let has_rust = terms.iter().any(|term| term == "rust");
+    match has_rust.then(|| detect_rust_crate(&terms)).flatten() {
+        Some(crate_name) => vec![
+            json!({
                 "title": format!("{} - Rust crate documentation", crate_name),
                 "url": format!("https://docs.rs/{crate_name}"),
                 "snippet": format!("Native rescue result: docs.rs documentation for the Rust crate `{crate_name}`."),
                 "source": "native_rescue"
-            }));
-            results.push(json!({
+            }),
+            json!({
                 "title": format!("{} - crates.io", crate_name),
                 "url": format!("https://crates.io/crates/{crate_name}"),
                 "snippet": format!("Native rescue result: crates.io package page for `{crate_name}`."),
                 "source": "native_rescue"
-            }));
-        }
+            }),
+        ],
+        None => Vec::new(),
     }
-
-    results
 }
 
 fn normalized_terms(query: &str) -> Vec<String> {
@@ -95,18 +93,15 @@ fn native_search_results_need_merge_retry(query: &str, results: &[Value]) -> boo
         .into_iter()
         .filter(|term| term.len() >= 3)
         .collect::<Vec<_>>();
-    if terms.len() < 3 || results.len() < 3 {
-        return false;
+    (terms.len() >= 3 && results.len() >= 3) && {
+        let best_coverage = results
+            .iter()
+            .take(3)
+            .map(|result| result_term_coverage(result, &terms))
+            .max()
+            .unwrap_or(0);
+        best_coverage < 2
     }
-
-    let best_coverage = results
-        .iter()
-        .take(3)
-        .map(|result| result_term_coverage(result, &terms))
-        .max()
-        .unwrap_or(0);
-
-    best_coverage < 2
 }
 
 fn result_term_coverage(result: &Value, terms: &[String]) -> usize {
@@ -133,88 +128,77 @@ fn searchxyz_results_to_json(results: Vec<crate::tools::searchxyz::core::search:
         .collect()
 }
 
+fn parse_bool_override(val: &Value) -> Option<bool> {
+    val.as_bool().or_else(|| {
+        let lower = val.as_str()?.trim().to_lowercase();
+        match lower.as_str() {
+            "true" | "1" | "yes" => Some(true),
+            "false" | "0" | "no" => Some(false),
+            _ => None,
+        }
+    })
+}
+
 fn web_search_should_auto_read_top_results(query: &str, arguments: &Value) -> bool {
-    if let Some(val) = arguments
+    arguments
         .get("read_top_results")
         .or_else(|| arguments.get("readTopResults"))
-    {
-        if let Some(explicit) = val.as_bool() {
-            return explicit;
-        }
-        if let Some(s) = val.as_str() {
-            let lower = s.trim().to_lowercase();
-            if lower == "true" || lower == "1" || lower == "yes" {
-                return true;
-            } else if lower == "false" || lower == "0" || lower == "no" {
-                return false;
-            }
-        }
-    }
-
-    let normalized = query.to_ascii_lowercase();
-    [
-        "research",
-        "summarize",
-        "summary",
-        "compare",
-        "comparison",
-        "latest",
-        "current",
-        "today",
-        "pricing",
-        "release",
-        "changelog",
-        "what's new",
-        "whats new",
-        "market",
-        "landscape",
-        "deep dive",
-    ]
-    .iter()
-    .any(|needle| normalized.contains(needle))
+        .and_then(parse_bool_override)
+        .unwrap_or_else(|| {
+            let normalized = query.to_ascii_lowercase();
+            [
+                "research",
+                "summarize",
+                "summary",
+                "compare",
+                "comparison",
+                "latest",
+                "current",
+                "today",
+                "pricing",
+                "release",
+                "changelog",
+                "what's new",
+                "whats new",
+                "market",
+                "landscape",
+                "deep dive",
+            ]
+            .iter()
+            .any(|needle| normalized.contains(needle))
+        })
 }
 
 fn web_search_auto_read_max_pages(arguments: &Value, should_read: bool) -> usize {
-    if !should_read {
-        return 0;
-    }
-    arguments
-        .get("max_pages")
-        .or_else(|| arguments.get("maxPages"))
-        .or_else(|| arguments.get("limit"))
-        .or_else(|| arguments.get("max_results"))
-        .and_then(|value| {
-            value.as_u64().or_else(|| {
-                value.as_str().and_then(|s| s.trim().parse::<u64>().ok())
+    match should_read {
+        false => 0,
+        true => arguments
+            .get("max_pages")
+            .or_else(|| arguments.get("maxPages"))
+            .or_else(|| arguments.get("limit"))
+            .or_else(|| arguments.get("max_results"))
+            .and_then(|value| {
+                value.as_u64().or_else(|| {
+                    value.as_str().and_then(|s| s.trim().parse::<u64>().ok())
+                })
             })
-        })
-        .map(|value| value.clamp(1, 5) as usize)
-        .unwrap_or(3)
+            .map(|value| value.clamp(1, 5) as usize)
+            .unwrap_or(3),
+    }
 }
 
 fn web_search_should_diagnose_on_failure(arguments: &Value) -> bool {
-    if let Some(val) = arguments
+    arguments
         .get("diagnose_on_failure")
         .or_else(|| arguments.get("diagnoseOnFailure"))
-    {
-        if let Some(b) = val.as_bool() {
-            return b;
-        }
-        if let Some(s) = val.as_str() {
-            let lower = s.trim().to_lowercase();
-            if lower == "false" || lower == "0" || lower == "no" {
-                return false;
-            }
-        }
-    }
-    true
+        .and_then(parse_bool_override)
+        .unwrap_or(true)
 }
 
 pub fn extract_web_search_query(arguments: &Value) -> Result<String> {
-    let raw_query = if let Some(s) = arguments.as_str() {
-        s.trim()
-    } else {
-        arguments
+    let raw_query = match arguments.as_str() {
+        Some(s) => s.trim(),
+        None => arguments
             .get("query")
             .or_else(|| arguments.get("q"))
             .or_else(|| arguments.get("search"))
@@ -224,12 +208,12 @@ pub fn extract_web_search_query(arguments: &Value) -> Result<String> {
             .or_else(|| arguments.get("text"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'query' parameter"))?
-            .trim()
+            .trim(),
     };
 
-    if raw_query.is_empty() {
-        return Err(anyhow!("Missing 'query' parameter (received empty string)"));
-    }
+    (!raw_query.is_empty())
+        .then_some(())
+        .ok_or_else(|| anyhow!("Missing 'query' parameter (received empty string)"))?;
 
     let domain = arguments
         .get("domain")
@@ -238,43 +222,35 @@ pub fn extract_web_search_query(arguments: &Value) -> Result<String> {
         .map(str::trim)
         .filter(|d| !d.is_empty());
 
-    if let Some(dom) = domain {
-        if !raw_query.contains("site:") {
-            return Ok(format!("{} site:{}", raw_query, dom));
-        }
+    match domain.filter(|_| !raw_query.contains("site:")) {
+        Some(dom) => Ok(format!("{} site:{}", raw_query, dom)),
+        None => Ok(raw_query.to_string()),
     }
-
-    Ok(raw_query.to_string())
 }
 
 fn browser_search_value_to_web_search_result(value: Value) -> Value {
-    if value
+    let has_read_results = value
         .get("read_results")
         .and_then(|read_results| read_results.as_array())
-        .is_some_and(|read_results| !read_results.is_empty())
-    {
-        value
-    } else {
-        Value::Array(
+        .is_some_and(|read_results| !read_results.is_empty());
+    match has_read_results {
+        true => value,
+        false => Value::Array(
             value
                 .get("results")
                 .and_then(|results| results.as_array())
                 .cloned()
                 .unwrap_or_default(),
-        )
+        ),
     }
 }
 
 fn web_search_archive_text(search_res: &Value) -> Option<String> {
-    let results = if let Some(arr) = search_res.as_array() {
-        arr
-    } else {
-        search_res.get("results")?.as_array()?
-    };
+    let results = search_res
+        .as_array()
+        .or_else(|| search_res.get("results").and_then(|v| v.as_array()))?;
 
-    if results.is_empty() {
-        return None;
-    }
+    (!results.is_empty()).then_some(())?;
 
     let mut text = results
         .iter()
@@ -289,26 +265,27 @@ fn web_search_archive_text(search_res: &Value) -> Option<String> {
         .collect::<Vec<String>>()
         .join("\n");
 
-    if let Some(read_results) = search_res
+    for read in search_res
         .get("read_results")
         .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+        .take(3)
     {
-        for read in read_results.iter().take(3) {
-            let url = read["url"].as_str().unwrap_or_default();
-            let content = read.get("content").unwrap_or(&Value::Null);
-            let content_text = content
-                .as_str()
-                .or_else(|| content.get("content").and_then(|value| value.as_str()))
-                .or_else(|| content.get("markdown").and_then(|value| value.as_str()))
-                .unwrap_or_default();
-            if !content_text.trim().is_empty() {
-                text.push_str(&format!(
-                    "\nRead URL: {}\nContent: {}\n---",
-                    url,
-                    content_text.chars().take(2000).collect::<String>()
-                ));
-            }
-        }
+        let url = read["url"].as_str().unwrap_or_default();
+        let content = read.get("content").unwrap_or(&Value::Null);
+        let content_text = content
+            .as_str()
+            .or_else(|| content.get("content").and_then(|value| value.as_str()))
+            .or_else(|| content.get("markdown").and_then(|value| value.as_str()))
+            .unwrap_or_default();
+        let _ = (!content_text.trim().is_empty()).then(|| {
+            text.push_str(&format!(
+                "\nRead URL: {}\nContent: {}\n---",
+                url,
+                content_text.chars().take(2000).collect::<String>()
+            ));
+        });
     }
 
     Some(text)
@@ -351,6 +328,52 @@ Next steps:
 - Diagnostics are appended automatically unless `diagnose_on_failure=false` is set.
 - For one-off API/scraper fallback, call `web_search` with `search_policy=native_then_external`."
     )
+}
+
+fn extract_external_json_results(resp_json: &Value, snippet_key: &str) -> Option<Vec<Value>> {
+    let results = resp_json.get("results")?.as_array()?;
+    let mapped: Vec<Value> = results
+        .iter()
+        .map(|r| {
+            let title = r
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let url = r
+                .get("url")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            let snippet = r
+                .get(snippet_key)
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string();
+            json!({
+                "title": title,
+                "url": url,
+                "snippet": snippet
+            })
+        })
+        .collect();
+    Some(mapped)
+}
+
+fn normalize_ddg_href(href: String) -> String {
+    let decoded = match href.find("uddg=") {
+        Some(pos) => percent_encoding::percent_decode_str(&href[pos + 5..])
+            .decode_utf8_lossy()
+            .into_owned(),
+        None => match href.starts_with("//") {
+            true => format!("https:{}", href),
+            false => href,
+        },
+    };
+    match decoded.find("&rut=") {
+        Some(pos) => decoded[..pos].to_string(),
+        None => decoded,
+    }
 }
 
 pub struct WebSearchTool {
@@ -423,13 +446,16 @@ impl Tool for WebSearchTool {
 
         let search_res = self.perform_search(&query, arguments).await?;
 
-        if let Some(results_str) = web_search_archive_text(&search_res) {
-            let _ = crate::tools::shared_memory::archive_research_entry(
-                &query,
-                &results_str,
-                "web_search",
-            )
-            .await;
+        match web_search_archive_text(&search_res) {
+            Some(results_str) => {
+                let _ = crate::tools::shared_memory::archive_research_entry(
+                    &query,
+                    &results_str,
+                    "web_search",
+                )
+                .await;
+            }
+            None => {}
         }
 
         Ok(search_res)
@@ -437,119 +463,158 @@ impl Tool for WebSearchTool {
 }
 
 impl WebSearchTool {
+    async fn try_native_search(&self, query: &str, policy: WebSearchPolicy) -> (Option<Value>, Option<String>) {
+        match policy.allows_native() {
+            false => (None, None),
+            true => {
+                let search_query =
+                    crate::tools::searchxyz::core::search::SearchQuery::new(query, 10);
+                match crate::tools::searchxyz::get_server()
+                    .dispatcher
+                    .search(&search_query)
+                    .await
+                {
+                    Ok(results) => {
+                        let search_results = searchxyz_results_to_json(results);
+                        match search_results.is_empty() {
+                            true => (None, None),
+                            false => {
+                                match native_search_results_need_merge_retry(query, &search_results)
+                                {
+                                    true => {
+                                        let mut merged_query =
+                                            crate::tools::searchxyz::core::search::SearchQuery::new(
+                                                query, 10,
+                                            );
+                                        merged_query.merge_backends = true;
+                                        match crate::tools::searchxyz::get_server()
+                                            .dispatcher
+                                            .search(&merged_query)
+                                            .await
+                                        {
+                                            Ok(merged_results) => {
+                                                let merged_results =
+                                                    searchxyz_results_to_json(merged_results);
+                                                match merged_results.is_empty() {
+                                                    false => {
+                                                        tracing::info!(query = %query, "SearchXyz first native results looked weak; returned merged backend results");
+                                                        return (
+                                                            Some(Value::Array(merged_results)),
+                                                            None,
+                                                        );
+                                                    }
+                                                    true => {}
+                                                }
+                                            }
+                                            Err(err) => {
+                                                tracing::warn!(query = %query, error = ?err, "SearchXyz merge retry failed after weak native results");
+                                            }
+                                        }
+                                    }
+                                    false => {}
+                                }
+                                (Some(Value::Array(search_results)), None)
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(policy = policy.as_str(), error = ?e, "SearchXyz native search failed");
+                        (None, Some(e.to_string()))
+                    }
+                }
+            }
+        }
+    }
+
     async fn perform_search(&self, query: &str, arguments: &Value) -> Result<Value> {
         let policy =
             WebSearchPolicy::parse(arguments.get("search_policy").and_then(|v| v.as_str()));
         let diagnose_on_failure = web_search_should_diagnose_on_failure(arguments);
-        let mut native_error = None;
 
-        // 0. Try SearchXyz Dispatcher (OpenZ-native search path).
-        if policy.allows_native() {
-            let search_query = crate::tools::searchxyz::core::search::SearchQuery::new(query, 10);
-            match crate::tools::searchxyz::get_server()
-                .dispatcher
-                .search(&search_query)
-                .await
-            {
-                Ok(results) => {
-                    let search_results = searchxyz_results_to_json(results);
-                    if !search_results.is_empty() {
-                        if native_search_results_need_merge_retry(query, &search_results) {
-                            let mut merged_query = crate::tools::searchxyz::core::search::SearchQuery::new(query, 10);
-                            merged_query.merge_backends = true;
-                            match crate::tools::searchxyz::get_server()
-                                .dispatcher
-                                .search(&merged_query)
-                                .await
-                            {
-                                Ok(merged_results) => {
-                                    let merged_results = searchxyz_results_to_json(merged_results);
-                                    if !merged_results.is_empty() {
-                                        tracing::info!(query = %query, "SearchXyz first native results looked weak; returned merged backend results");
-                                        return Ok(Value::Array(merged_results));
-                                    }
-                                }
-                                Err(err) => {
-                                    tracing::warn!(query = %query, error = ?err, "SearchXyz merge retry failed after weak native results");
+        let (native_hit, native_error) = self.try_native_search(query, policy).await;
+        match native_hit {
+            Some(hit) => return Ok(hit),
+            None => {}
+        }
+
+        match policy.allows_native() {
+            true => {
+                let rescue_results = native_rescue_results(query);
+                match rescue_results.is_empty() {
+                    false => return Ok(Value::Array(rescue_results)),
+                    true => {}
+                }
+            }
+            false => {}
+        }
+
+        match policy.allows_browser() {
+            true => {
+                let should_read_top_results =
+                    web_search_should_auto_read_top_results(query, arguments);
+                let max_pages = web_search_auto_read_max_pages(arguments, should_read_top_results);
+                let browser_tool = crate::tools::searchxyz::SearchXyzBrowserSearchTool;
+                for engine in browser_fallback_engines() {
+                    match browser_tool
+                        .call(&json!({
+                            "query": query,
+                            "engine": engine,
+                            "max_results": 5,
+                            "read_top_results": should_read_top_results,
+                            "max_pages": max_pages,
+                            "save_mode": "none",
+                        }))
+                        .await
+                    {
+                        Ok(value) => {
+                            let has_results = value
+                                .get("results")
+                                .and_then(|v| v.as_array())
+                                .is_some_and(|results| !results.is_empty());
+                            match has_results {
+                                true => return Ok(browser_search_value_to_web_search_result(value)),
+                                false => {
+                                    tracing::warn!(query = %query, engine = %engine, result = %value, "browser search fallback returned no usable links");
                                 }
                             }
                         }
-                        return Ok(Value::Array(search_results));
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!(policy = policy.as_str(), error = ?e, "SearchXyz native search failed");
-                    native_error = Some(e.to_string());
-                }
-            }
-        }
-
-        if policy.allows_native() {
-            let rescue_results = native_rescue_results(query);
-            if !rescue_results.is_empty() {
-                return Ok(Value::Array(rescue_results));
-            }
-        }
-
-        if policy.allows_browser() {
-            let should_read_top_results = web_search_should_auto_read_top_results(query, arguments);
-            let max_pages = web_search_auto_read_max_pages(arguments, should_read_top_results);
-            let browser_tool = crate::tools::searchxyz::SearchXyzBrowserSearchTool;
-            for engine in browser_fallback_engines() {
-                match browser_tool
-                    .call(&json!({
-                        "query": query,
-                        "engine": engine,
-                        "max_results": 5,
-                        "read_top_results": should_read_top_results,
-                        "max_pages": max_pages,
-                        "save_mode": "none",
-                    }))
-                    .await
-                {
-                    Ok(value) => {
-                        if let Some(results) = value.get("results").and_then(|v| v.as_array()) {
-                            if !results.is_empty() {
-                                return Ok(browser_search_value_to_web_search_result(value));
-                            }
+                        Err(err) => {
+                            tracing::warn!(query = %query, engine = %engine, error = ?err, "browser search fallback failed");
                         }
-                        tracing::warn!(query = %query, engine = %engine, result = %value, "browser search fallback returned no usable links");
-                    }
-                    Err(err) => {
-                        tracing::warn!(query = %query, engine = %engine, error = ?err, "browser search fallback failed");
                     }
                 }
             }
+            false => {}
         }
 
-        if !policy.allows_external() {
-            let mut message = format_native_only_failure(native_error.as_deref());
-            if diagnose_on_failure {
-                match crate::tools::searchxyz::web::build_searchxyz_doctor_report(false).await {
-                    Ok(report) => {
-                        message.push_str(
-                            "
-
----
-",
-                        );
-                        message.push_str(&report);
-                    }
-                    Err(err) => {
-                        message.push_str(&format!(
-                            "
-
-SearchXyz doctor failed while building diagnostics: {err}"
-                        ));
-                    }
+        match policy.allows_external() {
+            true => {}
+            false => {
+                let mut message = format_native_only_failure(native_error.as_deref());
+                match diagnose_on_failure {
+                    true => match crate::tools::searchxyz::web::build_searchxyz_doctor_report(false).await {
+                        Ok(report) => {
+                            message.push_str("\n\n---\n");
+                            message.push_str(&report);
+                        }
+                        Err(err) => {
+                            message.push_str(&format!(
+                                "\n\nSearchXyz doctor failed while building diagnostics: {err}"
+                            ));
+                        }
+                    },
+                    false => {}
                 }
+                return Err(anyhow!(message));
             }
-            return Err(anyhow!(message));
         }
 
         // 1. Try Websurfx Local/Private Search Engine API (if WEBSURFX_URL is set)
-        if let Ok(websurfx_url) = std::env::var("WEBSURFX_URL") {
-            if !websurfx_url.trim().is_empty() {
+        match std::env::var("WEBSURFX_URL")
+            .ok()
+            .filter(|url| !url.trim().is_empty())
+        {
+            Some(websurfx_url) => {
                 let base = websurfx_url.trim().trim_end_matches('/');
                 let encoded_query = percent_encoding::utf8_percent_encode(
                     query,
@@ -559,44 +624,28 @@ SearchXyz doctor failed while building diagnostics: {err}"
                 let url = format!("{}/?q={}&json=true", base, encoded_query);
 
                 let res = self.client.get(&url).send().await?;
-
-                if res.status().is_success() {
-                    let resp_json: Value = res.json().await?;
-                    if let Some(results) = resp_json.get("results").and_then(|r| r.as_array()) {
-                        let mut search_results = Vec::new();
-                        for r in results {
-                            let title = r
-                                .get("title")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or_default()
-                                .to_string();
-                            let url = r
-                                .get("url")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or_default()
-                                .to_string();
-                            let snippet = r
-                                .get("content")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or_default()
-                                .to_string();
-                            search_results.push(json!({
-                                "title": title,
-                                "url": url,
-                                "snippet": snippet
-                            }));
-                        }
-                        if !search_results.is_empty() {
-                            return Ok(Value::Array(search_results));
+                match res.status().is_success() {
+                    true => {
+                        let resp_json: Value = res.json().await?;
+                        match extract_external_json_results(&resp_json, "content")
+                            .filter(|r| !r.is_empty())
+                        {
+                            Some(search_results) => return Ok(Value::Array(search_results)),
+                            None => {}
                         }
                     }
+                    false => {}
                 }
             }
+            None => {}
         }
 
-        // 1. Try Tavily Search API
-        if let Ok(tavily_key) = std::env::var("TAVILY_API_KEY") {
-            if !tavily_key.trim().is_empty() {
+        // 2. Try Tavily Search API
+        match std::env::var("TAVILY_API_KEY")
+            .ok()
+            .filter(|key| !key.trim().is_empty())
+        {
+            Some(tavily_key) => {
                 let body = json!({
                     "api_key": tavily_key,
                     "query": query,
@@ -610,41 +659,26 @@ SearchXyz doctor failed while building diagnostics: {err}"
                     .send()
                     .await?;
 
-                if res.status().is_success() {
-                    let resp_json: Value = res.json().await?;
-                    if let Some(results) = resp_json.get("results").and_then(|r| r.as_array()) {
-                        let mut search_results = Vec::new();
-                        for r in results {
-                            let title = r
-                                .get("title")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or_default()
-                                .to_string();
-                            let url = r
-                                .get("url")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or_default()
-                                .to_string();
-                            let snippet = r
-                                .get("content")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or_default()
-                                .to_string();
-                            search_results.push(json!({
-                                "title": title,
-                                "url": url,
-                                "snippet": snippet
-                            }));
+                match res.status().is_success() {
+                    true => {
+                        let resp_json: Value = res.json().await?;
+                        match extract_external_json_results(&resp_json, "content") {
+                            Some(search_results) => return Ok(Value::Array(search_results)),
+                            None => {}
                         }
-                        return Ok(Value::Array(search_results));
                     }
+                    false => {}
                 }
             }
+            None => {}
         }
 
-        // 2. Try Exa Search API
-        if let Ok(exa_key) = std::env::var("EXA_API_KEY") {
-            if !exa_key.trim().is_empty() {
+        // 3. Try Exa Search API
+        match std::env::var("EXA_API_KEY")
+            .ok()
+            .filter(|key| !key.trim().is_empty())
+        {
+            Some(exa_key) => {
                 let body = json!({
                     "query": query,
                     "numResults": 5,
@@ -658,175 +692,157 @@ SearchXyz doctor failed while building diagnostics: {err}"
                     .send()
                     .await?;
 
-                if res.status().is_success() {
-                    let resp_json: Value = res.json().await?;
-                    if let Some(results) = resp_json.get("results").and_then(|r| r.as_array()) {
-                        let mut search_results = Vec::new();
-                        for r in results {
-                            let title = r
-                                .get("title")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or_default()
-                                .to_string();
-                            let url = r
-                                .get("url")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or_default()
-                                .to_string();
-                            let snippet = r
-                                .get("text")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or_default()
-                                .to_string();
-                            search_results.push(json!({
-                                "title": title,
-                                "url": url,
-                                "snippet": snippet
-                            }));
+                match res.status().is_success() {
+                    true => {
+                        let resp_json: Value = res.json().await?;
+                        match extract_external_json_results(&resp_json, "text") {
+                            Some(search_results) => return Ok(Value::Array(search_results)),
+                            None => {}
                         }
-                        return Ok(Value::Array(search_results));
                     }
+                    false => {}
                 }
             }
+            None => {}
         }
 
-        // 3. Fallback to DuckDuckGo scraping
+        // 4. Fallback to DuckDuckGo scraping
         let mut search_results = Vec::new();
-        let mut ddg_success = false;
-
         let res = self.client.get("https://html.duckduckgo.com/html/")
             .query(&[("q", query)])
             .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             .send()
             .await;
 
-        if let Ok(response) = res {
-            if response.status().is_success() {
-                if let Ok(html_content) = response.text().await {
-                    let document = Html::parse_document(&html_content);
-
-                    // Select search results
-                    if let (Ok(result_selector), Ok(title_selector), Ok(snippet_selector)) = (
-                        Selector::parse(".result"),
-                        Selector::parse(".result__title .result__a"),
-                        Selector::parse(".result__snippet"),
-                    ) {
-                        for element in document.select(&result_selector) {
-                            let title = element
-                                .select(&title_selector)
-                                .next()
-                                .map(|e| e.text().collect::<String>().trim().to_string())
-                                .unwrap_or_default();
-
-                            let href = element
-                                .select(&title_selector)
-                                .next()
-                                .and_then(|e| e.value().attr("href"))
-                                .map(|s| s.to_string())
-                                .unwrap_or_default();
-
-                            let snippet = element
-                                .select(&snippet_selector)
-                                .next()
-                                .map(|e| e.text().collect::<String>().trim().to_string())
-                                .unwrap_or_default();
-
-                            if !title.is_empty() && !href.is_empty() {
-                                // DuckDuckGo redirects URLs inside href (e.g. //duckduckgo.com/l/?uddg=URL)
-                                // We clean it up by extracting uddg parameter if present
-                                let clean_url = if href.contains("uddg=") {
-                                    if let Some(pos) = href.find("uddg=") {
-                                        let raw_url = &href[pos + 5..];
-                                        percent_encoding::percent_decode_str(raw_url)
-                                            .decode_utf8_lossy()
-                                            .into_owned()
-                                    } else {
-                                        href
-                                    }
-                                } else if href.starts_with("//") {
-                                    format!("https:{}", href)
-                                } else {
-                                    href
-                                };
-
-                                // Filter out external parameters after URL if there are any
-                                let clean_url = if let Some(pos) = clean_url.find("&rut=") {
-                                    clean_url[..pos].to_string()
-                                } else {
-                                    clean_url
-                                };
-
-                                search_results.push(json!({
-                                    "title": title,
-                                    "url": clean_url,
-                                    "snippet": snippet
-                                }));
-                            }
-                        }
-                        if !search_results.is_empty() {
-                            ddg_success = true;
-                        }
-                    }
-                }
-            }
-        }
-
-        // 4. Try Mojeek scraping if DuckDuckGo fails or returns no results
-        if !ddg_success {
-            tracing::warn!("DuckDuckGo search returned no results, falling back to Mojeek");
-            let res = self.client.get("https://www.mojeek.com/search")
-                .query(&[("q", query)])
-                .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                .send()
-                .await;
-
-            if let Ok(response) = res {
-                if response.status().is_success() {
-                    if let Ok(html_content) = response.text().await {
+        match res {
+            Ok(response) => match response.status().is_success() {
+                true => match response.text().await {
+                    Ok(html_content) => {
                         let document = Html::parse_document(&html_content);
-                        if let (Ok(li_selector), Ok(title_selector), Ok(snippet_selector)) = (
-                            Selector::parse("li"),
-                            Selector::parse("a.title"),
-                            Selector::parse("p.s"),
+                        match (
+                            Selector::parse(".result"),
+                            Selector::parse(".result__title .result__a"),
+                            Selector::parse(".result__snippet"),
                         ) {
-                            for element in document.select(&li_selector) {
-                                let title_node = element.select(&title_selector).next();
-                                let snippet_node = element.select(&snippet_selector).next();
-
-                                if let Some(tn) = title_node {
-                                    let title = tn.text().collect::<String>().trim().to_string();
-                                    let href = tn
-                                        .value()
-                                        .attr("href")
-                                        .map(|s| s.to_string())
-                                        .unwrap_or_default();
-                                    let snippet = snippet_node
+                            (Ok(result_selector), Ok(title_selector), Ok(snippet_selector)) => {
+                                for element in document.select(&result_selector) {
+                                    let title = element
+                                        .select(&title_selector)
+                                        .next()
                                         .map(|e| e.text().collect::<String>().trim().to_string())
                                         .unwrap_or_default();
 
-                                    if !title.is_empty() && !href.is_empty() {
+                                    let href = element
+                                        .select(&title_selector)
+                                        .next()
+                                        .and_then(|e| e.value().attr("href"))
+                                        .map(|s| s.to_string())
+                                        .unwrap_or_default();
+
+                                    let snippet = element
+                                        .select(&snippet_selector)
+                                        .next()
+                                        .map(|e| e.text().collect::<String>().trim().to_string())
+                                        .unwrap_or_default();
+
+                                    let _ = (!title.is_empty() && !href.is_empty()).then(|| {
+                                        let clean_url = normalize_ddg_href(href);
                                         search_results.push(json!({
                                             "title": title,
-                                            "url": href,
+                                            "url": clean_url,
                                             "snippet": snippet
                                         }));
-                                    }
+                                    });
                                 }
                             }
+                            _ => {}
                         }
                     }
+                    Err(_) => {}
+                },
+                false => {}
+            },
+            Err(_) => {}
+        }
+
+        // 5. Try Mojeek scraping if DuckDuckGo fails or returns no results
+        match search_results.is_empty() {
+            true => {
+                tracing::warn!("DuckDuckGo search returned no results, falling back to Mojeek");
+                let res = self.client.get("https://www.mojeek.com/search")
+                    .query(&[("q", query)])
+                    .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .send()
+                    .await;
+
+                match res {
+                    Ok(response) => match response.status().is_success() {
+                        true => match response.text().await {
+                            Ok(html_content) => {
+                                let document = Html::parse_document(&html_content);
+                                match (
+                                    Selector::parse("li"),
+                                    Selector::parse("a.title"),
+                                    Selector::parse("p.s"),
+                                ) {
+                                    (Ok(li_selector), Ok(title_selector), Ok(snippet_selector)) => {
+                                        for element in document.select(&li_selector) {
+                                            let title_node = element.select(&title_selector).next();
+                                            let snippet_node =
+                                                element.select(&snippet_selector).next();
+
+                                            let _ = title_node.map(|tn| {
+                                                let title = tn
+                                                    .text()
+                                                    .collect::<String>()
+                                                    .trim()
+                                                    .to_string();
+                                                let href = tn
+                                                    .value()
+                                                    .attr("href")
+                                                    .map(|s| s.to_string())
+                                                    .unwrap_or_default();
+                                                let snippet = snippet_node
+                                                    .map(|e| {
+                                                        e.text()
+                                                            .collect::<String>()
+                                                            .trim()
+                                                            .to_string()
+                                                    })
+                                                    .unwrap_or_default();
+
+                                                let _ = (!title.is_empty() && !href.is_empty())
+                                                    .then(|| {
+                                                        search_results.push(json!({
+                                                            "title": title,
+                                                            "url": href,
+                                                            "snippet": snippet
+                                                        }));
+                                                    });
+                                            });
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            Err(_) => {}
+                        },
+                        false => {}
+                    },
+                    Err(_) => {}
                 }
             }
+            false => {}
         }
 
-        if search_results.is_empty() {
-            return Err(anyhow!(
-                "All enabled external web search backends (Websurfx, Tavily, Exa, DuckDuckGo, Mojeek) failed or returned no results. Current policy: {}.",
-                policy.as_str()
-            ));
-        }
-
-        Ok(Value::Array(search_results))
+        (!search_results.is_empty())
+            .then_some(Value::Array(search_results))
+            .ok_or_else(|| {
+                anyhow!(
+                    "All enabled external web search backends (Websurfx, Tavily, Exa, DuckDuckGo, Mojeek) failed or returned no results. Current policy: {}.",
+                    policy.as_str()
+                )
+            })
     }
 }
 

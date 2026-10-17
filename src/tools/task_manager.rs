@@ -138,26 +138,30 @@ fn registry() -> &'static Mutex<Vec<ManagedTask>> {
 pub fn register_task(mut task: ManagedTask) -> u64 {
     let id = NEXT_TASK_ID.fetch_add(1, Ordering::SeqCst);
     task.id = id;
-    if let Ok(mut guard) = registry().lock() {
-        guard.push(task);
-    }
+    let _ = registry().lock().map(|mut guard| guard.push(task));
     id
 }
 
 pub fn register_or_replace_process_task(process_registry_id: u64, mut task: ManagedTask) -> u64 {
     task.process_registry_id = Some(process_registry_id);
-    if let Ok(mut guard) = registry().lock() {
-        if let Some(existing) = guard
+    match registry().lock() {
+        Ok(mut guard) => match guard
             .iter_mut()
             .find(|entry| entry.process_registry_id == Some(process_registry_id))
         {
-            let id = existing.id;
-            task.id = id;
-            *existing = task;
-            return id;
-        }
+            Some(existing) => {
+                let id = existing.id;
+                task.id = id;
+                *existing = task;
+                id
+            }
+            None => {
+                drop(guard);
+                register_task(task)
+            }
+        },
+        Err(_) => register_task(task),
     }
-    register_task(task)
 }
 
 pub fn list_tasks() -> Vec<ManagedTask> {
@@ -171,18 +175,16 @@ pub fn list_tasks() -> Vec<ManagedTask> {
 pub fn cleanup_expired_tasks() -> usize {
     let now = chrono::Utc::now();
     stop_matching_tasks(|task| {
-        if task.owner != TaskOwner::OpenZ {
-            return false;
-        }
-        let Some(ttl_secs) = task.ttl_secs else {
-            return false;
-        };
-        let Ok(last_used) = chrono::DateTime::parse_from_rfc3339(&task.last_used_at) else {
-            return false;
-        };
-        now.signed_duration_since(last_used.with_timezone(&chrono::Utc))
-            .num_seconds()
-            >= ttl_secs as i64
+        (task.owner == TaskOwner::OpenZ)
+            && task.ttl_secs.is_some_and(|ttl_secs| {
+                chrono::DateTime::parse_from_rfc3339(&task.last_used_at)
+                    .map(|last_used| {
+                        now.signed_duration_since(last_used.with_timezone(&chrono::Utc))
+                            .num_seconds()
+                            >= ttl_secs as i64
+                    })
+                    .unwrap_or(false)
+            })
     })
 }
 
@@ -204,41 +206,41 @@ pub fn cleanup_session_end_tasks() -> usize {
 
 pub fn stop_tasks(target: &str) -> usize {
     let normalized = target.trim().to_ascii_lowercase();
-    if normalized.is_empty() {
-        return 0;
+    match normalized.is_empty() {
+        true => 0,
+        false => stop_matching_tasks(|task| task_matches_target(task, &normalized)),
     }
-    stop_matching_tasks(|task| task_matches_target(task, &normalized))
 }
 
 fn task_matches_target(task: &ManagedTask, normalized_target: &str) -> bool {
-    if task.owner != TaskOwner::OpenZ {
-        return false;
-    }
-    normalized_target == "all"
-        || task.id.to_string() == normalized_target
-        || task
-            .process_registry_id
-            .map(|id| id.to_string() == normalized_target)
-            .unwrap_or(false)
-        || task.kind.as_str() == normalized_target
-        || task
-            .purpose
-            .to_ascii_lowercase()
-            .contains(normalized_target)
+    (task.owner == TaskOwner::OpenZ)
+        && (normalized_target == "all"
+            || task.id.to_string() == normalized_target
+            || task
+                .process_registry_id
+                .map(|id| id.to_string() == normalized_target)
+                .unwrap_or(false)
+            || task.kind.as_str() == normalized_target
+            || task
+                .purpose
+                .to_ascii_lowercase()
+                .contains(normalized_target))
 }
 
 fn stop_matching_tasks(matches_task: impl Fn(&ManagedTask) -> bool) -> usize {
-    let Ok(mut guard) = registry().lock() else {
-        return 0;
+    let mut guard = match registry().lock() {
+        Ok(guard) => guard,
+        Err(_) => return 0,
     };
     let mut stopped = 0usize;
     let mut remaining = Vec::new();
     for task in std::mem::take(&mut *guard) {
-        if matches_task(&task) {
-            stop_task_resource(&task);
-            stopped += 1;
-        } else {
-            remaining.push(task);
+        match matches_task(&task) {
+            true => {
+                stop_task_resource(&task);
+                stopped += 1;
+            }
+            false => remaining.push(task),
         }
     }
     *guard = remaining;
@@ -246,11 +248,11 @@ fn stop_matching_tasks(matches_task: impl Fn(&ManagedTask) -> bool) -> usize {
 }
 
 fn stop_task_resource(task: &ManagedTask) {
-    if let Some(process_registry_id) = task.process_registry_id {
+    let _ = task.process_registry_id.map(|process_registry_id| {
         let _ = crate::shutdown::stop_registered_child_without_task_cleanup(
             &process_registry_id.to_string(),
         );
-    }
+    });
 }
 
 fn cleanup_finished_process_tasks() {
@@ -258,13 +260,13 @@ fn cleanup_finished_process_tasks() {
         .into_iter()
         .map(|child| child.id)
         .collect::<std::collections::HashSet<_>>();
-    if let Ok(mut guard) = registry().lock() {
+    let _ = registry().lock().map(|mut guard| {
         guard.retain(|task| {
             task.process_registry_id
                 .map(|id| active_process_ids.contains(&id))
                 .unwrap_or(true)
         });
-    }
+    });
 }
 
 pub struct ManageTasksTool;
@@ -339,9 +341,7 @@ impl Tool for ManageTasksTool {
 
 #[cfg(test)]
 pub fn clear_task_registry_for_tests() {
-    if let Ok(mut guard) = registry().lock() {
-        guard.clear();
-    }
+    let _ = registry().lock().map(|mut guard| guard.clear());
 }
 
 #[cfg(test)]

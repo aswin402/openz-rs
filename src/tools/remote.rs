@@ -5,10 +5,13 @@ use serde_json::json;
 pub struct SendRemoteInputTool;
 
 fn is_self_target(current_session: Option<&str>, target_session: &str) -> bool {
-    let Some(current) = current_session else {
-        return false;
-    };
-    current == target_session || (target_session == "cli:direct" && current.starts_with("cli:"))
+    match current_session {
+        Some(current) => {
+            current == target_session
+                || (target_session == "cli:direct" && current.starts_with("cli:"))
+        }
+        None => false,
+    }
 }
 
 #[async_trait::async_trait]
@@ -48,28 +51,33 @@ impl Tool for SendRemoteInputTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("Missing 'message'"))?;
 
-        if is_self_target(
+        match is_self_target(
             crate::agent::style::spinner::get_current_session_key().as_deref(),
             session_id,
         ) {
-            return Err(anyhow!(
-                "Cannot send remote input to the current session; target another channel or session"
-            ));
+            true => {
+                return Err(anyhow!(
+                    "Cannot send remote input to the current session; target another channel or session"
+                ));
+            }
+            false => {}
         }
 
-        let target_session = if session_id == "cli:direct" {
-            crate::agent::activity::resolve_cli_direct_target()?
-        } else {
-            session_id.to_string()
+        let target_session = match session_id {
+            "cli:direct" => crate::agent::activity::resolve_cli_direct_target()?,
+            _ => session_id.to_string(),
         };
 
-        if target_session.starts_with("cli:")
-            && !crate::agent::activity::active_tui_session_exists(&target_session)
-        {
-            return Err(anyhow!(
-                "No active TUI session matches '{}'; start openz first",
-                target_session
-            ));
+        let missing_active_tui = target_session.starts_with("cli:")
+            && !crate::agent::activity::active_tui_session_exists(&target_session);
+        match missing_active_tui {
+            true => {
+                return Err(anyhow!(
+                    "No active TUI session matches '{}'; start openz first",
+                    target_session
+                ));
+            }
+            false => {}
         }
 
         crate::agent::activity::send_inbox_message(&target_session, message, "remote")?;

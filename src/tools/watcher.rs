@@ -91,12 +91,9 @@ impl Tool for FileWatcherTool {
                     .or_else(|| map.get("type"))
                     .and_then(|v| v.as_str())
                     .map(|s| s.trim().to_string())
-                    .unwrap_or_else(|| {
-                        if path.is_some() {
-                            "start".to_string()
-                        } else {
-                            "status".to_string()
-                        }
+                    .unwrap_or_else(|| match path.is_some() {
+                        true => "start".to_string(),
+                        false => "status".to_string(),
                     });
 
                 (action_raw, path, command)
@@ -119,18 +116,22 @@ impl Tool for FileWatcherTool {
                 let command = command_opt.unwrap_or_else(|| "cargo check".to_string());
 
                 let resolved_path = crate::config::resolve_path(&path_str);
-                if !resolved_path.exists() {
-                    return Err(anyhow!("Watch path does not exist: {:?}", resolved_path));
-                }
+                resolved_path
+                    .exists()
+                    .then_some(())
+                    .ok_or_else(|| anyhow!("Watch path does not exist: {:?}", resolved_path))?;
 
                 // Stop any existing watcher first
                 let shutdown_to_await = {
                     let mut active = ACTIVE_WATCHER.lock().unwrap_or_else(|e| e.into_inner());
                     active.take().map(|h| (h.path, h.shutdown_tx))
                 };
-                if let Some((path, tx)) = shutdown_to_await {
-                    println!("Stopping existing file watcher on {:?}...", path);
-                    let _ = tx.send(()).await;
+                match shutdown_to_await {
+                    Some((path, tx)) => {
+                        println!("Stopping existing file watcher on {:?}...", path);
+                        let _ = tx.send(()).await;
+                    }
+                    None => {}
                 }
 
                 let (shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
@@ -140,28 +141,19 @@ impl Tool for FileWatcherTool {
                 let event_tx_clone = event_tx.clone();
                 let mut watcher = RecommendedWatcher::new(
                     move |res: Result<notify::Event, notify::Error>| {
-                        if let Ok(event) = res {
-                            // Filter for file modify/write/create events, ignoring target/git files
+                        let _ = res.ok().map(|event| {
                             let is_modify = event.kind.is_modify() || event.kind.is_create();
                             let has_valid_file = event.paths.iter().any(|p| {
-                                if let Some(ext) = p.extension() {
+                                p.extension().is_some_and(|ext| {
                                     let ext_str = ext.to_string_lossy();
-                                    (ext_str == "rs"
-                                        || ext_str == "toml"
-                                        || ext_str == "py"
-                                        || ext_str == "js"
-                                        || ext_str == "ts")
+                                    matches!(ext_str.as_ref(), "rs" | "toml" | "py" | "js" | "ts")
                                         && !p.to_string_lossy().contains("/target/")
                                         && !p.to_string_lossy().contains("/.git/")
-                                } else {
-                                    false
-                                }
+                                })
                             });
-
-                            if is_modify && has_valid_file {
-                                let _ = event_tx_clone.try_send(());
-                            }
-                        }
+                            let _ = (is_modify && has_valid_file)
+                                .then(|| event_tx_clone.try_send(()));
+                        });
                     },
                     notify::Config::default(),
                 )?;
@@ -188,41 +180,48 @@ impl Tool for FileWatcherTool {
                             }
                             Some(_) = event_rx.recv() => {
                                 let now = Instant::now();
-                                if now.duration_since(last_trigger) > debounce_duration {
-                                    last_trigger = now;
-                                    crate::channels::cli::send_notification(&format!("File watcher triggered: running '{}' in {:?}", cmd_clone, path_clone));
+                                match now.duration_since(last_trigger) > debounce_duration {
+                                    true => {
+                                        last_trigger = now;
+                                        crate::channels::cli::send_notification(&format!("File watcher triggered: running '{}' in {:?}", cmd_clone, path_clone));
 
-                                    // Run command
-                                    let cmd_parts: Vec<&str> = cmd_clone.split_whitespace().collect();
-                                    if !cmd_parts.is_empty() {
-                                        let mut cmd = tokio::process::Command::new(cmd_parts[0]);
-                                        if cmd_parts.len() > 1 {
-                                            cmd.args(&cmd_parts[1..]);
-                                        }
-                                        cmd.current_dir(&path_clone);
+                                        let cmd_parts: Vec<&str> = cmd_clone.split_whitespace().collect();
+                                        match cmd_parts.split_first() {
+                                            Some((program, rest_args)) => {
+                                                let mut cmd = tokio::process::Command::new(program);
+                                                cmd.args(rest_args);
+                                                cmd.current_dir(&path_clone);
 
-                                        match cmd.output().await {
-                                            Ok(output) => {
-                                                if !output.status.success() {
-                                                    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                                                    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                                                    let error_msg = if stderr.trim().is_empty() { stdout } else { stderr };
+                                                match cmd.output().await {
+                                                    Ok(output) => match output.status.success() {
+                                                        true => {
+                                                            crate::channels::cli::send_notification("File watcher command succeeded.");
+                                                        }
+                                                        false => {
+                                                            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                                                            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                                                            let error_msg = match stderr.trim().is_empty() {
+                                                                true => stdout,
+                                                                false => stderr,
+                                                            };
 
-                                                    crate::channels::cli::send_notification("File watcher command failed! Sending to OpenZ session...");
-                                                    let notification = format!(
-                                                        "⚠️ [File Watcher] Command '{}' failed after file modification in {:?}:\n\n```\n{}\n```\n\nPlease fix the errors above.",
-                                                        cmd_clone, path_clone, error_msg
-                                                    );
-                                                    let _ = crate::agent::activity::send_inbox_message("cli:direct", &notification, "file_watcher");
-                                                } else {
-                                                    crate::channels::cli::send_notification("File watcher command succeeded.");
+                                                            crate::channels::cli::send_notification("File watcher command failed! Sending to OpenZ session...");
+                                                            let notification = format!(
+                                                                "⚠️ [File Watcher] Command '{}' failed after file modification in {:?}:\n\n```\n{}\n```\n\nPlease fix the errors above.",
+                                                                cmd_clone, path_clone, error_msg
+                                                            );
+                                                            let _ = crate::agent::activity::send_inbox_message("cli:direct", &notification, "file_watcher");
+                                                        }
+                                                    },
+                                                    Err(e) => {
+                                                        crate::channels::cli::send_notification(&format!("Failed to execute watch trigger command: {}", e));
+                                                    }
                                                 }
                                             }
-                                            Err(e) => {
-                                                crate::channels::cli::send_notification(&format!("Failed to execute watch trigger command: {}", e));
-                                            }
+                                            None => {}
                                         }
                                     }
+                                    false => {}
                                 }
                             }
                         }
@@ -248,31 +247,31 @@ impl Tool for FileWatcherTool {
                     let mut active = ACTIVE_WATCHER.lock().unwrap_or_else(|e| e.into_inner());
                     active.take().map(|h| h.shutdown_tx)
                 };
-                if let Some(tx) = tx_to_await {
-                    let _ = tx.send(()).await;
-                    Ok(json!({
-                        "status": "success",
-                        "message": "File watcher stopped."
-                    }))
-                } else {
-                    Ok(json!({
+                match tx_to_await {
+                    Some(tx) => {
+                        let _ = tx.send(()).await;
+                        Ok(json!({
+                            "status": "success",
+                            "message": "File watcher stopped."
+                        }))
+                    }
+                    None => Ok(json!({
                         "status": "success",
                         "message": "No active file watcher running."
-                    }))
+                    })),
                 }
             }
             "status" => {
                 let active = ACTIVE_WATCHER.lock().unwrap_or_else(|e| e.into_inner());
-                if let Some(handle) = active.as_ref() {
-                    Ok(json!({
+                match active.as_ref() {
+                    Some(handle) => Ok(json!({
                         "status": "active",
                         "path": handle.path.to_string_lossy(),
                         "command": handle.command
-                    }))
-                } else {
-                    Ok(json!({
+                    })),
+                    None => Ok(json!({
                         "status": "inactive"
-                    }))
+                    })),
                 }
             }
             _ => Err(anyhow!("Unsupported action: {}", action)),

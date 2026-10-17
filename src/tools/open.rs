@@ -45,71 +45,53 @@ impl Tool for OpenTool {
             _ => return Err(anyhow!("Invalid arguments: expected object or target string")),
         };
 
-        if raw_target.is_empty() {
-            return Err(anyhow!("Missing or empty 'target' parameter"));
+        match raw_target.is_empty() {
+            true => return Err(anyhow!("Missing or empty 'target' parameter")),
+            false => {}
         }
 
-        let mut target = raw_target.trim_matches(|c| c == '\'' || c == '"').trim();
-        if let Some(stripped) = target.strip_prefix("file://") {
-            target = stripped;
-        }
+        let trimmed_target = raw_target.trim_matches(|c| c == '\'' || c == '"').trim();
+        let target = trimmed_target.strip_prefix("file://").unwrap_or(trimmed_target);
 
-        if !is_safe_target(target) {
-            return Err(anyhow!(
-                "Security: target contains unsafe characters or shell metacharacters"
-            ));
-        }
-
-        // Validate URLs against SSRF
-        if target.starts_with("http://") || target.starts_with("https://") {
-            // Block shell metacharacters in URLs
-            if target.contains(';')
-                || target.contains('|')
-                || target.contains('&')
-                || target.contains('$')
-                || target.contains('`')
-                || target.contains('\n')
-            {
-                return Err(anyhow!("Security: URL contains shell metacharacters"));
+        match is_safe_target(target) {
+            true => {}
+            false => {
+                return Err(anyhow!(
+                    "Security: target contains unsafe characters or shell metacharacters"
+                ));
             }
-            let resolved = target.to_string();
-            let resolved_clone = resolved.clone();
-            let status = tokio::task::spawn_blocking(move || open::that(resolved_clone)).await?;
-            match status {
-                Ok(_) => {
-                    let device_inventory_recorded = record_device_open_success(&resolved);
-                    Ok(json!({
-                        "status": "success",
-                        "message": format!("Successfully opened '{}'", resolved),
-                        "user_visible": true,
-                        "do_not_retry": true,
-                        "device_inventory_recorded": device_inventory_recorded,
-                        "instruction": "The target was handed to the user's default application and the successful open was recorded for future local-device suggestions. Treat this as complete and do not try another viewer unless the user says it failed."
-                    }))
+        }
+
+        let resolved = match target.starts_with("http://") || target.starts_with("https://") {
+            true => {
+                let has_shell_meta = target
+                    .chars()
+                    .any(|c| matches!(c, ';' | '|' | '&' | '$' | '`' | '\n'));
+                match has_shell_meta {
+                    true => return Err(anyhow!("Security: URL contains shell metacharacters")),
+                    false => target.to_string(),
                 }
-                Err(e) => Err(anyhow!("Failed to open '{}': {}", resolved, e)),
             }
-        } else {
-            // For file paths, resolve and validate
-            let resolved = crate::config::resolve_path(target)
+            false => crate::config::resolve_path(target)
                 .to_string_lossy()
-                .to_string();
-            let resolved_clone = resolved.clone();
-            let status = tokio::task::spawn_blocking(move || open::that(resolved_clone)).await?;
-            match status {
-                Ok(_) => {
-                    let device_inventory_recorded = record_device_open_success(&resolved);
-                    Ok(json!({
-                        "status": "success",
-                        "message": format!("Successfully opened '{}'", resolved),
-                        "user_visible": true,
-                        "do_not_retry": true,
-                        "device_inventory_recorded": device_inventory_recorded,
-                        "instruction": "The target was handed to the user's default application and the successful open was recorded for future local-device suggestions. Treat this as complete and do not try another viewer unless the user says it failed."
-                    }))
-                }
-                Err(e) => Err(anyhow!("Failed to open '{}': {}", resolved, e)),
+                .to_string(),
+        };
+
+        let resolved_clone = resolved.clone();
+        let status = tokio::task::spawn_blocking(move || open::that(resolved_clone)).await?;
+        match status {
+            Ok(_) => {
+                let device_inventory_recorded = record_device_open_success(&resolved);
+                Ok(json!({
+                    "status": "success",
+                    "message": format!("Successfully opened '{}'", resolved),
+                    "user_visible": true,
+                    "do_not_retry": true,
+                    "device_inventory_recorded": device_inventory_recorded,
+                    "instruction": "The target was handed to the user's default application and the successful open was recorded for future local-device suggestions. Treat this as complete and do not try another viewer unless the user says it failed."
+                }))
             }
+            Err(e) => Err(anyhow!("Failed to open '{}': {}", resolved, e)),
         }
     }
 }

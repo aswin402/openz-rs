@@ -12,69 +12,57 @@ fn render_template_string(template: &str, data: &Value) -> String {
 }
 
 fn render_template_string_inner(template: &str, data: &Value, depth: usize) -> String {
-    if depth > MAX_TEMPLATE_DEPTH {
-        tracing::warn!(
-            "Template rendering exceeded max depth of {}",
-            MAX_TEMPLATE_DEPTH
-        );
-        return template.to_string();
+    match depth > MAX_TEMPLATE_DEPTH {
+        true => {
+            tracing::warn!(
+                "Template rendering exceeded max depth of {}",
+                MAX_TEMPLATE_DEPTH
+            );
+            return template.to_string();
+        }
+        false => {}
     }
 
     let mut result = template.to_string();
 
     // 1. Process loops of the form <!-- loop: key --> ... <!-- endloop -->
-    loop {
-        let loop_start_tag = "<!-- loop:";
-        let loop_end_tag = "<!-- endloop -->";
-
-        if let Some(start_idx) = result.find(loop_start_tag) {
-            let Some(start_tag_end) = result[start_idx..].find("-->") else {
-                break;
-            };
+    let loop_start_tag = "<!-- loop:";
+    let loop_end_tag = "<!-- endloop -->";
+    while let Some((start_idx, start_tag_end_idx, actual_end_idx)) =
+        result.find(loop_start_tag).and_then(|start_idx| {
+            let start_tag_end = result[start_idx..].find("-->")?;
             let start_tag_end_idx = start_idx + start_tag_end + 3;
+            let end_idx = result[start_tag_end_idx..].find(loop_end_tag)?;
+            Some((start_idx, start_tag_end_idx, start_tag_end_idx + end_idx))
+        })
+    {
+        let key_str = result[start_idx + loop_start_tag.len()..start_tag_end_idx - 3].trim();
+        let inner_template = &result[start_tag_end_idx..actual_end_idx];
 
-            // Extract the key name from <!-- loop: key -->
-            let key_str = result[start_idx + loop_start_tag.len()..start_tag_end_idx - 3].trim();
+        let loop_replacement: String = data
+            .get(key_str)
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .map(|item| render_template_string_inner(inner_template, item, depth + 1))
+            .collect();
 
-            if let Some(end_idx) = result[start_tag_end_idx..].find(loop_end_tag) {
-                let actual_end_idx = start_tag_end_idx + end_idx;
-                let inner_template = &result[start_tag_end_idx..actual_end_idx];
-
-                let mut loop_replacement = String::new();
-                if let Some(arr) = data.get(key_str).and_then(|v| v.as_array()) {
-                    for item in arr {
-                        loop_replacement.push_str(&render_template_string_inner(
-                            inner_template,
-                            item,
-                            depth + 1,
-                        ));
-                    }
-                }
-
-                let full_end_idx = actual_end_idx + loop_end_tag.len();
-                result.replace_range(start_idx..full_end_idx, &loop_replacement);
-            } else {
-                break; // Unclosed loop tag
-            }
-        } else {
-            break;
-        }
+        let full_end_idx = actual_end_idx + loop_end_tag.len();
+        result.replace_range(start_idx..full_end_idx, &loop_replacement);
     }
 
     // 2. Process scalar placeholders: {{ key }}
-    if let Some(obj) = data.as_object() {
-        for (k, v) in obj {
-            let placeholder = format!("{{{{ {} }}}}", k);
-            let placeholder_no_space = format!("{{{{{}}}}}", k);
-            let val_str = match v {
-                Value::String(s) => s.clone(),
-                Value::Number(n) => n.to_string(),
-                Value::Bool(b) => b.to_string(),
-                _ => v.to_string(),
-            };
-            result = result.replace(&placeholder, &val_str);
-            result = result.replace(&placeholder_no_space, &val_str);
-        }
+    for (k, v) in data.as_object().into_iter().flatten() {
+        let placeholder = format!("{{{{ {} }}}}", k);
+        let placeholder_no_space = format!("{{{{{}}}}}", k);
+        let val_str = match v {
+            Value::String(s) => s.clone(),
+            Value::Number(n) => n.to_string(),
+            Value::Bool(b) => b.to_string(),
+            _ => v.to_string(),
+        };
+        result = result.replace(&placeholder, &val_str);
+        result = result.replace(&placeholder_no_space, &val_str);
     }
 
     result
@@ -132,83 +120,81 @@ impl Tool for CompileTemplateTool {
         let template_path = crate::config::resolve_path(template_path_str);
         let output_path = crate::config::resolve_path(output_path_str);
 
-        if !template_path.exists() {
-            return Err(anyhow!("Template file not found at {:?}", template_path));
-        }
+        template_path
+            .exists()
+            .then_some(())
+            .ok_or_else(|| anyhow!("Template file not found at {:?}", template_path))?;
 
         let template_content = fs::read_to_string(&template_path)
             .map_err(|e| anyhow!("Failed to read template file: {}", e))?;
 
         let rendered = render_template_string(&template_content, data);
 
-        let output_format =
-            if let Some(fmt) = arguments.get("output_format").and_then(|v| v.as_str()) {
-                fmt.to_lowercase()
-            } else {
-                output_path
-                    .extension()
-                    .and_then(|ext| ext.to_str())
-                    .unwrap_or("html")
-                    .to_lowercase()
-            };
+        let output_format = arguments
+            .get("output_format")
+            .and_then(|v| v.as_str())
+            .or_else(|| output_path.extension().and_then(|ext| ext.to_str()))
+            .unwrap_or("html")
+            .to_lowercase();
 
-        if output_format == "pdf" {
-            // Write to a temporary HTML file in output directory
-            let temp_html_path = output_path.with_extension("temp.html");
-            fs::write(&temp_html_path, &rendered)
-                .map_err(|e| anyhow!("Failed to write temporary HTML file: {}", e))?;
+        match output_format.as_str() {
+            "pdf" => {
+                // Write to a temporary HTML file in output directory
+                let temp_html_path = output_path.with_extension("temp.html");
+                fs::write(&temp_html_path, &rendered)
+                    .map_err(|e| anyhow!("Failed to write temporary HTML file: {}", e))?;
 
-            // Navigate and print to PDF using gsd_browser
-            let gsd_browser = crate::tools::gsd_browser::GsdBrowserTool;
-            let temp_url = format!("file://{}", temp_html_path.to_string_lossy());
+                // Navigate and print to PDF using gsd_browser
+                let gsd_browser = crate::tools::gsd_browser::GsdBrowserTool;
+                let temp_url = format!("file://{}", temp_html_path.to_string_lossy());
 
-            // Navigate
-            let nav_res = gsd_browser
-                .call(&json!({
-                    "action": "navigate",
-                    "url": temp_url
-                }))
-                .await;
+                let nav_res = gsd_browser
+                    .call(&json!({
+                        "action": "navigate",
+                        "url": temp_url
+                    }))
+                    .await;
 
-            if let Err(e) = nav_res {
+                match nav_res {
+                    Ok(_) => {}
+                    Err(e) => {
+                        let _ = fs::remove_file(&temp_html_path);
+                        return Err(anyhow!(
+                            "Failed to navigate browser to temporary page: {}",
+                            e
+                        ));
+                    }
+                }
+
+                let save_res = gsd_browser
+                    .call(&json!({
+                        "action": "save_pdf",
+                        "path": output_path.to_string_lossy()
+                    }))
+                    .await;
+
                 let _ = fs::remove_file(&temp_html_path);
-                return Err(anyhow!(
-                    "Failed to navigate browser to temporary page: {}",
-                    e
-                ));
-            }
 
-            // Save PDF
-            let save_res = gsd_browser
-                .call(&json!({
-                    "action": "save_pdf",
-                    "path": output_path.to_string_lossy()
+                save_res.map_err(|e| anyhow!("Failed to save page as PDF: {}", e))?;
+
+                Ok(json!({
+                    "status": "success",
+                    "message": format!("Successfully compiled template to PDF at {:?}", output_path)
                 }))
-                .await;
-
-            // Cleanup temp file
-            let _ = fs::remove_file(&temp_html_path);
-
-            if let Err(e) = save_res {
-                return Err(anyhow!("Failed to save page as PDF: {}", e));
             }
+            _ => {
+                match output_path.parent() {
+                    Some(parent) => fs::create_dir_all(parent)?,
+                    None => {}
+                }
+                fs::write(&output_path, &rendered)
+                    .map_err(|e| anyhow!("Failed to write compiled document: {}", e))?;
 
-            Ok(json!({
-                "status": "success",
-                "message": format!("Successfully compiled template to PDF at {:?}", output_path)
-            }))
-        } else {
-            // Write compiled HTML directly
-            if let Some(parent) = output_path.parent() {
-                fs::create_dir_all(parent)?;
+                Ok(json!({
+                    "status": "success",
+                    "message": format!("Successfully compiled template to HTML at {:?}", output_path)
+                }))
             }
-            fs::write(&output_path, &rendered)
-                .map_err(|e| anyhow!("Failed to write compiled document: {}", e))?;
-
-            Ok(json!({
-                "status": "success",
-                "message": format!("Successfully compiled template to HTML at {:?}", output_path)
-            }))
         }
     }
 }

@@ -7,14 +7,40 @@ pub struct OnpkgTool;
 
 impl OnpkgTool {
     fn resolve_binary() -> String {
-        if let Some(home) = dirs::home_dir() {
-            let p = home.join(".cargo").join("bin").join("onpkg");
-            if p.exists() {
-                return p.to_string_lossy().to_string();
-            }
-        }
-        "onpkg".to_string()
+        dirs::home_dir()
+            .map(|home| home.join(".cargo").join("bin").join("onpkg"))
+            .filter(|p| p.exists())
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "onpkg".to_string())
     }
+}
+
+fn required_arg<'a>(arguments: &'a Value, keys: &[&str], message: &str) -> Result<&'a str> {
+    keys.iter()
+        .find_map(|key| arguments.get(*key).and_then(Value::as_str))
+        .ok_or_else(|| anyhow!("{}", message))
+}
+
+fn optional_arg<'a>(arguments: &'a Value, keys: &[&str]) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|key| arguments.get(*key).and_then(Value::as_str))
+}
+
+fn append_pkg_subcommand(cmd: &mut Command, subcmd: &str, arguments: &Value, action: &str) -> Result<()> {
+    let name = required_arg(
+        arguments,
+        &["name", "pkg", "package"],
+        &format!("Missing 'name' parameter for {} action", action),
+    )?;
+    cmd.args(["pkg", subcmd, name]);
+    match optional_arg(arguments, &["runtime", "rt"]) {
+        Some(rt) => {
+            cmd.arg("--runtime");
+            cmd.arg(rt);
+        }
+        None => {}
+    }
+    Ok(())
 }
 
 #[async_trait::async_trait]
@@ -71,18 +97,11 @@ impl Tool for OnpkgTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action_raw = if let Some(s) = arguments.as_str() {
-            s.to_string()
-        } else {
-            arguments
-                .get("action")
-                .or_else(|| arguments.get("command"))
-                .or_else(|| arguments.get("subcommand"))
-                .or_else(|| arguments.get("cmd"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("list_stacks")
-                .to_string()
-        };
+        let action_raw = arguments
+            .as_str()
+            .or_else(|| optional_arg(arguments, &["action", "command", "subcommand", "cmd"]))
+            .unwrap_or("list_stacks")
+            .to_string();
 
         let action_norm = action_raw.trim().to_lowercase();
         let action = match action_norm.as_str() {
@@ -106,105 +125,63 @@ impl Tool for OnpkgTool {
                 cmd.args(["stack", "list"]);
             }
             "show_stack" => {
-                let stack = arguments
-                    .get("stack_name")
-                    .or_else(|| arguments.get("stack"))
-                    .or_else(|| arguments.get("template"))
-                    .or_else(|| arguments.get("name"))
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        anyhow!("Missing 'stack_name' parameter for show_stack action")
-                    })?;
+                let stack = required_arg(
+                    arguments,
+                    &["stack_name", "stack", "template", "name"],
+                    "Missing 'stack_name' parameter for show_stack action",
+                )?;
                 cmd.args(["stack", "show", stack]);
             }
             "scaffold" => {
-                let stack = arguments
-                    .get("stack_name")
-                    .or_else(|| arguments.get("stack"))
-                    .or_else(|| arguments.get("template"))
-                    .or_else(|| arguments.get("name"))
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'stack_name' parameter for scaffold action"))?;
+                let stack = required_arg(
+                    arguments,
+                    &["stack_name", "stack", "template", "name"],
+                    "Missing 'stack_name' parameter for scaffold action",
+                )?;
                 cmd.args(["stack", "add", stack]);
-                if let Some(dir) = arguments
-                    .get("dir")
-                    .or_else(|| arguments.get("path"))
-                    .or_else(|| arguments.get("directory"))
-                    .and_then(|v| v.as_str())
-                {
-                    let resolved = crate::config::resolve_path(dir);
-                    cmd.arg("--dir");
-                    cmd.arg(resolved.to_string_lossy().to_string());
+                match optional_arg(arguments, &["dir", "path", "directory"]) {
+                    Some(dir) => {
+                        let resolved = crate::config::resolve_path(dir);
+                        cmd.arg("--dir");
+                        cmd.arg(resolved.to_string_lossy().to_string());
+                    }
+                    None => {}
                 }
             }
             "doctor" => {
                 cmd.arg("doctor");
             }
             "add_template" => {
-                let name = arguments
-                    .get("name")
-                    .or_else(|| arguments.get("template"))
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'name' parameter for add_template action"))?;
-                let source = arguments
-                    .get("source")
-                    .or_else(|| arguments.get("src"))
-                    .or_else(|| arguments.get("url"))
-                    .or_else(|| arguments.get("path"))
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'source' parameter for add_template action"))?;
+                let name = required_arg(
+                    arguments,
+                    &["name", "template"],
+                    "Missing 'name' parameter for add_template action",
+                )?;
+                let source = required_arg(
+                    arguments,
+                    &["source", "src", "url", "path"],
+                    "Missing 'source' parameter for add_template action",
+                )?;
                 cmd.args(["template", "add", name, source]);
             }
             "add_skill" => {
-                let name = arguments
-                    .get("name")
-                    .or_else(|| arguments.get("skill"))
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'name' parameter for add_skill action"))?;
-                let source = arguments
-                    .get("source")
-                    .or_else(|| arguments.get("src"))
-                    .or_else(|| arguments.get("url"))
-                    .or_else(|| arguments.get("path"))
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'source' parameter for add_skill action"))?;
+                let name = required_arg(
+                    arguments,
+                    &["name", "skill"],
+                    "Missing 'name' parameter for add_skill action",
+                )?;
+                let source = required_arg(
+                    arguments,
+                    &["source", "src", "url", "path"],
+                    "Missing 'source' parameter for add_skill action",
+                )?;
                 cmd.args(["skill", "add", name, source]);
             }
             "add_package" => {
-                let name = arguments
-                    .get("name")
-                    .or_else(|| arguments.get("pkg"))
-                    .or_else(|| arguments.get("package"))
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'name' parameter for add_package action"))?;
-                cmd.args(["pkg", "add", name]);
-                if let Some(rt) = arguments
-                    .get("runtime")
-                    .or_else(|| arguments.get("rt"))
-                    .and_then(|v| v.as_str())
-                {
-                    cmd.arg("--runtime");
-                    cmd.arg(rt);
-                }
+                append_pkg_subcommand(&mut cmd, "add", arguments, "add_package")?;
             }
             "install_package" => {
-                let name = arguments
-                    .get("name")
-                    .or_else(|| arguments.get("pkg"))
-                    .or_else(|| arguments.get("package"))
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        anyhow!("Missing 'name' parameter for install_package action")
-                    })?;
-                cmd.args(["pkg", "install", name]);
-                if let Some(rt) = arguments
-                    .get("runtime")
-                    .or_else(|| arguments.get("rt"))
-                    .and_then(|v| v.as_str())
-                {
-                    cmd.arg("--runtime");
-                    cmd.arg(rt);
-                }
+                append_pkg_subcommand(&mut cmd, "install", arguments, "install_package")?;
             }
             _ => return Err(anyhow!("Unsupported onpkg action: {}", action)),
         }
@@ -212,9 +189,13 @@ impl Tool for OnpkgTool {
         let output = cmd.output().await?;
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let status = match output.status.success() {
+            true => "success",
+            false => "error",
+        };
 
         Ok(json!({
-            "status": if output.status.success() { "success" } else { "error" },
+            "status": status,
             "stdout": stdout,
             "stderr": stderr,
             "code": output.status.code()
@@ -222,10 +203,84 @@ impl Tool for OnpkgTool {
     }
 }
 
+const ARCHITECTURE_PATH_PROBES: &[(&str, &[&str])] = &[
+    ("components", &["src/components", "components"]),
+    ("routing", &["src/pages", "pages", "src/routes", "routes"]),
+    (
+        "entrypoint",
+        &[
+            "src/main.rs",
+            "src/lib.rs",
+            "src/main.tsx",
+            "src/index.js",
+            "src/index.ts",
+            "index.html",
+            "src/main.py",
+            "main.py",
+        ],
+    ),
+    ("styles", &["src/index.css", "index.css", "src/app.css", "app.css"]),
+];
+
+fn collect_cargo_toml_packages(core_packages: &mut std::collections::HashSet<String>) {
+    let toml_str = match std::fs::read_to_string("Cargo.toml") {
+        Ok(content) => content,
+        Err(_) => return,
+    };
+    let mut in_deps = false;
+    for line in toml_str.lines() {
+        let trimmed = line.trim();
+        match trimmed.starts_with('[') {
+            true => {
+                in_deps = trimmed == "[dependencies]" || trimmed == "[workspace.dependencies]";
+                match trimmed
+                    .strip_prefix("[dependencies.")
+                    .and_then(|s| s.strip_suffix(']'))
+                {
+                    Some(pkg) => {
+                        core_packages.insert(pkg.trim().to_string());
+                    }
+                    None => {}
+                }
+            }
+            false => match in_deps && !trimmed.is_empty() && !trimmed.starts_with('#') {
+                true => match trimmed.split('=').next().map(str::trim) {
+                    Some(pkg_name) => {
+                        core_packages.insert(pkg_name.to_string());
+                    }
+                    None => {}
+                },
+                false => {}
+            },
+        }
+    }
+}
+
+fn collect_package_json_packages(core_packages: &mut std::collections::HashSet<String>) {
+    let pkg_json = match std::fs::read_to_string("package.json")
+        .ok()
+        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+    {
+        Some(val) => val,
+        None => return,
+    };
+    for field in ["dependencies", "devDependencies"] {
+        match pkg_json.get(field).and_then(Value::as_object) {
+            Some(map) => {
+                for key in map.keys() {
+                    core_packages.insert(key.to_string());
+                }
+            }
+            None => {}
+        }
+    }
+}
+
 pub fn sync_onpkg_manifest() -> Result<()> {
     let onpkg_json_path = std::path::Path::new("onpkg.json");
-    if !onpkg_json_path.exists() {
-        return Ok(());
+    match onpkg_json_path.exists() {
+        true => {}
+        false => return Ok(()),
     }
 
     // 1. Read onpkg.json
@@ -234,11 +289,14 @@ pub fn sync_onpkg_manifest() -> Result<()> {
         serde_json::from_str(&content).map_err(|e| anyhow!("Failed to parse onpkg.json: {}", e))?;
 
     // Ensure agent_instructions and docs_directory exist
-    if manifest.get("agent_instructions").is_none() {
-        manifest["agent_instructions"] = json!({
-            "active_skills": [],
-            "docs_directory": "onpkg_docs/"
-        });
+    match manifest.get("agent_instructions") {
+        Some(_) => {}
+        None => {
+            manifest["agent_instructions"] = json!({
+                "active_skills": [],
+                "docs_directory": "onpkg_docs/"
+            });
+        }
     }
     let docs_dir_name = manifest["agent_instructions"]
         .get("docs_directory")
@@ -247,12 +305,13 @@ pub fn sync_onpkg_manifest() -> Result<()> {
         .to_string();
 
     let docs_dir = std::path::PathBuf::from(docs_dir_name);
-    if !docs_dir.exists() {
-        std::fs::create_dir_all(&docs_dir)?;
+    match docs_dir.exists() {
+        true => {}
+        false => std::fs::create_dir_all(&docs_dir)?,
     }
 
     // 2. Create the 5 core workflow files if they don't exist
-    let workflow_files = vec![
+    let workflow_files = [
         ("prd.md", prd_template()),
         ("content.md", content_template()),
         ("design.md", design_template()),
@@ -262,29 +321,27 @@ pub fn sync_onpkg_manifest() -> Result<()> {
 
     for (filename, template) in &workflow_files {
         let file_path = docs_dir.join(filename);
-        if !file_path.exists() {
-            std::fs::write(&file_path, template)?;
+        match file_path.exists() {
+            true => {}
+            false => std::fs::write(&file_path, template)?,
         }
     }
 
     // 3. Scan docs_dir for all .md files (except INDEX.md) to update active_skills
-    let mut active_skills = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&docs_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-                    if ext == "md" {
-                        if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
-                            if name != "INDEX.md" {
-                                active_skills.push(name.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let mut active_skills: Vec<String> = std::fs::read_dir(&docs_dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("md"))
+        .filter_map(|path| {
+            path.file_name()
+                .and_then(|s| s.to_str())
+                .filter(|name| *name != "INDEX.md")
+                .map(str::to_string)
+        })
+        .collect();
     active_skills.sort();
 
     // Update active_skills in manifest
@@ -306,124 +363,45 @@ pub fn sync_onpkg_manifest() -> Result<()> {
     std::fs::write(index_path, index_content)?;
 
     // 5. Scan project structure to find Architecture elements
-    if manifest.get("architecture").is_none() {
-        manifest["architecture"] = json!({});
+    match manifest.get("architecture") {
+        Some(_) => {}
+        None => manifest["architecture"] = json!({}),
     }
 
-    // Components
-    let comp_paths = vec!["src/components", "components"];
-    for p in comp_paths {
-        if std::path::Path::new(p).exists() {
-            manifest["architecture"]["components"] = json!(p);
-            break;
-        }
-    }
-
-    // Routing
-    let route_paths = vec!["src/pages", "pages", "src/routes", "routes"];
-    for p in route_paths {
-        if std::path::Path::new(p).exists() {
-            manifest["architecture"]["routing"] = json!(p);
-            break;
-        }
-    }
-
-    // Entrypoint
-    let entry_paths = vec![
-        "src/main.rs",
-        "src/lib.rs",
-        "src/main.tsx",
-        "src/index.js",
-        "src/index.ts",
-        "index.html",
-        "src/main.py",
-        "main.py",
-    ];
-    for p in entry_paths {
-        if std::path::Path::new(p).exists() {
-            manifest["architecture"]["entrypoint"] = json!(p);
-            break;
-        }
-    }
-
-    // Styles
-    let style_paths = vec!["src/index.css", "index.css", "src/app.css", "app.css"];
-    for p in style_paths {
-        if std::path::Path::new(p).exists() {
-            manifest["architecture"]["styles"] = json!(p);
-            break;
+    for (field, candidates) in ARCHITECTURE_PATH_PROBES {
+        match candidates.iter().find(|p| std::path::Path::new(p).exists()) {
+            Some(found) => manifest["architecture"][*field] = json!(found),
+            None => {}
         }
     }
 
     // 6. Detect packages
-    if manifest.get("packages").is_none() {
-        manifest["packages"] = json!({
-            "added_by_agent": [],
-            "core": []
-        });
+    match manifest.get("packages") {
+        Some(_) => {}
+        None => {
+            manifest["packages"] = json!({
+                "added_by_agent": [],
+                "core": []
+            });
+        }
     }
 
     let mut core_packages = std::collections::HashSet::new();
-
-    // Parse Cargo.toml
-    if std::path::Path::new("Cargo.toml").exists() {
-        if let Ok(toml_str) = std::fs::read_to_string("Cargo.toml") {
-            let mut in_deps = false;
-            for line in toml_str.lines() {
-                let trimmed = line.trim();
-                if trimmed.starts_with('[') {
-                    in_deps = trimmed == "[dependencies]" || trimmed == "[workspace.dependencies]";
-                    if let Some(pkg) = trimmed
-                        .strip_prefix("[dependencies.")
-                        .and_then(|s| s.strip_suffix(']'))
-                    {
-                        core_packages.insert(pkg.trim().to_string());
-                    }
-                    continue;
-                }
-                if in_deps && !trimmed.is_empty() && !trimmed.starts_with('#') {
-                    if let Some(pkg_name) = trimmed.split('=').next().map(|s| s.trim()) {
-                        core_packages.insert(pkg_name.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    // Parse package.json
-    if std::path::Path::new("package.json").exists() {
-        if let Ok(pkg_json_str) = std::fs::read_to_string("package.json") {
-            if let Ok(pkg_json) = serde_json::from_str::<Value>(&pkg_json_str) {
-                if let Some(deps) = pkg_json.get("dependencies").and_then(|d| d.as_object()) {
-                    for key in deps.keys() {
-                        core_packages.insert(key.to_string());
-                    }
-                }
-                if let Some(dev_deps) = pkg_json.get("devDependencies").and_then(|d| d.as_object())
-                {
-                    for key in dev_deps.keys() {
-                        core_packages.insert(key.to_string());
-                    }
-                }
-            }
-        }
-    }
+    collect_cargo_toml_packages(&mut core_packages);
+    collect_package_json_packages(&mut core_packages);
 
     let mut core_vec: Vec<String> = core_packages.into_iter().collect();
     core_vec.sort();
 
     // Preserve existing added_by_agent packages, but update core packages
-    let mut added_by_agent = Vec::new();
-    if let Some(arr) = manifest["packages"]
+    let mut added_by_agent: Vec<String> = manifest["packages"]
         .get("added_by_agent")
-        .and_then(|a| a.as_array())
-    {
-        for v in arr {
-            if let Some(s) = v.as_str() {
-                added_by_agent.push(s.to_string());
-            }
-        }
-    }
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect();
     added_by_agent.sort();
 
     manifest["packages"]["core"] = json!(core_vec);
@@ -431,8 +409,9 @@ pub fn sync_onpkg_manifest() -> Result<()> {
 
     // 7. Write back if modified
     let new_content = serde_json::to_string_pretty(&manifest)?;
-    if new_content != content {
-        std::fs::write(onpkg_json_path, new_content)?;
+    match new_content != content {
+        true => std::fs::write(onpkg_json_path, new_content)?,
+        false => {}
     }
 
     Ok(())

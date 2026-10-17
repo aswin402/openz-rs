@@ -142,8 +142,9 @@ pub(crate) fn compute_bm25_scores(
     static_tools: &HashMap<String, std::sync::Arc<dyn super::Tool>>,
 ) -> HashMap<String, f32> {
     let query_tokens = tokenize(prompt);
-    if query_tokens.is_empty() || static_tools.is_empty() {
-        return HashMap::new();
+    match query_tokens.is_empty() || static_tools.is_empty() {
+        true => return HashMap::new(),
+        false => {}
     }
 
     let docs: Vec<ToolDoc> = static_tools
@@ -156,19 +157,16 @@ pub(crate) fn compute_bm25_scores(
     // Compute Document Frequency (DF) for each query token
     let mut df: HashMap<&str, usize> = HashMap::new();
     for token in &query_tokens {
-        if df.contains_key(token.as_str()) {
-            continue;
-        }
-        let count = docs
-            .iter()
-            .filter(|doc| {
-                doc.name_tokens.contains(token)
-                    || doc.alias_tokens.contains(token)
-                    || doc.domain_tokens.contains(token)
-                    || doc.desc_tokens.contains(token)
-            })
-            .count();
-        df.insert(token.as_str(), count);
+        df.entry(token.as_str()).or_insert_with(|| {
+            docs.iter()
+                .filter(|doc| {
+                    doc.name_tokens.contains(token)
+                        || doc.alias_tokens.contains(token)
+                        || doc.domain_tokens.contains(token)
+                        || doc.desc_tokens.contains(token)
+                })
+                .count()
+        });
     }
 
     let k1: f32 = 1.2;
@@ -177,72 +175,59 @@ pub(crate) fn compute_bm25_scores(
 
     let mut scores = HashMap::new();
     for doc in docs {
-        let mut score: f32 = 0.0;
         let len_norm = 1.0 - b + b * (doc.total_len as f32 / avg_doc_len);
-
-        for q in &query_tokens {
-            let doc_freq = *df.get(q.as_str()).unwrap_or(&0);
-            if doc_freq == 0 {
-                continue;
-            }
-
-            // Robertson-Spärck Jones IDF
-            let idf = ((num_docs - doc_freq as f32 + 0.5) / (doc_freq as f32 + 0.5) + 1.0).ln();
-            if idf <= 0.0 {
-                continue;
-            }
-
-            // Weighted Term Frequency across fields
-            let tf_name = doc.name_tokens.iter().filter(|t| *t == q).count() as f32 * 4.0;
-            let tf_alias = doc.alias_tokens.iter().filter(|t| *t == q).count() as f32 * 3.0;
-            let tf_domain = doc.domain_tokens.iter().filter(|t| *t == q).count() as f32 * 2.5;
-            let tf_desc = doc.desc_tokens.iter().filter(|t| *t == q).count() as f32 * 1.2;
-            let tf_total = tf_name + tf_alias + tf_domain + tf_desc;
-
-            if tf_total > 0.0 {
-                let tf_component = (tf_total * (k1 + 1.0)) / (tf_total + k1 * len_norm);
-                score += idf * tf_component;
-            }
-        }
+        let lexical_score: f32 = query_tokens
+            .iter()
+            .filter_map(|q| {
+                let doc_freq = *df.get(q.as_str()).unwrap_or(&0);
+                (doc_freq > 0).then(|| {
+                    let idf =
+                        ((num_docs - doc_freq as f32 + 0.5) / (doc_freq as f32 + 0.5) + 1.0).ln();
+                    let tf_name = doc.name_tokens.iter().filter(|t| *t == q).count() as f32 * 4.0;
+                    let tf_alias = doc.alias_tokens.iter().filter(|t| *t == q).count() as f32 * 3.0;
+                    let tf_domain =
+                        doc.domain_tokens.iter().filter(|t| *t == q).count() as f32 * 2.5;
+                    let tf_desc = doc.desc_tokens.iter().filter(|t| *t == q).count() as f32 * 1.2;
+                    let tf_total = tf_name + tf_alias + tf_domain + tf_desc;
+                    match idf > 0.0 && tf_total > 0.0 {
+                        true => {
+                            let tf_component =
+                                (tf_total * (k1 + 1.0)) / (tf_total + k1 * len_norm);
+                            idf * tf_component
+                        }
+                        false => 0.0,
+                    }
+                })
+            })
+            .sum();
 
         // Substring / verbatim phrase bonuses
         let name_lower = doc.name.to_ascii_lowercase();
-        if prompt_lower.contains(&name_lower) {
-            score += 25.0;
-        } else {
-            let spaced = name_lower.replace('_', " ");
-            if spaced.len() >= 4 && prompt_lower.contains(&spaced) {
-                score += 20.0;
-            }
-        }
+        let spaced = name_lower.replace('_', " ");
+        let phrase_bonus = match (
+            prompt_lower.contains(&name_lower),
+            spaced.len() >= 4 && prompt_lower.contains(&spaced),
+        ) {
+            (true, _) => 25.0,
+            (false, true) => 20.0,
+            (false, false) => 0.0,
+        };
 
-        scores.insert(doc.name.to_string(), score);
+        scores.insert(doc.name.to_string(), lexical_score + phrase_bonus);
     }
 
     scores
 }
 
-pub(crate) fn select_domains_for_prompt(prompt: &str) -> BTreeSet<&'static str> {
-    let lower = prompt.to_lowercase();
-    let mut domains = BTreeSet::new();
-    domains.insert("self_management");
-    domains.insert("filesystem");
-    domains.insert("subagent");
-
-    if contains_any(
-        &lower,
+const PROMPT_DOMAIN_RULES: &[(&[&str], &[&str])] = &[
+    (
         &[
             "cargo", "rust", "test", "build", "compile", "compiler", "error", "code", "function",
             "module", "refactor", "lint", "clippy",
         ],
-    ) {
-        domains.insert("code");
-        domains.insert("shell");
-        domains.insert("git");
-    }
-
-    if contains_any(
-        &lower,
+        &["code", "shell", "git"],
+    ),
+    (
         &[
             "cron",
             "cronjob",
@@ -254,20 +239,16 @@ pub(crate) fn select_domains_for_prompt(prompt: &str) -> BTreeSet<&'static str> 
             "pause job",
             "resume job",
         ],
-    ) {
-        domains.insert("cron");
-    }
-    if contains_any(
-        &lower,
+        &["cron"],
+    ),
+    (
         &[
             "website", "web", "url", "browser", "page", "crawl", "fetch", "search", "internet",
             "research", "http", "https",
         ],
-    ) {
-        domains.insert("web");
-    }
-    if contains_any(
-        &lower,
+        &["web"],
+    ),
+    (
         &[
             "image",
             "photo",
@@ -284,12 +265,9 @@ pub(crate) fn select_domains_for_prompt(prompt: &str) -> BTreeSet<&'static str> 
             "animation",
             "mp4",
         ],
-    ) {
-        domains.insert("media");
-        domains.insert("document");
-    }
-    if contains_any(
-        &lower,
+        &["media", "document"],
+    ),
+    (
         &[
             "pdf",
             "docx",
@@ -303,36 +281,44 @@ pub(crate) fn select_domains_for_prompt(prompt: &str) -> BTreeSet<&'static str> 
             "presentation",
             "csv",
         ],
-    ) {
-        domains.insert("document");
-    }
-    if contains_any(
-        &lower,
+        &["document"],
+    ),
+    (
         &[
             "git", "commit", "push", "pull", "pr", "github", "branch", "diff",
         ],
-    ) {
-        domains.insert("git");
-        domains.insert("code");
-    }
-    if contains_any(
-        &lower,
+        &["git", "code"],
+    ),
+    (
         &["memory", "remember", "recall", "fact", "knowledge", "graph"],
-    ) {
-        domains.insert("memory");
-    }
-    if contains_any(&lower, &["think", "reason", "plan", "analyze", "breakdown"]) {
-        domains.insert("reasoning");
-        domains.insert("context");
-    }
-    if contains_any(
-        &lower,
-        &["terminal", "shell", "command", "bash", "process", "port", "exec"],
-    ) {
-        domains.insert("shell");
-    }
-    if contains_any(&lower, &["mcp", "server", "gateway", "bridge"]) {
-        domains.insert("mcp");
+        &["memory"],
+    ),
+    (
+        &["think", "reason", "plan", "analyze", "breakdown"],
+        &["reasoning", "context"],
+    ),
+    (
+        &[
+            "terminal", "shell", "command", "bash", "process", "port", "exec",
+        ],
+        &["shell"],
+    ),
+    (&["mcp", "server", "gateway", "bridge"], &["mcp"]),
+];
+
+pub(crate) fn select_domains_for_prompt(prompt: &str) -> BTreeSet<&'static str> {
+    let lower = prompt.to_lowercase();
+    let mut domains = BTreeSet::from(["self_management", "filesystem", "subagent"]);
+
+    for (keywords, target_domains) in PROMPT_DOMAIN_RULES {
+        match contains_any(&lower, keywords) {
+            true => {
+                for domain in *target_domains {
+                    domains.insert(*domain);
+                }
+            }
+            false => {}
+        }
     }
 
     domains
@@ -347,10 +333,11 @@ pub(crate) fn select_domains_with_bm25(
 
     // Dynamically include domains of tools that have significant BM25 relevance (> 2.0)
     for (name, score) in bm25_scores {
-        if *score > 2.0 {
-            if let Some(tool) = static_tools.get(name) {
+        match (*score > 2.0, static_tools.get(name)) {
+            (true, Some(tool)) => {
                 domains.insert(tool.metadata().domain);
             }
+            _ => {}
         }
     }
 
@@ -376,25 +363,30 @@ pub(crate) fn tool_selection_score_with_bm25(
     selected_domains: &BTreeSet<&'static str>,
     bm25_score: f32,
 ) -> i32 {
-    let mut score = metadata.priority as i32;
-    if is_core_tool(name) {
-        score += 1_000;
-    }
-    if selected_domains.contains(metadata.domain) {
-        score += 500;
-    }
-    if bm25_score > 0.0 {
-        score += ((bm25_score * 30.0) as i32).min(2000);
-    }
-    score -= match metadata.risk {
+    let core_bonus = match is_core_tool(name) {
+        true => 1_000,
+        false => 0,
+    };
+    let domain_bonus = match selected_domains.contains(metadata.domain) {
+        true => 500,
+        false => 0,
+    };
+    let bm25_bonus = match bm25_score > 0.0 {
+        true => ((bm25_score * 30.0) as i32).min(2000),
+        false => 0,
+    };
+    let risk_penalty = match metadata.risk {
         ToolRisk::Low => 0,
         ToolRisk::Medium => 10,
         ToolRisk::High => 25,
     };
-    if metadata.requires_approval {
-        score -= 10;
-    }
-    score
+    let approval_penalty = match metadata.requires_approval {
+        true => 10,
+        false => 0,
+    };
+
+    metadata.priority as i32 + core_bonus + domain_bonus + bm25_bonus - risk_penalty
+        - approval_penalty
 }
 
 #[allow(dead_code)]
@@ -412,25 +404,23 @@ pub(crate) fn tool_selection_reasons_with_bm25(
     selected_domains: &BTreeSet<&'static str>,
     bm25_score: f32,
 ) -> Vec<&'static str> {
-    let mut reasons = Vec::new();
-    if is_core_tool(name) {
-        reasons.push("core_tool");
-    }
-    if selected_domains.contains(metadata.domain) {
-        reasons.push("prompt_domain");
-    }
-    if bm25_score > 0.0 {
-        reasons.push("bm25_relevance");
-    }
-    match metadata.risk {
-        ToolRisk::Low => reasons.push("low_risk"),
-        ToolRisk::Medium => reasons.push("medium_risk_penalty"),
-        ToolRisk::High => reasons.push("high_risk_penalty"),
-    }
-    if metadata.requires_approval {
-        reasons.push("requires_approval");
-    }
-    reasons
+    let risk_reason = match metadata.risk {
+        ToolRisk::Low => "low_risk",
+        ToolRisk::Medium => "medium_risk_penalty",
+        ToolRisk::High => "high_risk_penalty",
+    };
+    [
+        is_core_tool(name).then_some("core_tool"),
+        selected_domains
+            .contains(metadata.domain)
+            .then_some("prompt_domain"),
+        (bm25_score > 0.0).then_some("bm25_relevance"),
+        Some(risk_reason),
+        metadata.requires_approval.then_some("requires_approval"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 fn contains_phrase_bounded(haystack: &str, needle: &str) -> bool {

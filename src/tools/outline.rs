@@ -1,27 +1,13 @@
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
-use regex::Regex;
-use serde_json::{json, Value};
-use std::fs;
-use std::sync::LazyLock;
-
-static RE_RUST: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*(pub\s+)?(fn|struct|enum|trait|impl|type)\s+([a-zA-Z0-9_<>]+)")
-        .expect("valid rust outline regex")
-});
-static RE_PYTHON: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*(def|class)\s+([a-zA-Z0-9_]+)").expect("valid python outline regex")
-});
-static RE_GO: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^\s*(func|type)\s+(\([^\)]+\)\s+)?([a-zA-Z0-9_]+)").expect("valid go outline regex")
-});
-
 use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
 use oxc_ast::visit::Visit;
 use oxc_parser::Parser;
 use oxc_span::SourceType;
 use oxc_syntax::scope::ScopeFlags;
+use serde_json::{json, Value};
+use std::fs;
 
 pub struct CodeOutlineTool;
 
@@ -31,6 +17,86 @@ struct Symbol {
     kind: String,
     name: String,
     definition: String,
+}
+
+fn strip_keyword_with_space<'a>(input: &'a str, keyword: &str) -> Option<&'a str> {
+    input.strip_prefix(keyword).and_then(|rest| {
+        rest.chars()
+            .next()
+            .filter(|ch| ch.is_whitespace())
+            .map(|_| rest.trim_start())
+    })
+}
+
+fn take_ident(input: &str, allow_angle_brackets: bool) -> Option<&str> {
+    let len = input
+        .char_indices()
+        .take_while(|(_, ch)| {
+            ch.is_ascii_alphanumeric()
+                || *ch == '_'
+                || (allow_angle_brackets && matches!(*ch, '<' | '>'))
+        })
+        .map(|(idx, ch)| idx + ch.len_utf8())
+        .last()?;
+    Some(&input[..len])
+}
+
+fn parse_rust_outline_line(line: &str) -> Option<(String, String)> {
+    let trimmed = line.trim_start();
+    let after_pub = strip_keyword_with_space(trimmed, "pub").unwrap_or(trimmed);
+    ["fn", "struct", "enum", "trait", "impl", "type"]
+        .into_iter()
+        .find_map(|kw| {
+            let rest = strip_keyword_with_space(after_pub, kw)?;
+            let name = take_ident(rest, true)?;
+            Some((kw.to_string(), name.to_string()))
+        })
+}
+
+fn parse_python_outline_line(line: &str) -> Option<(String, String)> {
+    let trimmed = line.trim_start();
+    ["def", "class"].into_iter().find_map(|kw| {
+        let rest = strip_keyword_with_space(trimmed, kw)?;
+        let name = take_ident(rest, false)?;
+        Some((kw.to_string(), name.to_string()))
+    })
+}
+
+fn parse_go_outline_line(line: &str) -> Option<(String, String)> {
+    let trimmed = line.trim_start();
+    ["func", "type"].into_iter().find_map(|kw| {
+        let rest = strip_keyword_with_space(trimmed, kw)?;
+        let after_receiver = rest
+            .strip_prefix('(')
+            .and_then(|inner| inner.split_once(')'))
+            .and_then(|(_, tail)| {
+                tail.chars()
+                    .next()
+                    .filter(|ch| ch.is_whitespace())
+                    .map(|_| tail.trim_start())
+            })
+            .unwrap_or(rest);
+        let name = take_ident(after_receiver, false)?;
+        Some((kw.to_string(), name.to_string()))
+    })
+}
+
+fn parse_fallback_outline_line(trimmed: &str) -> Option<(String, String)> {
+    let has_decl = ["fn ", "def ", "function ", "class ", "struct "]
+        .iter()
+        .any(|needle| trimmed.contains(needle));
+    match has_decl {
+        true => Some((
+            "unknown".to_string(),
+            trimmed.split_whitespace().nth(1).unwrap_or("").to_string(),
+        )),
+        false => None,
+    }
+}
+
+fn is_comment_line(ext: &str, trimmed: &str) -> bool {
+    let hash_comment = matches!(ext, "py" | "rb" | "sh") && trimmed.starts_with('#');
+    trimmed.starts_with("//") || trimmed.starts_with("/*") || hash_comment
 }
 
 #[async_trait::async_trait]
@@ -70,8 +136,9 @@ impl Tool for CodeOutlineTool {
             .ok_or_else(|| anyhow!("Missing 'file_path' parameter"))?;
         let file_path = crate::config::resolve_path(file_path_str);
 
-        if !file_path.exists() {
-            return Err(anyhow!("File '{}' does not exist", file_path_str));
+        match file_path.exists() {
+            true => {}
+            false => return Err(anyhow!("File '{}' does not exist", file_path_str)),
         }
 
         let ext = file_path
@@ -80,98 +147,47 @@ impl Tool for CodeOutlineTool {
             .unwrap_or("")
             .to_lowercase();
         let content = fs::read_to_string(&file_path)?;
-        let mut symbols = Vec::new();
 
-        if ext == "js" || ext == "ts" || ext == "jsx" || ext == "tsx" {
-            // High-precision AST parsing using Oxc
-            let allocator = Allocator::default();
-            let source_type =
-                SourceType::from_path(&file_path).unwrap_or_else(|_| SourceType::default());
-            let parser_res = Parser::new(&allocator, &content, source_type).parse();
+        let symbols = match ext.as_str() {
+            "js" | "ts" | "jsx" | "tsx" => {
+                let allocator = Allocator::default();
+                let source_type =
+                    SourceType::from_path(&file_path).unwrap_or_else(|_| SourceType::default());
+                let parser_res = Parser::new(&allocator, &content, source_type).parse();
 
-            let mut visitor = OutlineVisitor {
-                symbols: Vec::new(),
-                source_text: &content,
-            };
-            visitor.visit_program(&parser_res.program);
-            symbols = visitor.symbols;
-        } else {
-            for (idx, line) in content.lines().enumerate() {
-                let line_num = idx + 1;
-                let trimmed = line.trim();
-
-                if trimmed.is_empty() {
-                    continue;
-                }
-
-                let is_comment = if ext == "py" || ext == "rb" || ext == "sh" {
-                    trimmed.starts_with("//")
-                        || trimmed.starts_with("#")
-                        || trimmed.starts_with("/*")
-                } else {
-                    trimmed.starts_with("//") || trimmed.starts_with("/*")
+                let mut visitor = OutlineVisitor {
+                    symbols: Vec::new(),
+                    source_text: &content,
                 };
-
-                if is_comment {
-                    continue;
-                }
-
-                match ext.as_str() {
-                    "rs" => {
-                        if let Some(cap) = RE_RUST.captures(line) {
-                            if let (Some(kind), Some(name)) = (cap.get(2), cap.get(3)) {
-                                symbols.push(Symbol {
-                                    line: line_num,
-                                    kind: kind.as_str().to_string(),
-                                    name: name.as_str().to_string(),
-                                    definition: trimmed.to_string(),
-                                });
-                            }
-                        }
-                    }
-                    "py" => {
-                        if let Some(cap) = RE_PYTHON.captures(line) {
-                            if let (Some(kind), Some(name)) = (cap.get(1), cap.get(2)) {
-                                symbols.push(Symbol {
-                                    line: line_num,
-                                    kind: kind.as_str().to_string(),
-                                    name: name.as_str().to_string(),
-                                    definition: trimmed.to_string(),
-                                });
-                            }
-                        }
-                    }
-                    "go" => {
-                        if let Some(cap) = RE_GO.captures(line) {
-                            if let (Some(kind), Some(name)) = (cap.get(1), cap.get(3)) {
-                                symbols.push(Symbol {
-                                    line: line_num,
-                                    kind: kind.as_str().to_string(),
-                                    name: name.as_str().to_string(),
-                                    definition: trimmed.to_string(),
-                                });
-                            }
-                        }
-                    }
-                    _ => {
-                        // Fallback generic scanner
-                        if trimmed.contains("fn ")
-                            || trimmed.contains("def ")
-                            || trimmed.contains("function ")
-                            || trimmed.contains("class ")
-                            || trimmed.contains("struct ")
-                        {
-                            symbols.push(Symbol {
-                                line: line_num,
-                                kind: "unknown".to_string(),
-                                name: trimmed.split_whitespace().nth(1).unwrap_or("").to_string(),
-                                definition: trimmed.to_string(),
-                            });
-                        }
-                    }
-                }
+                visitor.visit_program(&parser_res.program);
+                visitor.symbols
             }
-        }
+            _ => content
+                .lines()
+                .enumerate()
+                .filter_map(|(idx, line)| {
+                    let line_num = idx + 1;
+                    let trimmed = line.trim();
+                    match trimmed.is_empty() || is_comment_line(&ext, trimmed) {
+                        true => None,
+                        false => {
+                            let parsed = match ext.as_str() {
+                                "rs" => parse_rust_outline_line(line),
+                                "py" => parse_python_outline_line(line),
+                                "go" => parse_go_outline_line(line),
+                                _ => parse_fallback_outline_line(trimmed),
+                            };
+                            parsed.map(|(kind, name)| Symbol {
+                                line: line_num,
+                                kind,
+                                name,
+                                definition: trimmed.to_string(),
+                            })
+                        }
+                    }
+                })
+                .collect(),
+        };
 
         Ok(json!({
             "status": "success",
@@ -186,107 +202,59 @@ struct OutlineVisitor<'a> {
     source_text: &'a str,
 }
 
+impl<'a> OutlineVisitor<'a> {
+    fn push_span_symbol(&mut self, start_u32: u32, end_u32: u32, kind: &str, name: &str) {
+        let start = start_u32 as usize;
+        let end = end_u32 as usize;
+        let definition = self
+            .source_text
+            .get(start..end)
+            .map(|s| s.lines().next().unwrap_or("").trim().to_string())
+            .unwrap_or_else(|| format!("{} {}", kind, name));
+
+        let line_num = self
+            .source_text
+            .get(..start)
+            .map(|prefix| prefix.lines().count() + 1)
+            .unwrap_or(0);
+
+        self.symbols.push(Symbol {
+            line: line_num,
+            kind: kind.to_string(),
+            name: name.to_string(),
+            definition,
+        });
+    }
+}
+
 impl<'a> Visit<'a> for OutlineVisitor<'a> {
     fn visit_function(&mut self, func: &Function<'a>, flags: ScopeFlags) {
-        if let Some(ident) = &func.id {
-            let start = func.span.start as usize;
-            let end = func.span.end as usize;
-            let definition = self
-                .source_text
-                .get(start..end)
-                .map(|s| s.lines().next().unwrap_or("").trim().to_string())
-                .unwrap_or_else(|| format!("function {}", ident.name));
-
-            // Safe slicing: ensure we don't panic on non-UTF-8 boundaries
-            let line_num = if start <= self.source_text.len() {
-                self.source_text[..start].lines().count() + 1
-            } else {
-                0
-            };
-
-            self.symbols.push(Symbol {
-                line: line_num,
-                kind: "function".to_string(),
-                name: ident.name.to_string(),
-                definition,
-            });
+        match &func.id {
+            Some(ident) => {
+                self.push_span_symbol(func.span.start, func.span.end, "function", &ident.name)
+            }
+            None => {}
         }
         oxc_ast::visit::walk::walk_function(self, func, flags);
     }
 
     fn visit_class(&mut self, class: &Class<'a>) {
-        if let Some(ident) = &class.id {
-            let start = class.span.start as usize;
-            let end = class.span.end as usize;
-            let definition = self
-                .source_text
-                .get(start..end)
-                .map(|s| s.lines().next().unwrap_or("").trim().to_string())
-                .unwrap_or_else(|| format!("class {}", ident.name));
-
-            let line_num = if start <= self.source_text.len() {
-                self.source_text[..start].lines().count() + 1
-            } else {
-                0
-            };
-
-            self.symbols.push(Symbol {
-                line: line_num,
-                kind: "class".to_string(),
-                name: ident.name.to_string(),
-                definition,
-            });
+        match &class.id {
+            Some(ident) => {
+                self.push_span_symbol(class.span.start, class.span.end, "class", &ident.name)
+            }
+            None => {}
         }
         oxc_ast::visit::walk::walk_class(self, class);
     }
 
     fn visit_ts_interface_declaration(&mut self, decl: &TSInterfaceDeclaration<'a>) {
-        let ident = &decl.id;
-        let start = decl.span.start as usize;
-        let end = decl.span.end as usize;
-        let definition = self
-            .source_text
-            .get(start..end)
-            .map(|s| s.lines().next().unwrap_or("").trim().to_string())
-            .unwrap_or_else(|| format!("interface {}", ident.name));
-
-        let line_num = if start <= self.source_text.len() {
-            self.source_text[..start].lines().count() + 1
-        } else {
-            0
-        };
-
-        self.symbols.push(Symbol {
-            line: line_num,
-            kind: "interface".to_string(),
-            name: ident.name.to_string(),
-            definition,
-        });
+        self.push_span_symbol(decl.span.start, decl.span.end, "interface", &decl.id.name);
         oxc_ast::visit::walk::walk_ts_interface_declaration(self, decl);
     }
 
     fn visit_ts_type_alias_declaration(&mut self, decl: &TSTypeAliasDeclaration<'a>) {
-        let ident = &decl.id;
-        let start = decl.span.start as usize;
-        let end = decl.span.end as usize;
-        let definition = self
-            .source_text
-            .get(start..end)
-            .map(|s| s.lines().next().unwrap_or("").trim().to_string())
-            .unwrap_or_else(|| format!("type {}", ident.name));
-
-        let line_num = if start <= self.source_text.len() {
-            self.source_text[..start].lines().count() + 1
-        } else {
-            0
-        };
-
-        self.symbols.push(Symbol {
-            line: line_num,
-            kind: "type".to_string(),
-            name: ident.name.to_string(),
-            definition,
-        });
+        self.push_span_symbol(decl.span.start, decl.span.end, "type", &decl.id.name);
         oxc_ast::visit::walk::walk_ts_type_alias_declaration(self, decl);
     }
 }

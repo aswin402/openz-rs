@@ -26,12 +26,18 @@ impl SvgElement {
     }
 
     fn attr(mut self, key: &str, val: &str) -> Self {
-        if let Some(pos) = self.attrs.iter().position(|(k, _)| k == key) {
-            self.attrs[pos].1 = val.to_string();
-        } else {
-            self.attrs.push((key.to_string(), val.to_string()));
+        match self.attrs.iter().position(|(k, _)| k == key) {
+            Some(pos) => self.attrs[pos].1 = val.to_string(),
+            None => self.attrs.push((key.to_string(), val.to_string())),
         }
         self
+    }
+
+    fn attr_non_empty(self, key: &str, val: &str) -> Self {
+        match val.is_empty() {
+            true => self,
+            false => self.attr(key, val),
+        }
     }
 
     fn child(mut self, child: SvgElement) -> Self {
@@ -53,14 +59,16 @@ impl SvgElement {
             .map(|(k, v)| format!(" {}=\"{}\"", k, escape_xml(v)))
             .collect();
 
-        if self.children.is_empty() && self.text_content.is_none() {
-            let _ = writeln!(out, "{}<{}{} />", pad, self.tag, attrs);
-        } else {
-            let _ = write!(out, "{}<{}{}>", pad, self.tag, attrs);
-            if let Some(ref txt) = self.text_content {
+        match (self.children.is_empty(), self.text_content.as_ref()) {
+            (true, None) => {
+                let _ = writeln!(out, "{}<{}{} />", pad, self.tag, attrs);
+            }
+            (_, Some(txt)) => {
+                let _ = write!(out, "{}<{}{}>", pad, self.tag, attrs);
                 let _ = writeln!(out, "{}</{}>", txt, self.tag);
-            } else {
-                let _ = writeln!(out);
+            }
+            (false, None) => {
+                let _ = writeln!(out, "{}<{}{}>", pad, self.tag, attrs);
                 for child in &self.children {
                     out.push_str(&child.to_svg_string(indent + 1));
                 }
@@ -234,6 +242,16 @@ fn parse_animation(anim: &Value) -> Vec<SvgElement> {
     anims
 }
 
+const OPTIONAL_ELEMENT_ATTRS: &[(&str, &str)] = &[
+    ("id", "id"),
+    ("class", "class"),
+    ("style", "style"),
+    ("transform", "transform"),
+    ("filter", "filter"),
+    ("clip_path", "clip-path"),
+    ("mask", "mask"),
+];
+
 fn parse_element(elem: &Value) -> Option<SvgElement> {
     let shape = elem.get("shape").and_then(|v| v.as_str())?;
 
@@ -391,7 +409,6 @@ fn parse_element(elem: &Value) -> Option<SvgElement> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("3");
             let opacity = elem.get("opacity").and_then(|v| v.as_str()).unwrap_or("1");
-            // For stroke-dash draw-on effects, allow stroke-dasharray
             let dash = elem
                 .get("stroke_dasharray")
                 .and_then(|v| v.as_str())
@@ -400,19 +417,14 @@ fn parse_element(elem: &Value) -> Option<SvgElement> {
                 .get("stroke_dashoffset")
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
-            let mut e = SvgElement::new("path")
+            SvgElement::new("path")
                 .attr("d", d)
                 .attr("fill", fill)
                 .attr("stroke", stroke)
                 .attr("stroke-width", stroke_w)
-                .attr("opacity", opacity);
-            if !dash.is_empty() {
-                e = e.attr("stroke-dasharray", dash);
-            }
-            if !dash_offset.is_empty() {
-                e = e.attr("stroke-dashoffset", dash_offset);
-            }
-            e
+                .attr("opacity", opacity)
+                .attr_non_empty("stroke-dasharray", dash)
+                .attr_non_empty("stroke-dashoffset", dash_offset)
         }
         "text" => {
             let x = elem.get("x").and_then(|v| v.as_str()).unwrap_or("50");
@@ -437,14 +449,14 @@ fn parse_element(elem: &Value) -> Option<SvgElement> {
                 .get("text_anchor")
                 .and_then(|v| v.as_str())
                 .unwrap_or("middle");
+            let default_baseline = match text_anchor {
+                "middle" => "middle",
+                _ => "auto",
+            };
             let dominant_baseline = elem
                 .get("dominant_baseline")
                 .and_then(|v| v.as_str())
-                .unwrap_or(if text_anchor == "middle" {
-                    "middle"
-                } else {
-                    "auto"
-                });
+                .unwrap_or(default_baseline);
             let opacity = elem.get("opacity").and_then(|v| v.as_str()).unwrap_or("1");
             SvgElement::new("text")
                 .attr("x", x)
@@ -460,113 +472,69 @@ fn parse_element(elem: &Value) -> Option<SvgElement> {
         "group" => {
             let transform = elem.get("transform").and_then(|v| v.as_str()).unwrap_or("");
             let opacity = elem.get("opacity").and_then(|v| v.as_str()).unwrap_or("1");
-            let mut g = SvgElement::new("g").attr("opacity", opacity);
-            if !transform.is_empty() {
-                g = g.attr("transform", transform);
-            }
-            // Recursively process group children
-            if let Some(children) = elem.get("children").and_then(|v| v.as_array()) {
-                for child in children {
-                    if let Some(child_el) = parse_element(child) {
-                        g = g.child(child_el);
-                    }
-                }
+            let mut g = SvgElement::new("g")
+                .attr("opacity", opacity)
+                .attr_non_empty("transform", transform);
+            for child_el in elem
+                .get("children")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(parse_element)
+            {
+                g = g.child(child_el);
             }
             g
         }
         _ => return None,
     };
 
-    // Apply id if provided
-    if let Some(id) = elem.get("id").and_then(|v| v.as_str()) {
-        el = el.attr("id", id);
-    }
-
-    // Apply common SVG attributes if provided
-    if let Some(class) = elem.get("class").and_then(|v| v.as_str()) {
-        el = el.attr("class", class);
-    }
-    if let Some(style) = elem.get("style").and_then(|v| v.as_str()) {
-        el = el.attr("style", style);
-    }
-    if let Some(transform) = elem.get("transform").and_then(|v| v.as_str()) {
-        el = el.attr("transform", transform);
-    }
-    if let Some(filter) = elem.get("filter").and_then(|v| v.as_str()) {
-        el = el.attr("filter", filter);
-    }
-    if let Some(clip_path) = elem.get("clip_path").and_then(|v| v.as_str()) {
-        el = el.attr("clip-path", clip_path);
-    }
-    if let Some(mask) = elem.get("mask").and_then(|v| v.as_str()) {
-        el = el.attr("mask", mask);
-    }
-
-    // Apply animations
-    if let Some(animations) = elem.get("animations").and_then(|v| v.as_array()) {
-        for anim in animations {
-            for anim_el in parse_animation(anim) {
-                el = el.child(anim_el);
-            }
+    for (json_key, svg_attr) in OPTIONAL_ELEMENT_ATTRS {
+        match elem.get(*json_key).and_then(|v| v.as_str()) {
+            Some(val) => el = el.attr(svg_attr, val),
+            None => {}
         }
+    }
+
+    for anim_el in elem
+        .get("animations")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .flat_map(parse_animation)
+    {
+        el = el.child(anim_el);
     }
 
     Some(el)
 }
 
-fn build_svg_document(args: &Value) -> Result<String> {
-    if let Some(raw) = args.get("raw_svg").and_then(|v| v.as_str()) {
-        let trimmed = raw.trim();
-        if trimmed.starts_with("<?xml")
-            || (trimmed.starts_with("<svg") && trimmed.contains("</svg>"))
-        {
-            return Ok(trimmed.to_string());
-        }
-
-        let width = args.get("width").and_then(|v| v.as_u64()).unwrap_or(400);
-        let height = args.get("height").and_then(|v| v.as_u64()).unwrap_or(400);
-        let bg = args
-            .get("background")
-            .and_then(|v| v.as_str())
-            .unwrap_or("#ffffff");
-        let title = args
-            .get("title")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Generated SVG");
-        let view_box = args.get("viewBox").and_then(|v| v.as_str()).unwrap_or("");
-        let preserve_ar = args
-            .get("preserveAspectRatio")
-            .and_then(|v| v.as_str())
-            .unwrap_or("xMidYMid meet");
-
-        let vb_attr = if view_box.is_empty() {
-            format!("0 0 {} {}", width, height)
-        } else {
-            view_box.to_string()
-        };
-
-        let mut svg = format!(
-            r#"<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg"
-     xmlns:xlink="http://www.w3.org/1999/xlink"
-     width="{width}" height="{height}"
-     viewBox="{vb}"
-     preserveAspectRatio="{par}">
-  <title>{title}</title>
-  <rect width="100%" height="100%" fill="{bg}"/>
-"#,
-            width = width,
-            height = height,
-            vb = vb_attr,
-            par = preserve_ar,
-            title = escape_xml(title),
-            bg = bg
+fn append_gradient_stops(defs_content: &mut String, def: &Value) {
+    for stop in def
+        .get("stops")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let offset = stop.get("offset").and_then(|v| v.as_str()).unwrap_or("0%");
+        let color = stop.get("color").and_then(|v| v.as_str()).unwrap_or("#000");
+        let opacity = stop.get("opacity").and_then(|v| v.as_str()).unwrap_or("1");
+        let _ = writeln!(
+            defs_content,
+            "      <stop offset=\"{}\" style=\"stop-color:{};stop-opacity:{}\"/>",
+            offset, color, opacity
         );
-        svg.push_str(trimmed);
-        svg.push_str("\n</svg>\n");
-        return Ok(svg);
     }
+}
 
+fn resolve_view_box(view_box: &str, width: u64, height: u64) -> String {
+    match view_box.is_empty() {
+        true => format!("0 0 {} {}", width, height),
+        false => view_box.to_string(),
+    }
+}
+
+fn build_svg_document(args: &Value) -> Result<String> {
     let width = args.get("width").and_then(|v| v.as_u64()).unwrap_or(400);
     let height = args.get("height").and_then(|v| v.as_u64()).unwrap_or(400);
     let bg = args
@@ -582,135 +550,145 @@ fn build_svg_document(args: &Value) -> Result<String> {
         .get("preserveAspectRatio")
         .and_then(|v| v.as_str())
         .unwrap_or("xMidYMid meet");
+    let vb_attr = resolve_view_box(view_box, width, height);
+
+    match args.get("raw_svg").and_then(|v| v.as_str()) {
+        Some(raw) => {
+            let trimmed = raw.trim();
+            let is_complete = trimmed.starts_with("<?xml")
+                || (trimmed.starts_with("<svg") && trimmed.contains("</svg>"));
+            match is_complete {
+                true => return Ok(trimmed.to_string()),
+                false => {}
+            }
+
+            let mut svg = format!(
+                r#"<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     xmlns:xlink="http://www.w3.org/1999/xlink"
+     width="{width}" height="{height}"
+     viewBox="{vb}"
+     preserveAspectRatio="{par}">
+  <title>{title}</title>
+  <rect width="100%" height="100%" fill="{bg}"/>
+"#,
+                width = width,
+                height = height,
+                vb = vb_attr,
+                par = preserve_ar,
+                title = escape_xml(title),
+                bg = bg
+            );
+            svg.push_str(trimmed);
+            svg.push_str("\n</svg>\n");
+            return Ok(svg);
+        }
+        None => {}
+    }
 
     // Defs: gradients, filters, clip paths
     let mut defs_content = String::new();
-    if let Some(defs) = args.get("defs").and_then(|v| v.as_array()) {
-        for def in defs {
-            let def_type = def.get("type").and_then(|v| v.as_str()).unwrap_or("");
-            match def_type {
-                "linearGradient" => {
-                    let id = def.get("id").and_then(|v| v.as_str()).unwrap_or("grad1");
-                    let x1 = def.get("x1").and_then(|v| v.as_str()).unwrap_or("0%");
-                    let y1 = def.get("y1").and_then(|v| v.as_str()).unwrap_or("0%");
-                    let x2 = def.get("x2").and_then(|v| v.as_str()).unwrap_or("100%");
-                    let y2 = def.get("y2").and_then(|v| v.as_str()).unwrap_or("0%");
-                    let _ = writeln!(
-                        defs_content,
-                        "    <linearGradient id=\"{}\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\">",
-                        id, x1, y1, x2, y2
-                    );
-                    if let Some(stops) = def.get("stops").and_then(|v| v.as_array()) {
-                        for stop in stops {
-                            let offset =
-                                stop.get("offset").and_then(|v| v.as_str()).unwrap_or("0%");
-                            let color =
-                                stop.get("color").and_then(|v| v.as_str()).unwrap_or("#000");
-                            let opacity =
-                                stop.get("opacity").and_then(|v| v.as_str()).unwrap_or("1");
-                            let _ = writeln!(
-                                defs_content,
-                                "      <stop offset=\"{}\" style=\"stop-color:{};stop-opacity:{}\"/>",
-                                offset, color, opacity
-                            );
-                        }
-                    }
-                    let _ = writeln!(defs_content, "    </linearGradient>");
-                }
-                "radialGradient" => {
-                    let id = def.get("id").and_then(|v| v.as_str()).unwrap_or("radgrad1");
-                    let cx = def.get("cx").and_then(|v| v.as_str()).unwrap_or("50%");
-                    let cy = def.get("cy").and_then(|v| v.as_str()).unwrap_or("50%");
-                    let r = def.get("r").and_then(|v| v.as_str()).unwrap_or("50%");
-                    let _ = writeln!(
-                        defs_content,
-                        "    <radialGradient id=\"{}\" cx=\"{}\" cy=\"{}\" r=\"{}\">",
-                        id, cx, cy, r
-                    );
-                    if let Some(stops) = def.get("stops").and_then(|v| v.as_array()) {
-                        for stop in stops {
-                            let offset =
-                                stop.get("offset").and_then(|v| v.as_str()).unwrap_or("0%");
-                            let color =
-                                stop.get("color").and_then(|v| v.as_str()).unwrap_or("#000");
-                            let opacity =
-                                stop.get("opacity").and_then(|v| v.as_str()).unwrap_or("1");
-                            let _ = writeln!(
-                                defs_content,
-                                "      <stop offset=\"{}\" style=\"stop-color:{};stop-opacity:{}\"/>",
-                                offset, color, opacity
-                            );
-                        }
-                    }
-                    let _ = writeln!(defs_content, "    </radialGradient>");
-                }
-                "filter" => {
-                    let id = def.get("id").and_then(|v| v.as_str()).unwrap_or("f1");
-                    let filter_type = def
-                        .get("filter_type")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("blur");
-                    match filter_type {
-                        "blur" => {
-                            let std = def
-                                .get("stdDeviation")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("3");
-                            let _ = writeln!(
-                                defs_content,
-                                "    <filter id=\"{}\"><feGaussianBlur stdDeviation=\"{}\"/></filter>",
-                                id, std
-                            );
-                        }
-                        "shadow" => {
-                            let dx = def.get("dx").and_then(|v| v.as_str()).unwrap_or("3");
-                            let dy = def.get("dy").and_then(|v| v.as_str()).unwrap_or("3");
-                            let blur = def.get("blur").and_then(|v| v.as_str()).unwrap_or("4");
-                            let color = def
-                                .get("color")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("rgba(0,0,0,0.5)");
-                            let _ = writeln!(
-                                defs_content,
-                                "    <filter id=\"{}\" x=\"-20%\" y=\"-20%\" width=\"140%\" height=\"140%\"><feDropShadow dx=\"{}\" dy=\"{}\" stdDeviation=\"{}\" flood-color=\"{}\"/></filter>",
-                                id, dx, dy, blur, color
-                            );
-                        }
-                        _ => {}
-                    }
-                }
-                "clipPath" => {
-                    let id = def.get("id").and_then(|v| v.as_str()).unwrap_or("clip1");
-                    let shape_def = def.get("shape").and_then(|v| v.as_str()).unwrap_or("rect");
-                    let _ = writeln!(defs_content, "    <clipPath id=\"{}\">", id);
-                    match shape_def {
-                        "rect" => {
-                            let x = def.get("x").and_then(|v| v.as_str()).unwrap_or("0");
-                            let y = def.get("y").and_then(|v| v.as_str()).unwrap_or("0");
-                            let w = def.get("width").and_then(|v| v.as_str()).unwrap_or("100");
-                            let h = def.get("height").and_then(|v| v.as_str()).unwrap_or("100");
-                            let _ = writeln!(
-                                defs_content,
-                                "      <rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/>",
-                                x, y, w, h
-                            );
-                        }
-                        "circle" => {
-                            let cx = def.get("cx").and_then(|v| v.as_str()).unwrap_or("50");
-                            let cy = def.get("cy").and_then(|v| v.as_str()).unwrap_or("50");
-                            let r = def.get("r").and_then(|v| v.as_str()).unwrap_or("40");
-                            let _ = writeln!(
-                                defs_content,
-                                "      <circle cx=\"{}\" cy=\"{}\" r=\"{}\"/>",
-                                cx, cy, r
-                            );
-                        }
-                        _ => {}
-                    }
-                    let _ = writeln!(defs_content, "    </clipPath>");
-                }
-                _ => {}
+    for def in args
+        .get("defs")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+    {
+        let def_type = def.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        match def_type {
+            "linearGradient" => {
+                let id = def.get("id").and_then(|v| v.as_str()).unwrap_or("grad1");
+                let x1 = def.get("x1").and_then(|v| v.as_str()).unwrap_or("0%");
+                let y1 = def.get("y1").and_then(|v| v.as_str()).unwrap_or("0%");
+                let x2 = def.get("x2").and_then(|v| v.as_str()).unwrap_or("100%");
+                let y2 = def.get("y2").and_then(|v| v.as_str()).unwrap_or("0%");
+                let _ = writeln!(
+                    defs_content,
+                    "    <linearGradient id=\"{}\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\">",
+                    id, x1, y1, x2, y2
+                );
+                append_gradient_stops(&mut defs_content, def);
+                let _ = writeln!(defs_content, "    </linearGradient>");
             }
+            "radialGradient" => {
+                let id = def.get("id").and_then(|v| v.as_str()).unwrap_or("radgrad1");
+                let cx = def.get("cx").and_then(|v| v.as_str()).unwrap_or("50%");
+                let cy = def.get("cy").and_then(|v| v.as_str()).unwrap_or("50%");
+                let r = def.get("r").and_then(|v| v.as_str()).unwrap_or("50%");
+                let _ = writeln!(
+                    defs_content,
+                    "    <radialGradient id=\"{}\" cx=\"{}\" cy=\"{}\" r=\"{}\">",
+                    id, cx, cy, r
+                );
+                append_gradient_stops(&mut defs_content, def);
+                let _ = writeln!(defs_content, "    </radialGradient>");
+            }
+            "filter" => {
+                let id = def.get("id").and_then(|v| v.as_str()).unwrap_or("f1");
+                let filter_type = def
+                    .get("filter_type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("blur");
+                match filter_type {
+                    "blur" => {
+                        let std = def
+                            .get("stdDeviation")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("3");
+                        let _ = writeln!(
+                            defs_content,
+                            "    <filter id=\"{}\"><feGaussianBlur stdDeviation=\"{}\"/></filter>",
+                            id, std
+                        );
+                    }
+                    "shadow" => {
+                        let dx = def.get("dx").and_then(|v| v.as_str()).unwrap_or("3");
+                        let dy = def.get("dy").and_then(|v| v.as_str()).unwrap_or("3");
+                        let blur = def.get("blur").and_then(|v| v.as_str()).unwrap_or("4");
+                        let color = def
+                            .get("color")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("rgba(0,0,0,0.5)");
+                        let _ = writeln!(
+                            defs_content,
+                            "    <filter id=\"{}\" x=\"-20%\" y=\"-20%\" width=\"140%\" height=\"140%\"><feDropShadow dx=\"{}\" dy=\"{}\" stdDeviation=\"{}\" flood-color=\"{}\"/></filter>",
+                            id, dx, dy, blur, color
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            "clipPath" => {
+                let id = def.get("id").and_then(|v| v.as_str()).unwrap_or("clip1");
+                let shape_def = def.get("shape").and_then(|v| v.as_str()).unwrap_or("rect");
+                let _ = writeln!(defs_content, "    <clipPath id=\"{}\">", id);
+                match shape_def {
+                    "rect" => {
+                        let x = def.get("x").and_then(|v| v.as_str()).unwrap_or("0");
+                        let y = def.get("y").and_then(|v| v.as_str()).unwrap_or("0");
+                        let w = def.get("width").and_then(|v| v.as_str()).unwrap_or("100");
+                        let h = def.get("height").and_then(|v| v.as_str()).unwrap_or("100");
+                        let _ = writeln!(
+                            defs_content,
+                            "      <rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\"/>",
+                            x, y, w, h
+                        );
+                    }
+                    "circle" => {
+                        let cx = def.get("cx").and_then(|v| v.as_str()).unwrap_or("50");
+                        let cy = def.get("cy").and_then(|v| v.as_str()).unwrap_or("50");
+                        let r = def.get("r").and_then(|v| v.as_str()).unwrap_or("40");
+                        let _ = writeln!(
+                            defs_content,
+                            "      <circle cx=\"{}\" cy=\"{}\" r=\"{}\"/>",
+                            cx, cy, r
+                        );
+                    }
+                    _ => {}
+                }
+                let _ = writeln!(defs_content, "    </clipPath>");
+            }
+            _ => {}
         }
     }
 
@@ -719,13 +697,6 @@ fn build_svg_document(args: &Value) -> Result<String> {
         .get("custom_css")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-
-    // Build SVG header
-    let vb_attr = if view_box.is_empty() {
-        format!("0 0 {} {}", width, height)
-    } else {
-        view_box.to_string()
-    };
 
     let mut svg = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -744,19 +715,19 @@ fn build_svg_document(args: &Value) -> Result<String> {
     );
 
     // Defs block
-    if !defs_content.is_empty() || !custom_css.is_empty() {
+    let _ = (!defs_content.is_empty() || !custom_css.is_empty()).then(|| {
         svg.push_str("  <defs>\n");
-        if !custom_css.is_empty() {
+        let _ = (!custom_css.is_empty()).then(|| {
             svg.push_str("    <style type=\"text/css\">\n");
             svg.push_str("    <![CDATA[\n");
             svg.push_str(custom_css);
             svg.push('\n');
             svg.push_str("    ]]>\n");
             svg.push_str("    </style>\n");
-        }
+        });
         svg.push_str(&defs_content);
         svg.push_str("  </defs>\n");
-    }
+    });
 
     // Background rect
     svg.push_str(&format!(
@@ -765,12 +736,14 @@ fn build_svg_document(args: &Value) -> Result<String> {
     ));
 
     // Elements
-    if let Some(elements) = args.get("elements").and_then(|v| v.as_array()) {
-        for elem in elements {
-            if let Some(el) = parse_element(elem) {
-                svg.push_str(&el.to_svg_string(1));
-            }
-        }
+    for el in args
+        .get("elements")
+        .and_then(|v| v.as_array())
+        .into_iter()
+        .flatten()
+        .filter_map(parse_element)
+    {
+        svg.push_str(&el.to_svg_string(1));
     }
 
     svg.push_str("</svg>\n");
@@ -954,11 +927,11 @@ impl Tool for SvgAnimatorTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        if arguments.get("elements").is_none() && arguments.get("raw_svg").is_none() {
-            return Err(anyhow!(
-                "Either 'elements' or 'raw_svg' parameter must be provided."
-            ));
-        }
+        (arguments.get("elements").is_some() || arguments.get("raw_svg").is_some())
+            .then_some(())
+            .ok_or_else(|| {
+                anyhow!("Either 'elements' or 'raw_svg' parameter must be provided.")
+            })?;
 
         let output_path_str = arguments
             .get("output_path")
@@ -969,8 +942,9 @@ impl Tool for SvgAnimatorTool {
         let svg_content =
             build_svg_document(arguments).map_err(|e| anyhow!("SVG generation failed: {}", e))?;
 
-        if let Some(parent) = output_path.parent() {
-            fs::create_dir_all(parent)?;
+        match output_path.parent() {
+            Some(parent) => fs::create_dir_all(parent)?,
+            None => {}
         }
 
         fs::write(&output_path, &svg_content)
@@ -998,17 +972,18 @@ impl Tool for SvgAnimatorTool {
             })
             .unwrap_or(0);
 
+        let message = match arguments.get("raw_svg").is_some() {
+            true => format!("Raw SVG successfully written and saved to '{}'.", output_path_str),
+            false => format!(
+                "Animated SVG successfully created at '{}' with {} element(s) and {} animation(s).",
+                output_path_str, element_count, anim_count
+            ),
+        };
+
         Ok(json!({
             "status": "success",
             "output_path": output_path.to_string_lossy(),
-            "message": if arguments.get("raw_svg").is_some() {
-                format!("Raw SVG successfully written and saved to '{}'.", output_path_str)
-            } else {
-                format!(
-                    "Animated SVG successfully created at '{}' with {} element(s) and {} animation(s).",
-                    output_path_str, element_count, anim_count
-                )
-            },
+            "message": message,
             "size_bytes": svg_content.len(),
             "element_count": element_count,
             "animation_count": anim_count

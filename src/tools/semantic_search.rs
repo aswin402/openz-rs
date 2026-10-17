@@ -17,49 +17,53 @@ struct ChunkRef {
 }
 
 fn chunk_text(text: &str, chunk_size: usize, overlap: usize) -> Vec<String> {
-    let mut chunks = Vec::new();
     let chars: Vec<char> = text.chars().collect();
+    let step = chunk_size.saturating_sub(overlap).max(1);
+    let mut chunks = Vec::new();
     let mut start = 0;
     while start < chars.len() {
         let end = std::cmp::min(start + chunk_size, chars.len());
         let chunk: String = chars[start..end].iter().collect();
         chunks.push(chunk);
-        if end == chars.len() {
-            break;
+        match end == chars.len() {
+            true => break,
+            false => start += step,
         }
-        start += chunk_size - overlap;
     }
     chunks
 }
 
+fn should_skip_index_path(path: &Path) -> bool {
+    let path_str = path.to_string_lossy();
+    ["/.git", "/target", "/node_modules", "/.fastembed_cache"]
+        .iter()
+        .any(|needle| path_str.contains(needle))
+}
+
 fn get_files_recursively(path: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
-    if path.is_file() {
-        files.push(path.to_path_buf());
-    } else if path.is_dir() {
-        for entry in fs::read_dir(path)? {
-            let entry = entry?;
-            let entry_path = entry.path();
-
-            // Skip common build/vcs directories to be efficient
-            let path_str = entry_path.to_string_lossy();
-            if path_str.contains("/.git")
-                || path_str.contains("/target")
-                || path_str.contains("/node_modules")
-                || path_str.contains("/.fastembed_cache")
-            {
-                continue;
+    match (path.is_file(), path.is_dir()) {
+        (true, _) => files.push(path.to_path_buf()),
+        (false, true) => {
+            for entry in fs::read_dir(path)? {
+                let entry_path = entry?.path();
+                match should_skip_index_path(&entry_path) {
+                    true => {}
+                    false => get_files_recursively(&entry_path, files)?,
+                }
             }
-
-            get_files_recursively(&entry_path, files)?;
         }
+        (false, false) => {}
     }
     Ok(())
 }
 
 fn get_db_conn() -> Result<rusqlite::Connection> {
     let db_path = MemoryService::current().database_path(MemoryDatabase::EmbeddingCache);
-    if let Some(parent) = db_path.parent() {
-        let _ = fs::create_dir_all(parent);
+    match db_path.parent() {
+        Some(parent) => {
+            let _ = fs::create_dir_all(parent);
+        }
+        None => {}
     }
     let conn = rusqlite::Connection::open(&db_path)?;
     crate::core::sqlite::apply_standard_pragmas_with_extra(&conn, "PRAGMA foreign_keys=ON;")?;
@@ -92,17 +96,18 @@ fn prune_deleted_files(conn: &rusqlite::Connection) -> Result<()> {
     let mut stmt = conn.prepare("SELECT file_path FROM file_cache")?;
     let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
 
-    let mut to_delete = Vec::new();
-    for path_str in rows.flatten() {
-        if !Path::new(&path_str).exists() {
-            to_delete.push(path_str);
-        }
-    }
+    let to_delete: Vec<String> = rows
+        .flatten()
+        .filter(|path_str| !Path::new(path_str).exists())
+        .collect();
 
-    if !to_delete.is_empty() {
-        let mut del_stmt = conn.prepare("DELETE FROM file_cache WHERE file_path = ?1")?;
-        for path_str in to_delete {
-            let _ = del_stmt.execute([path_str]);
+    match to_delete.is_empty() {
+        true => {}
+        false => {
+            let mut del_stmt = conn.prepare("DELETE FROM file_cache WHERE file_path = ?1")?;
+            for path_str in to_delete {
+                let _ = del_stmt.execute([path_str]);
+            }
         }
     }
     Ok(())
@@ -157,15 +162,14 @@ impl Tool for SemanticSearchTool {
         let top_k = arguments.get("top_k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
 
         let mut files = Vec::new();
-        for path_val in paths_val {
-            if let Some(p_str) = path_val.as_str() {
-                let resolved = crate::config::resolve_path(p_str);
-                let _ = get_files_recursively(&resolved, &mut files);
-            }
+        for p_str in paths_val.iter().filter_map(Value::as_str) {
+            let resolved = crate::config::resolve_path(p_str);
+            let _ = get_files_recursively(&resolved, &mut files);
         }
 
-        if files.is_empty() {
-            return Err(anyhow!("No files found to index in the specified paths."));
+        match files.is_empty() {
+            true => return Err(anyhow!("No files found to index in the specified paths.")),
+            false => {}
         }
 
         let mut dirty_files = Vec::new();
@@ -193,45 +197,57 @@ impl Tool for SemanticSearchTool {
                     Err(_) => 0,
                 };
 
-                let mut is_cached = false;
-                if let Ok(mut rows) = mtime_stmt.query([&path_str]) {
-                    if let Ok(Some(row)) = rows.next() {
-                        let cached_mtime: u64 = row.get(0)?;
-                        if cached_mtime == mtime_secs {
-                            is_cached = true;
+                let is_cached = mtime_stmt
+                    .query([&path_str])
+                    .ok()
+                    .and_then(|mut rows| {
+                        rows.next()
+                            .ok()
+                            .flatten()
+                            .and_then(|row| row.get::<_, u64>(0).ok())
+                    })
+                    .is_some_and(|cached_mtime| cached_mtime == mtime_secs);
+
+                match is_cached {
+                    true => {
+                        match chunks_stmt.query_map([&path_str], |row| {
+                            let idx: usize = row.get(0)?;
+                            let text: String = row.get(1)?;
+                            let bytes: Vec<u8> = row.get(2)?;
+
+                            let embedding: Vec<f32> = bytes
+                                .chunks_exact(4)
+                                .map(|chunk| {
+                                    let array: [u8; 4] = chunk.try_into().unwrap_or([0; 4]);
+                                    f32::from_ne_bytes(array)
+                                })
+                                .collect();
+                            Ok(ChunkRef {
+                                file_path: path_str.clone(),
+                                text,
+                                index: idx,
+                                embedding,
+                            })
+                        }) {
+                            Ok(rows) => {
+                                for chunk in rows.flatten() {
+                                    final_chunks.push(chunk);
+                                }
+                            }
+                            Err(_) => {}
                         }
                     }
-                }
-
-                if is_cached {
-                    if let Ok(rows) = chunks_stmt.query_map([&path_str], |row| {
-                        let idx: usize = row.get(0)?;
-                        let text: String = row.get(1)?;
-                        let bytes: Vec<u8> = row.get(2)?;
-
-                        let mut embedding = Vec::with_capacity(bytes.len() / 4);
-                        for chunk in bytes.chunks_exact(4) {
-                            let array: [u8; 4] = chunk.try_into().unwrap_or([0; 4]);
-                            embedding.push(f32::from_ne_bytes(array));
-                        }
-                        Ok(ChunkRef {
-                            file_path: path_str.clone(),
-                            text,
-                            index: idx,
-                            embedding,
-                        })
-                    }) {
-                        for chunk in rows.flatten() {
-                            final_chunks.push(chunk);
-                        }
-                    }
-                } else {
-                    if let Ok(text) = fs::read_to_string(file_path) {
-                        if !text.trim().is_empty() && text.len() <= 1024 * 1024 {
-                            let file_chunks = chunk_text(&text, 600, 100);
-                            if !file_chunks.is_empty() {
+                    false => {
+                        match fs::read_to_string(file_path)
+                            .ok()
+                            .filter(|text| !text.trim().is_empty() && text.len() <= 1024 * 1024)
+                            .map(|text| chunk_text(&text, 600, 100))
+                            .filter(|file_chunks| !file_chunks.is_empty())
+                        {
+                            Some(file_chunks) => {
                                 dirty_files.push((path_str, mtime_secs, file_chunks));
                             }
+                            None => {}
                         }
                     }
                 }
@@ -242,27 +258,24 @@ impl Tool for SemanticSearchTool {
         let query_owned = query.to_string();
         let query_prefixed = format!("query: {}", query_owned);
 
-        let mut dirty_texts = Vec::new();
-        for (_, _, chunks) in &dirty_files {
-            for text in chunks {
-                dirty_texts.push(format!("passage: {}", text));
-            }
-        }
+        let dirty_texts: Vec<String> = dirty_files
+            .iter()
+            .flat_map(|(_, _, chunks)| chunks.iter().map(|text| format!("passage: {}", text)))
+            .collect();
 
         let embedding_service = memory.clone();
         let (query_vec, new_embeds) =
             tokio::task::spawn_blocking(move || -> Result<(Vec<f32>, Vec<Vec<f32>>)> {
                 embedding_service.with_local_model(|model| {
-                    // Embed Query
                     let query_embeds = model.embed(vec![&query_prefixed], None)?;
                     let q_vec = query_embeds[0].clone();
 
-                    // Embed New Passages if any
-                    let p_embeds = if !dirty_texts.is_empty() {
-                        let refs: Vec<&str> = dirty_texts.iter().map(|s| s.as_str()).collect();
-                        model.embed(refs, None)?
-                    } else {
-                        Vec::new()
+                    let p_embeds = match dirty_texts.is_empty() {
+                        true => Vec::new(),
+                        false => {
+                            let refs: Vec<&str> = dirty_texts.iter().map(|s| s.as_str()).collect();
+                            model.embed(refs, None)?
+                        }
                     };
 
                     Ok((q_vec, p_embeds))
@@ -271,68 +284,75 @@ impl Tool for SemanticSearchTool {
             .await??;
 
         // 3. Merge new embeddings back into cache and final list
-        if !dirty_files.is_empty() {
-            let mut tx_conn = get_db_conn()?;
-            let tx = tx_conn.transaction()?;
+        match dirty_files.is_empty() {
+            true => {}
+            false => {
+                let mut tx_conn = get_db_conn()?;
+                let tx = tx_conn.transaction()?;
 
-            let mut embed_idx = 0;
-            for (path_str, mtime_secs, chunks) in dirty_files {
-                tx.execute("DELETE FROM file_cache WHERE file_path = ?1", [&path_str])?;
-                tx.execute(
-                    "INSERT INTO file_cache (file_path, mtime_secs) VALUES (?1, ?2)",
-                    rusqlite::params![&path_str, mtime_secs],
-                )?;
-
-                for (idx, text) in chunks.into_iter().enumerate() {
-                    let embedding = new_embeds[embed_idx].clone();
-                    embed_idx += 1;
-
-                    let mut bytes = Vec::with_capacity(embedding.len() * 4);
-                    for val in &embedding {
-                        bytes.extend_from_slice(&val.to_ne_bytes());
-                    }
-
+                let mut embed_idx = 0;
+                for (path_str, mtime_secs, chunks) in dirty_files {
+                    tx.execute("DELETE FROM file_cache WHERE file_path = ?1", [&path_str])?;
                     tx.execute(
-                        "INSERT INTO chunk_cache (file_path, chunk_index, chunk_text, embedding) VALUES (?1, ?2, ?3, ?4)",
-                        rusqlite::params![&path_str, idx, &text, bytes],
+                        "INSERT INTO file_cache (file_path, mtime_secs) VALUES (?1, ?2)",
+                        rusqlite::params![&path_str, mtime_secs],
                     )?;
 
-                    final_chunks.push(ChunkRef {
-                        file_path: path_str.clone(),
-                        text,
-                        index: idx,
-                        embedding,
-                    });
+                    for (idx, text) in chunks.into_iter().enumerate() {
+                        let embedding = new_embeds[embed_idx].clone();
+                        embed_idx += 1;
+
+                        let bytes: Vec<u8> = embedding
+                            .iter()
+                            .flat_map(|val| val.to_ne_bytes())
+                            .collect();
+
+                        tx.execute(
+                            "INSERT INTO chunk_cache (file_path, chunk_index, chunk_text, embedding) VALUES (?1, ?2, ?3, ?4)",
+                            rusqlite::params![&path_str, idx, &text, bytes],
+                        )?;
+
+                        final_chunks.push(ChunkRef {
+                            file_path: path_str.clone(),
+                            text,
+                            index: idx,
+                            embedding,
+                        });
+                    }
                 }
+                tx.commit()?;
             }
-            tx.commit()?;
         }
 
-        if final_chunks.is_empty() {
-            return Err(anyhow!(
-                "Could not extract any readable text chunks from files."
-            ));
+        match final_chunks.is_empty() {
+            true => {
+                return Err(anyhow!(
+                    "Could not extract any readable text chunks from files."
+                ));
+            }
+            false => {}
         }
 
         // 4. Calculate similarity scores and sort
-        let mut results = Vec::new();
-        for chunk in &final_chunks {
-            let similarity = memory.cosine_similarity(&query_vec, &chunk.embedding);
-            results.push((similarity, chunk));
-        }
+        let mut results: Vec<(f32, &ChunkRef)> = final_chunks
+            .iter()
+            .map(|chunk| (memory.cosine_similarity(&query_vec, &chunk.embedding), chunk))
+            .collect();
 
-        // Sort descending by similarity
         results.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-        let mut matches = Vec::new();
-        for (sim, chunk) in results.into_iter().take(top_k) {
-            matches.push(json!({
-                "file_path": chunk.file_path,
-                "chunk_index": chunk.index,
-                "score": sim,
-                "text": chunk.text
-            }));
-        }
+        let matches: Vec<Value> = results
+            .into_iter()
+            .take(top_k)
+            .map(|(sim, chunk)| {
+                json!({
+                    "file_path": chunk.file_path,
+                    "chunk_index": chunk.index,
+                    "score": sim,
+                    "text": chunk.text
+                })
+            })
+            .collect();
 
         Ok(json!({
             "status": "success",

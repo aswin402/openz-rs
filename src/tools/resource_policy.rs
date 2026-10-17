@@ -52,17 +52,21 @@ pub fn active_process_tools() -> usize {
 pub fn try_acquire_process_tool(max_concurrent: usize) -> Result<ProcessToolGuard, String> {
     loop {
         let current = ACTIVE_PROCESS_TOOLS.load(Ordering::SeqCst);
-        if current >= max_concurrent {
-            return Err(format!(
-                "process tool limit reached ({}/{})",
-                current, max_concurrent
-            ));
+        match current >= max_concurrent {
+            true => {
+                return Err(format!(
+                    "process tool limit reached ({}/{})",
+                    current, max_concurrent
+                ));
+            }
+            false => {}
         }
-        if ACTIVE_PROCESS_TOOLS
+        match ACTIVE_PROCESS_TOOLS
             .compare_exchange(current, current + 1, Ordering::SeqCst, Ordering::SeqCst)
             .is_ok()
         {
-            return Ok(ProcessToolGuard);
+            true => return Ok(ProcessToolGuard),
+            false => {}
         }
     }
 }
@@ -86,12 +90,14 @@ fn current_openz_free_disk_gb() -> Option<f64> {
     let c_path = CString::new(path.as_os_str().as_bytes()).ok()?;
     let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
     let rc = unsafe { libc::statvfs(c_path.as_ptr(), stat.as_mut_ptr()) };
-    if rc != 0 {
-        return None;
+    match rc {
+        0 => {
+            let stat = unsafe { stat.assume_init() };
+            let bytes = stat.f_bavail as f64 * stat.f_frsize as f64;
+            Some(bytes / 1024.0 / 1024.0 / 1024.0)
+        }
+        _ => None,
     }
-    let stat = unsafe { stat.assume_init() };
-    let bytes = stat.f_bavail as f64 * stat.f_frsize as f64;
-    Some(bytes / 1024.0 / 1024.0 / 1024.0)
 }
 
 #[cfg(not(unix))]
@@ -104,18 +110,15 @@ pub fn evaluate_artifact_write(
     min_free_disk_gb: f64,
     runtime: &RuntimeResourceSnapshot,
 ) -> ToolResourceDecision {
-    if let Some(free_disk_gb) = runtime.free_disk_gb {
-        if free_disk_gb < min_free_disk_gb {
-            return ToolResourceDecision::Block {
-                reason: format!(
-                    "{} blocked: free disk {:.1}GB is below required minimum {:.1}GB",
-                    action, free_disk_gb, min_free_disk_gb
-                ),
-            };
-        }
+    match runtime.free_disk_gb.filter(|free| *free < min_free_disk_gb) {
+        Some(free_disk_gb) => ToolResourceDecision::Block {
+            reason: format!(
+                "{} blocked: free disk {:.1}GB is below required minimum {:.1}GB",
+                action, free_disk_gb, min_free_disk_gb
+            ),
+        },
+        None => ToolResourceDecision::Allow,
     }
-
-    ToolResourceDecision::Allow
 }
 
 pub fn ensure_artifact_write_allowed(action: &str) -> anyhow::Result<()> {
@@ -151,57 +154,52 @@ impl ToolResourcePolicy {
         defaults: &AgentDefaults,
         runtime: &RuntimeResourceSnapshot,
     ) -> ToolResourceDecision {
-        if metadata.uses_network && !defaults.allow_network_tools {
-            return ToolResourceDecision::Block {
+        let network_blocked = metadata.uses_network && !defaults.allow_network_tools;
+        let low_disk = metadata
+            .writes_disk
+            .then_some(runtime.free_disk_gb)
+            .flatten()
+            .filter(|free_disk_gb| *free_disk_gb < defaults.min_free_disk_gb);
+        let process_limit_reached = metadata.spawns_process
+            && runtime.active_process_tools >= defaults.max_concurrent_process_tools;
+        let expensive_approval = defaults.warn_before_expensive_tools
+            && metadata.uses_network
+            && (metadata.writes_disk || metadata.spawns_process);
+
+        match (
+            network_blocked,
+            low_disk,
+            process_limit_reached,
+            metadata.requires_conservative_approval(),
+            metadata.requires_risk_approval(),
+            expensive_approval,
+        ) {
+            (true, _, _, _, _, _) => ToolResourceDecision::Block {
                 reason: "Network tools are disabled by resource policy".to_string(),
-            };
-        }
-
-        if metadata.writes_disk {
-            if let Some(free_disk_gb) = runtime.free_disk_gb {
-                if free_disk_gb < defaults.min_free_disk_gb {
-                    return ToolResourceDecision::Block {
-                        reason: format!(
-                            "free disk {:.1}GB is below required minimum {:.1}GB",
-                            free_disk_gb, defaults.min_free_disk_gb
-                        ),
-                    };
-                }
-            }
-        }
-
-        if metadata.spawns_process
-            && runtime.active_process_tools >= defaults.max_concurrent_process_tools
-        {
-            return ToolResourceDecision::Block {
+            },
+            (false, Some(free_disk_gb), _, _, _, _) => ToolResourceDecision::Block {
+                reason: format!(
+                    "free disk {:.1}GB is below required minimum {:.1}GB",
+                    free_disk_gb, defaults.min_free_disk_gb
+                ),
+            },
+            (false, None, true, _, _, _) => ToolResourceDecision::Block {
                 reason: format!(
                     "process tool limit reached ({}/{})",
                     runtime.active_process_tools, defaults.max_concurrent_process_tools
                 ),
-            };
-        }
-
-        if metadata.requires_conservative_approval() {
-            return ToolResourceDecision::RequireApproval {
+            },
+            (false, None, false, true, _, _) => ToolResourceDecision::RequireApproval {
                 reason: "unclassified tool requires approval".to_string(),
-            };
-        }
-
-        if metadata.requires_risk_approval() {
-            return ToolResourceDecision::RequireApproval {
+            },
+            (false, None, false, false, true, _) => ToolResourceDecision::RequireApproval {
                 reason: "high risk tool requires approval".to_string(),
-            };
-        }
-
-        if defaults.warn_before_expensive_tools
-            && (metadata.uses_network && (metadata.writes_disk || metadata.spawns_process))
-        {
-            return ToolResourceDecision::RequireApproval {
+            },
+            (false, None, false, false, false, true) => ToolResourceDecision::RequireApproval {
                 reason: "expensive network/process/disk tool requires approval".to_string(),
-            };
+            },
+            (false, None, false, false, false, false) => ToolResourceDecision::Allow,
         }
-
-        ToolResourceDecision::Allow
     }
 }
 

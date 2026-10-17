@@ -68,9 +68,10 @@ fn network_disabled_blocks_network_tools() {
         &defaults,
         &runtime,
     );
-    assert!(
-        matches!(decision, ToolResourceDecision::Block { ref reason } if reason.contains("Network tools are disabled"))
-    );
+    assert_eq!(decision.as_str(), "block");
+    assert!(decision
+        .reason()
+        .is_some_and(|reason| reason.contains("Network tools are disabled")));
 }
 
 #[test]
@@ -86,9 +87,10 @@ fn low_disk_blocks_disk_writing_tools() {
         &defaults,
         &runtime,
     );
-    assert!(
-        matches!(decision, ToolResourceDecision::Block { ref reason } if reason.contains("free disk"))
-    );
+    assert_eq!(decision.as_str(), "block");
+    assert!(decision
+        .reason()
+        .is_some_and(|reason| reason.contains("free disk")));
 }
 
 #[test]
@@ -119,9 +121,10 @@ fn high_risk_tools_require_approval() {
         &defaults,
         &runtime,
     );
-    assert!(
-        matches!(decision, ToolResourceDecision::RequireApproval { ref reason } if reason.contains("high risk"))
-    );
+    assert_eq!(decision.as_str(), "require_approval");
+    assert!(decision
+        .reason()
+        .is_some_and(|reason| reason.contains("high risk")));
 }
 
 #[test]
@@ -131,9 +134,10 @@ fn artifact_write_blocks_when_free_disk_is_below_floor() {
         active_process_tools: 0,
     };
     let decision = evaluate_artifact_write("generate_video", 2.0, &runtime);
-    assert!(
-        matches!(decision, ToolResourceDecision::Block { ref reason } if reason.contains("generate_video") && reason.contains("free disk"))
-    );
+    assert_eq!(decision.as_str(), "block");
+    assert!(decision.reason().is_some_and(|reason| {
+        reason.contains("generate_video") && reason.contains("free disk")
+    }));
 }
 
 #[test]
@@ -191,7 +195,8 @@ fn process_limit_blocks_extra_process_tools() {
         &defaults,
         &runtime,
     );
-    assert!(
-        matches!(decision, ToolResourceDecision::Block { ref reason } if reason.contains("process tool limit"))
-    );
+    assert_eq!(decision.as_str(), "block");
+    assert!(decision
+        .reason()
+        .is_some_and(|reason| reason.contains("process tool limit")));
 }

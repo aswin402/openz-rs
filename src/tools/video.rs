@@ -55,20 +55,19 @@ impl Tool for VideoGeneratorTool {
         let output_path = crate::config::resolve_path(output_path_str);
         crate::tools::resource_policy::ensure_artifact_write_allowed("generate_video")?;
 
-        let bg_rgba = if let Some(arr) = arguments.get("bg_rgba").and_then(|v| v.as_array()) {
-            if arr.len() == 4 {
-                [
-                    arr[0].as_u64().unwrap_or(18) as u8,
-                    arr[1].as_u64().unwrap_or(20) as u8,
-                    arr[2].as_u64().unwrap_or(28) as u8,
-                    arr[3].as_u64().unwrap_or(255) as u8,
-                ]
-            } else {
-                [18, 20, 28, 255]
-            }
-        } else {
-            [18, 20, 28, 255]
-        };
+        let bg_rgba = arguments
+            .get("bg_rgba")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| match arr.as_slice() {
+                [r, g, b, a] => Some([
+                    r.as_u64().unwrap_or(18) as u8,
+                    g.as_u64().unwrap_or(20) as u8,
+                    b.as_u64().unwrap_or(28) as u8,
+                    a.as_u64().unwrap_or(255) as u8,
+                ]),
+                _ => None,
+            })
+            .unwrap_or([18, 20, 28, 255]);
 
         // Deserialize composition from JSON
         let comp: Composition =
@@ -76,8 +75,9 @@ impl Tool for VideoGeneratorTool {
 
         comp.validate().context("Composition validation failed")?;
 
-        if let Some(parent) = output_path.parent() {
-            fs::create_dir_all(parent)?;
+        match output_path.parent() {
+            Some(parent) => fs::create_dir_all(parent)?,
+            None => {}
         }
 
         // Run rendering using wavyte

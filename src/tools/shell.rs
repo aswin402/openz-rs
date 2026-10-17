@@ -5,53 +5,41 @@ use std::process::{Command, Stdio};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
+#[cfg(target_os = "linux")]
+fn ensure_zero_status(rc: i64) -> Result<(), std::io::Error> {
+    (rc == 0)
+        .then_some(())
+        .ok_or_else(std::io::Error::last_os_error)
+}
+
 /// Apply Linux seccomp guard + resource limits to a command via pre_exec.
 /// Runs inside the child process after fork() but before exec().
 /// On non-Linux platforms this is a no-op.
 #[cfg(target_os = "linux")]
 unsafe fn apply_seccomp_guard() -> Result<(), std::io::Error> {
     // Prevent privilege escalation via setuid/setgid/capabilities
-    if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
+    ensure_zero_status(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) as i64)?;
 
     // Kill child if parent dies (no orphaned processes)
-    if libc::prctl(
+    ensure_zero_status(libc::prctl(
         libc::PR_SET_PDEATHSIG,
         libc::SIGKILL as libc::c_ulong,
         0,
         0,
         0,
-    ) != 0
-    {
-        return Err(std::io::Error::last_os_error());
-    }
+    ) as i64)?;
 
-    // Limit CPU time (30 seconds soft, 60 hard)
-    let rlim_cpu = libc::rlimit {
-        rlim_cur: 30,
-        rlim_max: 60,
-    };
-    if libc::setrlimit(libc::RLIMIT_CPU, &rlim_cpu) != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-
-    // Limit virtual memory (256 MB soft, 512 MB hard)
-    let rlim_as = libc::rlimit {
-        rlim_cur: 256 * 1024 * 1024,
-        rlim_max: 512 * 1024 * 1024,
-    };
-    if libc::setrlimit(libc::RLIMIT_AS, &rlim_as) != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
-
-    // Limit output file size (10 MB)
-    let rlim_fsize = libc::rlimit {
-        rlim_cur: 10 * 1024 * 1024,
-        rlim_max: 10 * 1024 * 1024,
-    };
-    if libc::setrlimit(libc::RLIMIT_FSIZE, &rlim_fsize) != 0 {
-        return Err(std::io::Error::last_os_error());
+    let rlimits = [
+        // Limit CPU time (30 seconds soft, 60 hard)
+        (libc::RLIMIT_CPU, 30, 60),
+        // Limit virtual memory (256 MB soft, 512 MB hard)
+        (libc::RLIMIT_AS, 256 * 1024 * 1024, 512 * 1024 * 1024),
+        // Limit output file size (10 MB)
+        (libc::RLIMIT_FSIZE, 10 * 1024 * 1024, 10 * 1024 * 1024),
+    ];
+    for (resource, rlim_cur, rlim_max) in rlimits {
+        let rlim = libc::rlimit { rlim_cur, rlim_max };
+        ensure_zero_status(libc::setrlimit(resource, &rlim) as i64)?;
     }
 
     // Apply seccomp BPF filter (allowlist-based, x86_64 only)
@@ -188,30 +176,10 @@ unsafe fn allowlist_seccomp_filter() -> Result<(), std::io::Error> {
         436, // close_range
     ];
 
-    // Build BPF program:
-    // 1. Load architecture from seccomp_data (offset 4)
-    // 2. Check if x86_64 (0xC000003E)
-    // 3. If not, KILL
-    // 4. Load syscall number
-    // 5. Check against allowlist
-    // 6. If not found, KILL
-    // 7. If found, ALLOW
-
     // AUDIT_ARCH_X86_64 = 0xC000003E (little-endian)
     const AUDIT_ARCH_X86_64: u32 = 0xC000003E;
 
     let n_allowed = ALLOWED_SYSCALLS.len();
-
-    // BPF layout:
-    // 0: LD W ABS 4                    → load arch
-    // 1: JEQ #AUDIT_ARCH_X86_64, +1, +0  -> if x86_64, skip next kill
-    // 2: RET #SECCOMP_RET_KILL         → wrong arch
-    // 3: LD W ABS 0                    → load syscall num
-    // 4..4+N-1: for each syscall in allowlist:
-    //    JEQ #syscall, +(N - idx + 1), +1  → if match, jump to ALLOW; else continue
-    // 4+N: RET #SECCOMP_RET_KILL       → not allowed
-    // 4+N+1: RET #SECCOMP_RET_ALLOW    → allowed
-
     let n_instr = 4 + n_allowed + 2;
     let mut filter: Vec<libc::sock_filter> = Vec::with_capacity(n_instr);
 
@@ -222,7 +190,6 @@ unsafe fn allowlist_seccomp_filter() -> Result<(), std::io::Error> {
         jf: 0,
         k: 4, // offset of arch in seccomp_data
     });
-    // If arch == AUDIT_ARCH_X86_64, skip the kill instruction and load syscall number.
     filter.push(libc::sock_filter {
         code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
         jt: 1,
@@ -245,13 +212,11 @@ unsafe fn allowlist_seccomp_filter() -> Result<(), std::io::Error> {
         k: 0,
     });
 
-    // For each allowed syscall: check and jump to ALLOW if match
-    // Jump offset: (remaining checks) + 1 (KILL) to reach ALLOW
     for (idx, &syscall) in ALLOWED_SYSCALLS.iter().enumerate() {
         let remaining = n_allowed - idx;
         filter.push(libc::sock_filter {
             code: (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16,
-            jt: (remaining) as u8, // jump to ALLOW (skip remaining checks + KILL)
+            jt: (remaining) as u8,
             jf: 0,
             k: syscall,
         });
@@ -278,9 +243,7 @@ unsafe fn allowlist_seccomp_filter() -> Result<(), std::io::Error> {
         filter: filter.as_ptr() as *mut libc::sock_filter,
     };
 
-    if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
+    ensure_zero_status(libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) as i64)?;
 
     // Use seccomp(2) syscall directly — prctl(PR_SET_SECCOMP, ...) has a
     // long-standing kernel quirk on some x86_64 builds where SECCOMP_SET_MODE_FILTER
@@ -294,9 +257,7 @@ unsafe fn allowlist_seccomp_filter() -> Result<(), std::io::Error> {
             &prog as *const libc::sock_fprog,
         )
     };
-    if ret != 0 {
-        return Err(std::io::Error::last_os_error());
-    }
+    ensure_zero_status(ret)?;
 
     Ok(())
 }
@@ -304,10 +265,7 @@ unsafe fn allowlist_seccomp_filter() -> Result<(), std::io::Error> {
 /// Apply sandbox guard to a Command on Linux. No-op on other platforms.
 #[cfg(target_os = "linux")]
 fn sandbox_command(cmd: &mut Command, enable_sandbox: bool) {
-    if !enable_sandbox {
-        return;
-    }
-    unsafe {
+    let _ = enable_sandbox.then(|| unsafe {
         cmd.pre_exec(|| match apply_seccomp_guard() {
             Ok(()) => Ok(()),
             Err(e) => {
@@ -316,7 +274,7 @@ fn sandbox_command(cmd: &mut Command, enable_sandbox: bool) {
                 Ok(())
             }
         });
-    }
+    });
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -389,15 +347,14 @@ impl Tool for ExecCommandTool {
             _ => return Err(anyhow!("Invalid arguments: expected object or command string")),
         };
 
-        if command_str.is_empty() {
-            return Err(anyhow!("Missing or empty 'command' argument"));
-        }
+        (!command_str.is_empty())
+            .then_some(())
+            .ok_or_else(|| anyhow!("Missing or empty 'command' argument"))?;
 
         // 1. Try to parse command line to see if it targets a WASM script or skill
         let parsed_args = parse_command_line(&command_str);
-        if !parsed_args.is_empty() {
-            if let Some(wasm_file) = find_wasm_file(&parsed_args[0]) {
-                let path = wasm_file.clone();
+        match parsed_args.first().and_then(|first| find_wasm_file(first)) {
+            Some(path) => {
                 let wasm_args = parsed_args[1..].to_vec();
 
                 // Execute in spawn_blocking to avoid blocking tokio executor thread
@@ -435,35 +392,42 @@ impl Tool for ExecCommandTool {
                     }
                 }
             }
+            None => {}
         }
 
-        if let Some(detach_kind) = detach_command_kind(&command_str) {
-            spawn_detached_command(&command_str, detach_kind)?;
-            let is_server = matches!(detach_kind, DetachedCommandKind::DevServer);
-            return Ok(serde_json::json!({
-                "status_code": 0,
-                "stdout": "",
-                "stderr": "",
-                "detached": true,
-                "server_registered": is_server,
-                "user_visible": true,
-                "do_not_retry": true,
-                "message": if is_server {
-                    "Dev server launched in the background and registered. Use manage_servers or /stop-server to stop it when finished. Treat launch as complete unless the user says it failed."
-                } else {
-                    "Command launched in the background because it opens a desktop app. Treat this as complete; do not try alternate launch methods unless the user says it failed."
-                }
-            }));
+        match detach_command_kind(&command_str) {
+            Some(detach_kind) => {
+                spawn_detached_command(&command_str, detach_kind)?;
+                let is_server = matches!(detach_kind, DetachedCommandKind::DevServer);
+                let message = match is_server {
+                    true => "Dev server launched in the background and registered. Use manage_servers or /stop-server to stop it when finished. Treat launch as complete unless the user says it failed.",
+                    false => "Command launched in the background because it opens a desktop app. Treat this as complete; do not try alternate launch methods unless the user says it failed.",
+                };
+                return Ok(serde_json::json!({
+                    "status_code": 0,
+                    "stdout": "",
+                    "stderr": "",
+                    "detached": true,
+                    "server_registered": is_server,
+                    "user_visible": true,
+                    "do_not_retry": true,
+                    "message": message
+                }));
+            }
+            None => {}
         }
 
         // 2. Fallback to standard raw host shell execution
         let mut std_cmd = crate::core::process::host_shell_command(&command_str);
-        if let Some(ref cwd_str) = cwd_opt {
-            let resolved_cwd = crate::config::resolve_path(cwd_str);
-            if !resolved_cwd.exists() {
-                return Err(anyhow!("Working directory does not exist: {:?}", resolved_cwd));
+        match cwd_opt.as_ref() {
+            Some(cwd_str) => {
+                let resolved_cwd = crate::config::resolve_path(cwd_str);
+                resolved_cwd.exists().then_some(()).ok_or_else(|| {
+                    anyhow!("Working directory does not exist: {:?}", resolved_cwd)
+                })?;
+                std_cmd.current_dir(&resolved_cwd);
             }
-            std_cmd.current_dir(&resolved_cwd);
+            None => {}
         }
 
         let enable_sandbox = crate::config::loader::load_config()
@@ -523,9 +487,7 @@ fn should_detach_command(command_line: &str) -> bool {
 
 fn detach_command_kind(command_line: &str) -> Option<DetachedCommandKind> {
     let trimmed = command_line.trim();
-    if trimmed.is_empty() || contains_shell_control_operator(trimmed) {
-        return None;
-    }
+    (!trimmed.is_empty() && !contains_shell_control_operator(trimmed)).then_some(())?;
     let args = parse_command_line(trimmed);
     let first_idx = first_program_arg_index(&args)?;
     let first = command_basename(&args[first_idx]);
@@ -534,7 +496,7 @@ fn detach_command_kind(command_line: &str) -> Option<DetachedCommandKind> {
         .map(|s| s.as_str())
         .unwrap_or_default();
 
-    if (first == "gio" && second == "open")
+    let is_desktop = (first == "gio" && second == "open")
         || matches!(
             first.as_str(),
             "xdg-open"
@@ -562,28 +524,22 @@ fn detach_command_kind(command_line: &str) -> Option<DetachedCommandKind> {
                 | "code"
                 | "libreoffice"
                 | "soffice"
-        )
-    {
-        return Some(DetachedCommandKind::DesktopApp);
-    }
-
-    if is_long_running_dev_server(&args[first_idx..]) {
-        return Some(DetachedCommandKind::DevServer);
-    }
-
-    None
+        );
+    is_desktop
+        .then_some(DetachedCommandKind::DesktopApp)
+        .or_else(|| {
+            is_long_running_dev_server(&args[first_idx..]).then_some(DetachedCommandKind::DevServer)
+        })
 }
 
 fn contains_shell_control_operator(command_line: &str) -> bool {
     let mut in_double_quote = false;
     let mut in_single_quote = false;
     for c in command_line.chars() {
-        match c {
-            '"' if !in_single_quote => in_double_quote = !in_double_quote,
-            '\'' if !in_double_quote => in_single_quote = !in_single_quote,
-            ';' | '|' | '&' | '`' | '$' | '<' | '>' | '(' | ')' | '\\' | '\n'
-                if !in_single_quote =>
-            {
+        match (c, in_single_quote, in_double_quote) {
+            ('"', false, _) => in_double_quote = !in_double_quote,
+            ('\'', _, false) => in_single_quote = !in_single_quote,
+            (';' | '|' | '&' | '`' | '$' | '<' | '>' | '(' | ')' | '\\' | '\n', false, _) => {
                 return true;
             }
             _ => {}
@@ -597,12 +553,11 @@ fn first_program_arg_index(args: &[String]) -> Option<usize> {
 }
 
 fn looks_like_env_assignment(arg: &str) -> bool {
-    let Some((name, _)) = arg.split_once('=') else {
-        return false;
-    };
-    !name.is_empty()
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-        && !name.chars().next().is_some_and(|c| c.is_ascii_digit())
+    arg.split_once('=').is_some_and(|(name, _)| {
+        !name.is_empty()
+            && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            && !name.chars().next().is_some_and(|c| c.is_ascii_digit())
+    })
 }
 
 fn command_basename(program: &str) -> String {
@@ -614,10 +569,11 @@ fn command_basename(program: &str) -> String {
 }
 
 fn is_long_running_dev_server(args: &[String]) -> bool {
-    if args.is_empty() {
-        return false;
-    }
-    let first = command_basename(&args[0]);
+    let first_arg = match args.first() {
+        Some(first_arg) => first_arg,
+        None => return false,
+    };
+    let first = command_basename(first_arg);
     let rest: Vec<String> = args
         .iter()
         .skip(1)
@@ -671,95 +627,53 @@ fn spawn_detached_command(command_line: &str, kind: DetachedCommandKind) -> Resu
     Ok(())
 }
 
+fn push_non_empty_arg(args: &mut Vec<String>, current: &mut String) {
+    let text = std::mem::take(current);
+    let _ = (!text.is_empty()).then(|| args.push(text));
+}
+
 fn parse_command_line(cmd: &str) -> Vec<String> {
     let mut args = Vec::new();
     let mut current = String::new();
     let mut in_double_quote = false;
     let mut in_single_quote = false;
-    let chars = cmd.chars().peekable();
 
-    for c in chars {
-        match c {
-            '"' if !in_single_quote => {
-                in_double_quote = !in_double_quote;
-            }
-            '\'' if !in_double_quote => {
-                in_single_quote = !in_single_quote;
-            }
-            ' ' | '\t' if !in_double_quote && !in_single_quote => {
-                if !current.is_empty() {
-                    args.push(current);
-                    current = String::new();
-                }
-            }
-            _ => {
-                current.push(c);
-            }
+    for c in cmd.chars() {
+        match (c, in_single_quote, in_double_quote) {
+            ('"', false, _) => in_double_quote = !in_double_quote,
+            ('\'', _, false) => in_single_quote = !in_single_quote,
+            (' ' | '\t', false, false) => push_non_empty_arg(&mut args, &mut current),
+            _ => current.push(c),
         }
     }
-    if !current.is_empty() {
-        args.push(current);
-    }
+    push_non_empty_arg(&mut args, &mut current);
     args
 }
 
+fn resolve_wasm_candidate(path: std::path::PathBuf) -> Option<std::path::PathBuf> {
+    let is_wasm_ext = path.extension().and_then(|s| s.to_str()) == Some("wasm");
+    (path.exists() && path.is_file() && is_wasm_ext)
+        .then(|| path.clone())
+        .or_else(|| {
+            (!is_wasm_ext).then_some(())?;
+            let mut wasm_path = path;
+            wasm_path.set_extension("wasm");
+            (wasm_path.exists() && wasm_path.is_file()).then_some(wasm_path)
+        })
+}
+
 fn find_wasm_file(program: &str) -> Option<std::path::PathBuf> {
-    let path = crate::config::resolve_path(program);
-
-    // Check if the path exists and is a WASM file
-    if path.exists() && path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("wasm")
-    {
-        return Some(path);
-    }
-
-    // Try appending .wasm if not already present
-    if path.extension().and_then(|s| s.to_str()) != Some("wasm") {
-        let mut wasm_path = path.clone();
-        wasm_path.set_extension("wasm");
-        if wasm_path.exists() && wasm_path.is_file() {
-            return Some(wasm_path);
-        }
-    }
-
-    // Check the global skills directory (~/.openz/skills/)
-    let skills_dir = crate::agent::skills::get_skills_dir();
-    if let Some(file_name) = std::path::Path::new(program).file_name() {
-        let skill_path = skills_dir.join(file_name);
-        if skill_path.exists()
-            && skill_path.is_file()
-            && skill_path.extension().and_then(|s| s.to_str()) == Some("wasm")
-        {
-            return Some(skill_path);
-        }
-        if skill_path.extension().and_then(|s| s.to_str()) != Some("wasm") {
-            let mut skill_wasm_path = skill_path.clone();
-            skill_wasm_path.set_extension("wasm");
-            if skill_wasm_path.exists() && skill_wasm_path.is_file() {
-                return Some(skill_wasm_path);
-            }
-        }
-
-        // Check explicit workspace-local OpenZ skills (.openz/skills/).
+    let direct = crate::config::resolve_path(program);
+    resolve_wasm_candidate(direct).or_else(|| {
+        let file_name = std::path::Path::new(program).file_name()?;
+        let skills_dir = crate::agent::skills::get_skills_dir();
         let workspace_skills_dir = crate::agent::skills::get_workspace_skills_dir();
-        if workspace_skills_dir.exists() && workspace_skills_dir.is_dir() {
-            let workspace_skill_path = workspace_skills_dir.join(file_name);
-            if workspace_skill_path.exists()
-                && workspace_skill_path.is_file()
-                && workspace_skill_path.extension().and_then(|s| s.to_str()) == Some("wasm")
-            {
-                return Some(workspace_skill_path);
-            }
-            if workspace_skill_path.extension().and_then(|s| s.to_str()) != Some("wasm") {
-                let mut workspace_skill_wasm_path = workspace_skill_path.clone();
-                workspace_skill_wasm_path.set_extension("wasm");
-                if workspace_skill_wasm_path.exists() && workspace_skill_wasm_path.is_file() {
-                    return Some(workspace_skill_wasm_path);
-                }
-            }
-        }
-    }
-
-    None
+        resolve_wasm_candidate(skills_dir.join(file_name)).or_else(|| {
+            (workspace_skills_dir.exists() && workspace_skills_dir.is_dir())
+                .then(|| workspace_skills_dir.join(file_name))
+                .and_then(resolve_wasm_candidate)
+        })
+    })
 }
 
 #[cfg(test)]
@@ -938,9 +852,13 @@ impl Tool for PythonSandboxTool {
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let exit_code = output.status.code().unwrap_or(-1);
+        let status = match exit_code {
+            0 => "success",
+            _ => "error",
+        };
 
         Ok(serde_json::json!({
-            "status": if exit_code == 0 { "success" } else { "error" },
+            "status": status,
             "stdout": stdout,
             "stderr": stderr,
             "exit_code": exit_code

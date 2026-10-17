@@ -71,28 +71,28 @@ impl Tool for TriggerSopTool {
                 )
                 .await?;
 
-                if wait {
-                    if let Ok(inst) = crate::sop::load_instance(&instance_id) {
-                        return Ok(json!({
-                            "status": "success",
-                            "sop_id": sop_id,
-                            "instance_id": instance_id,
-                            "sop_status": format!("{:?}", inst.status),
-                            "current_step_index": inst.current_step_index,
-                            "steps_total": inst.steps.len(),
-                            "completed_at": inst.completed_at,
-                            "message": format!("SOP loop '{}' finished execution with status {:?}", sop_id, inst.status),
-                            "steps": inst.steps
-                        }));
-                    }
+                match wait
+                    .then(|| crate::sop::load_instance(&instance_id).ok())
+                    .flatten()
+                {
+                    Some(inst) => Ok(json!({
+                        "status": "success",
+                        "sop_id": sop_id,
+                        "instance_id": instance_id,
+                        "sop_status": format!("{:?}", inst.status),
+                        "current_step_index": inst.current_step_index,
+                        "steps_total": inst.steps.len(),
+                        "completed_at": inst.completed_at,
+                        "message": format!("SOP loop '{}' finished execution with status {:?}", sop_id, inst.status),
+                        "steps": inst.steps
+                    })),
+                    None => Ok(json!({
+                        "status": "success",
+                        "sop_id": sop_id,
+                        "instance_id": instance_id,
+                        "message": format!("SOP loop '{}' triggered. Instance ID: {}", sop_id, instance_id)
+                    })),
                 }
-
-                Ok(json!({
-                    "status": "success",
-                    "sop_id": sop_id,
-                    "instance_id": instance_id,
-                    "message": format!("SOP loop '{}' triggered. Instance ID: {}", sop_id, instance_id)
-                }))
             }
             "status" => {
                 let instance_id = arguments
@@ -186,23 +186,23 @@ impl Tool for TriggerSopTool {
                 )
                 .await?;
 
-                if wait {
-                    if let Ok(inst) = crate::sop::load_instance(instance_id) {
-                        return Ok(json!({
-                            "status": "success",
-                            "instance_id": instance_id,
-                            "sop_status": format!("{:?}", inst.status),
-                            "message": format!("SOP instance '{}' resumed and completed with status {:?}", instance_id, inst.status),
-                            "instance": inst
-                        }));
-                    }
+                match wait
+                    .then(|| crate::sop::load_instance(instance_id).ok())
+                    .flatten()
+                {
+                    Some(inst) => Ok(json!({
+                        "status": "success",
+                        "instance_id": instance_id,
+                        "sop_status": format!("{:?}", inst.status),
+                        "message": format!("SOP instance '{}' resumed and completed with status {:?}", instance_id, inst.status),
+                        "instance": inst
+                    })),
+                    None => Ok(json!({
+                        "status": "success",
+                        "instance_id": instance_id,
+                        "message": format!("SOP instance '{}' resume initiated.", instance_id)
+                    })),
                 }
-
-                Ok(json!({
-                    "status": "success",
-                    "instance_id": instance_id,
-                    "message": format!("SOP instance '{}' resume initiated.", instance_id)
-                }))
             }
             other => Err(anyhow!("Unknown action '{}'. Valid actions: 'trigger', 'status', 'output', 'list', 'resume'", other)),
         }

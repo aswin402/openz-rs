@@ -33,14 +33,16 @@ pub struct ToolScopeEngine {
 impl ToolScopeEngine {
     pub fn decide(&self, decision: &IntentDecision, max_visible_tools: usize) -> ToolScopeDecision {
         let packs = pack_for_intent(decision.intent).to_vec();
-        let mut allowed_names = BTreeSet::new();
-        for pack in &packs {
-            for spec in crate::tools::all_tool_specs() {
-                if spec.packs.iter().any(|label| *label == pack_label(*pack)) {
-                    allowed_names.insert(spec.name.to_string());
-                }
-            }
-        }
+        let allowed_names: BTreeSet<String> = packs
+            .iter()
+            .flat_map(|pack| {
+                let target_label = pack_label(*pack);
+                crate::tools::all_tool_specs()
+                    .iter()
+                    .filter(move |spec| spec.packs.iter().any(|label| *label == target_label))
+                    .map(|spec| spec.name.to_string())
+            })
+            .collect();
 
         ToolScopeDecision {
             packs,

@@ -5,6 +5,13 @@ use std::process::Command;
 
 pub struct SystemInfoTool;
 
+async fn run_command_stdout(program: &'static str, args: &'static [&'static str]) -> Result<String> {
+    let out = tokio::task::spawn_blocking(move || Command::new(program).args(args).output()).await?;
+    Ok(out
+        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+        .unwrap_or_else(|_| "Unavailable".to_string()))
+}
+
 #[async_trait::async_trait]
 impl Tool for SystemInfoTool {
     fn name(&self) -> &str {
@@ -26,54 +33,39 @@ impl Tool for SystemInfoTool {
         let os_type = std::env::consts::OS.to_string();
         let arch = std::env::consts::ARCH.to_string();
 
-        let disk_usage = if cfg!(target_os = "windows") {
-            let out = tokio::task::spawn_blocking(|| {
-                Command::new("wmic")
-                    .args(["logicaldisk", "get", "size,freespace,caption"])
-                    .output()
-            })
-            .await?;
-            out.map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .unwrap_or_else(|_| "Unavailable".to_string())
-        } else {
-            let out = tokio::task::spawn_blocking(|| Command::new("df").arg("-h").output()).await?;
-            out.map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .unwrap_or_else(|_| "Unavailable".to_string())
+        let disk_usage = match cfg!(target_os = "windows") {
+            true => {
+                run_command_stdout("wmic", &["logicaldisk", "get", "size,freespace,caption"]).await?
+            }
+            false => run_command_stdout("df", &["-h"]).await?,
         };
 
-        let memory_info = if cfg!(target_os = "linux") {
-            std::fs::read_to_string("/proc/meminfo").unwrap_or_else(|_| "Unavailable".to_string())
-        } else if cfg!(target_os = "macos") {
-            let out = tokio::task::spawn_blocking(|| {
-                Command::new("sysctl")
-                    .args(["hw.memsize", "vm.page_free_target"])
-                    .output()
-            })
-            .await?;
-            out.map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .unwrap_or_else(|_| "Unavailable".to_string())
-        } else {
-            let out = tokio::task::spawn_blocking(|| Command::new("systeminfo").output()).await?;
-            out.map(|o| String::from_utf8_lossy(&o.stdout).to_string())
-                .unwrap_or_else(|_| "Unavailable".to_string())
+        let memory_info = match (cfg!(target_os = "linux"), cfg!(target_os = "macos")) {
+            (true, _) => {
+                std::fs::read_to_string("/proc/meminfo").unwrap_or_else(|_| "Unavailable".to_string())
+            }
+            (false, true) => {
+                run_command_stdout("sysctl", &["hw.memsize", "vm.page_free_target"]).await?
+            }
+            (false, false) => run_command_stdout("systeminfo", &[]).await?,
         };
 
         let mut tools = json!({});
-        let tool_checks = vec![
-            ("git", vec!["--version"]),
-            ("cargo", vec!["--version"]),
-            ("npm", vec!["--version"]),
-            ("node", vec!["--version"]),
-            ("python3", vec!["--version"]),
-            ("pip3", vec!["--version"]),
-            ("docker", vec!["--version"]),
+        let tool_checks: &[(&str, &[&str])] = &[
+            ("git", &["--version"]),
+            ("cargo", &["--version"]),
+            ("npm", &["--version"]),
+            ("node", &["--version"]),
+            ("python3", &["--version"]),
+            ("pip3", &["--version"]),
+            ("docker", &["--version"]),
         ];
 
         for (tool, args) in tool_checks {
-            let tool_name = tool.to_string();
-            let args_clone = args.clone();
+            let tool_name = (*tool).to_string();
+            let args_slice = *args;
             let status = tokio::task::spawn_blocking(move || {
-                Command::new(&tool_name).args(&args_clone).output()
+                Command::new(&tool_name).args(args_slice).output()
             })
             .await;
             let available = status.is_ok();
@@ -81,7 +73,7 @@ impl Tool for SystemInfoTool {
                 Ok(Ok(ref o)) => String::from_utf8_lossy(&o.stdout).trim().to_string(),
                 _ => String::new(),
             };
-            tools[tool] = json!({
+            tools[*tool] = json!({
                 "available": available,
                 "version": version
             });

@@ -123,7 +123,5 @@ async fn test_trigger_sop_tool_status_and_output_flow() {
 
     // Clean up
     let inst_file = crate::sop::sop_instances_dir().join(format!("{}.json", test_id));
-    if inst_file.exists() {
-        let _ = std::fs::remove_file(inst_file);
-    }
+    let _ = std::fs::remove_file(inst_file);
 }

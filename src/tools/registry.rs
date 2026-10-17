@@ -31,13 +31,13 @@ impl StaticToolDriftReport {
 fn identity_keys(name: &str) -> Vec<String> {
     let canonical = normalize_tool_name(name);
     let mut keys = vec![canonical.clone()];
-    if let Some(spec) = tool_spec(&canonical) {
+    let _ = tool_spec(&canonical).map(|spec| {
         keys.extend(
             spec.aliases
                 .iter()
                 .map(|alias| normalize_tool_name(alias)),
         );
-    }
+    });
     keys.sort();
     keys.dedup();
     keys
@@ -49,20 +49,24 @@ pub(crate) fn insert_unique_tool(
 ) -> bool {
     let name = tool.name().to_string();
     let new_keys = identity_keys(&name);
-    if let Some(existing) = tools.values().find(|existing| {
+    match tools.values().find(|existing| {
         identity_keys(existing.name())
             .iter()
             .any(|key| new_keys.iter().any(|new_key| new_key == key))
     }) {
-        tracing::error!(
-            tool = %name,
-            existing_tool = %existing.name(),
-            "Ignoring tool registration with a conflicting canonical name or alias"
-        );
-        return false;
+        Some(existing) => {
+            tracing::error!(
+                tool = %name,
+                existing_tool = %existing.name(),
+                "Ignoring tool registration with a conflicting canonical name or alias"
+            );
+            false
+        }
+        None => {
+            tools.insert(name, tool);
+            true
+        }
     }
-    tools.insert(name, tool);
-    true
 }
 
 pub(crate) fn resolve_static_name(
@@ -434,17 +438,16 @@ impl ToolRegistry {
     }
 
     pub fn active_tool_capabilities(&self) -> Vec<String> {
-        let mut caps = Vec::new();
-        if self.tool_allowed_by_active_policy("exec_command") {
-            caps.push("terminal_execution".to_string());
-        }
-        if self.tool_allowed_by_active_policy("write_file") {
-            caps.push("filesystem_mutations".to_string());
-        }
-        if self.tool_allowed_by_active_policy("web_search") {
-            caps.push("live_network_research".to_string());
-        }
-        caps
+        const CAPABILITY_PROBES: &[(&str, &str)] = &[
+            ("exec_command", "terminal_execution"),
+            ("write_file", "filesystem_mutations"),
+            ("web_search", "live_network_research"),
+        ];
+        CAPABILITY_PROBES
+            .iter()
+            .filter(|(tool, _)| self.tool_allowed_by_active_policy(tool))
+            .map(|(_, capability)| (*capability).to_string())
+            .collect()
     }
 
     fn collect_parent_tools_excluding(&self, excluded: &[&str]) -> Vec<Arc<dyn Tool>> {
@@ -458,10 +461,7 @@ impl ToolRegistry {
 
     pub fn register(&self, tool: Arc<dyn Tool>) {
         let mut tools = self.write_tools();
-        if !insert_unique_tool(&mut tools, tool) {
-            return;
-        }
-        self.clear_route_cache();
+        let _ = insert_unique_tool(&mut tools, tool).then(|| self.clear_route_cache());
     }
 
     pub fn register_all<I>(&self, tools: I)
@@ -477,17 +477,23 @@ impl ToolRegistry {
         let mut tools = self.write_tools();
         for spec in all_tool_specs() {
             let canonical_name = spec.name;
-            if tools.contains_key(canonical_name) {
-                continue;
+            match tools.contains_key(canonical_name) {
+                true => continue,
+                false => {}
             }
-            if let Some(existing_key) = tools.keys().find(|k| {
-                k.eq_ignore_ascii_case(canonical_name)
-                    || spec.aliases.iter().any(|&a| a.eq_ignore_ascii_case(k.as_str()))
-            }) {
-                let existing_key = existing_key.clone();
-                let tool = tools.remove(&existing_key).unwrap();
+            let existing_key = tools
+                .keys()
+                .find(|k| {
+                    k.eq_ignore_ascii_case(canonical_name)
+                        || spec
+                            .aliases
+                            .iter()
+                            .any(|&a| a.eq_ignore_ascii_case(k.as_str()))
+                })
+                .cloned();
+            let _ = existing_key.and_then(|key| tools.remove(&key)).map(|tool| {
                 tools.insert(canonical_name.to_string(), tool);
-            }
+            });
         }
         self.clear_route_cache();
     }

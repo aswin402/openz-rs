@@ -491,22 +491,22 @@ async fn test_orchestration_prompt_tool_schemas_have_no_bare_object_types() {
     crate::cli::tools::register_all_tools(&registry, &config, provider, sessions).unwrap();
 
     let tools = registry.to_openai_format_for_prompt("Use orchestrate_workflow to run a simple sequential workflow with two steps: 1) plan: planner summarizes 'The quick brown fox', 2) review: reviewer checks the summary.");
-    let mut offending = Vec::new();
-    for tool in &tools {
-        let name = tool["function"]["name"].as_str().unwrap_or("");
-        let params = &tool["function"]["parameters"];
-        if let Some(props) = params["properties"].as_object() {
-            for (pname, pval) in props {
-                if pval.get("type").and_then(|v| v.as_str()) == Some("object") {
-                    let has_props = pval.get("properties").is_some();
-                    let has_add_props = pval.get("additionalProperties").is_some();
-                    if !has_props && !has_add_props {
-                        offending.push(format!("{name}.{pname}"));
-                    }
-                }
-            }
-        }
-    }
+    let offending: Vec<String> = tools
+        .iter()
+        .flat_map(|tool| {
+            let name = tool["function"]["name"].as_str().unwrap_or("");
+            tool["function"]["parameters"]["properties"]
+                .as_object()
+                .into_iter()
+                .flatten()
+                .filter(|(_, pval)| {
+                    pval.get("type").and_then(|v| v.as_str()) == Some("object")
+                        && pval.get("properties").is_none()
+                        && pval.get("additionalProperties").is_none()
+                })
+                .map(move |(pname, _)| format!("{name}.{pname}"))
+        })
+        .collect();
     assert!(offending.is_empty(), "Offending tool properties with bare object: {:?}", offending);
 }
 
