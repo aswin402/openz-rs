@@ -225,30 +225,43 @@ fn test_parse_sse_data_chunks_preserves_reasoning_content_and_tool_calls_in_same
     let (chunks, is_done) = parse_sse_data_chunks(sse_json);
     assert!(!is_done);
     assert_eq!(chunks.len(), 5);
-    assert!(matches!(&chunks[0], ChatStreamChunk::Reasoning(r) if r == "Let me execute the command."));
-    assert!(matches!(&chunks[1], ChatStreamChunk::Content(c) if c == "\n"));
-    assert!(matches!(
-        &chunks[2],
+    match &chunks[0] {
+        ChatStreamChunk::Reasoning(r) => assert_eq!(r, "Let me execute the command."),
+        _ => panic!("expected Reasoning chunk"),
+    }
+    match &chunks[1] {
+        ChatStreamChunk::Content(c) => assert_eq!(c, "\n"),
+        _ => panic!("expected Content chunk"),
+    }
+    match &chunks[2] {
         ChatStreamChunk::ToolCall {
             index: 0,
             id: Some(id),
             name: Some(name),
             arguments: Some(args),
-        } if id == "call_rm_1" && name == "exec_command" && args.contains("openz_test_delete.txt")
-    ));
-    assert!(matches!(
-        &chunks[3],
+        } => {
+            assert_eq!(id, "call_rm_1");
+            assert_eq!(name, "exec_command");
+            assert!(args.contains("openz_test_delete.txt"));
+        }
+        _ => panic!("expected first ToolCall chunk"),
+    }
+    match &chunks[3] {
         ChatStreamChunk::ToolCall {
             index: 1,
             id: Some(id),
             name: Some(name),
             arguments: None,
-        } if id == "call_jobs_2" && name == "list_jobs"
-    ));
-    assert!(matches!(
-        &chunks[4],
+        } => {
+            assert_eq!(id, "call_jobs_2");
+            assert_eq!(name, "list_jobs");
+        }
+        _ => panic!("expected second ToolCall chunk"),
+    }
+    match &chunks[4] {
         ChatStreamChunk::Done {
-            finish_reason: Some(reason)
-        } if reason == "tool_calls"
-    ));
+            finish_reason: Some(reason),
+        } => assert_eq!(reason, "tool_calls"),
+        _ => panic!("expected Done chunk"),
+    }
 }

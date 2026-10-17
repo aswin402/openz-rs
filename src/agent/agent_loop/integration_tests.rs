@@ -40,15 +40,11 @@ impl LLMProvider for TestMockProvider {
     ) -> anyhow::Result<LLMResponse> {
         let count = self.call_count.fetch_add(1, Ordering::SeqCst);
         let responses = self.responses.lock().unwrap();
-        let resp = if count < responses.len() {
-            responses[count].clone()
-        } else {
-            MockResponse {
-                content: Some("Default fallback".to_string()),
-                tool_calls: Vec::new(),
-                finish_reason: "stop".to_string(),
-            }
-        };
+        let resp = responses.get(count).cloned().unwrap_or_else(|| MockResponse {
+            content: Some("Default fallback".to_string()),
+            tool_calls: Vec::new(),
+            finish_reason: "stop".to_string(),
+        });
         Ok(LLMResponse {
             content: resp.content,
             tool_calls: resp.tool_calls,
@@ -88,10 +84,9 @@ impl Tool for CalculatorTool {
             .get("expression")
             .and_then(|e| e.as_str())
             .unwrap_or("");
-        if expr == "2 + 2" {
-            Ok(json!({ "result": "4" }))
-        } else {
-            Ok(json!({ "error": "unsupported expression" }))
+        match expr {
+            "2 + 2" => Ok(json!({ "result": "4" })),
+            _ => Ok(json!({ "error": "unsupported expression" })),
         }
     }
 
@@ -104,7 +99,6 @@ impl Tool for CalculatorTool {
 
 #[tokio::test]
 async fn test_agent_loop_tool_execution_pipeline() -> anyhow::Result<()> {
-    // 1. Setup temporary directory for config and session storage
     let temp_dir =
         std::env::temp_dir().join(format!("openz_agent_loop_test_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp_dir)?;
@@ -115,14 +109,10 @@ async fn test_agent_loop_tool_execution_pipeline() -> anyhow::Result<()> {
     let sessions_dir = temp_dir.join("sessions");
     std::fs::create_dir_all(&sessions_dir)?;
 
-    // Use task-local scopes to isolate configuration and workspace paths
     let res = crate::config::loader::CONFIG_DIR_OVERRIDE
         .scope(temp_dir.clone(), async {
             crate::config::loader::ACTIVE_WORKSPACE
                 .scope(temp_dir.clone(), async {
-                    // 2. Build mock provider response sequence:
-                    // First turn: requests a tool call to 'calculator' with argument '2 + 2'
-                    // Second turn: returns the final answer with result
                     let mock_responses = vec![
                         MockResponse {
                             content: None,
@@ -143,12 +133,10 @@ async fn test_agent_loop_tool_execution_pipeline() -> anyhow::Result<()> {
                     let provider = Arc::new(TestMockProvider::new(mock_responses));
                     let session_manager = SessionManager::new(sessions_dir);
 
-                    // Construct Config
                     let mut config = Config::default();
                     config.agents.defaults.model = "mock-model".to_string();
                     config.agents.defaults.provider = "mock-provider".to_string();
 
-                    // Set up ToolRegistry and register our CalculatorTool
                     let registry = ToolRegistry::new_with_context(
                         config.clone(),
                         provider.clone(),
@@ -156,15 +144,11 @@ async fn test_agent_loop_tool_execution_pipeline() -> anyhow::Result<()> {
                     );
                     registry.register(Arc::new(CalculatorTool));
 
-                    // 3. Construct and run AgentLoop
                     let agent = AgentLoop::new(config, provider.clone(), registry, session_manager);
                     let run_res = agent.run("What is 2 + 2?", "session-abc").await?;
 
-                    // 4. Verify results
                     assert_eq!(run_res.content, "The result of 2 + 2 is 4.");
                     assert_eq!(run_res.tools_used, vec!["calculator"]);
-
-                    // Check that the provider was queried exactly twice
                     assert_eq!(provider.call_count.load(Ordering::SeqCst), 2);
 
                     Ok::<(), anyhow::Error>(())
@@ -173,15 +157,12 @@ async fn test_agent_loop_tool_execution_pipeline() -> anyhow::Result<()> {
         })
         .await;
 
-    // Cleanup temp directory
     let _ = std::fs::remove_dir_all(&temp_dir);
-
     res
 }
 
 #[tokio::test]
 async fn test_agent_loop_session_overrides_pipeline() -> anyhow::Result<()> {
-    // 1. Setup temporary directory for config and session storage
     let temp_dir = std::env::temp_dir().join(format!(
         "openz_session_override_test_{}",
         uuid::Uuid::new_v4()
@@ -194,7 +175,6 @@ async fn test_agent_loop_session_overrides_pipeline() -> anyhow::Result<()> {
     let sessions_dir = temp_dir.join("sessions");
     std::fs::create_dir_all(&sessions_dir)?;
 
-    // 2. Pre-seed the session file with configuration overrides in the metadata map
     let session_file_path = sessions_dir.join("session-override.json");
     let session_json = json!({
         "key": "session-override",
@@ -211,12 +191,10 @@ async fn test_agent_loop_session_overrides_pipeline() -> anyhow::Result<()> {
     });
     std::fs::write(&session_file_path, serde_json::to_string(&session_json)?)?;
 
-    // Use task-local scopes to isolate configuration and workspace paths
     let res = crate::config::loader::CONFIG_DIR_OVERRIDE
         .scope(temp_dir.clone(), async {
             crate::config::loader::ACTIVE_WORKSPACE
                 .scope(temp_dir.clone(), async {
-                    // Build mock provider expecting overrides
                     let mock_responses = vec![MockResponse {
                         content: Some(
                             "I have processed your request with the overridden config.".to_string(),
@@ -228,34 +206,26 @@ async fn test_agent_loop_session_overrides_pipeline() -> anyhow::Result<()> {
                     let provider = Arc::new(TestMockProvider::new(mock_responses));
                     let session_manager = SessionManager::new(sessions_dir);
 
-                    // Construct default Config
                     let mut config = Config::default();
                     config.agents.defaults.model = "default-model".to_string();
                     config.agents.defaults.provider = "default-provider".to_string();
-                    config.agents.defaults.temperature = 0.1; // Default low temp
+                    config.agents.defaults.temperature = 0.1;
                     config.research.require_sources_for_current_claims = false;
 
-                    // Set up ToolRegistry
                     let registry = ToolRegistry::new_with_context(
                         config.clone(),
                         provider.clone(),
                         session_manager.clone(),
                     );
 
-                    // 3. Construct and run AgentLoop
                     let agent = AgentLoop::new(config, provider.clone(), registry, session_manager);
-
-                    // We'll capture the actual settings passed to the mock provider by implementing the test
-                    // right here in the run invocation.
                     let run_res = agent.run("Show settings", "session-override").await?;
 
-                    // 4. Verify results
                     assert_eq!(
                         run_res.content,
                         "I have processed your request with the overridden config."
                     );
 
-                    // Reload the session from disk to ensure metadata remained intact and messages were appended
                     let updated_session = agent
                         .session_manager
                         .get_or_create_async("session-override")
@@ -271,9 +241,7 @@ async fn test_agent_loop_session_overrides_pipeline() -> anyhow::Result<()> {
         })
         .await;
 
-    // Cleanup temp directory
     let _ = std::fs::remove_dir_all(&temp_dir);
-
     res
 }
 
@@ -300,10 +268,9 @@ impl Tool for TransientFailureTool {
 
     async fn call(&self, _arguments: &serde_json::Value) -> anyhow::Result<serde_json::Value> {
         let count = self.call_count.fetch_add(1, Ordering::SeqCst);
-        if count == 0 {
-            Err(anyhow::anyhow!("Rate limit exceeded (HTTP 429)"))
-        } else {
-            Ok(json!({ "result": "recovered" }))
+        match count {
+            0 => Err(anyhow::anyhow!("Rate limit exceeded (HTTP 429)")),
+            _ => Ok(json!({ "result": "recovered" })),
         }
     }
 

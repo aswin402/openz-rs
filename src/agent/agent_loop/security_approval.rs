@@ -32,40 +32,43 @@ pub(crate) async fn evaluate_tool_approval(
         super::loop_control::tool_repetition_block_threshold(&call.name, &call.arguments);
     let is_loop = repeat_count >= repeat_threshold;
     let mut should_halt = false;
-    if is_loop && parse_error.is_none() {
-        *loop_blocked_count += 1;
-        if *loop_blocked_count >= 3 {
-            should_halt = true;
+    match is_loop && parse_error.is_none() {
+        true => {
+            *loop_blocked_count += 1;
+            should_halt = *loop_blocked_count >= 3;
         }
+        false => {}
     }
 
-    let mut approved = true;
-    let mut forbidden = false;
-    let mut approval_requested = false;
-
-    if parse_error.is_none()
-        && crate::agent::security::SecurityGuard::is_forbidden(&call.name, &call.arguments)
-    {
-        forbidden = true;
-    } else if parse_error.is_none()
+    let is_forbidden = parse_error.is_none()
+        && crate::agent::security::SecurityGuard::is_forbidden(&call.name, &call.arguments);
+    let needs_approval = parse_error.is_none()
+        && !is_forbidden
         && !is_loop
         && crate::agent::security::SecurityGuard::is_sensitive_with_mode(
             &call.name,
             &call.arguments,
             security_mode,
-        )
-    {
-        // Clear the running tool spinner first so the prompt is clean.
-        if !silent {
-            print!("\r\x1b[2K");
-            let _ = std::io::stdout().flush();
-        }
+        );
 
-        approval_requested = true;
-        approved = crate::agent::security::ask_approval(session_key, &call.name, &call.arguments)
-            .await
-            .unwrap_or(false);
-    }
+    let (forbidden, approved, approval_requested) = match (is_forbidden, needs_approval) {
+        (true, _) => (true, true, false),
+        (false, true) => {
+            match silent {
+                true => {}
+                false => {
+                    print!("\r\x1b[2K");
+                    let _ = std::io::stdout().flush();
+                }
+            }
+            let user_approved =
+                crate::agent::security::ask_approval(session_key, &call.name, &call.arguments)
+                    .await
+                    .unwrap_or(false);
+            (false, user_approved, true)
+        }
+        (false, false) => (false, true, false),
+    };
 
     ToolApprovalDecision {
         parse_error,

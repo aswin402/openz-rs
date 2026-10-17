@@ -100,10 +100,10 @@ mod lock_tests {
         ];
         let c_path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
         let rc = unsafe { libc::utimensat(libc::AT_FDCWD, c_path.as_ptr(), times.as_ptr(), 0) };
-        if rc != 0 {
-            return Err(std::io::Error::last_os_error().into());
+        match rc {
+            0 => Ok(()),
+            _ => Err(std::io::Error::last_os_error().into()),
         }
-        Ok(())
     }
 
     #[cfg(not(unix))]

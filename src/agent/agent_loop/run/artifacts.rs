@@ -83,22 +83,20 @@ pub(super) fn edit_tool_target_path(
 pub(super) fn scope_context_target_for_edit_path(target_path: &str) -> String {
     let trimmed = target_path.trim();
     let path = std::path::Path::new(trimmed);
-    if path.exists() {
-        return trimmed.to_string();
-    }
-
-    let mut parent = path.parent();
-    while let Some(candidate) = parent {
-        if candidate.as_os_str().is_empty() {
-            return ".".to_string();
+    match path.exists() {
+        true => trimmed.to_string(),
+        false => {
+            let mut parent = path.parent();
+            while let Some(candidate) = parent {
+                match (candidate.as_os_str().is_empty(), candidate.exists()) {
+                    (true, _) => return ".".to_string(),
+                    (false, true) => return candidate.to_string_lossy().to_string(),
+                    (false, false) => parent = candidate.parent(),
+                }
+            }
+            trimmed.to_string()
         }
-        if candidate.exists() {
-            return candidate.to_string_lossy().to_string();
-        }
-        parent = candidate.parent();
     }
-
-    trimmed.to_string()
 }
 
 pub(super) fn should_record_auto_scope_result(scope_result: &serde_json::Value) -> bool {
@@ -166,40 +164,39 @@ pub(super) fn user_content_requests_artifact_open(user_content: &str) -> bool {
 
 pub(super) fn is_local_artifact_path(path: &str) -> bool {
     let clean = path.trim().trim_start_matches("file://");
-    if clean.starts_with("http://") || clean.starts_with("https://") {
-        return false;
+    match clean.starts_with("http://") || clean.starts_with("https://") {
+        true => false,
+        false => std::path::Path::new(clean)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.to_ascii_lowercase())
+            .is_some_and(|ext| {
+                matches!(
+                    ext.as_str(),
+                    "png"
+                        | "jpg"
+                        | "jpeg"
+                        | "webp"
+                        | "gif"
+                        | "bmp"
+                        | "svg"
+                        | "mp4"
+                        | "mov"
+                        | "webm"
+                        | "pdf"
+                        | "docx"
+                        | "pptx"
+                        | "xlsx"
+                        | "html"
+                        | "htm"
+                )
+            }),
     }
-    let Some(ext) = std::path::Path::new(clean)
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.to_ascii_lowercase())
-    else {
-        return false;
-    };
-    matches!(
-        ext.as_str(),
-        "png"
-            | "jpg"
-            | "jpeg"
-            | "webp"
-            | "gif"
-            | "bmp"
-            | "svg"
-            | "mp4"
-            | "mov"
-            | "webm"
-            | "pdf"
-            | "docx"
-            | "pptx"
-            | "xlsx"
-            | "html"
-            | "htm"
-    )
 }
 
 pub(super) fn artifact_path_from_value(value: &serde_json::Value) -> Option<String> {
     let obj = value.as_object()?;
-    for key in [
+    [
         "output_path",
         "outputPath",
         "path",
@@ -207,23 +204,21 @@ pub(super) fn artifact_path_from_value(value: &serde_json::Value) -> Option<Stri
         "filePath",
         "target",
         "url",
-    ] {
-        if let Some(path) = obj.get(key).and_then(|value| value.as_str()) {
-            if is_local_artifact_path(path) {
-                return Some(path.to_string());
-            }
-        }
-    }
-    None
+    ]
+    .iter()
+    .find_map(|key| {
+        obj.get(*key)
+            .and_then(|value| value.as_str())
+            .filter(|path| is_local_artifact_path(path))
+            .map(|path| path.to_string())
+    })
 }
 
 pub(super) fn artifact_path_from_tool_result(
     call: &crate::providers::ToolCallRequest,
     result: &serde_json::Value,
 ) -> Option<String> {
-    if result.get("error").is_some() {
-        return None;
-    }
+    result.get("error").is_none().then_some(())?;
     artifact_path_from_value(result).or_else(|| artifact_path_from_value(&call.arguments))
 }
 
@@ -233,14 +228,11 @@ pub(super) fn auto_open_artifact_call_after_tool(
     result: &serde_json::Value,
     opened_artifact_paths: &mut std::collections::HashSet<String>,
 ) -> Option<crate::providers::ToolCallRequest> {
-    if call.name == "open_path" || !user_content_requests_artifact_open(user_content) {
-        return None;
-    }
+    (call.name != "open_path" && user_content_requests_artifact_open(user_content))
+        .then_some(())?;
 
     let target = artifact_path_from_tool_result(call, result)?;
-    if !opened_artifact_paths.insert(target.clone()) {
-        return None;
-    }
+    opened_artifact_paths.insert(target.clone()).then_some(())?;
 
     Some(crate::providers::ToolCallRequest {
         id: format!("auto_open_{}", call.id),
@@ -254,24 +246,26 @@ pub(super) fn auto_open_artifact_call_after_tool(
 
 pub(super) fn artifact_open_category(target: &str) -> Option<&'static str> {
     let clean = target.trim().trim_start_matches("file://");
-    if clean.starts_with("http://") || clean.starts_with("https://") {
-        return Some("browser");
-    }
-    let ext = std::path::Path::new(clean)
-        .extension()
-        .and_then(|ext| ext.to_str())?
-        .to_ascii_lowercase();
-    match ext.as_str() {
-        "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "svg" => Some("image_viewer"),
-        "mp4" | "mkv" | "webm" | "mov" | "avi" => Some("video_player"),
-        "mp3" | "wav" | "ogg" | "flac" | "m4a" => Some("audio_player"),
-        "pdf" => Some("pdf_viewer"),
-        "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "odt" | "ods" | "odp" => {
-            Some("office_docs")
+    match clean.starts_with("http://") || clean.starts_with("https://") {
+        true => Some("browser"),
+        false => {
+            let ext = std::path::Path::new(clean)
+                .extension()
+                .and_then(|ext| ext.to_str())?
+                .to_ascii_lowercase();
+            match ext.as_str() {
+                "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "svg" => Some("image_viewer"),
+                "mp4" | "mkv" | "webm" | "mov" | "avi" => Some("video_player"),
+                "mp3" | "wav" | "ogg" | "flac" | "m4a" => Some("audio_player"),
+                "pdf" => Some("pdf_viewer"),
+                "doc" | "docx" | "xls" | "xlsx" | "ppt" | "pptx" | "odt" | "ods" | "odp" => {
+                    Some("office_docs")
+                }
+                "txt" | "md" | "rs" | "js" | "ts" | "html" | "htm" | "css" | "json" | "toml"
+                | "yaml" | "yml" => Some("editor"),
+                _ => Some("file_manager"),
+            }
         }
-        "txt" | "md" | "rs" | "js" | "ts" | "html" | "htm" | "css" | "json" | "toml"
-        | "yaml" | "yml" => Some("editor"),
-        _ => Some("file_manager"),
     }
 }
 
@@ -280,16 +274,14 @@ pub(super) fn auto_device_inventory_suggest_call_after_open_failure(
     result: &serde_json::Value,
     suggested_open_targets: &mut std::collections::HashSet<String>,
 ) -> Option<crate::providers::ToolCallRequest> {
-    if call.name != "open_path" || result.get("error").is_none() {
-        return None;
-    }
+    (call.name == "open_path" && result.get("error").is_some()).then_some(())?;
     let target = call
         .arguments
         .get("target")
         .and_then(|value| value.as_str())?;
-    if !suggested_open_targets.insert(target.to_string()) {
-        return None;
-    }
+    suggested_open_targets
+        .insert(target.to_string())
+        .then_some(())?;
     let category = artifact_open_category(target)?;
 
     Some(crate::providers::ToolCallRequest {

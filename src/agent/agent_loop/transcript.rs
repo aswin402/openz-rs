@@ -42,28 +42,31 @@ pub(crate) fn append_assistant_tool_calls(
         "tool_calls".to_string(),
         serde_json::Value::Array(tool_calls_json),
     );
-    if let Some(reasoning) = reasoning {
-        extra.insert(
-            "reasoning_content".to_string(),
-            serde_json::Value::String(reasoning.to_string()),
-        );
+    match reasoning {
+        Some(reasoning) => {
+            extra.insert(
+                "reasoning_content".to_string(),
+                serde_json::Value::String(reasoning.to_string()),
+            );
+        }
+        None => {}
     }
 
-    if let Some(last_msg) = messages.last_mut() {
-        if last_msg.role == "assistant" {
+    match messages.last_mut().filter(|msg| msg.role == "assistant") {
+        Some(last_msg) => {
             for (key, value) in extra {
                 last_msg.extra.insert(key, value);
             }
-            return;
+        }
+        None => {
+            messages.push(Message {
+                role: "assistant".to_string(),
+                content: String::new(),
+                timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                extra,
+            });
         }
     }
-
-    messages.push(Message {
-        role: "assistant".to_string(),
-        content: String::new(),
-        timestamp: Some(chrono::Utc::now().to_rfc3339()),
-        extra,
-    });
 }
 
 pub(crate) async fn append_tool_results(
@@ -92,66 +95,71 @@ pub(crate) async fn append_tool_results(
         let is_retrieve = tool_result.name == "retrieve_original"
             || tool_result.name == "headroom/retrieve_original";
         let mut tool_output_metadata = None;
-        let content = if content_str.len() > limit && !is_retrieve {
-            let outputs_dir = crate::config::loader::runtime_data_dir().join("tool_outputs");
-            let compressed = crate::agent::context_compactor::compress_tool_output(
-                &tool_result.name,
-                &content_str,
-            );
+        let content = match content_str.len() > limit && !is_retrieve {
+            true => {
+                let outputs_dir = crate::config::loader::runtime_data_dir().join("tool_outputs");
+                let compressed = crate::agent::context_compactor::compress_tool_output(
+                    &tool_result.name,
+                    &content_str,
+                );
 
-            let saved_path = match tokio::fs::create_dir_all(&outputs_dir).await {
-                Ok(()) => {
-                    let file_name = tool_output_file_name(&tool_result.name);
-                    let file_path = outputs_dir.join(file_name);
-                    match tokio::fs::write(&file_path, &content_str).await {
-                        Ok(()) => Some(file_path),
-                        Err(e) => {
-                            tracing::warn!(
-                                "Failed to write tool output file '{}': {}",
-                                file_path.display(),
-                                e
-                            );
-                            None
+                let saved_path = match tokio::fs::create_dir_all(&outputs_dir).await {
+                    Ok(()) => {
+                        let file_name = tool_output_file_name(&tool_result.name);
+                        let file_path = outputs_dir.join(file_name);
+                        match tokio::fs::write(&file_path, &content_str).await {
+                            Ok(()) => Some(file_path),
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Failed to write tool output file '{}': {}",
+                                    file_path.display(),
+                                    e
+                                );
+                                None
+                            }
                         }
                     }
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to create tool outputs directory '{}': {}",
-                        outputs_dir.display(),
-                        e
-                    );
-                    None
-                }
-            };
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to create tool outputs directory '{}': {}",
+                            outputs_dir.display(),
+                            e
+                        );
+                        None
+                    }
+                };
 
-            if let Some(file_path) = saved_path {
-                let original_ref = format!("file://{}", file_path.to_string_lossy());
-                tool_output_metadata = Some(serde_json::json!({
-                    "truncated": true,
-                    "original_ref": original_ref,
-                    "original_path": file_path.to_string_lossy(),
-                    "original_bytes": content_str.len(),
-                    "compressed_bytes": compressed.len(),
-                    "inline_limit": limit,
-                    "retrieve_tool": "retrieve_original",
-                }));
-                format!(
-                    "{}\n\n... [TRUNCATED - Full output saved for reference at {}] ...",
-                    compressed, original_ref
-                )
-            } else {
-                format!(
-                    "{}\n\n... [TRUNCATED - Full output could not be saved to disk] ...",
-                    compressed
-                )
+                match saved_path {
+                    Some(file_path) => {
+                        let original_ref = format!("file://{}", file_path.to_string_lossy());
+                        tool_output_metadata = Some(serde_json::json!({
+                            "truncated": true,
+                            "original_ref": original_ref,
+                            "original_path": file_path.to_string_lossy(),
+                            "original_bytes": content_str.len(),
+                            "compressed_bytes": compressed.len(),
+                            "inline_limit": limit,
+                            "retrieve_tool": "retrieve_original",
+                        }));
+                        format!(
+                            "{}\n\n... [TRUNCATED - Full output saved for reference at {}] ...",
+                            compressed, original_ref
+                        )
+                    }
+                    None => format!(
+                        "{}\n\n... [TRUNCATED - Full output could not be saved to disk] ...",
+                        compressed
+                    ),
+                }
             }
-        } else {
-            content_str
+            false => content_str,
         };
 
-        if let Some(metadata) = tool_output_metadata {
-            extra.insert("tool_output".to_string(), metadata);
+        match tool_output_metadata {
+            Some(metadata) => {
+                extra.insert("tool_output".to_string(), metadata);
+            }
+            None => {}
         }
 
         messages.push(Message {
@@ -166,19 +174,15 @@ pub(crate) async fn append_tool_results(
 fn tool_output_file_name(tool_name: &str) -> String {
     let safe_name: String = tool_name
         .chars()
-        .map(|ch| {
-            if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.') {
-                ch
-            } else {
-                '_'
-            }
+        .map(|ch| match ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.') {
+            true => ch,
+            false => '_',
         })
         .collect();
-    let safe_name = safe_name.trim_matches('_');
-    let safe_name = if safe_name.is_empty() {
-        "tool"
-    } else {
-        safe_name
+    let trimmed = safe_name.trim_matches('_');
+    let safe_name = match trimmed.is_empty() {
+        true => "tool",
+        false => trimmed,
     };
     format!("output_{}_{}.json", safe_name, uuid::Uuid::new_v4())
 }
@@ -186,4 +190,3 @@ fn tool_output_file_name(tool_name: &str) -> String {
 #[cfg(test)]
 #[path = "transcript_tests.rs"]
 mod tests;
-

@@ -46,15 +46,15 @@ impl ModelHealthRecord {
         self.last_success = Some(now);
         self.success_count = self.success_count.saturating_add(1);
         self.last_error = None;
-        if blank {
-            self.blank_response_count = self.blank_response_count.saturating_add(1);
-        }
-        if think_leak {
-            self.think_leak_count = self.think_leak_count.saturating_add(1);
-        }
-        if fallback_used {
-            self.fallback_count = self.fallback_count.saturating_add(1);
-        }
+        self.blank_response_count = self
+            .blank_response_count
+            .saturating_add(u64::from(blank));
+        self.think_leak_count = self
+            .think_leak_count
+            .saturating_add(u64::from(think_leak));
+        self.fallback_count = self
+            .fallback_count
+            .saturating_add(u64::from(fallback_used));
     }
 
     pub fn mark_failure(&mut self, error: &str) {
@@ -80,16 +80,17 @@ impl ModelRegistry {
 
     pub fn load() -> Self {
         let path = Self::path();
-        let Ok(raw) = std::fs::read_to_string(path) else {
-            return Self::default();
-        };
-        serde_json::from_str(&raw).unwrap_or_default()
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_default()
     }
 
     pub fn save(&self) -> Result<()> {
         let path = Self::path();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+        match path.parent() {
+            Some(parent) => std::fs::create_dir_all(parent)?,
+            None => {}
         }
         let raw = serde_json::to_string_pretty(self)?;
         std::fs::write(path, raw)?;

@@ -37,23 +37,27 @@ fn activity_status_forces_write(status: &str) -> bool {
 }
 
 fn write_activity_file(path: &Path, activity: &AgentActivity) {
-    if let Some(parent) = path.parent() {
-        if let Err(e) = fs::create_dir_all(parent) {
-            tracing::warn!("Failed to create activity directory: {}", e);
-            return;
-        }
+    match path.parent() {
+        Some(parent) => match fs::create_dir_all(parent) {
+            Ok(()) => {}
+            Err(e) => {
+                tracing::warn!("Failed to create activity directory: {}", e);
+                return;
+            }
+        },
+        None => {}
     }
     match serde_json::to_string_pretty(activity) {
         Ok(content) => {
-            // Atomic write: write to a unique temp file then rename to prevent partial reads.
             let tmp_path = path.with_extension(format!("json.tmp.{}", uuid::Uuid::new_v4()));
             match fs::write(&tmp_path, &content) {
-                Ok(()) => {
-                    if let Err(e) = fs::rename(&tmp_path, path) {
+                Ok(()) => match fs::rename(&tmp_path, path) {
+                    Ok(()) => {}
+                    Err(e) => {
                         tracing::warn!("Failed to rename activity file {:?}: {}", tmp_path, e);
                         let _ = fs::remove_file(&tmp_path);
                     }
-                }
+                },
                 Err(e) => {
                     tracing::warn!("Failed to write activity file {:?}: {}", path, e);
                 }
@@ -74,13 +78,15 @@ fn schedule_activity_flush(path: PathBuf, delay: Duration) {
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             state.flush_scheduled = false;
             let pending = state.pending.take();
-            if pending.is_some() {
-                state.last_written_at = Some(Instant::now());
+            match pending.is_some() {
+                true => state.last_written_at = Some(Instant::now()),
+                false => {}
             }
             pending
         };
-        if let Some(activity) = pending {
-            write_activity_file(&path, &activity);
+        match pending {
+            Some(activity) => write_activity_file(&path, &activity),
+            None => {}
         }
     });
 }
@@ -102,24 +108,32 @@ fn update_activity_at_path(path: PathBuf, activity: AgentActivity) {
             .map(|elapsed| elapsed >= ACTIVITY_WRITE_THROTTLE)
             .unwrap_or(true);
 
-        if force_write || due {
-            state.last_written_at = Some(now);
-            state.pending = None;
-            write_now = Some(activity);
-        } else {
-            state.pending = Some(activity);
-            if !state.flush_scheduled {
-                state.flush_scheduled = true;
-                schedule_after = Some(ACTIVITY_WRITE_THROTTLE - elapsed.unwrap_or_default());
+        match force_write || due {
+            true => {
+                state.last_written_at = Some(now);
+                state.pending = None;
+                write_now = Some(activity);
+            }
+            false => {
+                state.pending = Some(activity);
+                match state.flush_scheduled {
+                    true => {}
+                    false => {
+                        state.flush_scheduled = true;
+                        schedule_after = Some(ACTIVITY_WRITE_THROTTLE - elapsed.unwrap_or_default());
+                    }
+                }
             }
         }
     }
 
-    if let Some(activity) = write_now {
-        write_activity_file(&path, &activity);
+    match write_now {
+        Some(activity) => write_activity_file(&path, &activity),
+        None => {}
     }
-    if let Some(delay) = schedule_after {
-        schedule_activity_flush(path, delay);
+    match schedule_after {
+        Some(delay) => schedule_activity_flush(path, delay),
+        None => {}
     }
 }
 
@@ -136,9 +150,7 @@ pub fn update_activity(session_id: &str, status: &str, current_tool: Option<&str
 
 pub fn get_activity() -> Option<AgentActivity> {
     let path = activity_file();
-    if !path.exists() {
-        return None;
-    }
+    path.exists().then_some(())?;
     let content = fs::read_to_string(path).ok()?;
     serde_json::from_str(&content).ok()
 }
@@ -165,13 +177,15 @@ fn inbox_legacy_path(session_id: &str) -> PathBuf {
 }
 
 fn inbox_message_is_expired(message: &InboxMessage) -> bool {
-    let Some(timestamp) = chrono::DateTime::parse_from_rfc3339(&message.timestamp).ok() else {
-        return true;
-    };
-    chrono::Utc::now()
-        .signed_duration_since(timestamp.with_timezone(&chrono::Utc))
-        .num_seconds()
-        > REMOTE_INBOX_TTL_SECS
+    match chrono::DateTime::parse_from_rfc3339(&message.timestamp) {
+        Ok(timestamp) => {
+            chrono::Utc::now()
+                .signed_duration_since(timestamp.with_timezone(&chrono::Utc))
+                .num_seconds()
+                > REMOTE_INBOX_TTL_SECS
+        }
+        Err(_) => true,
+    }
 }
 
 fn quarantine_inbox_file(path: &Path) {
@@ -182,14 +196,18 @@ fn quarantine_inbox_file(path: &Path) {
             .unwrap_or("inbox"),
         uuid::Uuid::new_v4()
     ));
-    if fs::rename(path, quarantine).is_err() {
-        let _ = fs::remove_file(path);
+    match fs::rename(path, quarantine) {
+        Ok(()) => {}
+        Err(_) => {
+            let _ = fs::remove_file(path);
+        }
     }
 }
 
 fn cleanup_stale_inbox_files_in(dir: &Path) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
     };
     for entry in entries.flatten() {
         let path = entry.path();
@@ -198,19 +216,21 @@ fn cleanup_stale_inbox_files_in(dir: &Path) {
             .and_then(|name| name.to_str())
             .map(|name| name.starts_with("inbox_") && name.ends_with(".json"))
             .unwrap_or(false);
-        if !is_inbox_json {
-            continue;
+        match is_inbox_json {
+            false => continue,
+            true => {}
         }
-        let Ok(content) = fs::read_to_string(&path) else {
-            quarantine_inbox_file(&path);
-            continue;
-        };
-        let Ok(message) = serde_json::from_str::<InboxMessage>(&content) else {
-            quarantine_inbox_file(&path);
-            continue;
-        };
-        if inbox_message_is_expired(&message) {
-            let _ = fs::remove_file(path);
+        let parsed = fs::read_to_string(&path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<InboxMessage>(&content).ok());
+        match parsed {
+            None => quarantine_inbox_file(&path),
+            Some(message) => match inbox_message_is_expired(&message) {
+                true => {
+                    let _ = fs::remove_file(path);
+                }
+                false => {}
+            },
         }
     }
 }
@@ -251,27 +271,26 @@ pub fn pop_inbox_message(session_id: &str) -> Option<InboxMessage> {
         })
         .collect::<Vec<_>>();
 
-    // Read the legacy single-file format during migration.
     let legacy = inbox_legacy_path(session_id);
-    if legacy.exists() {
-        paths.push(legacy);
+    match legacy.exists() {
+        true => paths.push(legacy),
+        false => {}
     }
 
     let mut candidates = Vec::new();
     for path in paths {
-        let Ok(content) = fs::read_to_string(&path) else {
-            quarantine_inbox_file(&path);
-            continue;
-        };
-        let Ok(message) = serde_json::from_str::<InboxMessage>(&content) else {
-            quarantine_inbox_file(&path);
-            continue;
-        };
-        if inbox_message_is_expired(&message) {
-            let _ = fs::remove_file(&path);
-            continue;
+        let parsed = fs::read_to_string(&path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<InboxMessage>(&content).ok());
+        match parsed {
+            None => quarantine_inbox_file(&path),
+            Some(message) => match inbox_message_is_expired(&message) {
+                true => {
+                    let _ = fs::remove_file(&path);
+                }
+                false => candidates.push((message.timestamp.clone(), path)),
+            },
         }
-        candidates.push((message.timestamp.clone(), path));
     }
     candidates.sort_by(|a, b| a.0.cmp(&b.0));
 
@@ -283,25 +302,32 @@ pub fn pop_inbox_message(session_id: &str) -> Option<InboxMessage> {
                 .unwrap_or("inbox"),
             uuid::Uuid::new_v4()
         ));
-        if fs::rename(&path, &claim_path).is_err() {
-            continue;
+        match fs::rename(&path, &claim_path) {
+            Ok(()) => {}
+            Err(_) => continue,
         }
 
         let parsed = fs::read_to_string(&claim_path)
             .ok()
             .and_then(|content| serde_json::from_str::<InboxMessage>(&content).ok());
-        let Some(message) = parsed else {
-            quarantine_inbox_file(&claim_path);
-            continue;
+        let message = match parsed {
+            Some(msg) => msg,
+            None => {
+                quarantine_inbox_file(&claim_path);
+                continue;
+            }
         };
 
-        if inbox_message_is_expired(&message) {
-            let _ = fs::remove_file(&claim_path);
-            continue;
+        match inbox_message_is_expired(&message) {
+            true => {
+                let _ = fs::remove_file(&claim_path);
+                continue;
+            }
+            false => {
+                let _ = fs::remove_file(&claim_path);
+                return Some(message);
+            }
         }
-
-        let _ = fs::remove_file(&claim_path);
-        return Some(message);
     }
     None
 }
@@ -330,16 +356,18 @@ fn active_tui_path(session_key: &str) -> PathBuf {
 }
 
 fn process_is_alive(pid: u32) -> bool {
-    if pid == 0 {
-        return false;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        Path::new("/proc").join(pid.to_string()).exists()
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        true
+    match pid {
+        0 => false,
+        _ => {
+            #[cfg(target_os = "linux")]
+            {
+                Path::new("/proc").join(pid.to_string()).exists()
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                true
+            }
+        }
     }
 }
 
@@ -350,13 +378,15 @@ fn parse_rfc3339_utc(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
 }
 
 fn active_tui_is_stale(session: &ActiveTuiSession, now: chrono::DateTime<chrono::Utc>) -> bool {
-    if !process_is_alive(session.pid) {
-        return true;
+    match (
+        process_is_alive(session.pid),
+        parse_rfc3339_utc(&session.last_seen_at),
+    ) {
+        (true, Some(last_seen)) => {
+            now.signed_duration_since(last_seen).num_seconds() > ACTIVE_TUI_STALE_SECS
+        }
+        _ => true,
     }
-    let Some(last_seen) = parse_rfc3339_utc(&session.last_seen_at) else {
-        return true;
-    };
-    now.signed_duration_since(last_seen).num_seconds() > ACTIVE_TUI_STALE_SECS
 }
 
 pub fn session_preview_from_messages(messages: &[crate::session::Message]) -> String {
@@ -368,12 +398,13 @@ pub fn session_preview_from_messages(messages: &[crate::session::Message]) -> St
         .filter(|content| !content.is_empty())
         .unwrap_or("No user prompt yet");
     let collapsed = preview.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.chars().count() > 64 {
-        let mut short = collapsed.chars().take(61).collect::<String>();
-        short.push_str("...");
-        short
-    } else {
-        collapsed
+    match collapsed.chars().count() > 64 {
+        true => {
+            let mut short = collapsed.chars().take(61).collect::<String>();
+            short.push_str("...");
+            short
+        }
+        false => collapsed,
     }
 }
 
@@ -427,28 +458,35 @@ pub fn active_tui_session_exists(session_id: &str) -> bool {
 
 pub fn list_active_tui_sessions() -> Vec<ActiveTuiSession> {
     let dir = active_tui_dir();
-    let Ok(entries) = fs::read_dir(&dir) else {
-        return Vec::new();
+    let entries = match fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
     };
     let now = chrono::Utc::now();
     let mut sessions = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("json") {
-            continue;
+        match path.extension().and_then(|s| s.to_str()) == Some("json") {
+            false => continue,
+            true => {}
         }
-        let Ok(content) = fs::read_to_string(&path) else {
-            continue;
+        let content = match fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(_) => continue,
         };
-        let Ok(session) = serde_json::from_str::<ActiveTuiSession>(&content) else {
-            let _ = fs::remove_file(&path);
-            continue;
+        let session = match serde_json::from_str::<ActiveTuiSession>(&content) {
+            Ok(session) => session,
+            Err(_) => {
+                let _ = fs::remove_file(&path);
+                continue;
+            }
         };
-        if active_tui_is_stale(&session, now) {
-            let _ = fs::remove_file(&path);
-            continue;
+        match active_tui_is_stale(&session, now) {
+            true => {
+                let _ = fs::remove_file(&path);
+            }
+            false => sessions.push(session),
         }
-        sessions.push(session);
     }
     sessions.sort_by(|a, b| b.last_seen_at.cmp(&a.last_seen_at));
     sessions

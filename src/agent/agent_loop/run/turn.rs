@@ -1,9 +1,9 @@
 //! Turn-level provider coordination and cross-session locking.
 
-use anyhow::Result;
-use fs2::FileExt;
 use crate::agent::source_ledger::SourceLedger;
 use crate::tools::shared_memory::AutoCaptureSummary;
+use anyhow::Result;
+use fs2::FileExt;
 use std::collections::HashSet;
 
 use super::super::TurnContext;
@@ -58,9 +58,7 @@ pub(super) fn provider_turn_lock_key_for_mode(
 ) -> Option<String> {
     let mode = mode.map(str::trim).filter(|value| !value.is_empty())?;
     let mode = mode.to_lowercase();
-    if mode == "off" || mode == "false" || mode == "0" {
-        return None;
-    }
+    (!matches!(mode.as_str(), "off" | "false" | "0")).then_some(())?;
 
     let provider_lower = provider.to_lowercase();
     let model_lower = model.to_lowercase();
@@ -70,23 +68,21 @@ pub(super) fn provider_turn_lock_key_for_mode(
         || model_lower.ends_with("-free")
         || model_lower.contains("flash-free");
     let should_lock = mode == "all"
-        || ((mode == "fragile" || mode == "free" || mode == "on" || mode == "true") && fragile);
-    if !should_lock {
-        return None;
-    }
+        || (matches!(mode.as_str(), "fragile" | "free" | "on" | "true") && fragile);
+    should_lock.then_some(())?;
 
     let raw = format!("{}__{}", provider_lower, model_lower);
     let slug = raw
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .map(|ch| ch.is_ascii_alphanumeric().then_some(ch).unwrap_or('_'))
         .collect::<String>()
         .trim_matches('_')
         .to_string();
-    Some(if slug.is_empty() {
-        "provider".to_string()
-    } else {
-        slug
-    })
+    Some(
+        (!slug.is_empty())
+            .then_some(slug)
+            .unwrap_or_else(|| "provider".to_string()),
+    )
 }
 
 pub(super) async fn acquire_provider_turn_lock(
@@ -94,8 +90,9 @@ pub(super) async fn acquire_provider_turn_lock(
     provider: &str,
     model: &str,
 ) -> Result<Option<std::fs::File>> {
-    let Some(key) = provider_turn_lock_key(provider, model) else {
-        return Ok(None);
+    let key = match provider_turn_lock_key(provider, model) {
+        Some(key) => key,
+        None => return Ok(None),
     };
     let dir = crate::config::loader::runtime_data_dir().join("provider_turn_locks");
     let path = dir.join(format!("{key}.lock"));
@@ -116,29 +113,33 @@ pub(super) async fn acquire_provider_turn_lock(
         loop {
             match file.try_lock_exclusive() {
                 Ok(()) => return Ok(Some(file)),
-                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                    if !announced_wait {
-                        crate::agent::activity::update_activity(
-                            &session_key,
-                            "Waiting for provider slot",
-                            Some(&format!("{} / {}", provider, model)),
-                        );
-                        announced_wait = true;
+                Err(err) => match err.kind() == std::io::ErrorKind::WouldBlock {
+                    false => return Err(err.into()),
+                    true => {
+                        let _ = (!announced_wait).then(|| {
+                            crate::agent::activity::update_activity(
+                                &session_key,
+                                "Waiting for provider slot",
+                                Some(&format!("{} / {}", provider, model)),
+                            );
+                            announced_wait = true;
+                        });
+                        match started.elapsed() > std::time::Duration::from_secs(120) {
+                            true => anyhow::bail!(
+                                "Provider '{}' model '{}' is still busy in another OpenZ session after 120s",
+                                provider,
+                                model
+                            ),
+                            false => {
+                                std::thread::sleep(delay);
+                                delay = std::cmp::min(
+                                    delay.saturating_mul(2),
+                                    std::time::Duration::from_secs(1),
+                                );
+                            }
+                        }
                     }
-                    if started.elapsed() > std::time::Duration::from_secs(120) {
-                        anyhow::bail!(
-                            "Provider '{}' model '{}' is still busy in another OpenZ session after 120s",
-                            provider,
-                            model
-                        );
-                    }
-                    std::thread::sleep(delay);
-                    delay = std::cmp::min(
-                        delay.saturating_mul(2),
-                        std::time::Duration::from_secs(1),
-                    );
-                }
-                Err(err) => return Err(err.into()),
+                },
             }
         }
     })

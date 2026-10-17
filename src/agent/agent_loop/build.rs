@@ -1,94 +1,114 @@
-use crate::memory::{with_graph_db, with_shared_db};
 use super::{AgentLoop, TurnContext, TurnState};
+use crate::memory::{with_graph_db, with_shared_db};
 use anyhow::Result;
 use std::collections::HashSet;
 
 pub const MIN_MATCH_SCORE: f64 = 6.0;
 pub const MAX_SOURCE_CONTEXT_CHARS: usize = 3000;
 
-pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
-    let config = &ctx.config;
-    let mut summary_part = String::new();
-    if let Some(summary) = ctx.session.metadata.get("summary").and_then(|v| v.as_str()) {
-        if !summary.is_empty() {
-            summary_part = format!(
-                "\n\nHere is a summary of the earlier part of the conversation:\n{}\n",
-                summary
-            );
-        }
-    }
-    let mut memory_part = String::new();
-    if let Some(memory) = ctx.session.metadata.get("memory").and_then(|v| v.as_str()) {
-        if !memory.is_empty() {
-            memory_part = format!(
-                "\n\nHere is the long-term memory of key facts, preferences, and decisions from this session:\n{}\n",
-                memory
-            );
-        }
-    }
-    let mut profile_name = None;
-    let parts: Vec<&str> = ctx.session_key.split(':').collect();
-    if parts.len() >= 2 && parts[0] == "subagent" {
-        profile_name = Some(parts[1]);
-    }
+fn extract_metadata_section(
+    metadata: &serde_json::Map<String, serde_json::Value>,
+    key: &str,
+    heading: &str,
+) -> String {
+    metadata
+        .get(key)
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("\n\n{}\n{}\n", heading, s))
+        .unwrap_or_default()
+}
 
-    let mut skills_part = String::new();
+fn subagent_profile_name(session_key: &str) -> Option<&str> {
+    let parts: Vec<&str> = session_key.split(':').collect();
+    match parts.as_slice() {
+        ["subagent", profile, ..] => Some(*profile),
+        _ => None,
+    }
+}
+
+fn format_skills_part(
+    user_content: &str,
+    messages: &[crate::session::Message],
+    profile_name: Option<&str>,
+) -> String {
     let relevant_skills = crate::agent::skills::load_relevant_skills_with_profile(
-        ctx.user_content,
-        &ctx.session.messages,
+        user_content,
+        messages,
         profile_name,
     )
     .unwrap_or_default();
 
-    if !relevant_skills.is_empty() {
-        skills_part =
-            "\n\nHere are the active guidelines and procedural skills you should follow:\n"
-                .to_string();
-        let top_count = 2.min(relevant_skills.len());
-        for skill in relevant_skills.iter().take(top_count) {
-            skills_part.push_str(&format!(
-                "=== Active Skill: {} ===\n{}\n\n",
-                skill.name, skill.content
-            ));
-        }
-        if relevant_skills.len() > top_count {
-            skills_part.push_str("[Indexed Skills Catalog]\nThe following additional skills are active in ~/.openz/skills/:\n");
-            for skill in relevant_skills.iter().skip(top_count) {
-                let desc = skill.description();
-                let triggers = skill.triggers();
-                let triggers_str = if triggers.is_empty() {
-                    String::new()
-                } else {
-                    format!(" (triggers: {})", triggers.join(", "))
-                };
-                skills_part.push_str(&format!("- {}: {}{}\n", skill.name, desc, triggers_str));
+    match relevant_skills.is_empty() {
+        false => {
+            let mut skills_part =
+                "\n\nHere are the active guidelines and procedural skills you should follow:\n"
+                    .to_string();
+            let top_count = 2.min(relevant_skills.len());
+            for skill in relevant_skills.iter().take(top_count) {
+                skills_part.push_str(&format!(
+                    "=== Active Skill: {} ===\n{}\n\n",
+                    skill.name, skill.content
+                ));
             }
-            skills_part.push('\n');
+            let _ = (relevant_skills.len() > top_count).then(|| {
+                skills_part.push_str("[Indexed Skills Catalog]\nThe following additional skills are active in ~/.openz/skills/:\n");
+                for skill in relevant_skills.iter().skip(top_count) {
+                    let desc = skill.description();
+                    let triggers = skill.triggers();
+                    let triggers_str = (!triggers.is_empty())
+                        .then(|| format!(" (triggers: {})", triggers.join(", ")))
+                        .unwrap_or_default();
+                    skills_part.push_str(&format!("- {}: {}{}\n", skill.name, desc, triggers_str));
+                }
+                skills_part.push('\n');
+            });
+            skills_part
         }
-    } else if let Ok(all_skills) = crate::agent::skills::load_skills_with_profile(profile_name) {
-        if !all_skills.is_empty() {
-            skills_part = "\n\n[Available Skills Catalog]\nThe following procedural skills are indexed in ~/.openz/skills/:\n".to_string();
-            for skill in all_skills.iter().take(5) {
-                let desc = skill.description();
-                skills_part.push_str(&format!("- {}: {}\n", skill.name, desc));
-            }
-            skills_part.push('\n');
-        }
+        true => crate::agent::skills::load_skills_with_profile(profile_name)
+            .ok()
+            .filter(|all_skills| !all_skills.is_empty())
+            .map(|all_skills| {
+                let mut skills_part = "\n\n[Available Skills Catalog]\nThe following procedural skills are indexed in ~/.openz/skills/:\n".to_string();
+                for skill in all_skills.iter().take(5) {
+                    skills_part.push_str(&format!("- {}: {}\n", skill.name, skill.description()));
+                }
+                skills_part.push('\n');
+                skills_part
+            })
+            .unwrap_or_default(),
     }
-    let mut vision_instruction = "";
-    if !crate::providers::model_supports_vision(&config.agents.defaults.model) {
-        vision_instruction = " If a message contains a markdown image link (e.g. ![](file://...)) and you need to analyze or describe the image, you MUST call the direct 'vision_agent' tool to see and report on the image contents. Do not route image analysis through generic 'delegate_task' when the specialized 'vision_agent' tool is available; generic delegation may select a non-vision model.";
-    }
-    let subagents_list = if let Ok(profiles) = crate::subagents::load_profiles() {
-        profiles
-            .iter()
-            .map(|p| p.name.clone())
-            .collect::<Vec<String>>()
-            .join(", ")
-    } else {
-        "planner, researcher, debugger, DevOps, skill_improvement, openz_maintainer, mcps_manager"
-            .to_string()
-    };
+}
+
+pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
+    let config = &ctx.config;
+    let summary_part = extract_metadata_section(
+        &ctx.session.metadata,
+        "summary",
+        "Here is a summary of the earlier part of the conversation:",
+    );
+    let memory_part = extract_metadata_section(
+        &ctx.session.metadata,
+        "memory",
+        "Here is the long-term memory of key facts, preferences, and decisions from this session:",
+    );
+    let profile_name = subagent_profile_name(ctx.session_key);
+    let skills_part = format_skills_part(ctx.user_content, &ctx.session.messages, profile_name);
+    let vision_instruction = (!crate::providers::model_supports_vision(&config.agents.defaults.model))
+        .then_some(" If a message contains a markdown image link (e.g. ![](file://...)) and you need to analyze or describe the image, you MUST call the direct 'vision_agent' tool to see and report on the image contents. Do not route image analysis through generic 'delegate_task' when the specialized 'vision_agent' tool is available; generic delegation may select a non-vision model.")
+        .unwrap_or("");
+    let subagents_list = crate::subagents::load_profiles()
+        .map(|profiles| {
+            profiles
+                .iter()
+                .map(|p| p.name.clone())
+                .collect::<Vec<String>>()
+                .join(", ")
+        })
+        .unwrap_or_else(|_| {
+            "planner, researcher, debugger, DevOps, skill_improvement, openz_maintainer, mcps_manager"
+                .to_string()
+        });
     let vault_path = crate::core::vault::resolve_vault_path(config);
     let vault_display = vault_path.display().to_string();
     let vault_name = &config.vault.name;
@@ -173,21 +193,22 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             ));
         });
 
-    let caveman_rules = if config.agents.defaults.caveman_mode {
-        "\n\nRespond terse like smart caveman. All technical substance stay. Only fluff die.\nRules:\n- Drop: articles (a/an/the), filler (just/really/basically), pleasantries, hedging\n- Fragments OK. Short synonyms. Technical terms exact. Code unchanged.\n- Pattern: [thing] [action] [reason]. [next step].\n- Not: \"Sure! I'd be happy to help you with that.\"\n- Yes: \"Bug in auth middleware. Fix:\""
-    } else {
-        ""
-    };
+    let caveman_rules = config
+        .agents
+        .defaults
+        .caveman_mode
+        .then_some("\n\nRespond terse like smart caveman. All technical substance stay. Only fluff die.\nRules:\n- Drop: articles (a/an/the), filler (just/really/basically), pleasantries, hedging\n- Fragments OK. Short synonyms. Technical terms exact. Code unchanged.\n- Pattern: [thing] [action] [reason]. [next step].\n- Not: \"Sure! I'd be happy to help you with that.\"\n- Yes: \"Bug in auth middleware. Fix:\"")
+        .unwrap_or("");
 
     let user_profile_raw = crate::agent::skills::load_user_profile();
-    let user_profile_part = if !user_profile_raw.trim().is_empty() {
-        format!(
-            "\n\n[User Profile & Design Preferences]\nFollow these persistent user preferences and styling guidelines unconditionally across all deliverables:\n{}\n",
-            user_profile_raw.trim()
-        )
-    } else {
-        String::new()
-    };
+    let user_profile_part = (!user_profile_raw.trim().is_empty())
+        .then(|| {
+            format!(
+                "\n\n[User Profile & Design Preferences]\nFollow these persistent user preferences and styling guidelines unconditionally across all deliverables:\n{}\n",
+                user_profile_raw.trim()
+            )
+        })
+        .unwrap_or_default();
 
     let pinned_memory =
         retrieve_pinned_identity_memories(&config.agents.defaults.bot_name).await;
@@ -207,7 +228,6 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     let cross_session_memory =
         retrieve_cross_session_memories(ctx.user_content, &config.agents.defaults.bot_name).await;
 
-    // Calculate total character limit and assemble KV-cache-friendly system prompt
     let budget_limit = crate::providers::DynamicContextRegistry::resolve_prompt_budget_chars(
         &config.agents.defaults.model,
         config,
@@ -382,29 +402,32 @@ fn recent_session_context(messages: &[crate::session::Message], max_chars: usize
         .take(6)
         .map(|msg| {
             let content = msg.content.split_whitespace().collect::<Vec<_>>().join(" ");
-            let label = if msg.role == "user" {
-                "User"
-            } else {
-                "Assistant"
+            let label = match msg.role.as_str() {
+                "user" => "User",
+                _ => "Assistant",
             };
             format!("- {}: {}", label, content)
         })
         .collect();
     lines.reverse();
-    if lines.is_empty() {
-        return String::new();
-    }
-    let mut out = String::from(
-        "\n\n[Recent Session Context]\nUse these latest turns before claiming there is no current-session context:\n",
-    );
-    for line in lines {
-        if out.chars().count() + line.chars().count() + 1 > max_chars {
-            break;
+    match lines.is_empty() {
+        true => String::new(),
+        false => {
+            let mut out = String::from(
+                "\n\n[Recent Session Context]\nUse these latest turns before claiming there is no current-session context:\n",
+            );
+            for line in lines {
+                match out.chars().count() + line.chars().count() + 1 > max_chars {
+                    true => break,
+                    false => {
+                        out.push_str(&line);
+                        out.push('\n');
+                    }
+                }
+            }
+            out
         }
-        out.push_str(&line);
-        out.push('\n');
     }
-    out
 }
 
 fn is_identity_or_persona_query(text: &str) -> bool {
@@ -428,44 +451,37 @@ fn is_identity_or_persona_query(text: &str) -> bool {
 }
 
 pub fn resolve_prompt_budget(configured_budget: Option<usize>, context_window: usize) -> usize {
-    if let Some(explicit) = configured_budget {
-        return explicit;
-    }
-    // Allocate up to 3/8 of total context window for prompt overhead, with a minimum floor of 8k chars
-    let computed = (context_window * 3) / 8;
-    computed.max(8000)
+    configured_budget.unwrap_or_else(|| ((context_window * 3) / 8).max(8000))
 }
 
 fn identity_answer_priority_context(user_content: &str, pinned_memory: &str) -> &'static str {
-    if is_identity_or_persona_query(user_content) && !pinned_memory.trim().is_empty() {
-        "\n\n[Identity Answer Priority]\nThe active persona and user preference facts in [Pinned Memory] outrank the generic system product identity for identity/persona questions. If asked who you are, answer as the active persona first, then mention OpenZ only as underlying system/context if useful. Do not ignore custom persona memory because the generic header says OpenZ.\n"
-    } else {
-        ""
-    }
+    (is_identity_or_persona_query(user_content) && !pinned_memory.trim().is_empty())
+        .then_some(
+            "\n\n[Identity Answer Priority]\nThe active persona and user preference facts in [Pinned Memory] outrank the generic system product identity for identity/persona questions. If asked who you are, answer as the active persona first, then mention OpenZ only as underlying system/context if useful. Do not ignore custom persona memory because the generic header says OpenZ.\n",
+        )
+        .unwrap_or("")
 }
 
 fn identity_memory_candidate(text: &str, bot_name: &str) -> bool {
     let normalized = text.to_lowercase();
     let bot_norm = bot_name.trim().to_lowercase();
-    if !bot_norm.is_empty() && normalized.contains(&bot_norm) {
-        return true;
-    }
-    [
-        "name",
-        "call",
-        "called",
-        "persona",
-        "personality",
-        "friend",
-        "preference",
-        "prefers",
-        "wants",
-        "likes",
-        "creator",
-        "developer",
-    ]
-    .iter()
-    .any(|needle| normalized.contains(needle))
+    (!bot_norm.is_empty() && normalized.contains(&bot_norm))
+        || [
+            "name",
+            "call",
+            "called",
+            "persona",
+            "personality",
+            "friend",
+            "preference",
+            "prefers",
+            "wants",
+            "likes",
+            "creator",
+            "developer",
+        ]
+        .iter()
+        .any(|needle| normalized.contains(needle))
 }
 
 fn runtime_tool_discipline_rules() -> &'static str {
@@ -491,43 +507,44 @@ fn model_name_suggests_strong(model: &str) -> bool {
 }
 
 fn is_weak_or_risky_model(model: &str) -> bool {
-    if model_name_suggests_strong(model) {
-        return false;
+    (!model_name_suggests_strong(model)) && {
+        let m = model.to_lowercase();
+        let tokens: Vec<&str> = m
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|s| !s.is_empty())
+            .collect();
+        [
+            "1b",
+            "2b",
+            "3b",
+            "4b",
+            "6b",
+            "7b",
+            "8b",
+            "9b",
+            "small",
+            "mini",
+            "lite",
+            "free",
+            "preview",
+            "experimental",
+            "beta",
+            "pickle",
+            "mimo",
+            "hy3",
+        ]
+        .iter()
+        .any(|needle| tokens.contains(needle))
     }
-    let m = model.to_lowercase();
-    let tokens: Vec<&str> = m
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .filter(|s| !s.is_empty())
-        .collect();
-    [
-        "1b",
-        "2b",
-        "3b",
-        "4b",
-        "6b",
-        "7b",
-        "8b",
-        "9b",
-        "small",
-        "mini",
-        "lite",
-        "free",
-        "preview",
-        "experimental",
-        "beta",
-        "pickle",
-        "mimo",
-        "hy3",
-    ]
-    .iter()
-    .any(|needle| tokens.contains(needle))
 }
 
 fn weak_model_operating_rules(model: &str) -> String {
-    if !is_weak_or_risky_model(model) {
-        return String::new();
-    }
-    "\n\n[Small Model Operating Rules]\n- Use [Recent Session Context] before saying you do not know what this session discussed.\n- Use [Pinned Memory] before answering identity, persona, or preference questions.\n- For tool-heavy tasks, keep steps short and prefer exact tool schemas over guessing.\n- For broad tasks, research first, then make an implementation plan and todo list before editing.\n".to_string()
+    is_weak_or_risky_model(model)
+        .then(|| {
+            "\n\n[Small Model Operating Rules]\n- Use [Recent Session Context] before saying you do not know what this session discussed.\n- Use [Pinned Memory] before answering identity, persona, or preference questions.\n- For tool-heavy tasks, keep steps short and prefer exact tool schemas over guessing.\n- For broad tasks, research first, then make an implementation plan and todo list before editing.\n"
+                .to_string()
+        })
+        .unwrap_or_default()
 }
 
 fn concrete_research_topic_terms(text: &str) -> Vec<String> {
@@ -573,9 +590,6 @@ fn is_local_operational_or_ack_query(text: &str) -> bool {
     ]
     .iter()
     .any(|needle| normalized.contains(needle));
-    if action_start && local_target {
-        return true;
-    }
 
     let ack = [
         "good",
@@ -591,8 +605,10 @@ fn is_local_operational_or_ack_query(text: &str) -> bool {
         "works",
         "worked",
     ];
-    ack.iter()
-        .any(|phrase| normalized == *phrase || normalized.starts_with(&format!("{} ", phrase)))
+    (action_start && local_target)
+        || ack
+            .iter()
+            .any(|phrase| normalized == *phrase || normalized.starts_with(&format!("{} ", phrase)))
 }
 
 fn is_openz_self_inventory_query(text: &str) -> bool {
@@ -612,9 +628,6 @@ fn is_openz_self_inventory_query(text: &str) -> bool {
     ]
     .iter()
     .any(|needle| lower.contains(needle));
-    if !asks_inventory {
-        return false;
-    }
 
     let asks_external_comparison = [
         "compare",
@@ -630,16 +643,14 @@ fn is_openz_self_inventory_query(text: &str) -> bool {
     .iter()
     .any(|needle| lower.contains(needle));
 
-    !asks_external_comparison
+    asks_inventory && !asks_external_comparison
 }
 
 fn should_skip_research_memory_for_generic_query(text: &str) -> bool {
-    if super::research_policy::text_has_http_url(text) {
-        return false;
-    }
-    is_openz_self_inventory_query(text)
-        || is_local_operational_or_ack_query(text)
-        || concrete_research_topic_terms(text).is_empty()
+    (!super::research_policy::text_has_http_url(text))
+        && (is_openz_self_inventory_query(text)
+            || is_local_operational_or_ack_query(text)
+            || concrete_research_topic_terms(text).is_empty())
 }
 
 fn should_show_saved_context_notification(text: &str) -> bool {
@@ -650,95 +661,97 @@ fn format_research_brief_context_items(
     items: &[crate::tools::shared_memory::ResearchBrief],
     user_content: &str,
 ) -> String {
-    if items.is_empty() {
-        return String::new();
-    }
-    let current_sensitive = super::research_policy::has_live_research_intent(user_content);
-    let mut out = String::from(
-        "\n\n[Relevant Research Briefs]\nUse these saved briefs first for simple definition/comparison questions. Do not call web/search tools when a fresh brief answers a stable non-live question. If the user provides a URL, asks to verify/check again, or asks for latest/current data, refresh the exact source or web before final answer. Only state facts present in the briefs or saved sources; say unknown if a requested detail is missing. Do not guess licenses, channels, release numbers, integrations, or comparisons from memory alone:\n",
-    );
-    if current_sensitive {
-        out.push_str("- Live/refresh intent detected: verify exact saved sources or web before final answer.\n");
-    } else {
-        out.push_str("- Stable intent detected: answer directly from fresh briefs/sources when they cover the question; do not call web/search only to improve wording or re-check stable definitions.\n");
-    }
-    for item in items.iter().take(3) {
-        let line = format!(
-            "- {} | freshness={} ttl={}s confidence={:.2} score={:.2} | summary: {}\n",
-            item.topic,
-            item.freshness,
-            item.stale_after_secs,
-            item.confidence,
-            item.score,
-            item.summary
-        );
-        if out.chars().count() + line.chars().count() > 3600 {
-            break;
+    match items.is_empty() {
+        true => String::new(),
+        false => {
+            let current_sensitive = super::research_policy::has_live_research_intent(user_content);
+            let mut out = String::from(
+                "\n\n[Relevant Research Briefs]\nUse these saved briefs first for simple definition/comparison questions. Do not call web/search tools when a fresh brief answers a stable non-live question. If the user provides a URL, asks to verify/check again, or asks for latest/current data, refresh the exact source or web before final answer. Only state facts present in the briefs or saved sources; say unknown if a requested detail is missing. Do not guess licenses, channels, release numbers, integrations, or comparisons from memory alone:\n",
+            );
+            let intent_line = match current_sensitive {
+                true => "- Live/refresh intent detected: verify exact saved sources or web before final answer.\n",
+                false => "- Stable intent detected: answer directly from fresh briefs/sources when they cover the question; do not call web/search only to improve wording or re-check stable definitions.\n",
+            };
+            out.push_str(intent_line);
+            for item in items.iter().take(3) {
+                let line = format!(
+                    "- {} | freshness={} ttl={}s confidence={:.2} score={:.2} | summary: {}\n",
+                    item.topic,
+                    item.freshness,
+                    item.stale_after_secs,
+                    item.confidence,
+                    item.score,
+                    item.summary
+                );
+                match out.chars().count() + line.chars().count() > 3600 {
+                    true => break,
+                    false => out.push_str(&line),
+                }
+            }
+            out
         }
-        out.push_str(&line);
     }
-    out
 }
 
 async fn retrieve_research_brief_context(session_key: &str, user_content: &str) -> String {
-    if should_skip_research_memory_for_generic_query(user_content) {
-        return String::new();
-    }
-    match crate::tools::shared_memory::search_research_briefs(user_content, 3).await {
-        Ok(items) => {
-            if should_show_saved_context_notification(user_content) {
-                if let Some(best) = items.first().filter(|item| item.score >= MIN_MATCH_SCORE) {
-                    let notice = format!(
-                        "◇ Research brief matched: {} ({})",
-                        best.topic, best.freshness
-                    );
-                    crate::channels::cli::send_notification(&notice);
-                    crate::channels::websocket::publish_activity_notice(
-                        session_key,
-                        "research",
-                        "Research brief matched",
-                        format!("{} ({})", best.topic, best.freshness),
-                    );
-                }
+    match should_skip_research_memory_for_generic_query(user_content) {
+        true => String::new(),
+        false => match crate::tools::shared_memory::search_research_briefs(user_content, 3).await {
+            Ok(items) => {
+                let _ = should_show_saved_context_notification(user_content)
+                    .then(|| items.first().filter(|item| item.score >= MIN_MATCH_SCORE))
+                    .flatten()
+                    .map(|best| {
+                        let notice = format!(
+                            "◇ Research brief matched: {} ({})",
+                            best.topic, best.freshness
+                        );
+                        crate::channels::cli::send_notification(&notice);
+                        crate::channels::websocket::publish_activity_notice(
+                            session_key,
+                            "research",
+                            "Research brief matched",
+                            format!("{} ({})", best.topic, best.freshness),
+                        );
+                    });
+                format_research_brief_context_items(&items, user_content)
             }
-            format_research_brief_context_items(&items, user_content)
-        }
-        Err(err) => {
-            tracing::debug!(error = ?err, "research brief context retrieval skipped");
-            String::new()
-        }
+            Err(err) => {
+                tracing::debug!(error = ?err, "research brief context retrieval skipped");
+                String::new()
+            }
+        },
     }
 }
 
 fn format_source_context_items(items: &[crate::tools::shared_memory::SourceBookmark]) -> String {
-    if items.is_empty() {
-        return String::new();
-    }
-    let mut out = String::from("
-
-[Relevant Saved Sources]
-Use these ranked links, repos, docs, paths, or profiles before broad searching. If freshness=stale or the user asks for latest/current data, refresh the specific saved source first and then answer:
-");
-    for item in items.iter().take(4) {
-        let line = format!(
-            "- {} [{}] {} | freshness={} ttl={}s trust={:.2} score={:.2} | aliases: {} | summary: {}
-",
-            crate::tools::shared_memory::display_source_label(&item.label, &item.uri),
-            item.kind,
-            item.uri,
-            item.freshness,
-            item.stale_after_secs,
-            item.trust_score,
-            item.score,
-            item.aliases.join(", "),
-            item.summary
-        );
-        if out.chars().count() + line.chars().count() > MAX_SOURCE_CONTEXT_CHARS {
-            break;
+    match items.is_empty() {
+        true => String::new(),
+        false => {
+            let mut out = String::from(
+                "\n\n[Relevant Saved Sources]\nUse these ranked links, repos, docs, paths, or profiles before broad searching. If freshness=stale or the user asks for latest/current data, refresh the specific saved source first and then answer:\n",
+            );
+            for item in items.iter().take(4) {
+                let line = format!(
+                    "- {} [{}] {} | freshness={} ttl={}s trust={:.2} score={:.2} | aliases: {} | summary: {}\n",
+                    crate::tools::shared_memory::display_source_label(&item.label, &item.uri),
+                    item.kind,
+                    item.uri,
+                    item.freshness,
+                    item.stale_after_secs,
+                    item.trust_score,
+                    item.score,
+                    item.aliases.join(", "),
+                    item.summary
+                );
+                match out.chars().count() + line.chars().count() > MAX_SOURCE_CONTEXT_CHARS {
+                    true => break,
+                    false => out.push_str(&line),
+                }
+            }
+            out
         }
-        out.push_str(&line);
     }
-    out
 }
 
 fn should_notify_source_context(user_content: &str, brief_context_available: bool) -> bool {
@@ -750,43 +763,47 @@ async fn retrieve_source_context(
     user_content: &str,
     brief_context_available: bool,
 ) -> String {
-    if should_skip_research_memory_for_generic_query(user_content) {
-        return String::new();
-    }
-    match crate::tools::shared_memory::search_source_bookmarks(user_content, 4).await {
-        Ok(items) => {
-            if should_notify_source_context(user_content, brief_context_available) {
-                if let Some(best) = items.first().filter(|item| item.score >= MIN_MATCH_SCORE) {
-                    let label =
-                        crate::tools::shared_memory::display_source_label(&best.label, &best.uri);
-                    let notice = format!("◇ Sources matched: {} ({})", label, best.freshness);
-                    crate::channels::cli::send_notification(&notice);
-                    crate::channels::websocket::publish_activity_notice(
-                        session_key,
-                        "research",
-                        "Sources matched",
-                        format!("{} ({})", label, best.freshness),
-                    );
-                }
+    match should_skip_research_memory_for_generic_query(user_content) {
+        true => String::new(),
+        false => match crate::tools::shared_memory::search_source_bookmarks(user_content, 4).await {
+            Ok(items) => {
+                let _ = should_notify_source_context(user_content, brief_context_available)
+                    .then(|| items.first().filter(|item| item.score >= MIN_MATCH_SCORE))
+                    .flatten()
+                    .map(|best| {
+                        let label = crate::tools::shared_memory::display_source_label(
+                            &best.label,
+                            &best.uri,
+                        );
+                        let notice = format!("◇ Sources matched: {} ({})", label, best.freshness);
+                        crate::channels::cli::send_notification(&notice);
+                        crate::channels::websocket::publish_activity_notice(
+                            session_key,
+                            "research",
+                            "Sources matched",
+                            format!("{} ({})", label, best.freshness),
+                        );
+                    });
+                format_source_context_items(&items)
             }
-            format_source_context_items(&items)
-        }
-        Err(err) => {
-            tracing::debug!(error = ?err, "source context retrieval skipped");
-            String::new()
-        }
+            Err(err) => {
+                tracing::debug!(error = ?err, "source context retrieval skipped");
+                String::new()
+            }
+        },
     }
 }
 
 fn summarize_workflow_steps(steps: &serde_json::Value) -> String {
-    let Some(arr) = steps.as_array() else {
-        return String::new();
+    let arr = match steps.as_array() {
+        Some(arr) => arr,
+        None => return String::new(),
     };
     arr.iter()
         .take(5)
         .enumerate()
-        .map(|(idx, step)| {
-            if let Some(obj) = step.as_object() {
+        .map(|(idx, step)| match step.as_object() {
+            Some(obj) => {
                 let tool = obj
                     .get("tool")
                     .or_else(|| obj.get("name"))
@@ -798,14 +815,12 @@ fn summarize_workflow_steps(steps: &serde_json::Value) -> String {
                     .or_else(|| obj.get("action"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                if note.is_empty() {
-                    format!("{}. {}", idx + 1, tool)
-                } else {
-                    format!("{}. {} ({})", idx + 1, tool, note)
+                match note.is_empty() {
+                    true => format!("{}. {}", idx + 1, tool),
+                    false => format!("{}. {} ({})", idx + 1, tool, note),
                 }
-            } else {
-                format!("{}. {}", idx + 1, step)
             }
+            None => format!("{}. {}", idx + 1, step),
         })
         .collect::<Vec<_>>()
         .join("; ")
@@ -817,36 +832,36 @@ fn format_workflow_context_items(items: &[crate::tools::shared_memory::WorkflowC
         .filter(|item| item.score >= 4.0)
         .take(3)
         .collect();
-    if relevant.is_empty() {
-        return String::new();
-    }
-    let mut out = String::from("
-
-[Relevant Reusable Workflows]
-Use these matched procedures automatically for similar tasks instead of rediscovering steps. Follow preconditions, execute the steps, verify the result, then record success/failure with workflow_memory.record_run. For high-risk workflows, request approval before execution:
-");
-    for item in relevant {
-        let steps = summarize_workflow_steps(&item.steps);
-        let line = format!(
-            "- {} [{}] risk={} score={:.2} success={} failure={} | triggers: {} | preconditions: {} | summary: {} | steps: {} | verify: {}\n",
-            item.name,
-            item.status,
-            item.risk,
-            item.score,
-            item.success_count,
-            item.failure_count,
-            item.triggers.join(", "),
-            item.preconditions.join(", "),
-            item.summary,
-            steps,
-            item.verification.join(", ")
-        );
-        if out.chars().count() + line.chars().count() > 3600 {
-            break;
+    match relevant.is_empty() {
+        true => String::new(),
+        false => {
+            let mut out = String::from(
+                "\n\n[Relevant Reusable Workflows]\nUse these matched procedures automatically for similar tasks instead of rediscovering steps. Follow preconditions, execute the steps, verify the result, then record success/failure with workflow_memory.record_run. For high-risk workflows, request approval before execution:\n",
+            );
+            for item in relevant {
+                let steps = summarize_workflow_steps(&item.steps);
+                let line = format!(
+                    "- {} [{}] risk={} score={:.2} success={} failure={} | triggers: {} | preconditions: {} | summary: {} | steps: {} | verify: {}\n",
+                    item.name,
+                    item.status,
+                    item.risk,
+                    item.score,
+                    item.success_count,
+                    item.failure_count,
+                    item.triggers.join(", "),
+                    item.preconditions.join(", "),
+                    item.summary,
+                    steps,
+                    item.verification.join(", ")
+                );
+                match out.chars().count() + line.chars().count() > 3600 {
+                    true => break,
+                    false => out.push_str(&line),
+                }
+            }
+            out
         }
-        out.push_str(&line);
     }
-    out
 }
 
 fn should_emit_workflow_notice(seen: &mut HashSet<String>, workflow_name: &str) -> bool {
@@ -860,8 +875,11 @@ async fn retrieve_workflow_context(
 ) -> String {
     match crate::tools::shared_memory::search_workflow_cards(user_content, 3, true).await {
         Ok(items) => {
-            if let Some(best) = items.first().filter(|item| item.score >= 4.0) {
-                if should_emit_workflow_notice(seen_workflow_notices, &best.name) {
+            let _ = items
+                .first()
+                .filter(|item| item.score >= 4.0)
+                .filter(|best| should_emit_workflow_notice(seen_workflow_notices, &best.name))
+                .map(|best| {
                     let notice = format!("◇ Workflow matched: {}", best.name);
                     crate::channels::cli::send_notification(&notice);
                     crate::channels::websocket::publish_activity_notice(
@@ -870,8 +888,7 @@ async fn retrieve_workflow_context(
                         "Workflow matched",
                         best.name.clone(),
                     );
-                }
-            }
+                });
             format_workflow_context_items(&items)
         }
         Err(err) => {
@@ -896,12 +913,12 @@ async fn retrieve_pinned_identity_memories(bot_name: &str) -> String {
         }
         Ok(collected)
     });
-    if let Ok(rows) = cognitive_rows {
+    let _ = cognitive_rows.map(|rows| {
         entries.extend(
             rows.into_iter()
                 .filter(|text| identity_memory_candidate(text, bot_name)),
         );
-    }
+    });
     drop(_lock);
 
     let semantic_rows = with_graph_db(|conn| {
@@ -926,17 +943,20 @@ async fn retrieve_pinned_identity_memories(bot_name: &str) -> String {
     let mut out = String::new();
     for entry in entries {
         let normalized = entry.trim().to_lowercase();
-        if normalized.is_empty() || !seen.insert(normalized) {
-            continue;
+        let is_new = !normalized.is_empty() && seen.insert(normalized);
+        match is_new {
+            false => continue,
+            true => {
+                let _ = out.is_empty().then(|| {
+                    out.push_str("\n\n[Pinned Memory]\nUse these stable identity/persona/preference facts before guessing:\n");
+                });
+                let line = format!("- {}\n", entry.trim());
+                match out.chars().count() + line.chars().count() > 1500 {
+                    true => break,
+                    false => out.push_str(&line),
+                }
+            }
         }
-        if out.is_empty() {
-            out.push_str("\n\n[Pinned Memory]\nUse these stable identity/persona/preference facts before guessing:\n");
-        }
-        let line = format!("- {}\n", entry.trim());
-        if out.chars().count() + line.chars().count() > 1500 {
-            break;
-        }
-        out.push_str(&line);
     }
     out
 }
@@ -1028,7 +1048,6 @@ async fn retrieve_cross_session_memories(user_content: &str, bot_name: &str) -> 
     let uid = "*";
     let aid = "*";
 
-    // 1. Query cognitive_memory (from store_memory tool) — top by importance × recency
     let _lock = crate::tools::shared_memory::get_db_mutex().lock().await;
     let cognitive_rows = with_shared_db(|conn| {
         let mut stmt = conn.prepare(
@@ -1063,14 +1082,13 @@ async fn retrieve_cross_session_memories(user_content: &str, bot_name: &str) -> 
             (base_relevance == 0.0 && wants_identity && identity_memory_candidate(&text, bot_name))
                 .then_some(1.0f32);
         let relevance = identity_boost.unwrap_or(base_relevance);
-        (!is_foreign && relevance > 0.0).then(|| {
+        let _ = (!is_foreign && relevance > 0.0).then(|| {
             let score = importance * (-decay_rate * days_elapsed).exp() * relevance;
             all_entries.push((score, text));
         });
     }
     drop(_lock);
 
-    // 2. Query semantic_metadata (curator facts)
     let semantic_facts = with_graph_db(|conn| {
         let mut stmt = conn
             .prepare(
@@ -1093,7 +1111,6 @@ async fn retrieve_cross_session_memories(user_content: &str, bot_name: &str) -> 
     })
     .unwrap_or_default();
 
-    // Score semantic facts just below cognitive ones, gated by current query relevance and workspace scope.
     for fact in &semantic_facts {
         let is_foreign = has_foreign_workspace_path(fact, &active_workspace, user_content);
         let base_relevance = memory_relevance_score(&query_terms, fact);
@@ -1101,12 +1118,11 @@ async fn retrieve_cross_session_memories(user_content: &str, bot_name: &str) -> 
             (base_relevance == 0.0 && wants_identity && identity_memory_candidate(fact, bot_name))
                 .then_some(1.0f32);
         let relevance = identity_boost.unwrap_or(base_relevance);
-        (!is_foreign && relevance > 0.0).then(|| {
+        let _ = (!is_foreign && relevance > 0.0).then(|| {
             all_entries.push((0.7 * relevance, fact.clone()));
         });
     }
 
-    // 3. Query graph_nodes (entity observations)
     let graph_nodes = with_graph_db(|conn| {
         let mut stmt = conn
             .prepare(
@@ -1130,10 +1146,8 @@ async fn retrieve_cross_session_memories(user_content: &str, bot_name: &str) -> 
     })
     .unwrap_or_default();
 
-    // 4. Sort by score descending
     all_entries.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
 
-    // 5. Dedup by normalized text
     fn normalize(s: &str) -> String {
         s.trim()
             .trim_start_matches(['-', '*', ' '])
@@ -1152,13 +1166,12 @@ async fn retrieve_cross_session_memories(user_content: &str, bot_name: &str) -> 
             || seen
                 .iter()
                 .any(|s: &String| s.contains(&norm) || norm.contains(s));
-        (!is_duplicate).then(|| {
+        let _ = (!is_duplicate).then(|| {
             seen.insert(norm);
             deduped.push(text.clone());
         });
     }
 
-    // 6. Filter graph nodes by relevance and workspace scope
     let filtered_nodes: Vec<_> = graph_nodes
         .into_iter()
         .filter(|(name, obs)| {
@@ -1198,96 +1211,70 @@ fn get_version_history() -> String {
 
     for line in CHANGELOG_CONTENT.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("### v") {
+        let is_version_header = trimmed.starts_with("### v");
+        let _ = is_version_header.then(|| {
             header_count += 1;
-            if header_count > 5 {
-                break;
-            }
             recording = true;
-        }
-        if recording {
-            history.push_str(line);
-            history.push('\n');
+        });
+        match is_version_header && header_count > 5 {
+            true => break,
+            false => {
+                let _ = recording.then(|| {
+                    history.push_str(line);
+                    history.push('\n');
+                });
+            }
         }
     }
     history.trim().to_string()
 }
 
+const TOOL_NAMESPACE_CATEGORIES: &[(&str, &str)] = &[
+    ("searchxyz_", "SearchXyz Tools"),
+    ("openmedia_", "OpenMedia Tools"),
+    ("opendoc_", "OpenDoc Tools"),
+    ("github_", "GitHub Integration Tools"),
+    ("docs_", "Local & Crates Docs Tools"),
+];
+
 fn get_dynamic_tools_guideline(registry: &crate::tools::ToolRegistry) -> String {
     let tools = registry.get_static_tools();
     let mut core_tools = Vec::new();
-    let mut searchxyz_tools = Vec::new();
-    let mut openmedia_tools = Vec::new();
-    let mut opendoc_tools = Vec::new();
-    let mut github_tools = Vec::new();
-    let mut docs_tools = Vec::new();
+    let mut grouped: Vec<Vec<String>> = vec![Vec::new(); TOOL_NAMESPACE_CATEGORIES.len()];
 
     for t in tools {
         let name = t.name();
-        if name.starts_with("searchxyz_") {
-            searchxyz_tools.push(format!("'{}'", name));
-        } else if name.starts_with("openmedia_") {
-            openmedia_tools.push(format!("'{}'", name));
-        } else if name.starts_with("opendoc_") {
-            opendoc_tools.push(format!("'{}'", name));
-        } else if name.starts_with("github_") {
-            github_tools.push(format!("'{}'", name));
-        } else if name.starts_with("docs_") {
-            docs_tools.push(format!("'{}'", name));
-        } else {
-            core_tools.push(format!("'{}'", name));
+        let formatted = format!("'{}'", name);
+        let matched_idx = TOOL_NAMESPACE_CATEGORIES
+            .iter()
+            .position(|(prefix, _)| name.starts_with(prefix));
+        match matched_idx {
+            Some(idx) => grouped[idx].push(formatted),
+            None => core_tools.push(formatted),
         }
     }
 
     core_tools.sort();
-    searchxyz_tools.sort();
-    openmedia_tools.sort();
-    opendoc_tools.sort();
-    github_tools.sort();
-    docs_tools.sort();
+    for list in &mut grouped {
+        list.sort();
+    }
 
     let mut out = String::new();
     out.push_str("You have native tools for files, shell execution, and other utilities. The following tools are registered in your environment:\n");
-    if !core_tools.is_empty() {
+    let _ = (!core_tools.is_empty()).then(|| {
         out.push_str(&format!(
             "            - Core Tools: {}\n",
             core_tools.join(", ")
         ));
-    }
-    if !searchxyz_tools.is_empty() {
-        out.push_str(&format!(
-            "            - SearchXyz Tools: {}\n",
-            searchxyz_tools.join(", ")
-        ));
-    }
-    if !openmedia_tools.is_empty() {
-        out.push_str(&format!(
-            "            - OpenMedia Tools: {}\n",
-            openmedia_tools.join(", ")
-        ));
-    }
-    if !opendoc_tools.is_empty() {
-        out.push_str(&format!(
-            "            - OpenDoc Tools: {}\n",
-            opendoc_tools.join(", ")
-        ));
-    }
-    if !github_tools.is_empty() {
-        out.push_str(&format!(
-            "            - GitHub Integration Tools: {}\n",
-            github_tools.join(", ")
-        ));
-    }
-    if !docs_tools.is_empty() {
-        out.push_str(&format!(
-            "            - Local & Crates Docs Tools: {}\n",
-            docs_tools.join(", ")
-        ));
+    });
+    for ((_, label), list) in TOOL_NAMESPACE_CATEGORIES.iter().zip(grouped.iter()) {
+        let _ = (!list.is_empty()).then(|| {
+            out.push_str(&format!("            - {}: {}\n", label, list.join(", ")));
+        });
     }
     out.push_str("            - MCP server integration managed via 'manage_mcp' tool.");
     out
 }
-
 
 #[cfg(test)]
 #[path = "build_tests.rs"]

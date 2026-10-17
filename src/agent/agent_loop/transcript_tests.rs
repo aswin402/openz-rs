@@ -36,10 +36,9 @@ async fn large_namespaced_tool_output_uses_runtime_dir_and_safe_filename() {
         })
         .await;
 
-    if let Some(old_home) = old_home {
-        std::env::set_var("HOME", old_home);
-    } else {
-        std::env::remove_var("HOME");
+    match old_home {
+        Some(old_home) => std::env::set_var("HOME", old_home),
+        None => std::env::remove_var("HOME"),
     }
 
     let output_dir = config_dir.join("tool_outputs");

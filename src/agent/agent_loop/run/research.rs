@@ -26,46 +26,42 @@ pub(super) fn direct_research_url(
     tool_name: &str,
     arguments: &serde_json::Value,
 ) -> Option<String> {
-    if !matches!(tool_name, "web_fetch" | "searchxyz_read_url") {
-        return None;
-    }
+    matches!(tool_name, "web_fetch" | "searchxyz_read_url").then_some(())?;
 
     let raw_url = arguments.get("url").and_then(|value| value.as_str())?;
     let mut parsed = reqwest::Url::parse(raw_url).ok()?;
-    // URL fragments select a page section but do not change the fetched document.
     parsed.set_fragment(None);
     Some(parsed.to_string())
 }
 
 pub(super) fn direct_page_research_only(user_content: &str) -> bool {
-    if !super::super::research_policy::text_has_http_url(user_content) {
-        return false;
+    match super::super::research_policy::text_has_http_url(user_content) {
+        false => false,
+        true => {
+            let lower = user_content.to_lowercase();
+            let allows_related_sources = [
+                "deep",
+                "broader",
+                "more detail",
+                "related",
+                "compare",
+                "comparison",
+                "multiple sources",
+                "full research",
+                "scrape",
+                "scrap",
+                "source code",
+                "download",
+                "assets",
+                "asset",
+                "run locally",
+                "local copy",
+            ]
+            .iter()
+            .any(|term| lower.contains(term));
+            !allows_related_sources
+        }
     }
-
-    let lower = user_content.to_lowercase();
-    // Extraction and download tasks legitimately follow embeds and asset URLs.
-    // Ordinary "research this URL" requests remain page-local by default.
-    let allows_related_sources = [
-        "deep",
-        "broader",
-        "more detail",
-        "related",
-        "compare",
-        "comparison",
-        "multiple sources",
-        "full research",
-        "scrape",
-        "scrap",
-        "source code",
-        "download",
-        "assets",
-        "asset",
-        "run locally",
-        "local copy",
-    ]
-    .iter()
-    .any(|term| lower.contains(term));
-    !allows_related_sources
 }
 
 pub(super) fn user_content_requests_fresh_fetch(user_content: &str) -> bool {
@@ -92,21 +88,20 @@ pub(super) async fn fresh_research_brief_blocks_lookup(
     tool_name: &str,
     arguments: &serde_json::Value,
 ) -> bool {
-    if !is_research_lookup_tool(tool_name)
+    match !is_research_lookup_tool(tool_name)
         || super::super::research_policy::should_force_live_research_lookup(
             user_content,
             arguments,
-        )
-    {
-        return false;
-    }
-    match crate::tools::shared_memory::search_research_briefs(user_content, 1).await {
-        Ok(items) => items.first().is_some_and(|item| {
-            item.score >= super::super::build::MIN_MATCH_SCORE && item.freshness == "fresh"
-        }),
-        Err(err) => {
-            tracing::debug!(error = ?err, "fresh research brief lookup gate skipped");
-            false
-        }
+        ) {
+        true => false,
+        false => match crate::tools::shared_memory::search_research_briefs(user_content, 1).await {
+            Ok(items) => items.first().is_some_and(|item| {
+                item.score >= super::super::build::MIN_MATCH_SCORE && item.freshness == "fresh"
+            }),
+            Err(err) => {
+                tracing::debug!(error = ?err, "fresh research brief lookup gate skipped");
+                false
+            }
+        },
     }
 }

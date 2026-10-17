@@ -23,31 +23,33 @@ pub struct SourceLedger {
     sources: Vec<SourceRef>,
 }
 
+const SOURCE_URL_KEYS: &[&str] = &["url", "source_url", "sourceUrl", "uri", "link"];
+
 impl SourceLedger {
     pub fn add_success(&mut self, url: &str, title: Option<&str>) {
         let normalized = normalize_source_url(url);
-        if self.sources.iter().any(|source| source.url == normalized) {
-            return;
+        match self.sources.iter().any(|source| source.url == normalized) {
+            true => {}
+            false => self.sources.push(SourceRef {
+                url: normalized,
+                title: title.map(str::to_string),
+                status: SourceStatus::Success,
+            }),
         }
-        self.sources.push(SourceRef {
-            url: normalized,
-            title: title.map(str::to_string),
-            status: SourceStatus::Success,
-        });
     }
 
     pub fn add_failure(&mut self, url: &str, reason: &str) {
         let normalized = normalize_source_url(url);
-        if self.sources.iter().any(|source| source.url == normalized) {
-            return;
+        match self.sources.iter().any(|source| source.url == normalized) {
+            true => {}
+            false => self.sources.push(SourceRef {
+                url: normalized,
+                title: None,
+                status: SourceStatus::Failed {
+                    reason: reason.to_string(),
+                },
+            }),
         }
-        self.sources.push(SourceRef {
-            url: normalized,
-            title: None,
-            status: SourceStatus::Failed {
-                reason: reason.to_string(),
-            },
-        });
     }
 
     pub fn successful_sources(&self) -> impl Iterator<Item = &SourceRef> {
@@ -76,15 +78,18 @@ impl SourceLedger {
         arguments: &serde_json::Value,
         result: &serde_json::Value,
     ) {
-        if let Some(error) = result.get("error").and_then(|value| value.as_str()) {
-            if let Some(label) = attempted_source_label(arguments) {
-                self.add_failure(&label, error);
+        match result.get("error").and_then(|value| value.as_str()) {
+            Some(error) => {
+                match attempted_source_label(arguments) {
+                    Some(label) => self.add_failure(&label, error),
+                    None => {}
+                }
             }
-            return;
+            None => {
+                collect_sources(result, self, None);
+                collect_sources(arguments, self, None);
+            }
         }
-
-        collect_sources(result, self, None);
-        collect_sources(arguments, self, None);
     }
 
     pub fn append_live_research_caveat_if_needed(
@@ -92,11 +97,12 @@ impl SourceLedger {
         content: String,
         require_sources: bool,
     ) -> String {
-        if !require_sources || self.confidence_for_live_claims() == SourceConfidence::Sufficient {
-            return content;
-        }
-        if content.contains("Live source verification is incomplete") {
-            return content;
+        let skip = !require_sources
+            || self.confidence_for_live_claims() == SourceConfidence::Sufficient
+            || content.contains("Live source verification is incomplete");
+        match skip {
+            true => return content,
+            false => {}
         }
 
         let detail = match self.confidence_for_live_claims() {
@@ -146,16 +152,19 @@ fn collect_sources(
                 .or_else(|| map.get("reason"))
                 .and_then(|value| value.as_str())
                 .unwrap_or("failed");
+            let is_failed = matches!(status.as_str(), "error" | "failed" | "failure" | "blocked");
 
-            for key in ["url", "source_url", "sourceUrl", "uri", "link"] {
-                if let Some(url) = map.get(key).and_then(|value| value.as_str()) {
-                    if is_http_url(url) {
-                        if matches!(status.as_str(), "error" | "failed" | "failure" | "blocked") {
-                            ledger.add_failure(url, detail);
-                        } else {
-                            ledger.add_success(url, title);
-                        }
-                    }
+            for key in SOURCE_URL_KEYS {
+                match map
+                    .get(*key)
+                    .and_then(|value| value.as_str())
+                    .filter(|url| is_http_url(url))
+                {
+                    Some(url) => match is_failed {
+                        true => ledger.add_failure(url, detail),
+                        false => ledger.add_success(url, title),
+                    },
+                    None => {}
                 }
             }
 
@@ -197,6 +206,7 @@ fn is_http_url(value: &str) -> bool {
         .map(|url| matches!(url.scheme(), "http" | "https"))
         .unwrap_or(false)
 }
+
 fn normalize_source_url(url: &str) -> String {
     match reqwest::Url::parse(url) {
         Ok(mut parsed) => {
@@ -210,4 +220,3 @@ fn normalize_source_url(url: &str) -> String {
 #[cfg(test)]
 #[path = "source_ledger_tests.rs"]
 mod tests;
-

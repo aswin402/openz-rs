@@ -3,24 +3,18 @@ use crate::tools::arguments::{PATH_KEYS, QUERY_KEYS};
 use sha2::{Digest, Sha256};
 
 fn read_scene_file_fingerprint(path: &str) -> Option<String> {
-    let path = if let Some(stripped) = path.strip_prefix("file://") {
-        std::path::PathBuf::from(stripped)
-    } else {
-        std::path::PathBuf::from(path)
-    };
+    let path = std::path::PathBuf::from(path.strip_prefix("file://").unwrap_or(path));
     let metadata = std::fs::metadata(&path).ok()?;
-    if !metadata.is_file() {
-        return None;
-    }
+    metadata.is_file().then_some(())?;
     let bytes = std::fs::read(&path).ok()?;
     let mut hasher = Sha256::new();
     hasher.update(path.to_string_lossy().as_bytes());
     hasher.update(metadata.len().to_le_bytes());
-    if let Ok(modified) = metadata.modified() {
-        if let Ok(elapsed) = modified.duration_since(std::time::UNIX_EPOCH) {
-            hasher.update(elapsed.as_nanos().to_le_bytes());
-        }
-    }
+    let _ = metadata
+        .modified()
+        .ok()
+        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|elapsed| hasher.update(elapsed.as_nanos().to_le_bytes()));
     hasher.update(&bytes);
     Some(format!("sha256:{:x}", hasher.finalize()))
 }
@@ -31,14 +25,9 @@ fn scene_file_arg_path(args: &serde_json::Value) -> Option<&str> {
         .or_else(|| obj.get("scenePath"))
         .and_then(|v| v.as_str())
         .or_else(|| {
-            obj.get("scene").and_then(|v| {
-                let s = v.as_str()?;
-                if s.ends_with(".json") || s.starts_with("file://") {
-                    Some(s)
-                } else {
-                    None
-                }
-            })
+            obj.get("scene")
+                .and_then(|v| v.as_str())
+                .filter(|s| s.ends_with(".json") || s.starts_with("file://"))
         })
 }
 
@@ -73,11 +62,12 @@ fn object_arg_value<'a>(
 
 fn canonical_tool_args_key(tool_name: &str, args: &serde_json::Value) -> Option<String> {
     let parsed;
-    let args = if let Some(raw) = args.as_str() {
-        parsed = serde_json::from_str::<serde_json::Value>(raw).ok()?;
-        &parsed
-    } else {
-        args
+    let args = match args.as_str() {
+        Some(raw) => {
+            parsed = serde_json::from_str::<serde_json::Value>(raw).ok()?;
+            &parsed
+        }
+        None => args,
     };
     let map = args.as_object()?;
 
@@ -98,12 +88,9 @@ fn canonical_tool_args_key(tool_name: &str, args: &serde_json::Value) -> Option<
             ))
         }
         "read_file" | "view_file" => {
-            let path = object_arg_value(
-                map,
-                PATH_KEYS,
-            )
-            .and_then(|v| v.as_str())?
-            .trim();
+            let path = object_arg_value(map, PATH_KEYS)
+                .and_then(|v| v.as_str())?
+                .trim();
             let start_line =
                 object_arg_value(map, &["start_line", "startLine"]).and_then(|v| v.as_u64());
             let end_line = object_arg_value(map, &["end_line", "endLine"]).and_then(|v| v.as_u64());
@@ -116,10 +103,9 @@ fn canonical_tool_args_key(tool_name: &str, args: &serde_json::Value) -> Option<
 }
 
 fn normalized_json_arg(args: &serde_json::Value) -> Option<serde_json::Value> {
-    if let Some(raw) = args.as_str() {
-        serde_json::from_str::<serde_json::Value>(raw).ok()
-    } else {
-        Some(args.clone())
+    match args.as_str() {
+        Some(raw) => serde_json::from_str::<serde_json::Value>(raw).ok(),
+        None => Some(args.clone()),
     }
 }
 
@@ -128,16 +114,15 @@ fn tool_args_match(
     current: &serde_json::Value,
     previous: &serde_json::Value,
 ) -> bool {
-    if let (Some(current_key), Some(previous_key)) = (
+    match (
         canonical_tool_args_key(tool_name, current),
         canonical_tool_args_key(tool_name, previous),
     ) {
-        return current_key == previous_key;
-    }
-
-    match (normalized_json_arg(current), normalized_json_arg(previous)) {
-        (Some(current), Some(previous)) => current == previous,
-        _ => previous == current,
+        (Some(current_key), Some(previous_key)) => current_key == previous_key,
+        _ => match (normalized_json_arg(current), normalized_json_arg(previous)) {
+            (Some(current), Some(previous)) => current == previous,
+            _ => previous == current,
+        },
     }
 }
 
@@ -151,20 +136,29 @@ fn tool_result_signature(
     tool_name: &str,
 ) -> Option<String> {
     messages.iter().find_map(|msg| {
-        if msg.role != "tool" {
-            return None;
-        }
+        (msg.role == "tool").then_some(())?;
         let same_call = call_id
             .is_some_and(|id| msg.extra.get("tool_call_id").and_then(|v| v.as_str()) == Some(id));
         let same_name = msg.extra.get("name").and_then(|v| v.as_str()) == Some(tool_name);
-        if same_call || (call_id.is_none() && same_name) {
+        (same_call || (call_id.is_none() && same_name)).then(|| {
             let mut hasher = Sha256::new();
             hasher.update(msg.content.as_bytes());
-            Some(format!("sha256:{:x}", hasher.finalize()))
-        } else {
-            None
-        }
+            format!("sha256:{:x}", hasher.finalize())
+        })
     })
+}
+
+fn extract_call_name(tc: &serde_json::Value) -> Option<&str> {
+    tc.get("name").and_then(|v| v.as_str()).or_else(|| {
+        tc.get("function")
+            .and_then(|f| f.get("name"))
+            .and_then(|v| v.as_str())
+    })
+}
+
+fn extract_call_args(tc: &serde_json::Value) -> Option<&serde_json::Value> {
+    tc.get("arguments")
+        .or_else(|| tc.get("function").and_then(|f| f.get("arguments")))
 }
 
 pub(crate) fn count_previous_tool_calls(
@@ -179,24 +173,18 @@ pub(crate) fn count_previous_tool_calls(
     let mut state_epoch = 0usize;
     let mut call_epochs = Vec::new();
 
-    for msg in turn_messages {
-        if msg.role != "assistant" {
-            continue;
-        }
-        if let Some(tool_calls) = msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
-            for tc in tool_calls {
-                let name = tc.get("name").and_then(|v| v.as_str()).or_else(|| {
-                    tc.get("function")
-                        .and_then(|f| f.get("name"))
-                        .and_then(|v| v.as_str())
+    for msg in turn_messages.iter().filter(|m| m.role == "assistant") {
+        let tool_calls = match msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
+            Some(tc) => tc,
+            None => continue,
+        };
+        for tc in tool_calls {
+            call_epochs.push(state_epoch);
+            let _ = extract_call_name(tc)
+                .filter(|name_str| is_state_changing_tool(name_str))
+                .map(|_| {
+                    state_epoch += 1;
                 });
-                call_epochs.push(state_epoch);
-                if let Some(name_str) = name {
-                    if is_state_changing_tool(name_str) {
-                        state_epoch += 1;
-                    }
-                }
-            }
         }
     }
     let current_state_epoch = state_epoch;
@@ -204,57 +192,60 @@ pub(crate) fn count_previous_tool_calls(
     let mut seen_signatures = std::collections::HashSet::new();
     let mut count = 0;
     let mut call_index = 0usize;
-    for (idx, msg) in turn_messages.iter().enumerate() {
-        if msg.role == "assistant" {
-            if let Some(tool_calls) = msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
-                for tc in tool_calls {
-                    let name = tc.get("name").and_then(|v| v.as_str()).or_else(|| {
-                        tc.get("function")
-                            .and_then(|f| f.get("name"))
-                            .and_then(|v| v.as_str())
-                    });
-                    let args = tc
-                        .get("arguments")
-                        .or_else(|| tc.get("function").and_then(|f| f.get("arguments")));
-                    let call_epoch = call_epochs.get(call_index).copied().unwrap_or(0);
-                    call_index += 1;
+    for (idx, msg) in turn_messages
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.role == "assistant")
+    {
+        let tool_calls = match msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
+            Some(tc) => tc,
+            None => continue,
+        };
+        for tc in tool_calls {
+            let call_epoch = call_epochs.get(call_index).copied().unwrap_or(0);
+            call_index += 1;
+            let (name_str, args_val) = match (extract_call_name(tc), extract_call_args(tc)) {
+                (Some(n), Some(a)) => (n, a),
+                _ => continue,
+            };
+            match name_str == tool_name {
+                false => continue,
+                true => {
+                    let current_fingerprint = tool_arg_fingerprint(tool_args);
+                    let previous_fingerprint =
+                        tc.get("_openz_arg_fingerprint").and_then(|v| v.as_str());
 
-                    if let (Some(name_str), Some(args_val)) = (name, args) {
-                        if name_str == tool_name {
-                            let current_fingerprint = tool_arg_fingerprint(tool_args);
-                            let previous_fingerprint =
-                                tc.get("_openz_arg_fingerprint").and_then(|v| v.as_str());
+                    let match_args = match (
+                        current_fingerprint.as_deref(),
+                        previous_fingerprint.is_some() && scene_file_arg_path(tool_args).is_some(),
+                    ) {
+                        (Some(current), _) => previous_fingerprint == Some(current),
+                        (None, true) => false,
+                        (None, false) => tool_args_match(tool_name, tool_args, args_val),
+                    };
 
-                            let match_args = if let Some(current) = current_fingerprint.as_deref() {
-                                previous_fingerprint == Some(current)
-                            } else if previous_fingerprint.is_some()
-                                && scene_file_arg_path(tool_args).is_some()
-                            {
-                                false
-                            } else {
-                                tool_args_match(tool_name, tool_args, args_val)
-                            };
-                            if match_args {
-                                if exact_arg_repeat && call_epoch == current_state_epoch {
-                                    count += 1;
-                                    continue;
-                                }
-                                if progress_sensitive_repeat {
+                    match match_args {
+                        false => {}
+                        true => match exact_arg_repeat && call_epoch == current_state_epoch {
+                            true => {
+                                count += 1;
+                            }
+                            false => {
+                                let is_new_progress_sig = progress_sensitive_repeat && {
                                     let signature = tool_result_signature(
                                         &turn_messages[idx + 1..],
                                         tool_call_id(tc),
                                         tool_name,
                                     );
-                                    if signature
+                                    signature
                                         .as_ref()
                                         .is_some_and(|sig| seen_signatures.insert(sig.clone()))
-                                    {
-                                        continue;
-                                    }
-                                }
-                                count += 1;
+                                };
+                                let _ = (!is_new_progress_sig).then(|| {
+                                    count += 1;
+                                });
                             }
-                        }
+                        },
                     }
                 }
             }
@@ -264,24 +255,22 @@ pub(crate) fn count_previous_tool_calls(
 }
 
 pub(crate) fn count_previous_text_responses(messages: &[Message], next_content: &str) -> usize {
-    if next_content.trim().is_empty() {
-        return 0;
-    }
-    let last_user_idx = messages.iter().rposition(|m| m.role == "user").unwrap_or(0);
-    let mut count = 0;
     let next_trimmed = next_content.trim();
-    for msg in &messages[last_user_idx..] {
-        if msg.role == "assistant"
-            && !msg.content.trim().is_empty()
-            && msg.content.trim() == next_trimmed
-        {
-            count += 1;
+    match next_trimmed.is_empty() {
+        true => 0,
+        false => {
+            let last_user_idx = messages.iter().rposition(|m| m.role == "user").unwrap_or(0);
+            messages[last_user_idx..]
+                .iter()
+                .filter(|msg| {
+                    msg.role == "assistant"
+                        && !msg.content.trim().is_empty()
+                        && msg.content.trim() == next_trimmed
+                })
+                .count()
         }
     }
-    count
 }
-
-
 
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))

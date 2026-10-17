@@ -34,21 +34,23 @@ impl StreamingAssembly {
                 arguments,
             } => {
                 let entry = self.partial_tool_calls.entry(index).or_default();
-                if let Some(id) = id.filter(|s| !s.is_empty()) {
-                    entry.id = id;
+                match id.filter(|s| !s.is_empty()) {
+                    Some(id) => entry.id = id,
+                    None => {}
                 }
-                if let Some(name) = name.filter(|s| !s.is_empty()) {
-                    entry.name = name;
+                match name.filter(|s| !s.is_empty()) {
+                    Some(name) => entry.name = name,
+                    None => {}
                 }
-                if let Some(arguments) = arguments {
-                    entry.arguments.push_str(&arguments);
-                }
-            }
-            ChatStreamChunk::Done { finish_reason } => {
-                if let Some(reason) = finish_reason {
-                    self.finish_reason = reason;
+                match arguments {
+                    Some(arguments) => entry.arguments.push_str(&arguments),
+                    None => {}
                 }
             }
+            ChatStreamChunk::Done { finish_reason } => match finish_reason {
+                Some(reason) => self.finish_reason = reason,
+                None => {}
+            },
         }
     }
 
@@ -58,57 +60,56 @@ impl StreamingAssembly {
 
         let mut tool_calls = Vec::new();
         for key in keys {
-            if let Some(partial) = self.partial_tool_calls.get(&key) {
-                if partial.name.trim().is_empty() {
-                    continue;
-                }
-                let arguments = if partial.arguments.trim().is_empty() {
-                    serde_json::json!({})
-                } else {
-                    serde_json::from_str(&partial.arguments).unwrap_or_else(|err| {
-                        let repaired = partial.arguments.replace('\n', "\\n").replace('\r', "\\r");
-                        serde_json::from_str(&repaired)
-                            .unwrap_or_else(|_| serde_json::json!({ "parse_error": err.to_string() }))
-                    })
-                };
-
-                tool_calls.push(ToolCallRequest {
-                    id: if partial.id.is_empty() {
-                        format!("call_{}", key)
-                    } else {
-                        partial.id.clone()
-                    },
-                    name: partial.name.clone(),
-                    arguments,
-                });
+            let partial = match self.partial_tool_calls.get(&key) {
+                Some(partial) => partial,
+                None => continue,
+            };
+            match partial.name.trim().is_empty() {
+                true => continue,
+                false => {}
             }
+            let arguments = match partial.arguments.trim().is_empty() {
+                true => serde_json::json!({}),
+                false => serde_json::from_str(&partial.arguments).unwrap_or_else(|err| {
+                    let repaired = partial.arguments.replace('\n', "\\n").replace('\r', "\\r");
+                    serde_json::from_str(&repaired)
+                        .unwrap_or_else(|_| serde_json::json!({ "parse_error": err.to_string() }))
+                }),
+            };
+
+            let id = match partial.id.is_empty() {
+                true => format!("call_{}", key),
+                false => partial.id.clone(),
+            };
+
+            tool_calls.push(ToolCallRequest {
+                id,
+                name: partial.name.clone(),
+                arguments,
+            });
         }
 
-        let mut content = if self.content.is_empty() {
-            None
-        } else {
-            Some(self.content)
-        };
+        let mut content = (!self.content.is_empty()).then_some(self.content);
 
-        if tool_calls.is_empty() {
-            if let Some(ref text) = content {
+        match (tool_calls.is_empty(), content.as_deref()) {
+            (true, Some(text)) => {
                 let parsed = crate::providers::openai::parse_fallback_tool_calls(text);
-                if !parsed.is_empty() {
-                    tool_calls = parsed;
-                    content = None;
+                match parsed.is_empty() {
+                    true => {}
+                    false => {
+                        tool_calls = parsed;
+                        content = None;
+                    }
                 }
             }
+            _ => {}
         }
 
         LLMResponse {
             content,
             tool_calls,
             finish_reason: self.finish_reason,
-            reasoning_content: if self.reasoning.is_empty() {
-                None
-            } else {
-                Some(self.reasoning)
-            },
+            reasoning_content: (!self.reasoning.is_empty()).then_some(self.reasoning),
         }
     }
 }

@@ -100,8 +100,9 @@ fn register_child_inner(
         kill_process_group,
     };
     let list = SPAWNED_CHILDREN.get_or_init(|| Mutex::new(Vec::new()));
-    if let Ok(mut guard) = list.lock() {
-        guard.push(managed);
+    match list.lock() {
+        Ok(mut guard) => guard.push(managed),
+        Err(_) => {}
     }
 
     let task_kind = match kind.as_str() {
@@ -133,30 +134,36 @@ fn register_child_inner(
 
 fn kill_managed_child(entry: &mut ManagedChild) {
     #[cfg(unix)]
-    if entry.kill_process_group {
-        let pgid = -(entry.child.id() as i32);
-        unsafe {
-            libc::kill(pgid, libc::SIGTERM);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(150));
-        if matches!(entry.child.try_wait(), Ok(None)) {
+    match entry.kill_process_group {
+        true => {
+            let pgid = -(entry.child.id() as i32);
             unsafe {
-                libc::kill(pgid, libc::SIGKILL);
+                libc::kill(pgid, libc::SIGTERM);
             }
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            match entry.child.try_wait() {
+                Ok(None) => unsafe {
+                    libc::kill(pgid, libc::SIGKILL);
+                },
+                _ => {}
+            }
+            let _ = entry.child.wait();
+            return;
         }
-        let _ = entry.child.wait();
-        return;
+        false => {}
     }
 
     let _ = entry.child.kill();
     let _ = entry.child.wait();
 }
 pub fn list_registered_children() -> Vec<RegisteredChildInfo> {
-    let Some(list) = SPAWNED_CHILDREN.get() else {
-        return Vec::new();
+    let list = match SPAWNED_CHILDREN.get() {
+        Some(list) => list,
+        None => return Vec::new(),
     };
-    let Ok(mut guard) = list.lock() else {
-        return Vec::new();
+    let mut guard = match list.lock() {
+        Ok(guard) => guard,
+        Err(_) => return Vec::new(),
     };
     let mut active = Vec::new();
     guard.retain_mut(|entry| match entry.child.try_wait() {
@@ -178,40 +185,47 @@ pub fn list_registered_children() -> Vec<RegisteredChildInfo> {
 
 pub fn stop_registered_child(target: &str) -> Result<usize, String> {
     let stopped = stop_registered_child_without_task_cleanup(target)?;
-    if stopped > 0 {
-        crate::tools::task_manager::stop_tasks(target);
+    match stopped > 0 {
+        true => {
+            let _ = crate::tools::task_manager::stop_tasks(target);
+        }
+        false => {}
     }
     Ok(stopped)
 }
 
 pub fn stop_registered_child_without_task_cleanup(target: &str) -> Result<usize, String> {
-    let Some(list) = SPAWNED_CHILDREN.get() else {
-        return Ok(0);
+    let list = match SPAWNED_CHILDREN.get() {
+        Some(list) => list,
+        None => return Ok(0),
     };
-    let Ok(mut guard) = list.lock() else {
-        return Err("process registry lock poisoned".to_string());
-    };
+    let mut guard = list
+        .lock()
+        .map_err(|_| "process registry lock poisoned".to_string())?;
     let stop_all = target.trim().eq_ignore_ascii_case("all");
-    let target_id = if stop_all {
-        None
-    } else {
-        Some(
+    let target_id = match stop_all {
+        true => None,
+        false => Some(
             target
                 .trim()
                 .parse::<u64>()
                 .map_err(|_| "target must be a server id or 'all'".to_string())?,
-        )
+        ),
     };
 
     let mut stopped = 0usize;
     let mut remaining = Vec::new();
     for mut entry in std::mem::take(&mut *guard) {
         let selected = stop_all || Some(entry.id) == target_id;
-        if selected {
-            kill_managed_child(&mut entry);
-            stopped += 1;
-        } else if matches!(entry.child.try_wait(), Ok(None)) {
-            remaining.push(entry);
+        match selected {
+            true => {
+                kill_managed_child(&mut entry);
+                stopped += 1;
+            }
+            false => match entry.child.try_wait() {
+                Ok(None) => remaining.push(entry),
+                _ => {}
+            },
         }
     }
     *guard = remaining;
@@ -223,8 +237,11 @@ pub fn kill_all_registered_children() {
 }
 
 pub fn trigger() {
-    if let Some(tx) = SHUTDOWN_TX.get() {
-        let _ = tx.send(true);
+    match SHUTDOWN_TX.get() {
+        Some(tx) => {
+            let _ = tx.send(true);
+        }
+        None => {}
     }
     kill_all_registered_children();
     crate::tools::subagent::cleanup_registered_worktrees();
@@ -245,10 +262,9 @@ pub enum SigintAction {
 }
 
 pub fn sigint_action(cli_active: bool, raw_input_active: bool) -> SigintAction {
-    if cli_active && !raw_input_active {
-        SigintAction::CancelTurn
-    } else {
-        SigintAction::Shutdown
+    match (cli_active, raw_input_active) {
+        (true, false) => SigintAction::CancelTurn,
+        _ => SigintAction::Shutdown,
     }
 }
 

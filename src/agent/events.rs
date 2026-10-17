@@ -68,20 +68,14 @@ impl AgentEvent {
     pub fn public_text(&self, visibility: &OutputVisibility) -> Option<String> {
         match self {
             Self::PublicMessage(text) | Self::PublicProgress(text) => Some(text.clone()),
-            Self::ToolStarted { name, summary } => {
-                if summary.trim().is_empty() {
-                    Some(format!("• {name}"))
-                } else {
-                    Some(format!("• {summary}"))
-                }
-            }
-            Self::ToolFinished { name, status } => {
-                if status.trim().is_empty() {
-                    Some(format!("✓ {name}"))
-                } else {
-                    Some(format!("✓ {name}: {status}"))
-                }
-            }
+            Self::ToolStarted { name, summary } => match summary.trim().is_empty() {
+                true => Some(format!("• {name}")),
+                false => Some(format!("• {summary}")),
+            },
+            Self::ToolFinished { name, status } => match status.trim().is_empty() {
+                true => Some(format!("✓ {name}")),
+                false => Some(format!("✓ {name}: {status}")),
+            },
             Self::PrivateReasoning(reasoning) => render_reasoning(reasoning, &visibility.reasoning),
             Self::TraceDebug(_) => None,
             Self::WorkflowNotice(text) => visibility.workflow_notices.then(|| text.clone()),
@@ -101,8 +95,9 @@ impl AgentEvent {
 
 fn render_reasoning(reasoning: &str, visibility: &PublicReasoningVisibility) -> Option<String> {
     let trimmed = reasoning.trim();
-    if trimmed.is_empty() {
-        return None;
+    match trimmed.is_empty() {
+        true => return None,
+        false => {}
     }
 
     match visibility {
@@ -119,10 +114,13 @@ fn render_reasoning(reasoning: &str, visibility: &PublicReasoningVisibility) -> 
 
 fn compact_text(text: &str, max_chars: usize) -> String {
     let mut compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if compact.chars().count() > max_chars {
-        let take = max_chars.saturating_sub(3);
-        compact = compact.chars().take(take).collect::<String>();
-        compact.push_str("...");
+    match compact.chars().count() > max_chars {
+        true => {
+            let take = max_chars.saturating_sub(3);
+            compact = compact.chars().take(take).collect::<String>();
+            compact.push_str("...");
+        }
+        false => {}
     }
     compact
 }

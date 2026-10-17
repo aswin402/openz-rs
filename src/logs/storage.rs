@@ -20,8 +20,11 @@ pub fn default_log_path() -> PathBuf {
 
 pub async fn init_db_writer(mut rx: tokio::sync::mpsc::UnboundedReceiver<LogEntry>) {
     let db_path = default_db_path();
-    if let Some(parent) = db_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+    match db_path.parent() {
+        Some(parent) => {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        None => {}
     }
     tokio::task::spawn_blocking(move || {
         let conn = match rusqlite::Connection::open(&db_path) {
@@ -32,7 +35,7 @@ pub async fn init_db_writer(mut rx: tokio::sync::mpsc::UnboundedReceiver<LogEntr
             }
         };
 
-        if let Err(e) = conn.execute(
+        match conn.execute(
             "CREATE TABLE IF NOT EXISTS logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
@@ -43,8 +46,11 @@ pub async fn init_db_writer(mut rx: tokio::sync::mpsc::UnboundedReceiver<LogEntr
             )",
             [],
         ) {
-            eprintln!("Failed to create logs table: {}", e);
-            return;
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Failed to create logs table: {}", e);
+                return;
+            }
         }
 
         let _ = conn.execute(

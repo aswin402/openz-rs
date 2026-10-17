@@ -80,14 +80,17 @@ where
             .or_else(crate::agent::style::spinner::get_current_session_key);
         let timestamp = chrono::Utc::now().to_rfc3339();
 
-        if let Some(tx) = LOG_TX.get() {
-            let _ = tx.send(LogEntry {
-                timestamp,
-                level,
-                target,
-                message: redact_sensitive_text(&visitor.message),
-                session: session.map(|value| redact_sensitive_text(&value)),
-            });
+        match LOG_TX.get() {
+            Some(tx) => {
+                let _ = tx.send(LogEntry {
+                    timestamp,
+                    level,
+                    target,
+                    message: redact_sensitive_text(&visitor.message),
+                    session: session.map(|value| redact_sensitive_text(&value)),
+                });
+            }
+            None => {}
         }
     }
 }
@@ -100,23 +103,23 @@ struct EventFieldVisitor {
 impl tracing::field::Visit for EventFieldVisitor {
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
         let val_str = format!("{:?}", value);
-        let cleaned = if val_str.starts_with('"') && val_str.ends_with('"') && val_str.len() >= 2 {
-            val_str[1..val_str.len() - 1].to_string()
-        } else {
-            val_str
-        };
-        if field.name() == "message" {
-            self.message = cleaned;
-        } else if field.name() == "session" {
-            self.session = Some(cleaned);
+        let cleaned = val_str
+            .strip_prefix('"')
+            .and_then(|s| s.strip_suffix('"'))
+            .map(ToString::to_string)
+            .unwrap_or(val_str);
+        match field.name() {
+            "message" => self.message = cleaned,
+            "session" => self.session = Some(cleaned),
+            _ => {}
         }
     }
 
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        if field.name() == "message" {
-            self.message = value.to_string();
-        } else if field.name() == "session" {
-            self.session = Some(value.to_string());
+        match field.name() {
+            "message" => self.message = value.to_string(),
+            "session" => self.session = Some(value.to_string()),
+            _ => {}
         }
     }
 }

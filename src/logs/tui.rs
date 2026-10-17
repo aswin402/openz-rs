@@ -49,8 +49,9 @@ fn extract_all_sessions_from_line(line: &str) -> Vec<String> {
             .find([' ', ',', '}', ']', '\n', ')'])
             .unwrap_or(val_slice.len());
         let val = val_slice[..end].trim().to_string();
-        if !val.is_empty() && !sessions.contains(&val) {
-            sessions.push(val);
+        match !val.is_empty() && !sessions.contains(&val) {
+            true => sessions.push(val),
+            false => {}
         }
         search_from = start + end;
     }
@@ -64,15 +65,11 @@ fn extract_all_sessions_from_line(line: &str) -> Vec<String> {
 /// will not have it and are always shown regardless of filter.
 fn parse_line(line: &str) -> Option<ParsedLine<'_>> {
     let line = line.trim();
-    if line.is_empty() {
-        return None;
-    }
+    (!line.is_empty()).then_some(())?;
 
     // timestamp is the first token (ISO 8601, ends with 'Z')
     let (ts, rest) = line.split_once(' ')?;
-    if !ts.ends_with('Z') {
-        return None;
-    }
+    ts.ends_with('Z').then_some(())?;
 
     // level is the next word
     let rest = rest.trim_start();
@@ -81,10 +78,9 @@ fn parse_line(line: &str) -> Option<ParsedLine<'_>> {
 
     // target ends at the first ': '
     let rest = rest.trim_start();
-    let (target, message_raw) = if let Some(idx) = rest.find(": ") {
-        (&rest[..idx], &rest[idx + 2..])
-    } else {
-        ("", rest)
+    let (target, message_raw) = match rest.find(": ") {
+        Some(idx) => (&rest[..idx], &rest[idx + 2..]),
+        None => ("", rest),
     };
 
     // Extract `session=<value>` from the trailing span fields.
@@ -104,283 +100,339 @@ fn parse_line(line: &str) -> Option<ParsedLine<'_>> {
 }
 
 /// Split `"message body  session=cli:direct"` into `("message body", Some("cli:direct"))`.
-/// Returns `(original, None)` if the field is absent.
+/// Returns `(original, None)` when the field is absent.
 fn extract_session_field(raw: &str) -> (&str, Option<String>) {
-    // Look for `session=` as a trailing span field (tracing appends these at the end).
-    // It may be preceded by at least one space or appear after other fields.
-    if let Some(pos) = raw.rfind(" session=") {
-        let value = raw[pos + " session=".len()..].trim().to_string();
-        let msg = raw[..pos].trim_end();
-        (msg, Some(value))
-    } else if let Some(stripped) = raw.strip_prefix("session=") {
-        // Edge: no message body, only the field
-        let value = stripped.trim().to_string();
-        ("", Some(value))
-    } else {
-        (raw, None)
+    match raw.rfind(" session=") {
+        Some(pos) => {
+            let value = raw[pos + " session=".len()..].trim().to_string();
+            let msg = raw[..pos].trim_end();
+            (msg, Some(value))
+        }
+        None => match raw.strip_prefix("session=") {
+            Some(stripped) => ("", Some(stripped.trim().to_string())),
+            None => (raw, None),
+        },
     }
 }
 
 // ── Pretty-print a single line ──────────────────────────────────────────────
 
+fn is_word_boundary_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+fn is_number_token(token: &str) -> bool {
+    let mut parts = token.split('.');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(int_part), None, None) => {
+            !int_part.is_empty() && int_part.chars().all(|c| c.is_ascii_digit())
+        }
+        (Some(int_part), Some(frac_part), None) => {
+            !int_part.is_empty()
+                && !frac_part.is_empty()
+                && int_part.chars().all(|c| c.is_ascii_digit())
+                && frac_part.chars().all(|c| c.is_ascii_digit())
+        }
+        _ => false,
+    }
+}
+
+fn highlight_json_segment(json_part: &str) -> String {
+    let mut out = String::with_capacity(json_part.len() + 32);
+    let mut rest = json_part;
+    let mut prev_word_char = false;
+
+    while !rest.is_empty() {
+        let first = rest.chars().next().unwrap_or('\0');
+        match first {
+            '"' => {
+                let after_open = &rest[1..];
+                match after_open.find('"') {
+                    Some(end_idx) => {
+                        let inner = &after_open[..end_idx];
+                        let after_close = &after_open[end_idx + 1..];
+                        match (!inner.is_empty(), after_close.strip_prefix(':')) {
+                            (true, Some(after_colon)) => {
+                                let trimmed = after_colon.trim_start();
+                                out.push_str(&format!("\"{CYAN}{inner}{RESET}\": "));
+                                rest = trimmed;
+                            }
+                            (true, None) => {
+                                out.push_str(&format!("\"{GREEN}{inner}{RESET}\""));
+                                rest = after_close;
+                            }
+                            (false, _) => {
+                                out.push_str("\"\"");
+                                rest = after_close;
+                            }
+                        }
+                        prev_word_char = false;
+                    }
+                    None => {
+                        out.push('"');
+                        rest = after_open;
+                        prev_word_char = false;
+                    }
+                }
+            }
+            c => {
+                let starts_token =
+                    !prev_word_char && (c.is_ascii_digit() || matches!(c, 't' | 'f' | 'n'));
+                match starts_token {
+                    true => {
+                        let token_len = rest
+                            .char_indices()
+                            .find_map(|(idx, ch)| {
+                                (!(ch.is_ascii_alphanumeric() || ch == '_'))
+                                    .then_some(idx)
+                            })
+                            .unwrap_or(rest.len());
+                        let num_len = rest
+                            .char_indices()
+                            .find_map(|(idx, ch)| {
+                                (!(ch.is_ascii_digit() || ch == '.')).then_some(idx)
+                            })
+                            .unwrap_or(rest.len());
+                        let candidate_len = match c.is_ascii_digit() {
+                            true => num_len.max(token_len),
+                            false => token_len,
+                        };
+                        let token = &rest[..candidate_len];
+                        let after_token = &rest[candidate_len..];
+                        let next_is_word = after_token
+                            .chars()
+                            .next()
+                            .is_some_and(is_word_boundary_char);
+                        let is_literal = !next_is_word
+                            && (matches!(token, "true" | "false" | "null")
+                                || is_number_token(token));
+                        match is_literal {
+                            true => {
+                                out.push_str(&format!("{ORANGE}{token}{RESET}"));
+                                rest = after_token;
+                                prev_word_char = false;
+                            }
+                            false => {
+                                out.push(c);
+                                rest = &rest[c.len_utf8()..];
+                                prev_word_char = is_word_boundary_char(c);
+                            }
+                        }
+                    }
+                    false => {
+                        out.push(c);
+                        rest = &rest[c.len_utf8()..];
+                        prev_word_char = is_word_boundary_char(c);
+                    }
+                }
+            }
+        }
+    }
+
+    out
+}
+
 fn highlight_message(msg: &str) -> String {
-    static RE_KEY: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
-    let re_key = RE_KEY
-        .get_or_init(|| regex::Regex::new(r#""([^"]+)":\s*"#).ok())
-        .as_ref();
-
-    static RE_VAL_NUM: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
-    let re_val_num = RE_VAL_NUM
-        .get_or_init(|| regex::Regex::new(r#"\b(true|false|null|\d+(\.\d+)?)\b"#).ok())
-        .as_ref();
-
-    static RE_STR_LITERAL: std::sync::OnceLock<Option<regex::Regex>> = std::sync::OnceLock::new();
-    let re_str_literal = RE_STR_LITERAL
-        .get_or_init(|| regex::Regex::new(r#""([^\x1b"]+)""#).ok())
-        .as_ref();
-
-    if !msg.contains('{') && !msg.contains('[') {
-        return msg.to_string();
+    match msg.find('{').or_else(|| msg.find('[')) {
+        Some(start_idx) => {
+            let prefix = &msg[..start_idx];
+            let json_part = &msg[start_idx..];
+            format!("{}{}", prefix, highlight_json_segment(json_part))
+        }
+        None => msg.to_string(),
     }
-
-    let start_idx = msg.find('{').or_else(|| msg.find('[')).unwrap_or(0);
-    let prefix = &msg[..start_idx];
-    let json_part = &msg[start_idx..];
-
-    let mut highlighted_json = json_part.to_string();
-    if let Some(re_key) = re_key {
-        highlighted_json = re_key
-            .replace_all(&highlighted_json, |caps: &regex::Captures| {
-                format!("\"{}{}{}\": ", CYAN, &caps[1], RESET)
-            })
-            .to_string();
-    }
-
-    if let Some(re_val_num) = re_val_num {
-        highlighted_json = re_val_num
-            .replace_all(&highlighted_json, |caps: &regex::Captures| {
-                format!("{}{}{}", ORANGE, &caps[1], RESET)
-            })
-            .to_string();
-    }
-
-    if let Some(re_str_literal) = re_str_literal {
-        highlighted_json = re_str_literal
-            .replace_all(&highlighted_json, |caps: &regex::Captures| {
-                format!("\"{}{}{}\"", GREEN, &caps[1], RESET)
-            })
-            .to_string();
-    }
-
-    format!("{}{}", prefix, highlighted_json)
 }
 
 fn is_subagent_tool(tool_name: &str) -> bool {
-    if tool_name == "delegate_task"
-        || tool_name == "parallel_research"
-        || tool_name == "evaluator_optimizer_loop"
-    {
-        return true;
-    }
-    if let Ok(profiles) = crate::subagents::load_profiles() {
-        profiles.iter().any(|p| p.name == tool_name)
-    } else {
-        false
-    }
+    matches!(
+        tool_name,
+        "delegate_task" | "parallel_research" | "evaluator_optimizer_loop"
+    ) || crate::subagents::load_profiles()
+        .map(|profiles| profiles.iter().any(|p| p.name == tool_name))
+        .unwrap_or(false)
 }
 
-fn pretty_format_log(message: &str) -> Option<(String, String, String, &'static str)> {
-    // 1. USER prompt
-    if message.contains("User prompt:") || message.contains("User input:") {
-        let prompt = if let Some(idx) = message.find("User prompt:") {
-            &message[idx + "User prompt:".len()..]
-        } else if let Some(idx) = message.find("User input:") {
-            &message[idx + "User input:".len()..]
-        } else {
-            message
-        };
-        return Some((
+fn slice_after_prefix<'a>(text: &'a str, prefixes: &[&str]) -> &'a str {
+    prefixes
+        .iter()
+        .find_map(|prefix| text.find(prefix).map(|idx| &text[idx + prefix.len()..]))
+        .unwrap_or(text)
+}
+
+fn format_user_log(message: &str) -> Option<(String, String, String, &'static str)> {
+    (message.contains("User prompt:") || message.contains("User input:")).then(|| {
+        let prompt = slice_after_prefix(message, &["User prompt:", "User input:"]);
+        (
             "👤".to_string(),
             "USER".to_string(),
             prompt.trim().to_string(),
             CYAN,
-        ));
-    }
+        )
+    })
+}
 
-    // 2. LLM CALL
-    if message.contains("Sending completion request to LLM")
-        || message.contains("Sending request to LLM")
-    {
-        let model = if let Some(idx) = message.find("model:") {
-            let rest = &message[idx + "model:".len()..];
-            rest.trim_matches(|c| c == ')' || c == '"' || c == '(')
-                .trim()
-        } else {
-            ""
+fn format_llm_call_log(message: &str) -> Option<(String, String, String, &'static str)> {
+    (message.contains("Sending completion request to LLM")
+        || message.contains("Sending request to LLM"))
+    .then(|| {
+        let model = message
+            .find("model:")
+            .map(|idx| {
+                message[idx + "model:".len()..]
+                    .trim_matches(|c| c == ')' || c == '"' || c == '(')
+                    .trim()
+            })
+            .unwrap_or("");
+        let msg = match model.is_empty() {
+            true => "Sending request to LLM".to_string(),
+            false => format!("Sending request to LLM (model: {})", model),
         };
-        let msg = if model.is_empty() {
-            "Sending request to LLM".to_string()
-        } else {
-            format!("Sending request to LLM (model: {})", model)
-        };
-        return Some(("📡".to_string(), "LLM CALL".to_string(), msg, SLATE));
-    }
+        ("📡".to_string(), "LLM CALL".to_string(), msg, SLATE)
+    })
+}
 
-    // 3. THINKING (LLM reasoning)
-    if message.contains("LLM reasoning content:") {
-        let thought = if let Some(idx) = message.find("LLM reasoning content:") {
-            &message[idx + "LLM reasoning content:".len()..]
-        } else {
-            message
-        };
-        return Some((
+fn format_thinking_log(message: &str) -> Option<(String, String, String, &'static str)> {
+    message.contains("LLM reasoning content:").then(|| {
+        let thought = slice_after_prefix(message, &["LLM reasoning content:"]);
+        (
             "🧠".to_string(),
             "THINKING".to_string(),
             thought.trim().to_string(),
             ORANGE,
-        ));
-    }
+        )
+    })
+}
 
-    // 4. RESPONSE (LLM content)
-    if message.contains("LLM text content:") {
-        let resp = if let Some(idx) = message.find("LLM text content:") {
-            &message[idx + "LLM text content:".len()..]
-        } else {
-            message
-        };
-        return Some((
+fn format_response_text_log(message: &str) -> Option<(String, String, String, &'static str)> {
+    message.contains("LLM text content:").then(|| {
+        let resp = slice_after_prefix(message, &["LLM text content:"]);
+        (
             "🤖".to_string(),
             "RESPONSE".to_string(),
             resp.trim().to_string(),
             WHITE,
-        ));
-    }
+        )
+    })
+}
 
-    // 4b. LLM RESPONSE RECEIVED (finish reason)
-    if message.contains("Received LLM response") {
-        let finish = if let Some(idx) = message.find("finish_reason:") {
-            let rest = &message[idx + "finish_reason:".len()..];
-            rest.trim_matches(|c| c == ')' || c == '"' || c == '(')
-                .trim()
-        } else {
-            ""
+fn format_response_meta_log(message: &str) -> Option<(String, String, String, &'static str)> {
+    message.contains("Received LLM response").then(|| {
+        let finish = message
+            .find("finish_reason:")
+            .map(|idx| {
+                message[idx + "finish_reason:".len()..]
+                    .trim_matches(|c| c == ')' || c == '"' || c == '(')
+                    .trim()
+            })
+            .unwrap_or("");
+        let msg = match finish.is_empty() {
+            true => "Received LLM response".to_string(),
+            false => format!("Received LLM response (finish_reason: {})", finish),
         };
-        let msg = if finish.is_empty() {
-            "Received LLM response".to_string()
-        } else {
-            format!("Received LLM response (finish_reason: {})", finish)
-        };
-        return Some(("🤖".to_string(), "RESPONSE".to_string(), msg, WHITE));
-    }
+        ("🤖".to_string(), "RESPONSE".to_string(), msg, WHITE)
+    })
+}
 
-    // 5. TOOL START / SUBAGENT START
-    if message.contains("Executing tool call") {
+fn format_tool_start_log(message: &str) -> Option<(String, String, String, &'static str)> {
+    message.contains("Executing tool call").then(|| {
         let tool = extract_quoted_field(message, "tool=");
         let args = extract_quoted_field(message, "arguments=");
-        let is_subagent = tool.as_ref().map(|t| is_subagent_tool(t)).unwrap_or(false);
-
+        let is_subagent = tool.as_deref().is_some_and(is_subagent_tool);
         let formatted = match (tool, args) {
             (Some(t), Some(a)) => format!("{} with args: {}", t, a),
-            (Some(t), None) => t.to_string(),
+            (Some(t), None) => t,
             _ => "tool execution".to_string(),
         };
-
-        if is_subagent {
-            return Some((
+        match is_subagent {
+            true => (
                 "🤖".to_string(),
                 "SUBAGENT START".to_string(),
                 formatted,
                 PURPLE,
-            ));
-        } else {
-            return Some(("🛠️".to_string(), "TOOL START".to_string(), formatted, GOLD));
+            ),
+            false => ("🛠️".to_string(), "TOOL START".to_string(), formatted, GOLD),
         }
-    }
+    })
+}
 
-    // 6. TOOL DONE / SUBAGENT DONE
-    if message.contains("Tool call completed") {
+fn format_tool_done_log(message: &str) -> Option<(String, String, String, &'static str)> {
+    message.contains("Tool call completed").then(|| {
         let tool = extract_quoted_field(message, "tool=");
-        let is_subagent = tool.as_ref().map(|t| is_subagent_tool(t)).unwrap_or(false);
-
+        let is_subagent = tool.as_deref().is_some_and(is_subagent_tool);
         let formatted = match tool {
             Some(t) => format!("{} completed", t),
             None => "tool completed".to_string(),
         };
-
-        if is_subagent {
-            return Some((
+        match is_subagent {
+            true => (
                 "🤖".to_string(),
                 "SUBAGENT DONE".to_string(),
                 formatted,
                 GREEN,
-            ));
-        } else {
-            return Some(("✅".to_string(), "TOOL DONE".to_string(), formatted, GREEN));
+            ),
+            false => ("✅".to_string(), "TOOL DONE".to_string(), formatted, GREEN),
         }
-    }
+    })
+}
 
-    // 7. TOOL FAIL / SUBAGENT FAIL
-    if message.contains("Tool call failed") || message.contains("Tool call timed out") {
+fn format_tool_fail_log(message: &str) -> Option<(String, String, String, &'static str)> {
+    (message.contains("Tool call failed") || message.contains("Tool call timed out")).then(|| {
         let tool = extract_quoted_field(message, "tool=");
         let err = extract_quoted_field(message, "error=");
-        let base = if message.contains("timed out") {
-            "timed out"
-        } else {
-            "failed"
+        let timed_out = message.contains("timed out");
+        let base = match timed_out {
+            true => "timed out",
+            false => "failed",
         };
-        let is_subagent = tool.as_ref().map(|t| is_subagent_tool(t)).unwrap_or(false);
-
+        let is_subagent = tool.as_deref().is_some_and(is_subagent_tool);
         let formatted = match (tool, err) {
             (Some(t), Some(e)) => format!("{} {} - error: {}", t, base, e),
             (Some(t), None) => format!("{} {}", t, base),
             _ => format!("tool {}", base),
         };
-
-        let icon = if message.contains("timed out") {
-            "⏱️"
-        } else {
-            "✕"
+        let icon = match timed_out {
+            true => "⏱️",
+            false => "✕",
         };
-        let label = if is_subagent {
-            "SUBAGENT FAIL"
-        } else {
-            "TOOL FAIL"
+        let label = match is_subagent {
+            true => "SUBAGENT FAIL",
+            false => "TOOL FAIL",
         };
+        (icon.to_string(), label.to_string(), formatted, ROSE)
+    })
+}
 
-        return Some((icon.to_string(), label.to_string(), formatted, ROSE));
-    }
-
-    // 8. BLOCKED
-    if message.contains("Tool execution blocked")
+fn format_blocked_log(message: &str) -> Option<(String, String, String, &'static str)> {
+    (message.contains("Tool execution blocked")
         || message.contains("forbidden by security")
-        || message.contains("denied by user")
-    {
+        || message.contains("denied by user"))
+    .then(|| {
         let tool = extract_quoted_field(message, "tool=");
-        let reason = if message.contains("blocked") {
-            "loop/repetition detected"
-        } else if message.contains("forbidden") {
-            "forbidden by security policies"
-        } else {
-            "denied by user"
-        };
+        let reason = [
+            (message.contains("blocked"), "loop/repetition detected"),
+            (
+                message.contains("forbidden"),
+                "forbidden by security policies",
+            ),
+        ]
+        .into_iter()
+        .find_map(|(matched, text)| matched.then_some(text))
+        .unwrap_or("denied by user");
         let formatted = match tool {
             Some(t) => format!("{} blocked - reason: {}", t, reason),
-            _ => format!("tool blocked - reason: {}", reason),
+            None => format!("tool blocked - reason: {}", reason),
         };
-        return Some(("🛡️".to_string(), "BLOCKED".to_string(), formatted, GOLD));
-    }
+        ("🛡️".to_string(), "BLOCKED".to_string(), formatted, GOLD)
+    })
+}
 
-    // 9. CURATOR
-    if message.contains("Self-improvement curator:") || message.contains("Self-improvement curator")
-    {
-        let rest = if let Some(idx) = message.find("Self-improvement curator:") {
-            &message[idx + "Self-improvement curator:".len()..]
-        } else if let Some(idx) = message.find("Self-improvement curator") {
-            &message[idx + "Self-improvement curator".len()..]
-        } else {
-            message
-        };
-        return Some((
+fn format_curator_log(message: &str) -> Option<(String, String, String, &'static str)> {
+    message.contains("Self-improvement curator").then(|| {
+        let rest = slice_after_prefix(
+            message,
+            &["Self-improvement curator:", "Self-improvement curator"],
+        );
+        (
             "🧹".to_string(),
             "CURATOR".to_string(),
             rest.trim()
@@ -388,120 +440,143 @@ fn pretty_format_log(message: &str) -> Option<(String, String, String, &'static 
                 .trim()
                 .to_string(),
             PURPLE,
-        ));
-    }
+        )
+    })
+}
 
-    // 10. COMPACTING / SAVED / EXTRA LIFECYCLE
-    if message.contains("Session saved successfully") || message.contains("Session saved") {
-        return Some((
-            "💾".to_string(),
-            "SAVED".to_string(),
+fn format_lifecycle_log(message: &str) -> Option<(String, String, String, &'static str)> {
+    let rules: [(bool, &str, &str, String, &'static str); 3] = [
+        (
+            message.contains("Session saved"),
+            "💾",
+            "SAVED",
             "Session saved. Turn complete.".to_string(),
             GREEN,
-        ));
-    }
-
-    if message.contains("Compacting history") {
-        return Some((
-            "🗜️".to_string(),
-            "COMPACT".to_string(),
+        ),
+        (
+            message.contains("Compacting history"),
+            "🗜️",
+            "COMPACT",
             message.to_string(),
             SLATE,
-        ));
-    }
-
-    if message.contains("Compacted summary length")
-        || message.contains("Consolidated long-term memory")
-    {
-        return Some((
-            "💾".to_string(),
-            "COMPACTED".to_string(),
+        ),
+        (
+            message.contains("Compacted summary length")
+                || message.contains("Consolidated long-term memory"),
+            "💾",
+            "COMPACTED",
             message.to_string(),
             SLATE,
-        ));
-    }
+        ),
+    ];
+    rules
+        .into_iter()
+        .find_map(|(matched, icon, label, text, color)| {
+            matched.then(|| (icon.to_string(), label.to_string(), text, color))
+        })
+}
 
-    None
+type LogFormatterFn = fn(&str) -> Option<(String, String, String, &'static str)>;
+
+const PRETTY_LOG_FORMATTERS: &[LogFormatterFn] = &[
+    format_user_log,
+    format_llm_call_log,
+    format_thinking_log,
+    format_response_text_log,
+    format_response_meta_log,
+    format_tool_start_log,
+    format_tool_done_log,
+    format_tool_fail_log,
+    format_blocked_log,
+    format_curator_log,
+    format_lifecycle_log,
+];
+
+fn pretty_format_log(message: &str) -> Option<(String, String, String, &'static str)> {
+    PRETTY_LOG_FORMATTERS
+        .iter()
+        .find_map(|formatter| formatter(message))
 }
 
 fn extract_quoted_field(text: &str, field_prefix: &str) -> Option<String> {
-    if let Some(pos) = text.find(field_prefix) {
-        let start = pos + field_prefix.len();
-        if text[start..].starts_with('"') {
-            let rest = &text[start + 1..];
+    let pos = text.find(field_prefix)?;
+    let start = pos + field_prefix.len();
+    let tail = &text[start..];
+    match tail.strip_prefix('"') {
+        Some(rest) => {
             let mut val = String::new();
             let mut chars = rest.chars().peekable();
             while let Some(c) = chars.next() {
-                if c == '\\' {
-                    if let Some(&next_c) = chars.peek() {
-                        if next_c == '"' || next_c == '\\' {
-                            if let Some(escaped) = chars.next() {
-                                val.push(escaped);
-                            }
-                        } else {
-                            val.push(c);
-                        }
-                    } else {
-                        val.push(c);
-                    }
-                } else if c == '"' {
-                    break;
-                } else {
-                    val.push(c);
+                match c {
+                    '\\' => match chars.peek().copied() {
+                        Some('"' | '\\') => match chars.next() {
+                            Some(escaped) => val.push(escaped),
+                            None => {}
+                        },
+                        _ => val.push(c),
+                    },
+                    '"' => break,
+                    other => val.push(other),
                 }
             }
-            return Some(val);
-        } else {
-            // Unquoted field (till space or end of string)
-            let rest = &text[start..];
-            let end = rest.find(' ').unwrap_or(rest.len());
-            return Some(rest[..end].to_string());
+            Some(val)
+        }
+        None => {
+            let end = tail.find(' ').unwrap_or(tail.len());
+            Some(tail[..end].to_string())
         }
     }
-    None
 }
 
-fn print_line_filtered(
-    raw: &str,
+const TARGET_COLOR_PREFIXES: &[(&str, &str)] = &[
+    ("openz::agent::", PURPLE),
+    ("openz::providers::", CYAN),
+    ("openz::tools::", GOLD),
+    ("openz::channels::", GREEN),
+];
+
+fn resolve_target_color(target: &str) -> &'static str {
+    TARGET_COLOR_PREFIXES
+        .iter()
+        .find_map(|(prefix, color)| target.starts_with(prefix).then_some(*color))
+        .unwrap_or(BLUE)
+}
+
+fn matches_search_query(message: &str, target: &str, search: Option<&str>) -> bool {
+    match search {
+        Some(q) => {
+            let q_lower = q.to_lowercase();
+            message.to_lowercase().contains(&q_lower) || target.to_lowercase().contains(&q_lower)
+        }
+        None => true,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_log_row(
+    timestamp: &str,
+    level: &str,
+    target: &str,
+    message: &str,
+    sessions: &[String],
     filter: &SessionFilter,
     level_filter: &LogLevelFilter,
     search: Option<&str>,
 ) {
+    let should_render = session_matches(sessions, filter)
+        && level_filter.matches(level)
+        && matches_search_query(message, target, search);
+    match should_render {
+        false => return,
+        true => {}
+    }
+
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
 
-    let Some(p) = parse_line(raw) else {
-        // Continuation / unstructured line — print dimmed, always show
-        let _ = writeln!(out, "  {DIM}{SLATE}{raw}{RESET}");
-        return;
-    };
+    let ts = timestamp.get(11..19).unwrap_or(timestamp);
 
-    if !session_matches(&p.sessions, filter) {
-        return;
-    }
-
-    if !level_filter.matches(p.level) {
-        return;
-    }
-
-    if let Some(q) = search {
-        let q_lower = q.to_lowercase();
-        let msg_lower = p.message.to_lowercase();
-        let target_lower = p.target.to_lowercase();
-        if !msg_lower.contains(&q_lower) && !target_lower.contains(&q_lower) {
-            return;
-        }
-    }
-
-    // Shorten timestamp: keep "HH:MM:SS" only (chars 11..19)
-    let ts = if p.timestamp.len() >= 19 {
-        &p.timestamp[11..19]
-    } else {
-        p.timestamp
-    };
-
-    // Level badge — fixed 5-char, coloured
-    let (level_col, level_label) = match p.level {
+    let (level_col, level_label) = match level {
         "ERROR" => (ROSE, "ERROR"),
         "WARN" => (GOLD, "WARN "),
         "INFO" => (GREEN, "INFO "),
@@ -510,73 +585,85 @@ fn print_line_filtered(
         other => (SLATE, other),
     };
 
-    // Message colour varies by level
-    let msg_col = match p.level {
+    let msg_col = match level {
         "ERROR" => ROSE,
         "WARN" => GOLD,
         _ => WHITE,
     };
 
-    // Truncate target to keep it readable
-    let target = if p.target.len() > 35 {
-        format!("…{}", &p.target[p.target.len().saturating_sub(34)..])
-    } else {
-        p.target.to_string()
+    let target_str = match target.len() > 35 {
+        true => format!("…{}", &target[target.len().saturating_sub(34)..]),
+        false => target.to_string(),
     };
 
-    // Target grouping colors:
-    let target_col = if p.target.starts_with("openz::agent::") {
-        PURPLE
-    } else if p.target.starts_with("openz::providers::") {
-        CYAN
-    } else if p.target.starts_with("openz::tools::") {
-        GOLD
-    } else if p.target.starts_with("openz::channels::") {
-        GREEN
-    } else {
-        BLUE
-    };
+    let target_col = resolve_target_color(target);
 
-    // Session badge (optional) — shown in cyan after the message
-    let session_badge = match p.sessions.last() {
+    let session_badge = match sessions.last() {
         Some(s) => {
-            // Shorten long session keys: `cli:direct` → `cli`, `gateway:ws:abc` → `gateway`
             let short = s.split(':').next().unwrap_or(s.as_str());
             format!("  {CYAN}{DIM}[{short}]{RESET}")
         }
         None => String::new(),
     };
 
-    if let Some((icon, label, formatted_msg, color)) = pretty_format_log(p.message) {
-        let highlighted = highlight_message(&formatted_msg);
-        let _ = writeln!(
-            out,
-            "{SLATE}{DIM}{ts}{RESET}  {BOLD}{level_col}{level_label}{RESET}  {target_col}{target:<35}{RESET}  {icon} {BOLD}{color}[{label}]{RESET} {color}{}{RESET}{session_badge}",
-            highlighted,
-            ts = ts,
-            level_col = level_col,
-            level_label = level_label,
-            target = &target,
-            target_col = target_col,
-            icon = icon,
-            label = label,
-            color = color,
-            session_badge = session_badge,
-        );
-    } else {
-        let highlighted_msg = highlight_message(p.message);
-        let _ = writeln!(
-            out,
-            "{SLATE}{DIM}{ts}{RESET}  {BOLD}{level_col}{level_label}{RESET}  {target_col}{target:<35}{RESET}  {msg_col}{}{RESET}{session_badge}",
-            highlighted_msg,
-            ts = ts,
-            level_col = level_col,
-            level_label = level_label,
-            target = &target,
-            target_col = target_col,
-            msg_col = msg_col,
-            session_badge = session_badge,
-        );
+    match pretty_format_log(message) {
+        Some((icon, label, formatted_msg, color)) => {
+            let highlighted = highlight_message(&formatted_msg);
+            let _ = writeln!(
+                out,
+                "{SLATE}{DIM}{ts}{RESET}  {BOLD}{level_col}{level_label}{RESET}  {target_col}{target_str:<35}{RESET}  {icon} {BOLD}{color}[{label}]{RESET} {color}{}{RESET}{session_badge}",
+                highlighted,
+                ts = ts,
+                level_col = level_col,
+                level_label = level_label,
+                target_str = &target_str,
+                target_col = target_col,
+                icon = icon,
+                label = label,
+                color = color,
+                session_badge = session_badge,
+            );
+        }
+        None => {
+            let highlighted_msg = highlight_message(message);
+            let _ = writeln!(
+                out,
+                "{SLATE}{DIM}{ts}{RESET}  {BOLD}{level_col}{level_label}{RESET}  {target_col}{target_str:<35}{RESET}  {msg_col}{}{RESET}{session_badge}",
+                highlighted_msg,
+                ts = ts,
+                level_col = level_col,
+                level_label = level_label,
+                target_str = &target_str,
+                target_col = target_col,
+                msg_col = msg_col,
+                session_badge = session_badge,
+            );
+        }
+    }
+}
+
+fn print_line_filtered(
+    raw: &str,
+    filter: &SessionFilter,
+    level_filter: &LogLevelFilter,
+    search: Option<&str>,
+) {
+    match parse_line(raw) {
+        Some(p) => render_log_row(
+            p.timestamp,
+            p.level,
+            p.target,
+            p.message,
+            &p.sessions,
+            filter,
+            level_filter,
+            search,
+        ),
+        None => {
+            let stdout = std::io::stdout();
+            let mut out = stdout.lock();
+            let _ = writeln!(out, "  {DIM}{SLATE}{raw}{RESET}");
+        }
     }
 }
 
@@ -604,6 +691,20 @@ fn print_header(
 
 // ── Tail initial lines (reverse seek, O(tail) memory) ───────────────────
 
+fn push_non_empty_reversed(leftover: &mut Vec<char>, lines: &mut Vec<String>) {
+    match leftover.is_empty() {
+        true => {}
+        false => {
+            let line: String = leftover.iter().rev().collect();
+            leftover.clear();
+            match line.trim().is_empty() {
+                true => {}
+                false => lines.push(line),
+            }
+        }
+    }
+}
+
 fn print_tail(
     path: &PathBuf,
     tail: usize,
@@ -624,12 +725,11 @@ fn print_tail(
 
     let file_len = f.seek(SeekFrom::End(0))?;
 
-    if tail == 0 {
-        return Ok(file_len);
+    match tail {
+        0 => return Ok(file_len),
+        _ => {}
     }
 
-    // Read file backwards from end using a sliding window to collect the last N lines.
-    // Memory usage: O(tail) instead of O(file_size).
     let mut lines = Vec::with_capacity(tail.min(1000));
     let mut pos = file_len;
     let mut leftover = Vec::new();
@@ -643,33 +743,22 @@ fn print_tail(
         let mut buf = vec![0u8; read_size];
         f.read_exact(&mut buf)?;
 
-        // Scan block backwards for newlines
         let block_str = String::from_utf8_lossy(&buf);
         for (_i, c) in block_str.char_indices().rev() {
-            if c == '\n' && !leftover.is_empty() {
-                let line: String = leftover.iter().rev().collect();
-                leftover.clear();
-                if !line.trim().is_empty() {
-                    lines.push(line);
-                    if lines.len() >= tail {
-                        break;
+            match c {
+                '\n' => {
+                    push_non_empty_reversed(&mut leftover, &mut lines);
+                    match lines.len() >= tail {
+                        true => break,
+                        false => {}
                     }
                 }
-            } else if c == '\n' {
-                // empty line — skip
-            } else {
-                leftover.push(c);
+                other => leftover.push(other),
             }
         }
     }
 
-    // Push any remaining partial line
-    if !leftover.is_empty() {
-        let line: String = leftover.iter().rev().collect();
-        if !line.trim().is_empty() {
-            lines.push(line);
-        }
-    }
+    push_non_empty_reversed(&mut leftover, &mut lines);
 
     lines.reverse();
 
@@ -702,60 +791,115 @@ fn read_new_bytes(
     current_file_id: &mut Option<u64>,
     search: Option<&str>,
 ) {
-    if let Ok(mut f) = File::open(path) {
-        if let Ok(metadata) = f.metadata() {
-            let len = metadata.len();
-            let file_id = get_file_id(&metadata);
+    let mut f = match File::open(path) {
+        Ok(f) => f,
+        Err(_) => return,
+    };
+    let metadata = match f.metadata() {
+        Ok(m) => m,
+        Err(_) => return,
+    };
+    let len = metadata.len();
+    let file_id = get_file_id(&metadata);
 
-            let is_new_file = match current_file_id {
-                Some(id) => *id != file_id,
-                None => true,
-            };
+    let is_new_file = match current_file_id {
+        Some(id) => *id != file_id,
+        None => true,
+    };
 
-            if len < *pos || is_new_file {
-                if is_new_file && current_file_id.is_some() {
-                    println!("\n  {GOLD}── log file recreated, reading from start ──{RESET}\n");
-                } else if len < *pos {
-                    println!("\n  {GOLD}── log rotated/truncated, reading from start ──{RESET}\n");
-                }
-                *pos = 0;
-                buffer.clear();
-                *current_file_id = Some(file_id);
-            }
+    match (len < *pos || is_new_file, is_new_file && current_file_id.is_some(), len < *pos) {
+        (true, true, _) => {
+            println!("\n  {GOLD}── log file recreated, reading from start ──{RESET}\n");
+            *pos = 0;
+            buffer.clear();
+            *current_file_id = Some(file_id);
+        }
+        (true, false, true) => {
+            println!("\n  {GOLD}── log rotated/truncated, reading from start ──{RESET}\n");
+            *pos = 0;
+            buffer.clear();
+            *current_file_id = Some(file_id);
+        }
+        (true, false, false) => {
+            *pos = 0;
+            buffer.clear();
+            *current_file_id = Some(file_id);
+        }
+        (false, _, _) => {}
+    }
 
-            if f.seek(SeekFrom::Start(*pos)).is_ok() {
-                let mut temp_buf = Vec::new();
-                if f.read_to_end(&mut temp_buf).is_ok() && !temp_buf.is_empty() {
+    match f.seek(SeekFrom::Start(*pos)) {
+        Ok(_) => {
+            let mut temp_buf = Vec::new();
+            match f.read_to_end(&mut temp_buf).is_ok() && !temp_buf.is_empty() {
+                true => {
                     *pos += temp_buf.len() as u64;
                     buffer.extend_from_slice(&temp_buf);
 
-                    if let Some(last_newline_idx) = buffer.iter().rposition(|&b| b == b'\n') {
-                        let complete_bytes = &buffer[..=last_newline_idx];
-                        let text = String::from_utf8_lossy(complete_bytes);
-                        for line in text.lines() {
-                            print_line_filtered(line, filter, level_filter, search);
+                    match buffer.iter().rposition(|&b| b == b'\n') {
+                        Some(last_newline_idx) => {
+                            let complete_bytes = &buffer[..=last_newline_idx];
+                            let text = String::from_utf8_lossy(complete_bytes);
+                            for line in text.lines() {
+                                print_line_filtered(line, filter, level_filter, search);
+                            }
+                            *buffer = buffer[last_newline_idx + 1..].to_vec();
+                            let _ = std::io::stdout().flush();
                         }
-                        *buffer = buffer[last_newline_idx + 1..].to_vec();
-                        let _ = std::io::stdout().flush();
+                        None => {}
                     }
                 }
+                false => {}
             }
         }
+        Err(_) => {}
     }
 }
 
-/// Check if auto-followed session changed.
+/// Check whether auto-followed session changed.
 fn update_auto_session(filter: &mut SessionFilter) {
-    if let SessionFilter::Auto(ref current) = filter {
-        let active = detect_active_session();
-        if active != *current {
-            if let Some(ref new_id) = active {
-                println!("\n  {CYAN}{DIM}◉ active session changed: {new_id}{RESET}\n");
-            } else {
-                println!("\n  {CYAN}{DIM}◉ active session lost (idle){RESET}\n");
+    match filter {
+        SessionFilter::Auto(ref current) => {
+            let active = detect_active_session();
+            match active != *current {
+                true => {
+                    match &active {
+                        Some(new_id) => {
+                            println!("\n  {CYAN}{DIM}◉ active session changed: {new_id}{RESET}\n");
+                        }
+                        None => {
+                            println!("\n  {CYAN}{DIM}◉ active session lost (idle){RESET}\n");
+                        }
+                    }
+                    *filter = SessionFilter::Auto(active);
+                }
+                false => {}
             }
-            *filter = SessionFilter::Auto(active);
         }
+        _ => {}
+    }
+}
+
+async fn recv_notify_event(
+    rx: &mut tokio::sync::mpsc::Receiver<notify::Result<notify::Event>>,
+    enabled: bool,
+) -> Option<notify::Result<notify::Event>> {
+    match enabled {
+        true => rx.recv().await,
+        false => std::future::pending().await,
+    }
+}
+
+fn maybe_refresh_auto_session(
+    last_session_check: &mut std::time::Instant,
+    filter: &mut SessionFilter,
+) {
+    match last_session_check.elapsed() >= Duration::from_secs(1) {
+        true => {
+            *last_session_check = std::time::Instant::now();
+            update_auto_session(filter);
+        }
+        false => {}
     }
 }
 
@@ -771,70 +915,56 @@ async fn follow(
     let ctrl_c = tokio::signal::ctrl_c();
     tokio::pin!(ctrl_c);
 
-    let mut current_file_id = None;
-    if let Ok(metadata) = std::fs::metadata(path) {
-        current_file_id = Some(get_file_id(&metadata));
-    }
+    let mut current_file_id = std::fs::metadata(path).ok().map(|m| get_file_id(&m));
 
     let mut buffer = Vec::new();
     let mut last_session_check = std::time::Instant::now();
 
-    // Set up notify watcher for instant file change notifications.
-    // Falls back to polling if watcher creation fails.
     let (notify_tx, mut notify_rx) =
         tokio::sync::mpsc::channel::<notify::Result<notify::Event>>(256);
     let notify_path = path.clone();
 
-    let has_notify = std::sync::atomic::AtomicBool::new(false);
-
-    if let Ok(mut watcher) = RecommendedWatcher::new(
+    let watcher_guard = RecommendedWatcher::new(
         move |res| {
             let _ = notify_tx.blocking_send(res);
         },
         Config::default(),
-    ) {
-        if watcher
+    )
+    .ok()
+    .and_then(|mut watcher| {
+        watcher
             .watch(&notify_path, RecursiveMode::NonRecursive)
-            .is_ok()
-        {
-            has_notify.store(true, std::sync::atomic::Ordering::SeqCst);
-            // Keep watcher alive for this function's duration
-            let _ = watcher;
-        }
-    }
-
-    let notify_available = has_notify.load(std::sync::atomic::Ordering::SeqCst);
-
-    // Poll interval — fast when no notify, slow heartbeat when notify works
-    let mut interval = tokio::time::interval(if notify_available {
-        Duration::from_millis(1000)
-    } else {
-        Duration::from_millis(100)
+            .ok()
+            .map(|()| watcher)
     });
+
+    let notify_available = watcher_guard.is_some();
+
+    let poll_ms = match notify_available {
+        true => 1000,
+        false => 100,
+    };
+    let mut interval = tokio::time::interval(Duration::from_millis(poll_ms));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     loop {
         tokio::select! {
             biased;
             _ = &mut ctrl_c => {
+                let _ = &watcher_guard;
                 println!("\n\n  {SLATE}{DIM}── openz logs stopped{RESET}\n");
                 break Ok(());
             }
-            _ = notify_rx.recv(), if notify_available => {
+            _ = recv_notify_event(&mut notify_rx, notify_available) => {
                 read_new_bytes(path, &mut pos, &mut buffer, &filter, &level_filter, &mut current_file_id, search);
-                if last_session_check.elapsed() >= Duration::from_secs(1) {
-                    last_session_check = std::time::Instant::now();
-                    update_auto_session(&mut filter);
-                }
+                maybe_refresh_auto_session(&mut last_session_check, &mut filter);
             }
             _ = interval.tick() => {
-                if !notify_available {
-                    read_new_bytes(path, &mut pos, &mut buffer, &filter, &level_filter, &mut current_file_id, search);
+                match notify_available {
+                    false => read_new_bytes(path, &mut pos, &mut buffer, &filter, &level_filter, &mut current_file_id, search),
+                    true => {}
                 }
-                if last_session_check.elapsed() >= Duration::from_secs(1) {
-                    last_session_check = std::time::Instant::now();
-                    update_auto_session(&mut filter);
-                }
+                maybe_refresh_auto_session(&mut last_session_check, &mut filter);
             }
         }
     }
@@ -851,108 +981,17 @@ pub fn print_row(
     level_filter: &LogLevelFilter,
     search: Option<&str>,
 ) {
-    let stdout = std::io::stdout();
-    let mut out = stdout.lock();
-
-    // Check session filter
     let sessions_vec = session.map(|s| vec![s.to_string()]).unwrap_or_default();
-    if !session_matches(&sessions_vec, filter) {
-        return;
-    }
-
-    // Check level filter
-    if !level_filter.matches(level) {
-        return;
-    }
-
-    if let Some(q) = search {
-        let q_lower = q.to_lowercase();
-        let msg_lower = message.to_lowercase();
-        let target_lower = target.to_lowercase();
-        if !msg_lower.contains(&q_lower) && !target_lower.contains(&q_lower) {
-            return;
-        }
-    }
-
-    // Shorten timestamp: HH:MM:SS (chars 11..19 of RFC3339)
-    let ts = if timestamp.len() >= 19 {
-        &timestamp[11..19]
-    } else {
-        timestamp
-    };
-
-    let (level_col, level_label) = match level {
-        "ERROR" => (ROSE, "ERROR"),
-        "WARN" => (GOLD, "WARN "),
-        "INFO" => (GREEN, "INFO "),
-        "DEBUG" => (ORANGE, "DEBUG"),
-        "TRACE" => (SLATE, "TRACE"),
-        other => (SLATE, other),
-    };
-
-    let msg_col = match level {
-        "ERROR" => ROSE,
-        "WARN" => GOLD,
-        _ => WHITE,
-    };
-
-    let target_str = if target.len() > 35 {
-        format!("…{}", &target[target.len().saturating_sub(34)..])
-    } else {
-        target.to_string()
-    };
-
-    let target_col = if target.starts_with("openz::agent::") {
-        PURPLE
-    } else if target.starts_with("openz::providers::") {
-        CYAN
-    } else if target.starts_with("openz::tools::") {
-        GOLD
-    } else if target.starts_with("openz::channels::") {
-        GREEN
-    } else {
-        BLUE
-    };
-
-    let session_badge = match session {
-        Some(s) => {
-            let short = s.split(':').next().unwrap_or(s);
-            format!("  {CYAN}{DIM}[{short}]{RESET}")
-        }
-        None => String::new(),
-    };
-
-    if let Some((icon, label, formatted_msg, color)) = pretty_format_log(message) {
-        let highlighted = highlight_message(&formatted_msg);
-        let _ = writeln!(
-            out,
-            "{SLATE}{DIM}{ts}{RESET}  {BOLD}{level_col}{level_label}{RESET}  {target_col}{target_str:<35}{RESET}  {icon} {BOLD}{color}[{label}]{RESET} {color}{}{RESET}{session_badge}",
-            highlighted,
-            ts = ts,
-            level_col = level_col,
-            level_label = level_label,
-            target_str = &target_str,
-            target_col = target_col,
-            icon = icon,
-            label = label,
-            color = color,
-            session_badge = session_badge,
-        );
-    } else {
-        let highlighted_msg = highlight_message(message);
-        let _ = writeln!(
-            out,
-            "{SLATE}{DIM}{ts}{RESET}  {BOLD}{level_col}{level_label}{RESET}  {target_col}{target_str:<35}{RESET}  {msg_col}{}{RESET}{session_badge}",
-            highlighted_msg,
-            ts = ts,
-            level_col = level_col,
-            level_label = level_label,
-            target_str = &target_str,
-            target_col = target_col,
-            msg_col = msg_col,
-            session_badge = session_badge,
-        );
-    }
+    render_log_row(
+        timestamp,
+        level,
+        target,
+        message,
+        &sessions_vec,
+        filter,
+        level_filter,
+        search,
+    );
 }
 
 pub(crate) fn print_tail_sqlite(
@@ -987,11 +1026,7 @@ pub(crate) fn print_tail_sqlite(
         })
     })?;
 
-    let mut rows: Vec<DbRow> = Vec::new();
-    for r in rows_iter.flatten() {
-        rows.push(r);
-    }
-
+    let mut rows: Vec<DbRow> = rows_iter.flatten().collect();
     rows.reverse();
 
     let mut last_id = 0;
@@ -1010,6 +1045,51 @@ pub(crate) fn print_tail_sqlite(
     }
 
     Ok(last_id)
+}
+
+fn poll_sqlite_rows(
+    db_path: &Path,
+    last_id: &mut i64,
+    filter: &SessionFilter,
+    level_filter: &LogLevelFilter,
+    search: Option<&str>,
+) {
+    let conn = match rusqlite::Connection::open(db_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let mut stmt = match conn.prepare(
+        "SELECT id, timestamp, level, target, message, session FROM logs WHERE id > ?1 ORDER BY id ASC",
+    ) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let rows_iter = match stmt.query_map([*last_id], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+            row.get::<_, String>(4)?,
+            row.get::<_, Option<String>>(5)?,
+        ))
+    }) {
+        Ok(rows) => rows,
+        Err(_) => return,
+    };
+    for (id, timestamp, level, target, message, session) in rows_iter.flatten() {
+        print_row(
+            &timestamp,
+            &level,
+            &target,
+            &message,
+            session.as_deref(),
+            filter,
+            level_filter,
+            search,
+        );
+        *last_id = id;
+    }
 }
 
 async fn follow_sqlite(
@@ -1035,32 +1115,8 @@ async fn follow_sqlite(
                 break Ok(());
             }
             _ = interval.tick() => {
-                if let Ok(conn) = rusqlite::Connection::open(db_path) {
-                    if let Ok(mut stmt) = conn.prepare(
-                        "SELECT id, timestamp, level, target, message, session FROM logs WHERE id > ?1 ORDER BY id ASC"
-                    ) {
-                        if let Ok(rows_iter) = stmt.query_map([last_id], |row| {
-                            Ok((
-                                row.get::<_, i64>(0)?,
-                                row.get::<_, String>(1)?,
-                                row.get::<_, String>(2)?,
-                                row.get::<_, String>(3)?,
-                                row.get::<_, String>(4)?,
-                                row.get::<_, Option<String>>(5)?,
-                            ))
-                        }) {
-                            for (id, timestamp, level, target, message, session) in rows_iter.flatten() {
-                                print_row(&timestamp, &level, &target, &message, session.as_deref(), &filter, &level_filter, search);
-                                last_id = id;
-                            }
-                        }
-                    }
-                }
-
-                if last_session_check.elapsed() >= Duration::from_secs(1) {
-                    last_session_check = std::time::Instant::now();
-                    update_auto_session(&mut filter);
-                }
+                poll_sqlite_rows(db_path, &mut last_id, &filter, &level_filter, search);
+                maybe_refresh_auto_session(&mut last_session_check, &mut filter);
             }
         }
     }
@@ -1076,56 +1132,59 @@ pub async fn run_logs_viewer(
     search: Option<String>,
 ) -> Result<()> {
     let path = log_path.unwrap_or_else(default_db_path);
-
     let is_sqlite = path.extension().is_some_and(|ext| ext == "db");
 
     let effective_filter = match &filter {
-        SessionFilter::Only(_) => filter.clone(),
-        SessionFilter::Auto(_) => filter.clone(),
+        SessionFilter::Only(_) | SessionFilter::Auto(_) => filter.clone(),
         SessionFilter::All => {
-            if let Some(active) = detect_active_session() {
-                println!("\n  {CYAN}{DIM}◉ active session detected: {active}{RESET}");
+            match detect_active_session() {
+                Some(active) => {
+                    println!("\n  {CYAN}{DIM}◉ active session detected: {active}{RESET}");
+                }
+                None => {}
             }
             filter.clone()
         }
     };
 
-    if is_sqlite {
-        print_header(&path, tail, &effective_filter, &level_filter);
-        let last_id = print_tail_sqlite(
-            &path,
-            tail,
-            &effective_filter,
-            &level_filter,
-            search.as_deref(),
-        )?;
-        println!("\n  {PURPLE}{DIM}── live ──{RESET}\n");
-        follow_sqlite(
-            &path,
-            last_id,
-            effective_filter,
-            level_filter,
-            search.as_deref(),
-        )
-        .await
-    } else {
-        print_header(&path, tail, &effective_filter, &level_filter);
-        let pos = print_tail(
-            &path,
-            tail,
-            &effective_filter,
-            &level_filter,
-            search.as_deref(),
-        )?;
-        println!("\n  {PURPLE}{DIM}── live ──{RESET}\n");
-        follow(
-            &path,
-            pos,
-            effective_filter,
-            level_filter,
-            search.as_deref(),
-        )
-        .await
+    print_header(&path, tail, &effective_filter, &level_filter);
+    match is_sqlite {
+        true => {
+            let last_id = print_tail_sqlite(
+                &path,
+                tail,
+                &effective_filter,
+                &level_filter,
+                search.as_deref(),
+            )?;
+            println!("\n  {PURPLE}{DIM}── live ──{RESET}\n");
+            follow_sqlite(
+                &path,
+                last_id,
+                effective_filter,
+                level_filter,
+                search.as_deref(),
+            )
+            .await
+        }
+        false => {
+            let pos = print_tail(
+                &path,
+                tail,
+                &effective_filter,
+                &level_filter,
+                search.as_deref(),
+            )?;
+            println!("\n  {PURPLE}{DIM}── live ──{RESET}\n");
+            follow(
+                &path,
+                pos,
+                effective_filter,
+                level_filter,
+                search.as_deref(),
+            )
+            .await
+        }
     }
 }
 
@@ -1138,8 +1197,10 @@ pub fn print_session_recent_logs(
     let is_sqlite = path.extension().is_some_and(|ext| ext == "db");
 
     let filter = match session {
-        Some(s) if s.to_lowercase() == "all" => SessionFilter::All,
-        Some(s) => SessionFilter::Only(s),
+        Some(s) => match s.to_lowercase().as_str() {
+            "all" => SessionFilter::All,
+            _ => SessionFilter::Only(s),
+        },
         None => SessionFilter::All,
     };
 
@@ -1155,10 +1216,13 @@ pub fn print_session_recent_logs(
         None => LogLevelFilter::Debug,
     };
 
-    if is_sqlite {
-        let _ = print_tail_sqlite(&path, tail, &filter, &level_filter, None)?;
-    } else {
-        let _ = print_tail(&path, tail, &filter, &level_filter, None)?;
+    match is_sqlite {
+        true => {
+            let _ = print_tail_sqlite(&path, tail, &filter, &level_filter, None)?;
+        }
+        false => {
+            let _ = print_tail(&path, tail, &filter, &level_filter, None)?;
+        }
     }
     Ok(())
 }

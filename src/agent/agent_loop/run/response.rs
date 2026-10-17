@@ -11,145 +11,160 @@ use anyhow::Result;
 use futures_util::StreamExt;
 use std::io::Write;
 
-#[allow(clippy::too_many_arguments)]
-pub(super) async fn normalize_response(
+async fn continue_truncated_response(
     loop_ref: &AgentLoop,
     ctx: &mut TurnContext<'_>,
-    mut resp: crate::providers::LLMResponse,
+    resp: &mut crate::providers::LLMResponse,
+    settings: &GenerationSettings,
+    turn_cancel: &crate::tools::subagent::CancellationToken,
+) {
+    let mut accumulated_content = resp.content.clone();
+    let mut finish_reason = resp.finish_reason.clone();
+    let mut continue_attempts = 0;
+
+    while finish_reason == "length" && continue_attempts < 3 && !turn_cancel.is_cancelled() {
+        continue_attempts += 1;
+
+        let mut temp_messages = ctx.messages.clone();
+        let _ = accumulated_content.as_ref().map(|current_acc| {
+            temp_messages.push(Message {
+                role: "assistant".to_string(),
+                content: current_acc.clone(),
+                timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                extra: serde_json::Map::new(),
+            });
+        });
+
+        temp_messages.push(Message {
+            role: "user".to_string(),
+            content: "Continue generating the rest of your previous message exactly from where you left off. Do not repeat the beginning.".to_string(),
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            extra: serde_json::Map::new(),
+        });
+
+        let cont_activity_msg = format!(
+            "{}▶ Continuing response... (attempt {}){}",
+            crate::agent::style::RED_ORANGE,
+            continue_attempts,
+            crate::agent::style::COLOR_RESET
+        );
+        match loop_ref
+            .chat_with_fallback(
+                &mut ctx.active_provider,
+                &ctx.system_prompt,
+                &temp_messages,
+                &[],
+                settings,
+                &cont_activity_msg,
+            )
+            .await
+        {
+            Ok(cont_resp) => {
+                finish_reason = cont_resp.finish_reason.clone();
+                let _ = cont_resp.content.as_ref().map(|cont_content| {
+                    match accumulated_content.as_mut() {
+                        Some(acc) => acc.push_str(cont_content),
+                        None => accumulated_content = Some(cont_content.clone()),
+                    }
+                });
+                let _ = (!cont_resp.tool_calls.is_empty())
+                    .then(|| resp.tool_calls.extend(cont_resp.tool_calls));
+            }
+            Err(_) => break,
+        }
+    }
+
+    resp.content = accumulated_content;
+    resp.finish_reason = finish_reason;
+}
+
+fn build_recovery_prompt(original_reasoning: Option<&str>, has_tools: bool) -> String {
+    let trimmed = original_reasoning.map(str::trim).filter(|s| !s.is_empty());
+    match (trimmed, has_tools) {
+        (Some(reasoning), true) => format!(
+            "Your previous streamed response contained reasoning only and stopped before executing a tool call or providing a final answer. Here is that reasoning:\n\n{}\n\nNow execute the required tool call(s) to fulfill the request, or if no tool is needed, provide only the final user-facing answer to my last message without reasoning labels.",
+            reasoning
+        ),
+        (None, true) => "Your previous streamed response contained reasoning only. Now execute the required tool call(s) to fulfill the request, or provide only the final user-facing answer to my last message.".to_string(),
+        (Some(reasoning), false) => format!(
+            "Your previous streamed response contained reasoning only and no user-facing answer. Here is that reasoning:\n\n{}\n\nNow provide only the final user-facing answer to my last message. Do not include analysis, reasoning labels, or tool calls.",
+            reasoning
+        ),
+        (None, false) => "Your previous streamed response contained reasoning only and no user-facing answer. Provide only the final answer to my last message now. Do not include reasoning, analysis, or tool calls.".to_string(),
+    }
+}
+
+fn maybe_print_recovery_reasoning(
+    reasoning_printed: &mut bool,
+    mode: &str,
+    start_time: std::time::Instant,
+    original_reasoning: Option<&String>,
+) {
+    let should_print = !*reasoning_printed
+        && should_show_tui_thoughts(mode)
+        && !crate::agent::style::spinner::is_silent();
+    let _ = should_print.then(|| {
+        print!("\r\x1b[2K");
+        let _ = std::io::stdout().flush();
+        let duration_secs = start_time.elapsed().as_secs_f32();
+        let depth = crate::tools::subagent::DELEGATION_DEPTH
+            .try_with(|d| *d)
+            .unwrap_or(0);
+        let prefix = (depth > 0)
+            .then(|| crate::agent::style::get_tree_prefix(false))
+            .unwrap_or_default();
+        crate::tui_println!(
+            "{}{}• {}{}{}Thought for {:.1}s{}",
+            prefix,
+            crate::agent::style::RED_ORANGE,
+            crate::agent::style::COLOR_RESET,
+            crate::agent::style::COLOR_BOLD,
+            crate::agent::style::RED_ORANGE,
+            duration_secs,
+            crate::agent::style::COLOR_RESET
+        );
+        let _ = original_reasoning.map(|reasoning| {
+            let visible_reasoning = match mode == "compact" {
+                true => compact_reasoning_summary(reasoning),
+                false => reasoning.clone(),
+            };
+            let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+            crate::agent::style::print_tree_monologue(&leaf_prefix, &visible_reasoning);
+            crate::tui_println!("");
+        });
+        *reasoning_printed = true;
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn recover_from_reasoning_only_response(
+    loop_ref: &AgentLoop,
+    ctx: &mut TurnContext<'_>,
+    resp: &mut crate::providers::LLMResponse,
     config: &crate::config::schema::Config,
     tools_openai: &[serde_json::Value],
     settings: &GenerationSettings,
-    turn_cancel: &crate::tools::subagent::CancellationToken,
     start_time: std::time::Instant,
     reasoning_printed: &mut bool,
     content_streaming_started: &mut bool,
     markdown_streamer: &mut crate::channels::cli::render::StreamingMarkdownRenderer,
-) -> Result<crate::providers::LLMResponse> {
-    if resp.finish_reason == "length" {
-        let mut accumulated_content = resp.content.clone();
-        let mut finish_reason = resp.finish_reason.clone();
-        let mut continue_attempts = 0;
+) -> Result<()> {
+    let _ = (!crate::agent::style::spinner::is_silent()).then(|| {
+        print!("\r\x1b[2K");
+        let _ = std::io::stdout().flush();
+    });
 
-        while finish_reason == "length" && continue_attempts < 3 {
-            if turn_cancel.is_cancelled() {
-                break;
-            }
-            continue_attempts += 1;
-
-            let mut temp_messages = ctx.messages.clone();
-            if let Some(ref current_acc) = accumulated_content {
-                temp_messages.push(Message {
-                    role: "assistant".to_string(),
-                    content: current_acc.clone(),
-                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
-                    extra: serde_json::Map::new(),
-                });
-            }
-
-            temp_messages.push(Message {
-                role: "user".to_string(),
-                content: "Continue generating the rest of your previous message exactly from where you left off. Do not repeat the beginning.".to_string(),
-                timestamp: Some(chrono::Utc::now().to_rfc3339()),
-                extra: serde_json::Map::new(),
-            });
-
-            let cont_activity_msg = format!(
-                "{}▶ Continuing response... (attempt {}){}",
-                crate::agent::style::RED_ORANGE,
-                continue_attempts,
-                crate::agent::style::COLOR_RESET
-            );
-            // Continuations are text-only so the model cannot start a new tool call.
-            if let Ok(cont_resp) = loop_ref
-                .chat_with_fallback(
-                    &mut ctx.active_provider,
-                    &ctx.system_prompt,
-                    &temp_messages,
-                    &[],
-                    settings,
-                    &cont_activity_msg,
-                )
-                .await
-            {
-                finish_reason = cont_resp.finish_reason.clone();
-                if let Some(ref cont_content) = cont_resp.content {
-                    if let Some(ref mut acc) = accumulated_content {
-                        acc.push_str(cont_content);
-                    } else {
-                        accumulated_content = Some(cont_content.clone());
-                    }
-                }
-                if !cont_resp.tool_calls.is_empty() {
-                    resp.tool_calls.extend(cont_resp.tool_calls);
-                }
-            } else {
-                break;
-            }
+    match config.agents.defaults.streaming {
+        false => {
+            resp.content = resp.reasoning_content.take();
+            ctx.streamed = false;
+            Ok(())
         }
-
-        resp.content = accumulated_content;
-        resp.finish_reason = finish_reason;
-    }
-
-    if let Some(text) = resp.content.take() {
-        let (clean_content, extracted_reasoning) =
-            crate::providers::openai::split_think_blocks(&text);
-        resp.content = clean_content;
-        resp.reasoning_content = crate::providers::openai::merge_reasoning(
-            resp.reasoning_content.take(),
-            extracted_reasoning,
-        );
-    }
-
-    if resp.tool_calls.is_empty() {
-        if let Some(ref text) = resp.content {
-            let parsed = crate::providers::openai::parse_fallback_tool_calls(text);
-            if !parsed.is_empty() {
-                resp.tool_calls = parsed;
-                resp.content = None;
-            }
-        }
-    }
-
-    if resp.tool_calls.is_empty() && resp.content.is_none() {
-        if let Some(ref reasoning) = resp.reasoning_content {
-            if reasoning.contains("[TOOL_CALL]")
-                || reasoning.contains("<tool_call>")
-                || reasoning.contains("```tool_call")
-            {
-                let parsed = crate::providers::openai::parse_fallback_tool_calls(reasoning);
-                if !parsed.is_empty() {
-                    resp.tool_calls = parsed;
-                }
-            }
-        }
-    }
-
-    // Some providers return reasoning_content without a user-facing answer or tool call.
-    // Re-prompt once so the model can either execute the tool call it planned in reasoning
-    // or provide a final user-facing answer.
-    if resp.content.is_none() && resp.reasoning_content.is_some() && resp.tool_calls.is_empty() {
-        if !crate::agent::style::spinner::is_silent() {
-            print!("\r\x1b[2K");
-            let _ = std::io::stdout().flush();
-        }
-
-        if config.agents.defaults.streaming {
+        true => {
             let original_reasoning = resp.reasoning_content.take();
             let mut recovery_messages = ctx.messages.clone();
-            let has_tools = !tools_openai.is_empty();
-            let recovery_prompt = match (original_reasoning.as_deref(), has_tools) {
-                (Some(reasoning), true) if !reasoning.trim().is_empty() => format!(
-                    "Your previous streamed response contained reasoning only and stopped before executing a tool call or providing a final answer. Here is that reasoning:\n\n{}\n\nNow execute the required tool call(s) to fulfill the request, or if no tool is needed, provide only the final user-facing answer to my last message without reasoning labels.",
-                    reasoning.trim()
-                ),
-                (_, true) => "Your previous streamed response contained reasoning only. Now execute the required tool call(s) to fulfill the request, or provide only the final user-facing answer to my last message.".to_string(),
-                (Some(reasoning), false) if !reasoning.trim().is_empty() => format!(
-                    "Your previous streamed response contained reasoning only and no user-facing answer. Here is that reasoning:\n\n{}\n\nNow provide only the final user-facing answer to my last message. Do not include analysis, reasoning labels, or tool calls.",
-                    reasoning.trim()
-                ),
-                (_, false) => "Your previous streamed response contained reasoning only and no user-facing answer. Provide only the final answer to my last message now. Do not include reasoning, analysis, or tool calls.".to_string(),
-            };
+            let recovery_prompt =
+                build_recovery_prompt(original_reasoning.as_deref(), !tools_openai.is_empty());
             recovery_messages.push(Message {
                 role: "user".to_string(),
                 content: recovery_prompt,
@@ -180,64 +195,25 @@ pub(super) async fn normalize_response(
                         crate::agent::agent_loop::streaming::StreamingAssembly::new();
 
                     let recovery_stream_idle_timeout = loop_ref.provider_attempt_timeout_duration();
-                    loop {
-                        let Some(chunk) = tokio::time::timeout(
-                            recovery_stream_idle_timeout,
-                            recovery_stream.next(),
+                    while let Some(chunk) = tokio::time::timeout(
+                        recovery_stream_idle_timeout,
+                        recovery_stream.next(),
+                    )
+                    .await
+                    .map_err(|_| {
+                        anyhow::anyhow!(
+                            "Provider recovery stream timed out after {}s without output",
+                            recovery_stream_idle_timeout.as_secs()
                         )
-                        .await
-                        .map_err(|_| {
-                            anyhow::anyhow!(
-                                "Provider recovery stream timed out after {}s without output",
-                                recovery_stream_idle_timeout.as_secs()
-                            )
-                        })?
-                        else {
-                            break;
-                        };
+                    })? {
                         match chunk? {
                             crate::providers::ChatStreamChunk::Content(text) => {
-                                if !*reasoning_printed
-                                    && should_show_tui_thoughts(mode)
-                                    && !crate::agent::style::spinner::is_silent()
-                                {
-                                    print!("\r\x1b[2K");
-                                    let _ = std::io::stdout().flush();
-                                    let duration_secs = start_time.elapsed().as_secs_f32();
-                                    let depth = crate::tools::subagent::DELEGATION_DEPTH
-                                        .try_with(|d| *d)
-                                        .unwrap_or(0);
-                                    let prefix = if depth > 0 {
-                                        crate::agent::style::get_tree_prefix(false)
-                                    } else {
-                                        String::new()
-                                    };
-                                    crate::tui_println!(
-                                        "{}{}• {}{}{}Thought for {:.1}s{}",
-                                        prefix,
-                                        crate::agent::style::RED_ORANGE,
-                                        crate::agent::style::COLOR_RESET,
-                                        crate::agent::style::COLOR_BOLD,
-                                        crate::agent::style::RED_ORANGE,
-                                        duration_secs,
-                                        crate::agent::style::COLOR_RESET
-                                    );
-                                    if let Some(ref reasoning) = original_reasoning {
-                                        let visible_reasoning = if mode == "compact" {
-                                            compact_reasoning_summary(reasoning)
-                                        } else {
-                                            reasoning.clone()
-                                        };
-                                        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                                        crate::agent::style::print_tree_monologue(
-                                            &leaf_prefix,
-                                            &visible_reasoning,
-                                        );
-                                        crate::tui_println!("");
-                                    }
-                                    *reasoning_printed = true;
-                                }
-
+                                maybe_print_recovery_reasoning(
+                                    reasoning_printed,
+                                    mode,
+                                    start_time,
+                                    original_reasoning.as_ref(),
+                                );
                                 recovery_content.push_str(&text);
                                 stream_content_chunk(
                                     &text,
@@ -275,9 +251,9 @@ pub(super) async fn normalize_response(
                                 );
                             }
                             crate::providers::ChatStreamChunk::Done { finish_reason } => {
-                                if let Some(ref reason) = finish_reason {
+                                let _ = finish_reason.as_ref().map(|reason| {
                                     recovery_finish_reason = reason.clone();
-                                }
+                                });
                                 recovery_assembly.push_chunk(
                                     crate::providers::ChatStreamChunk::Done { finish_reason },
                                 );
@@ -288,46 +264,49 @@ pub(super) async fn normalize_response(
                     markdown_streamer.finish();
                     let assembled_recovery = recovery_assembly.into_response();
 
-                    if !assembled_recovery.tool_calls.is_empty() {
-                        resp.tool_calls = assembled_recovery.tool_calls;
-                        resp.content = None;
-                        resp.reasoning_content = crate::providers::openai::merge_reasoning(
-                            original_reasoning,
-                            if recovery_reasoning.trim().is_empty() {
-                                None
-                            } else {
-                                Some(recovery_reasoning)
-                            },
-                        );
-                        resp.finish_reason = "tool_calls".to_string();
-                        ctx.streamed = false;
-                    } else {
-                        let recovery_reasoning_visible = recovery_reasoning.trim().to_string();
-                        let recovered_content = if !recovery_content.trim().is_empty() {
-                            Some(recovery_content)
-                        } else if !recovery_reasoning_visible.is_empty() {
-                            Some(recovery_reasoning_visible)
-                        } else {
-                            Some("I did not receive a final answer from the model for this turn.".to_string())
-                        };
-                        let recovery_reasoning_for_memory = if recovery_reasoning.trim().is_empty()
-                            || recovered_content
-                                .as_ref()
-                                .is_some_and(|content| content == recovery_reasoning.trim())
-                        {
-                            None
-                        } else {
-                            Some(recovery_reasoning)
-                        };
-                        resp.content = recovered_content;
-                        resp.reasoning_content = crate::providers::openai::merge_reasoning(
-                            original_reasoning,
-                            recovery_reasoning_for_memory,
-                        );
-                        resp.finish_reason = recovery_finish_reason;
-                        resp.tool_calls.clear();
-                        ctx.streamed = *content_streaming_started;
+                    match assembled_recovery.tool_calls.is_empty() {
+                        false => {
+                            resp.tool_calls = assembled_recovery.tool_calls;
+                            resp.content = None;
+                            resp.reasoning_content = crate::providers::openai::merge_reasoning(
+                                original_reasoning,
+                                (!recovery_reasoning.trim().is_empty())
+                                    .then_some(recovery_reasoning),
+                            );
+                            resp.finish_reason = "tool_calls".to_string();
+                            ctx.streamed = false;
+                        }
+                        true => {
+                            let recovery_reasoning_visible = recovery_reasoning.trim().to_string();
+                            let recovered_content = (!recovery_content.trim().is_empty())
+                                .then(|| recovery_content.clone())
+                                .or_else(|| {
+                                    (!recovery_reasoning_visible.is_empty())
+                                        .then(|| recovery_reasoning_visible.clone())
+                                })
+                                .or_else(|| {
+                                    Some(
+                                        "I did not receive a final answer from the model for this turn."
+                                            .to_string(),
+                                    )
+                                });
+                            let hide_reasoning_for_memory = recovery_reasoning.trim().is_empty()
+                                || recovered_content
+                                    .as_ref()
+                                    .is_some_and(|content| content == recovery_reasoning.trim());
+                            let recovery_reasoning_for_memory =
+                                (!hide_reasoning_for_memory).then_some(recovery_reasoning);
+                            resp.content = recovered_content;
+                            resp.reasoning_content = crate::providers::openai::merge_reasoning(
+                                original_reasoning,
+                                recovery_reasoning_for_memory,
+                            );
+                            resp.finish_reason = recovery_finish_reason;
+                            resp.tool_calls.clear();
+                            ctx.streamed = *content_streaming_started;
+                        }
                     }
+                    Ok(())
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -345,23 +324,99 @@ pub(super) async fn normalize_response(
                     resp.reasoning_content = None;
                     ctx.streamed = false;
                     *content_streaming_started = false;
+                    Ok(())
                 }
             }
-        } else {
-            resp.content = resp.reasoning_content.take();
-            ctx.streamed = false;
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) async fn normalize_response(
+    loop_ref: &AgentLoop,
+    ctx: &mut TurnContext<'_>,
+    mut resp: crate::providers::LLMResponse,
+    config: &crate::config::schema::Config,
+    tools_openai: &[serde_json::Value],
+    settings: &GenerationSettings,
+    turn_cancel: &crate::tools::subagent::CancellationToken,
+    start_time: std::time::Instant,
+    reasoning_printed: &mut bool,
+    content_streaming_started: &mut bool,
+    markdown_streamer: &mut crate::channels::cli::render::StreamingMarkdownRenderer,
+) -> Result<crate::providers::LLMResponse> {
+    match resp.finish_reason == "length" {
+        true => {
+            continue_truncated_response(loop_ref, ctx, &mut resp, settings, turn_cancel).await;
+        }
+        false => {}
     }
 
-    if resp.content.is_none() && resp.reasoning_content.is_none() && resp.tool_calls.is_empty() {
-        let finish = resp.finish_reason.to_lowercase();
-        if finish.contains("filter") || finish.contains("malformed") {
-            resp.content = Some(format!(
-                "The model call ended without output due to provider safety/filter reason: '{}'. Check tool call arguments or system prompt constraints.",
-                resp.finish_reason
-            ));
+    let _ = resp.content.take().map(|text| {
+        let (clean_content, extracted_reasoning) =
+            crate::providers::openai::split_think_blocks(&text);
+        resp.content = clean_content;
+        resp.reasoning_content = crate::providers::openai::merge_reasoning(
+            resp.reasoning_content.take(),
+            extracted_reasoning,
+        );
+    });
+
+    let _ = resp
+        .tool_calls
+        .is_empty()
+        .then(|| resp.content.as_deref())
+        .flatten()
+        .map(crate::providers::openai::parse_fallback_tool_calls)
+        .filter(|parsed| !parsed.is_empty())
+        .map(|parsed| {
+            resp.tool_calls = parsed;
+            resp.content = None;
+        });
+
+    let _ = (resp.tool_calls.is_empty() && resp.content.is_none())
+        .then(|| resp.reasoning_content.as_deref())
+        .flatten()
+        .filter(|reasoning| {
+            reasoning.contains("[TOOL_CALL]")
+                || reasoning.contains("<tool_call>")
+                || reasoning.contains("```tool_call")
+        })
+        .map(crate::providers::openai::parse_fallback_tool_calls)
+        .filter(|parsed| !parsed.is_empty())
+        .map(|parsed| {
+            resp.tool_calls = parsed;
+        });
+
+    match resp.content.is_none() && resp.reasoning_content.is_some() && resp.tool_calls.is_empty() {
+        true => {
+            recover_from_reasoning_only_response(
+                loop_ref,
+                ctx,
+                &mut resp,
+                config,
+                tools_openai,
+                settings,
+                start_time,
+                reasoning_printed,
+                content_streaming_started,
+                markdown_streamer,
+            )
+            .await?;
         }
+        false => {}
     }
+
+    let _ = (resp.content.is_none() && resp.reasoning_content.is_none() && resp.tool_calls.is_empty())
+        .then(|| {
+            let finish = resp.finish_reason.to_lowercase();
+            (finish.contains("filter") || finish.contains("malformed")).then(|| {
+                resp.content = Some(format!(
+                    "The model call ended without output due to provider safety/filter reason: '{}'. Check tool call arguments or system prompt constraints.",
+                    resp.finish_reason
+                ));
+            })
+        });
 
     Ok(resp)
 }

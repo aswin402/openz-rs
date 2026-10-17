@@ -32,21 +32,22 @@ pub(super) fn resolve_tool_timeout_secs(
     recommended_timeout_secs: Option<u64>,
     default_timeout_secs: u64,
 ) -> u64 {
-    if let Some(explicit) = timeout_arg(arguments, "_timeout_secs") {
-        return crate::tools::clamp_tool_timeout_secs(explicit);
-    }
-
-    let mut timeout_secs = recommended_timeout_secs.unwrap_or(default_timeout_secs);
-    if let Some(argument_timeout) = timeout_arg(arguments, "timeout_secs") {
-        timeout_secs = timeout_secs.max(argument_timeout);
-    }
-    if tool_name == "parallel_research" {
-        if let Some(task_timeout) = max_parallel_task_timeout(arguments) {
-            timeout_secs = timeout_secs.max(task_timeout);
+    match timeout_arg(arguments, "_timeout_secs") {
+        Some(explicit) => crate::tools::clamp_tool_timeout_secs(explicit),
+        None => {
+            let mut timeout_secs = recommended_timeout_secs.unwrap_or(default_timeout_secs);
+            let _ = timeout_arg(arguments, "timeout_secs").map(|argument_timeout| {
+                timeout_secs = timeout_secs.max(argument_timeout);
+            });
+            let _ = (tool_name == "parallel_research")
+                .then(|| max_parallel_task_timeout(arguments))
+                .flatten()
+                .map(|task_timeout| {
+                    timeout_secs = timeout_secs.max(task_timeout);
+                });
+            crate::tools::clamp_tool_timeout_secs(timeout_secs)
         }
     }
-
-    crate::tools::clamp_tool_timeout_secs(timeout_secs)
 }
 
 pub(super) struct ApprovedToolExec<'a> {
@@ -208,18 +209,17 @@ impl<'a> ToolExecutionPipeline<'a> {
     fn acquire_process_guard(
         &self,
     ) -> Result<Option<crate::tools::resource_policy::ProcessToolGuard>, String> {
-        if !self.params.metadata.spawns_process {
-            return Ok(None);
+        match self.params.metadata.spawns_process {
+            false => Ok(None),
+            true => crate::tools::resource_policy::try_acquire_process_tool(
+                self.params
+                    .config
+                    .agents
+                    .defaults
+                    .max_concurrent_process_tools,
+            )
+            .map(Some),
         }
-
-        crate::tools::resource_policy::try_acquire_process_tool(
-            self.params
-                .config
-                .agents
-                .defaults
-                .max_concurrent_process_tools,
-        )
-        .map(Some)
     }
 
     fn resolve_timeout_secs(&self) -> u64 {
@@ -248,9 +248,9 @@ impl<'a> ToolExecutionPipeline<'a> {
                     Err(anyhow::anyhow!("Cancelled by user"))
                 }
                 _ = async {
-                    while *tool_cancel_rx.borrow() == tool_cancel_initial {
-                        if tool_cancel_rx.changed().await.is_err() { break; }
-                    }
+                    while *tool_cancel_rx.borrow() == tool_cancel_initial
+                        && tool_cancel_rx.changed().await.is_ok()
+                    {}
                 } => {
                     Err(anyhow::anyhow!("Cancelled by user"))
                 }
@@ -294,9 +294,8 @@ impl<'a> ToolExecutionPipeline<'a> {
 
     async fn render_error(&mut self, err: anyhow::Error) -> serde_json::Value {
         let error_str = err.to_string();
-        if should_cancel_turn_after_tool_error(&error_str) {
-            self.params.turn_cancel.cancel();
-        }
+        let _ = should_cancel_turn_after_tool_error(&error_str)
+            .then(|| self.params.turn_cancel.cancel());
         self.params.turn_errors.push(format!(
             "Tool {} failed: {}",
             self.params.call.name, error_str
@@ -318,25 +317,27 @@ impl<'a> ToolExecutionPipeline<'a> {
 
 fn is_transient_error(err: &anyhow::Error) -> bool {
     let msg = err.to_string().to_lowercase();
-    if msg.contains("cancelled by user") || msg.contains("tool execution timed out") {
-        return false;
-    }
-    msg.contains("rate limit")
-        || msg.contains("429")
-        || msg.contains("too many requests")
-        || msg.contains("timeout")
-        || msg.contains("timed out")
-        || msg.contains("connection")
-        || msg.contains("connect")
-        || msg.contains("network")
-        || msg.contains("dns")
-        || msg.contains("host unreachable")
-        || msg.contains("temporary failure")
-        || msg.contains("502")
-        || msg.contains("503")
-        || msg.contains("504")
-        || msg.contains("bad gateway")
-        || msg.contains("service unavailable")
+    (!msg.contains("cancelled by user") && !msg.contains("tool execution timed out"))
+        && [
+            "rate limit",
+            "429",
+            "too many requests",
+            "timeout",
+            "timed out",
+            "connection",
+            "connect",
+            "network",
+            "dns",
+            "host unreachable",
+            "temporary failure",
+            "502",
+            "503",
+            "504",
+            "bad gateway",
+            "service unavailable",
+        ]
+        .iter()
+        .any(|needle| msg.contains(needle))
 }
 
 pub(super) async fn execute_approved_tool(params: ApprovedToolExec<'_>) -> serde_json::Value {
@@ -344,13 +345,6 @@ pub(super) async fn execute_approved_tool(params: ApprovedToolExec<'_>) -> serde
 }
 
 /// Execute a tool call generated by an automatic follow-up policy.
-///
-/// These calls are created by the run loop after a user-facing tool completes
-/// (for example, opening a generated artifact or suggesting a device). They
-/// intentionally bypass the model-facing approval decision because the parent
-/// call already established the user intent, but still use the same resource,
-/// timeout, retry, cancellation, and rendering pipeline as every approved
-/// tool call.
 pub(super) async fn execute_auto_tool_call(
     tools: &crate::tools::ToolRegistry,
     call: &crate::providers::ToolCallRequest,

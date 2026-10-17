@@ -17,11 +17,12 @@ impl SessionFilter {
     /// Build from an optional CLI `--session` string.
     pub fn from_opt(s: Option<&str>) -> Self {
         match s {
-            None => SessionFilter::All,
-            Some(k) if k.eq_ignore_ascii_case("all") => SessionFilter::All,
-            Some(k) if k.eq_ignore_ascii_case("auto") => SessionFilter::Auto(detect_active_session()),
-            Some("") => SessionFilter::All,
-            Some(k) => SessionFilter::Only(k.to_string()),
+            None | Some("") => SessionFilter::All,
+            Some(k) => match k.to_ascii_lowercase().as_str() {
+                "all" => SessionFilter::All,
+                "auto" => SessionFilter::Auto(detect_active_session()),
+                _ => SessionFilter::Only(k.to_string()),
+            },
         }
     }
 
@@ -74,29 +75,17 @@ impl LogLevelFilter {
     }
 }
 
-/// Returns true if any of the line's sessions match the filter.
+fn matches_session_prefix(line_sessions: &[String], wanted: &str) -> bool {
+    line_sessions.is_empty() || line_sessions.iter().any(|s| s.starts_with(wanted))
+}
+
+/// Returns true when any of the line's sessions match the filter.
 pub(crate) fn session_matches(line_sessions: &[String], filter: &SessionFilter) -> bool {
     match filter {
-        SessionFilter::All => true,
-        SessionFilter::Only(wanted) => {
-            if line_sessions.is_empty() {
-                // Lines without a session tag predate the feature — always show them
-                // so old history is not silently dropped.
-                true
-            } else {
-                line_sessions.iter().any(|s| s.starts_with(wanted.as_str()))
-            }
+        SessionFilter::All | SessionFilter::Auto(None) => true,
+        SessionFilter::Only(wanted) | SessionFilter::Auto(Some(wanted)) => {
+            matches_session_prefix(line_sessions, wanted)
         }
-        SessionFilter::Auto(opt_wanted) => match opt_wanted {
-            None => true,
-            Some(wanted) => {
-                if line_sessions.is_empty() {
-                    true
-                } else {
-                    line_sessions.iter().any(|s| s.starts_with(wanted.as_str()))
-                }
-            }
-        },
     }
 }
 
@@ -104,18 +93,15 @@ pub(crate) fn session_matches(line_sessions: &[String], filter: &SessionFilter) 
 /// agent session (excluding idle ones that have been inactive > 60 s).
 pub fn detect_active_session() -> Option<String> {
     let activity = crate::agent::activity::get_activity()?;
-    // If the agent is not idle and the activity timestamp is recent (< 60s), use it.
-    if activity.status != "Idle" {
-        return Some(activity.session_id);
+    match activity.status.as_str() {
+        "Idle" => chrono::DateTime::parse_from_rfc3339(&activity.timestamp)
+            .ok()
+            .and_then(|ts| {
+                let age = chrono::Utc::now().signed_duration_since(ts.with_timezone(&chrono::Utc));
+                (age.num_seconds() < 60).then_some(activity.session_id)
+            }),
+        _ => Some(activity.session_id),
     }
-    // Even idle: if updated in last 60 s, still return it as the "active" one.
-    if let Ok(ts) = chrono::DateTime::parse_from_rfc3339(&activity.timestamp) {
-        let age = chrono::Utc::now().signed_duration_since(ts.with_timezone(&chrono::Utc));
-        if age.num_seconds() < 60 {
-            return Some(activity.session_id);
-        }
-    }
-    None
 }
 
 pub struct RunningSession {
@@ -123,6 +109,21 @@ pub struct RunningSession {
     pub session_type: String,
     pub last_log_message: String,
     pub last_seen: String,
+}
+
+const TARGET_SESSION_TYPE_RULES: &[(&[&str], &str)] = &[
+    (&["websocket", "gateway"], "Gateway"),
+    (&["telegram"], "Telegram Bot"),
+    (&["discord"], "Discord Bot"),
+    (&["whatsapp"], "WhatsApp Bot"),
+    (&["email"], "Email Handler"),
+    (&["cli"], "CLI Agent"),
+];
+
+fn classify_target_session_type(target: &str) -> Option<&'static str> {
+    TARGET_SESSION_TYPE_RULES
+        .iter()
+        .find_map(|(needles, label)| needles.iter().any(|n| target.contains(n)).then_some(*label))
 }
 
 pub fn get_running_sessions() -> Result<Vec<RunningSession>> {
@@ -159,29 +160,24 @@ pub fn get_running_sessions() -> Result<Vec<RunningSession>> {
         let mut target_type = "Agent".to_string();
         let mut last_msg = String::new();
 
-        if let Ok(mut type_rows) = type_stmt.query([&meta.session_id]) {
-            while let Ok(Some(r)) = type_rows.next() {
-                let target: String = r.get(0)?;
-                let message: String = r.get(1)?;
+        match type_stmt.query([&meta.session_id]) {
+            Ok(mut type_rows) => {
+                while let Ok(Some(r)) = type_rows.next() {
+                    let target: String = r.get(0)?;
+                    let message: String = r.get(1)?;
 
-                if last_msg.is_empty() {
-                    last_msg = message.clone();
-                }
+                    match last_msg.is_empty() {
+                        true => last_msg = message,
+                        false => {}
+                    }
 
-                if target.contains("websocket") || target.contains("gateway") {
-                    target_type = "Gateway".to_string();
-                } else if target.contains("telegram") {
-                    target_type = "Telegram Bot".to_string();
-                } else if target.contains("discord") {
-                    target_type = "Discord Bot".to_string();
-                } else if target.contains("whatsapp") {
-                    target_type = "WhatsApp Bot".to_string();
-                } else if target.contains("email") {
-                    target_type = "Email Handler".to_string();
-                } else if target.contains("cli") {
-                    target_type = "CLI Agent".to_string();
+                    match classify_target_session_type(&target) {
+                        Some(kind) => target_type = kind.to_string(),
+                        None => {}
+                    }
                 }
             }
+            Err(_) => {}
         }
 
         sessions.push(RunningSession {

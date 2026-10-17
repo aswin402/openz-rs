@@ -61,81 +61,89 @@ fn looks_trivial(text: &str) -> bool {
 
 pub fn classify_grounding_text(text: &str) -> GroundingClass {
     let text = normalized(text);
+    let candidates = [
+        (
+            looks_like_url_or_path(&text),
+            GroundingClass::SourceSpecific,
+        ),
+        (
+            contains_any_word(
+                &text,
+                &[
+                    "medical",
+                    "medication",
+                    "medicine",
+                    "legal",
+                    "financial",
+                    "diagnosis",
+                    "tax",
+                    "investment",
+                    "contract",
+                    "safety",
+                    "exploit",
+                    "cve",
+                ],
+            ) || contains_any(&text, &["security vulnerability"]),
+            GroundingClass::HighStakes,
+        ),
+        (
+            contains_any(
+                &text,
+                &[
+                    "latest", "today", "current", "recent", "news", "price", "version", "schedule",
+                    "score", "release", "changed", "updated",
+                ],
+            ),
+            GroundingClass::CurrentExternal,
+        ),
+        (
+            contains_any(
+                &text,
+                &[
+                    "this repo",
+                    "codebase",
+                    "file",
+                    "directory",
+                    "path",
+                    "function",
+                    "struct",
+                    "module",
+                    "implementation",
+                    "where is",
+                    "where are",
+                ],
+            ),
+            GroundingClass::LocalProject,
+        ),
+        (
+            contains_any(
+                &text,
+                &[
+                    "remember",
+                    "memory",
+                    "preference",
+                    "saved",
+                    "skill",
+                    "what did we",
+                    "previous",
+                ],
+            ),
+            GroundingClass::PersonalMemory,
+        ),
+        (
+            contains_any(
+                &text,
+                &["not sure", "unknown", "verify", "check if", "doubt"],
+            ),
+            GroundingClass::Uncertain,
+        ),
+        (looks_trivial(&text), GroundingClass::Trivial),
+    ];
 
-    if looks_like_url_or_path(&text) {
-        return GroundingClass::SourceSpecific;
-    }
-    if contains_any_word(
-        &text,
-        &[
-            "medical",
-            "medication",
-            "medicine",
-            "legal",
-            "financial",
-            "diagnosis",
-            "tax",
-            "investment",
-            "contract",
-            "safety",
-            "exploit",
-            "cve",
-        ],
-    ) || contains_any(&text, &["security vulnerability"])
-    {
-        return GroundingClass::HighStakes;
-    }
-    if contains_any(
-        &text,
-        &[
-            "latest", "today", "current", "recent", "news", "price", "version", "schedule",
-            "score", "release", "changed", "updated",
-        ],
-    ) {
-        return GroundingClass::CurrentExternal;
-    }
-    if contains_any(
-        &text,
-        &[
-            "this repo",
-            "codebase",
-            "file",
-            "directory",
-            "path",
-            "function",
-            "struct",
-            "module",
-            "implementation",
-            "where is",
-            "where are",
-        ],
-    ) {
-        return GroundingClass::LocalProject;
-    }
-    if contains_any(
-        &text,
-        &[
-            "remember",
-            "memory",
-            "preference",
-            "saved",
-            "skill",
-            "what did we",
-            "previous",
-        ],
-    ) {
-        return GroundingClass::PersonalMemory;
-    }
-    if contains_any(
-        &text,
-        &["not sure", "unknown", "verify", "check if", "doubt"],
-    ) {
-        return GroundingClass::Uncertain;
-    }
-    if looks_trivial(&text) {
-        return GroundingClass::Trivial;
-    }
-    GroundingClass::Stable
+    candidates
+        .into_iter()
+        .find_map(|(matched, class)| matched.then_some(class))
+        .unwrap_or(GroundingClass::Stable)
 }
 
 fn asks_for_delegation_or_complex_work(text: &str) -> bool {
@@ -187,12 +195,12 @@ pub fn step_execution_policy(
     let combined = format!("{workflow_goal}\n{step_goal}");
     let step_class = classify_grounding_text(step_goal);
     let workflow_class = classify_grounding_text(workflow_goal);
-    let class = if matches!(step_class, GroundingClass::Stable)
-        && should_inherit_workflow_grounding(step_goal)
-    {
-        workflow_class
-    } else {
-        step_class
+    let class = match (
+        matches!(step_class, GroundingClass::Stable),
+        should_inherit_workflow_grounding(step_goal),
+    ) {
+        (true, true) => workflow_class,
+        _ => step_class,
     };
     let combined_norm = normalized(&combined);
     let step_norm = normalized(step_goal);

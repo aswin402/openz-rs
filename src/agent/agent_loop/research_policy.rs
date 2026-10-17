@@ -50,18 +50,93 @@ const EXPLICIT_RESEARCH_TERMS: &[&str] = &[
     "deep dive",
 ];
 
+const LOCAL_OPERATIONAL_QUERY_TERMS: &[&str] = &[
+    "which dir",
+    "which directory",
+    "what dir",
+    "what directory",
+    "where are we",
+    "where am i",
+    "current dir",
+    "current directory",
+    "cwd",
+    "working directory",
+    "in this repo",
+    "this repo",
+    "this codebase",
+    "write_file",
+    "read_file",
+    "patch_file",
+    "replace_lines",
+    "exec_command",
+    "list_jobs",
+    "schedule_job",
+    "remove_job",
+    "cargo check",
+    "cargo test",
+    "cargo build",
+    "src/",
+    "/tmp/",
+    "cron job",
+    "scheduled cron",
+];
+
+const RESEARCH_FAILURE_RULES: &[(ResearchFailureKind, &[&str])] = &[
+    (
+        ResearchFailureKind::Captcha,
+        &["captcha", "cloudflare", "bot check"],
+    ),
+    (
+        ResearchFailureKind::BrowserDependencyMissing,
+        &[
+            "geckodriver",
+            "chromedriver",
+            "failed to start any headless browser",
+            "browser dependency",
+            "not installed",
+        ],
+    ),
+    (
+        ResearchFailureKind::BrowserSessionLost,
+        &[
+            "receiver is gone",
+            "browser session",
+            "connection closed before receiving response",
+        ],
+    ),
+    (
+        ResearchFailureKind::SearchExhausted,
+        &[
+            "all search backends",
+            "all enabled external web search backends",
+            "no search results",
+            "search backends exhausted",
+        ],
+    ),
+    (
+        ResearchFailureKind::RateLimited,
+        &["429", "rate limit", "too many requests"],
+    ),
+    (
+        ResearchFailureKind::ServerUnavailable,
+        &["503", "502", "504", "service unavailable", "bad gateway"],
+    ),
+    (ResearchFailureKind::Timeout, &["timeout", "timed out"]),
+    (
+        ResearchFailureKind::Network,
+        &["dns", "network", "connection", "host"],
+    ),
+];
+
 fn contains_phrase_bounded(text_lower: &str, phrase: &str) -> bool {
     let bytes = text_lower.as_bytes();
     let p_len = phrase.len();
-    for (idx, _) in text_lower.match_indices(phrase) {
+    text_lower.match_indices(phrase).any(|(idx, _)| {
         let before_ok = idx == 0 || !bytes[idx - 1].is_ascii_alphanumeric();
         let after_idx = idx + p_len;
         let after_ok = after_idx >= bytes.len() || !bytes[after_idx].is_ascii_alphanumeric();
-        if before_ok && after_ok {
-            return true;
-        }
-    }
-    false
+        before_ok && after_ok
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,49 +200,15 @@ impl ResearchFailureKind {
 
 pub fn classify_research_failure(error: &str) -> ResearchFailureKind {
     let lower = error.to_lowercase();
-    if lower.contains("captcha") || lower.contains("cloudflare") || lower.contains("bot check") {
-        ResearchFailureKind::Captcha
-    } else if lower.contains("geckodriver")
-        || lower.contains("chromedriver")
-        || lower.contains("failed to start any headless browser")
-        || lower.contains("browser dependency")
-        || lower.contains("not installed")
-    {
-        ResearchFailureKind::BrowserDependencyMissing
-    } else if lower.contains("receiver is gone")
-        || lower.contains("browser session")
-        || lower.contains("connection closed before receiving response")
-    {
-        ResearchFailureKind::BrowserSessionLost
-    } else if lower.contains("all search backends")
-        || lower.contains("all enabled external web search backends")
-        || lower.contains("no search results")
-        || lower.contains("search backends exhausted")
-    {
-        ResearchFailureKind::SearchExhausted
-    } else if lower.contains("429")
-        || lower.contains("rate limit")
-        || lower.contains("too many requests")
-    {
-        ResearchFailureKind::RateLimited
-    } else if lower.contains("503")
-        || lower.contains("502")
-        || lower.contains("504")
-        || lower.contains("service unavailable")
-        || lower.contains("bad gateway")
-    {
-        ResearchFailureKind::ServerUnavailable
-    } else if lower.contains("timeout") || lower.contains("timed out") {
-        ResearchFailureKind::Timeout
-    } else if lower.contains("dns")
-        || lower.contains("network")
-        || lower.contains("connection")
-        || lower.contains("host")
-    {
-        ResearchFailureKind::Network
-    } else {
-        ResearchFailureKind::Other
-    }
+    RESEARCH_FAILURE_RULES
+        .iter()
+        .find_map(|(kind, needles)| {
+            needles
+                .iter()
+                .any(|needle| lower.contains(needle))
+                .then(|| kind.clone())
+        })
+        .unwrap_or(ResearchFailureKind::Other)
 }
 
 pub fn text_has_http_url(text: &str) -> bool {
@@ -219,49 +260,17 @@ pub fn is_explicit_research_request(text: &str) -> bool {
 
 fn is_local_operational_query(text: &str) -> bool {
     let lower = text.to_lowercase();
-    [
-        "which dir",
-        "which directory",
-        "what dir",
-        "what directory",
-        "where are we",
-        "where am i",
-        "current dir",
-        "current directory",
-        "cwd",
-        "working directory",
-        "in this repo",
-        "this repo",
-        "this codebase",
-        "write_file",
-        "read_file",
-        "patch_file",
-        "replace_lines",
-        "exec_command",
-        "list_jobs",
-        "schedule_job",
-        "remove_job",
-        "cargo check",
-        "cargo test",
-        "cargo build",
-        "src/",
-        "/tmp/",
-        "cron job",
-        "scheduled cron",
-    ]
-    .iter()
-    .any(|needle| lower.contains(needle))
+    LOCAL_OPERATIONAL_QUERY_TERMS
+        .iter()
+        .any(|needle| lower.contains(needle))
 }
 
 pub fn has_live_research_intent(text: &str) -> bool {
-    if is_local_operational_query(text) && !text_has_http_url(text) {
-        return false;
-    }
-
-    text_has_http_url(text)
-        || is_current_or_latest_query(text)
-        || asks_to_revalidate_saved_research(text)
-        || is_explicit_research_request(text)
+    (!is_local_operational_query(text) || text_has_http_url(text))
+        && (text_has_http_url(text)
+            || is_current_or_latest_query(text)
+            || asks_to_revalidate_saved_research(text)
+            || is_explicit_research_request(text))
 }
 
 pub fn should_force_live_research_lookup(
@@ -274,4 +283,3 @@ pub fn should_force_live_research_lookup(
 #[cfg(test)]
 #[path = "research_policy_tests.rs"]
 mod tests;
-

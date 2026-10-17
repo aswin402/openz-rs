@@ -6,90 +6,102 @@ pub enum MarketplaceIntent {
     NotMarketplace,
 }
 
+const BUYER_KEYWORDS: &[&str] = &[
+    "buy",
+    "buyer",
+    "purchase",
+    "where can i get",
+    "where to get",
+    "buyer-side",
+    "buyer side",
+    "buy-side",
+    "customer-side",
+    "ready-made",
+    "ready made",
+    "use ready",
+    "agents to use",
+    "get agents",
+];
+
+const SELLER_KEYWORDS: &[&str] = &[
+    "seller-side",
+    "seller side",
+    "sell-side",
+    "creator-side",
+    "sell my",
+    "sell our",
+    "sell agents",
+    "sell ai agents",
+    "selling my",
+    "selling our",
+    "monetize",
+    "creator payout",
+    "revenue share",
+    "publish my",
+    "publish our",
+];
+
+const AMBIGUOUS_MARKETPLACE_KEYWORDS: &[&str] = &[
+    "selling platform",
+    "selling platforms",
+    "agent marketplace",
+    "agent marketplaces",
+];
+
+const ENGINEERING_KEYWORDS: &[&str] = &[
+    "write ",
+    "build ",
+    "create ",
+    "design ",
+    "implement ",
+    "code ",
+    "define ",
+    "definition",
+    "explain ",
+    "architecture",
+    "schema",
+    "landing page",
+    "html",
+    "css",
+    "database",
+    "api",
+];
+
+const MARKETPLACE_NOUN_KEYWORDS: &[&str] = &[
+    "platform",
+    "platforms",
+    "marketplace",
+    "marketplaces",
+    "store",
+    "stores",
+    "directory",
+    "directories",
+];
+
+const AI_AGENT_KEYWORDS: &[&str] = &["ai agent", "ai agents", "agent", "agents"];
+
 pub fn classify_marketplace_intent(text: &str) -> MarketplaceIntent {
     let lower = text.to_lowercase();
-    if !mentions_ai_agent(&lower) || is_engineering_or_explanatory_prompt(&lower) {
-        return MarketplaceIntent::NotMarketplace;
+    match !mentions_ai_agent(&lower) || is_engineering_or_explanatory_prompt(&lower) {
+        true => return MarketplaceIntent::NotMarketplace,
+        false => {}
     }
 
-    let buyer = contains_any(
-        &lower,
-        &[
-            "buy",
-            "buyer",
-            "purchase",
-            "where can i get",
-            "where to get",
-            "buyer-side",
-            "buyer side",
-            "buy-side",
-            "customer-side",
-            "ready-made",
-            "ready made",
-            "use ready",
-            "agents to use",
-            "get agents",
-        ],
-    );
-    let seller = contains_any(
-        &lower,
-        &[
-            "seller-side",
-            "seller side",
-            "sell-side",
-            "creator-side",
-            "sell my",
-            "sell our",
-            "sell agents",
-            "sell ai agents",
-            "selling my",
-            "selling our",
-            "monetize",
-            "creator payout",
-            "revenue share",
-            "publish my",
-            "publish our",
-        ],
-    );
+    let buyer = contains_any(&lower, BUYER_KEYWORDS);
+    let seller = contains_any(&lower, SELLER_KEYWORDS);
+    let ambiguous = mentions_agent_marketplace(&lower)
+        && contains_any(&lower, AMBIGUOUS_MARKETPLACE_KEYWORDS);
 
-    if buyer && !seller {
-        MarketplaceIntent::Buyer
-    } else if seller && !buyer {
-        MarketplaceIntent::Seller
-    } else if mentions_agent_marketplace(&lower)
-        && (lower.contains("selling platform")
-            || lower.contains("selling platforms")
-            || lower.contains("agent marketplace")
-            || lower.contains("agent marketplaces"))
-    {
-        MarketplaceIntent::AmbiguousBuySell
-    } else {
-        MarketplaceIntent::NotMarketplace
+    match (buyer, seller, ambiguous) {
+        (true, false, _) => MarketplaceIntent::Buyer,
+        (false, true, _) => MarketplaceIntent::Seller,
+        (_, _, true) => MarketplaceIntent::AmbiguousBuySell,
+        _ => MarketplaceIntent::NotMarketplace,
     }
 }
 
 fn is_engineering_or_explanatory_prompt(lower: &str) -> bool {
-    contains_any(
-        lower,
-        &[
-            "write ",
-            "build ",
-            "create ",
-            "design ",
-            "implement ",
-            "code ",
-            "define ",
-            "definition",
-            "explain ",
-            "architecture",
-            "schema",
-            "landing page",
-            "html",
-            "css",
-            "database",
-            "api",
-        ],
-    )
+    contains_any(lower, ENGINEERING_KEYWORDS)
 }
 
 pub fn clarification_question_for_marketplace_intent(text: &str) -> Option<&'static str> {
@@ -102,24 +114,11 @@ pub fn clarification_question_for_marketplace_intent(text: &str) -> Option<&'sta
 }
 
 fn mentions_agent_marketplace(lower: &str) -> bool {
-    mentions_ai_agent(lower)
-        && contains_any(
-            lower,
-            &[
-                "platform",
-                "platforms",
-                "marketplace",
-                "marketplaces",
-                "store",
-                "stores",
-                "directory",
-                "directories",
-            ],
-        )
+    mentions_ai_agent(lower) && contains_any(lower, MARKETPLACE_NOUN_KEYWORDS)
 }
 
 fn mentions_ai_agent(lower: &str) -> bool {
-    contains_any(lower, &["ai agent", "ai agents", "agent", "agents"])
+    contains_any(lower, AI_AGENT_KEYWORDS)
 }
 
 fn contains_any(text: &str, needles: &[&str]) -> bool {
