@@ -3,11 +3,13 @@ use crate::tools::browser_common::{
     browser_cdp_port, connect_to_tab, ensure_browser_running, kill_browser_on_cdp_port,
     obtain_tab_websocket_url, send_cdp_cmd,
 };
+use crate::tools::image_generator::{serve_local_html_file, LocalHtmlServerGuard};
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use base64::prelude::*;
 use serde_json::{json, Value};
 use std::fs;
+use std::path::PathBuf;
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -26,25 +28,27 @@ struct HtmlVideoRenderPlan {
 
 impl HtmlVideoRenderPlan {
     fn new(duration_seconds: f64, fps: i64, settle_ms: u64, load_delay_ms: i64) -> Result<Self> {
-        if duration_seconds <= 0.0 {
-            return Err(anyhow!("duration_seconds must be greater than zero"));
+        match duration_seconds > 0.0 {
+            false => return Err(anyhow!("duration_seconds must be greater than zero")),
+            true => {}
         }
-        if fps <= 0 {
-            return Err(anyhow!("fps must be greater than zero"));
+        match fps > 0 {
+            false => return Err(anyhow!("fps must be greater than zero")),
+            true => {}
         }
         let total_frames = (duration_seconds * fps as f64).round() as usize;
-        if total_frames == 0 {
-            return Err(anyhow!(
+        match total_frames > 0 {
+            false => Err(anyhow!(
                 "Total frames cannot be zero. Adjust duration or FPS."
-            ));
+            )),
+            true => Ok(Self {
+                total_frames,
+                duration_seconds,
+                fps,
+                settle_ms,
+                load_delay_ms,
+            }),
         }
-        Ok(Self {
-            total_frames,
-            duration_seconds,
-            fps,
-            settle_ms,
-            load_delay_ms,
-        })
     }
 
     fn exceeds_default_direct_limit(&self) -> bool {
@@ -67,12 +71,16 @@ impl HtmlVideoRenderPlan {
     }
 }
 
-struct ServerGuard(Option<tokio::task::JoinHandle<()>>);
-
-impl Drop for ServerGuard {
-    fn drop(&mut self) {
-        if let Some(ref handle) = self.0 {
-            handle.abort();
+async fn resolve_video_target_url(html_path_str: &str) -> (String, LocalHtmlServerGuard) {
+    let is_remote = html_path_str.starts_with("http://") || html_path_str.starts_with("https://");
+    match is_remote {
+        true => (html_path_str.to_string(), LocalHtmlServerGuard(None)),
+        false => {
+            let raw_path = match html_path_str.strip_prefix("file://") {
+                Some(stripped) => PathBuf::from(stripped),
+                None => resolve_path(html_path_str),
+            };
+            serve_local_html_file(raw_path).await
         }
     }
 }
@@ -178,55 +186,13 @@ impl Tool for HtmlToVideoTool {
             .get("allow_long_render")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        if render_plan.exceeds_default_direct_limit() && !allow_long_render {
-            return Err(anyhow!(render_plan.guidance()));
+        match render_plan.exceeds_default_direct_limit() && !allow_long_render {
+            true => return Err(anyhow!(render_plan.guidance())),
+            false => {}
         }
         let total_frames = render_plan.total_frames;
 
-        let mut _server_guard = ServerGuard(None);
-        let target_url =
-            if html_path_str.starts_with("http://") || html_path_str.starts_with("https://") {
-                html_path_str.to_string()
-            } else {
-                let mut raw_path = if let Some(stripped) = html_path_str.strip_prefix("file://") {
-                    std::path::PathBuf::from(stripped)
-                } else {
-                    resolve_path(html_path_str)
-                };
-                if !raw_path.is_absolute() {
-                    if let Ok(cwd) = std::env::current_dir() {
-                        raw_path = cwd.join(raw_path);
-                    }
-                }
-
-                let parent_dir = raw_path.parent().unwrap_or(&raw_path).to_path_buf();
-                let filename = raw_path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("index.html")
-                    .to_string();
-
-                match tokio::net::TcpListener::bind("127.0.0.1:0").await {
-                    Ok(listener) => {
-                        if let Ok(addr) = listener.local_addr() {
-                            let port = addr.port();
-                            let app = axum::Router::new()
-                                .nest_service("/", tower_http::services::ServeDir::new(&parent_dir))
-                                .layer(axum::middleware::from_fn(force_utf8));
-                            let handle = tokio::spawn(async move {
-                                let _ = axum::serve(listener, app).await;
-                            });
-                            _server_guard.0 = Some(handle);
-                            format!("http://127.0.0.1:{}/{}", port, filename)
-                        } else {
-                            format!("file://{}", raw_path.to_string_lossy())
-                        }
-                    }
-                    Err(_) => {
-                        format!("file://{}", raw_path.to_string_lossy())
-                    }
-                }
-            };
+        let (target_url, _server_guard) = resolve_video_target_url(html_path_str).await;
 
         let uuid = uuid::Uuid::new_v4().to_string();
         let temp_frames_dir = std::env::temp_dir().join(format!("openz_html_video_{}", uuid));
@@ -293,23 +259,27 @@ impl Tool for HtmlToVideoTool {
         sleep(Duration::from_millis(load_delay_ms as u64)).await;
 
         for frame in 0..total_frames {
-            if let Some(js) = tick_js {
-                let js_injected = js.replace("{frame}", &frame.to_string());
-                let _ = send_cdp_cmd(
-                    &mut write,
-                    &mut read,
-                    &mut message_id,
-                    "Runtime.evaluate",
-                    json!({
-                        "expression": js_injected,
-                        "returnByValue": true
-                    }),
-                )
-                .await?;
+            match tick_js {
+                Some(js) => {
+                    let js_injected = js.replace("{frame}", &frame.to_string());
+                    let _ = send_cdp_cmd(
+                        &mut write,
+                        &mut read,
+                        &mut message_id,
+                        "Runtime.evaluate",
+                        json!({
+                            "expression": js_injected,
+                            "returnByValue": true
+                        }),
+                    )
+                    .await?;
+                }
+                None => {}
             }
 
-            if settle_ms > 0 {
-                sleep(Duration::from_millis(settle_ms)).await;
+            match settle_ms > 0 {
+                true => sleep(Duration::from_millis(settle_ms)).await,
+                false => {}
             }
 
             let screenshot_res = send_cdp_cmd(
@@ -339,8 +309,9 @@ impl Tool for HtmlToVideoTool {
             .send()
             .await;
 
-        if let Some(parent) = output_path.parent() {
-            fs::create_dir_all(parent)?;
+        match output_path.parent() {
+            Some(parent) => fs::create_dir_all(parent)?,
+            None => {}
         }
 
         let mut ffmpeg_cmd = tokio::process::Command::new("ffmpeg");
@@ -361,39 +332,19 @@ impl Tool for HtmlToVideoTool {
 
         let _ = fs::remove_dir_all(&temp_frames_dir);
 
-        if !ffmpeg_output.status.success() {
-            let stderr = String::from_utf8_lossy(&ffmpeg_output.stderr);
-            return Err(anyhow!("ffmpeg failed to render video: {}", stderr));
-        }
-
-        Ok(json!({
-            "status": "success",
-            "output_path": output_path.to_string_lossy(),
-            "total_frames": total_frames,
-            "message": format!("Video successfully generated from HTML template at {} FPS ({} frames) and saved to '{}'.", fps, total_frames, output_path_str)
-        }))
-    }
-}
-
-async fn force_utf8(
-    req: axum::http::Request<axum::body::Body>,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    let mut response = next.run(req).await;
-    if let Some(content_type) = response.headers().get(axum::http::header::CONTENT_TYPE) {
-        if let Ok(content_type_str) = content_type.to_str() {
-            if content_type_str.starts_with("text/html") && !content_type_str.contains("charset") {
-                if let Ok(new_val) =
-                    axum::http::header::HeaderValue::from_str("text/html; charset=utf-8")
-                {
-                    response
-                        .headers_mut()
-                        .insert(axum::http::header::CONTENT_TYPE, new_val);
-                }
+        match ffmpeg_output.status.success() {
+            false => {
+                let stderr = String::from_utf8_lossy(&ffmpeg_output.stderr);
+                Err(anyhow!("ffmpeg failed to render video: {}", stderr))
             }
+            true => Ok(json!({
+                "status": "success",
+                "output_path": output_path.to_string_lossy(),
+                "total_frames": total_frames,
+                "message": format!("Video successfully generated from HTML template at {} FPS ({} frames) and saved to '{}'.", fps, total_frames, output_path_str)
+            })),
         }
     }
-    response
 }
 
 #[cfg(test)]

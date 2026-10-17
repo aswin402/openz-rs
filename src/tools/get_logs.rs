@@ -43,26 +43,24 @@ impl Tool for GetLogsTool {
         let level_opt = arguments.get("level").and_then(|v| v.as_str());
 
         let db_path = crate::logs::default_db_path();
-        if !db_path.exists() {
-            return Ok(json!({
-                "status": "success",
-                "message": "Logs database does not exist yet.",
-                "logs": []
-            }));
+        match db_path.exists() {
+            false => {
+                return Ok(json!({
+                    "status": "success",
+                    "message": "Logs database does not exist yet.",
+                    "logs": []
+                }));
+            }
+            true => {}
         }
 
         let conn = rusqlite::Connection::open(&db_path)?;
 
-        // Resolve session filter
         let target_session = match session_opt {
             Some("all") => None,
-            Some("current") | None => {
-                if let Some(act) = crate::agent::activity::get_activity() {
-                    Some(act.session_id)
-                } else {
-                    crate::logs::get_latest_session_id()
-                }
-            }
+            Some("current") | None => crate::agent::activity::get_activity()
+                .map(|act| act.session_id)
+                .or_else(crate::logs::get_latest_session_id),
             Some(other) => Some(other.to_string()),
         };
 
@@ -73,18 +71,19 @@ impl Tool for GetLogsTool {
 
         let level_filter = crate::logs::LogLevelFilter::from_opt(level_opt);
 
-        // Build SQL query
         let mut query =
             "SELECT id, timestamp, level, target, message, session FROM logs".to_string();
         let mut where_clauses = Vec::new();
         let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
-        if let crate::logs::SessionFilter::Only(s) = &filter {
-            where_clauses.push("session = ?".to_string());
-            params.push(Box::new(s.clone()));
+        match &filter {
+            crate::logs::SessionFilter::Only(s) => {
+                where_clauses.push("session = ?".to_string());
+                params.push(Box::new(s.clone()));
+            }
+            _ => {}
         }
 
-        // Add level filters
         let min_level_val = match level_filter {
             crate::logs::LogLevelFilter::Trace => 1,
             crate::logs::LogLevelFilter::Debug => 2,
@@ -99,9 +98,12 @@ impl Tool for GetLogsTool {
         );
         params.push(Box::new(min_level_val));
 
-        if !where_clauses.is_empty() {
-            query.push_str(" WHERE ");
-            query.push_str(&where_clauses.join(" AND "));
+        match where_clauses.is_empty() {
+            true => {}
+            false => {
+                query.push_str(" WHERE ");
+                query.push_str(&where_clauses.join(" AND "));
+            }
         }
 
         query.push_str(" ORDER BY id DESC LIMIT ?");

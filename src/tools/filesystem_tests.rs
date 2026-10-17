@@ -15,15 +15,15 @@ fn run_git(dir: &std::path::Path, args: &[&str]) -> Result<()> {
         .args(args)
         .current_dir(dir)
         .output()?;
-    if !output.status.success() {
-        return Err(anyhow!(
+    match output.status.success() {
+        true => Ok(()),
+        false => Err(anyhow!(
             "git {:?} failed: {}{}",
             args,
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
-        ));
+        )),
     }
-    Ok(())
 }
 
 #[tokio::test]

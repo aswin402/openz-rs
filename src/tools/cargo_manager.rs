@@ -23,11 +23,14 @@ async fn run_cargo_cmd(
 ) -> Result<std::process::Output> {
     let mut std_cmd = std::process::Command::new("cargo");
 
-    if let Some(ref cwd_str) = cwd {
-        let path = crate::config::loader::resolve_path(cwd_str);
-        std_cmd.current_dir(path);
-    } else {
-        crate::config::loader::set_command_cwd(&mut std_cmd);
+    match cwd {
+        Some(ref cwd_str) => {
+            let path = crate::config::loader::resolve_path(cwd_str);
+            std_cmd.current_dir(path);
+        }
+        None => {
+            crate::config::loader::set_command_cwd(&mut std_cmd);
+        }
     }
 
     match action.trim().to_lowercase().as_str() {
@@ -61,9 +64,7 @@ async fn run_cargo_cmd(
         _ => return Err(anyhow!("Unsupported cargo action: {}", action)),
     }
 
-    if let Some(pkg) = package {
-        std_cmd.args(["-p", pkg]);
-    }
+    let _ = package.map(|pkg| std_cmd.args(["-p", pkg]));
 
     for arg in extra_args {
         std_cmd.arg(arg);
@@ -72,6 +73,102 @@ async fn run_cargo_cmd(
     let mut tokio_cmd = tokio::process::Command::from(std_cmd);
     tokio_cmd.kill_on_drop(true);
     Ok(tokio_cmd.output().await?)
+}
+
+fn parse_compiler_errors(stderr: &str) -> Vec<(String, usize)> {
+    stderr
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("--> "))
+        .filter_map(|stripped| {
+            let mut parts = stripped.split(':');
+            let file_path = parts.next()?.trim().to_string();
+            let line_num = parts.next()?.trim().parse::<usize>().ok()?;
+            Some((file_path, line_num))
+        })
+        .collect()
+}
+
+fn collect_error_context(stderr: &str, target_file: &str, line_num: usize) -> String {
+    let needle = format!(":{line_num}");
+    let mut error_context = String::new();
+    let mut collect = false;
+    let mut error_lines_count = 0usize;
+    for line in stderr.lines() {
+        let starts_block = line.contains(target_file) && line.contains(&needle);
+        match starts_block {
+            true => {
+                collect = true;
+                error_lines_count = 0;
+            }
+            false => {}
+        }
+        match collect {
+            true => {
+                error_context.push_str(line);
+                error_context.push('\n');
+                error_lines_count += 1;
+                let stop = error_lines_count > 12
+                    || (line.trim().is_empty() && error_lines_count > 4);
+                let _ = stop.then(|| collect = false);
+            }
+            false => {}
+        }
+    }
+    error_context
+}
+
+fn strip_code_fences(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let without_header = match trimmed.starts_with("```") {
+        true => trimmed
+            .find('\n')
+            .map(|pos| &trimmed[pos + 1..])
+            .unwrap_or(trimmed),
+        false => trimmed,
+    };
+    let without_footer = without_header
+        .strip_suffix("```")
+        .map(str::trim)
+        .unwrap_or(without_header);
+    without_footer.trim().to_string()
+}
+
+fn parse_clippy_diagnostics(stdout: &str) -> Vec<Value> {
+    stdout
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|msg| msg.get("reason").and_then(Value::as_str) == Some("compiler-message"))
+        .filter_map(|msg| {
+            let message = msg.get("message")?;
+            let level = message
+                .get("level")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
+            let msg_text = message
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let first_span = message
+                .get("spans")
+                .and_then(Value::as_array)
+                .and_then(|arr| arr.first());
+            let file_path = first_span
+                .and_then(|s| s.get("file_name"))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let line_num = first_span
+                .and_then(|s| s.get("line_start"))
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            Some(json!({
+                "level": level,
+                "message": msg_text,
+                "file": file_path,
+                "line": line_num
+            }))
+        })
+        .collect()
 }
 
 #[async_trait::async_trait]
@@ -115,18 +212,19 @@ impl Tool for CargoManagerTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action = if let Some(s) = arguments.as_str() {
-            s.to_string()
-        } else {
-            arguments
-                .get("action")
-                .or_else(|| arguments.get("command"))
-                .or_else(|| arguments.get("cmd"))
-                .or_else(|| arguments.get("subcommand"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("check")
-                .to_string()
-        };
+        let action = arguments
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                arguments
+                    .get("action")
+                    .or_else(|| arguments.get("command"))
+                    .or_else(|| arguments.get("cmd"))
+                    .or_else(|| arguments.get("subcommand"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("check")
+                    .to_string()
+            });
         let cwd = arguments
             .get("cwd")
             .or_else(|| arguments.get("path"))
@@ -139,23 +237,21 @@ impl Tool for CargoManagerTool {
             .or_else(|| arguments.get("package_name"))
             .and_then(|v| v.as_str());
 
-        let mut extra_args = Vec::new();
-        if let Some(args_val) = arguments.get("args").or_else(|| arguments.get("extra_args")) {
-            if let Some(arr) = args_val.as_array() {
-                for item in arr {
-                    if let Some(s) = item.as_str() {
-                        extra_args.push(s.to_string());
-                    }
-                }
-            } else if let Some(s) = args_val.as_str() {
-                extra_args.extend(s.split_whitespace().map(|x| x.to_string()));
-            }
-        }
-        if arguments.get("release").and_then(|v| v.as_bool()).unwrap_or(false)
-            && !extra_args.iter().any(|a| a == "--release")
-        {
-            extra_args.push("--release".to_string());
-        }
+        let mut extra_args = match arguments.get("args").or_else(|| arguments.get("extra_args")) {
+            Some(Value::Array(arr)) => arr
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect::<Vec<_>>(),
+            Some(Value::String(s)) => s.split_whitespace().map(str::to_string).collect::<Vec<_>>(),
+            _ => Vec::new(),
+        };
+        let add_release = arguments
+            .get("release")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            && !extra_args.iter().any(|a| a == "--release");
+        let _ = add_release.then(|| extra_args.push("--release".to_string()));
 
         let self_heal = arguments
             .get("self_heal")
@@ -177,217 +273,133 @@ impl Tool for CargoManagerTool {
             || action.eq_ignore_ascii_case("b")
             || action.eq_ignore_ascii_case("c");
 
-        if can_self_heal && !output.status.success() && self_heal {
-            let mut retries = 0;
-            const MAX_RETRIES: usize = 2;
+        let mut retries = 0usize;
+        const MAX_RETRIES: usize = 2;
 
-            while !output.status.success() && retries < MAX_RETRIES {
-                // Parse compilation errors to find offending files
-                let mut errors_found = Vec::new();
-                for line in stderr.lines() {
-                    let line_trimmed = line.trim();
-                    if let Some(stripped) = line_trimmed.strip_prefix("--> ") {
-                        let parts: Vec<&str> = stripped.split(':').collect();
-                        if parts.len() >= 2 {
-                            let file_path = parts[0].trim().to_string();
-                            if let Ok(line_num) = parts[1].trim().parse::<usize>() {
-                                errors_found.push((file_path, line_num));
-                            }
-                        }
-                    }
-                }
+        while can_self_heal && self_heal && !output.status.success() && retries < MAX_RETRIES {
+            let errors_found = parse_compiler_errors(&stderr);
+            let (target_file, line_num) = match errors_found.first() {
+                Some(pair) => (&pair.0, pair.1),
+                None => break,
+            };
 
-                if errors_found.is_empty() {
-                    break;
-                }
+            crate::tui_println!(
+                "{}◇ [Self-Heal] Compiler error detected in '{}' on line {}. Requesting auto-patch...{}",
+                AURA_GOLD,
+                target_file,
+                line_num,
+                COLOR_RESET
+            );
 
-                crate::tui_println!(
-                    "{}◇ [Self-Heal] Compiler error detected in '{}' on line {}. Requesting auto-patch...{}",
-                    AURA_GOLD,
-                    errors_found[0].0,
-                    errors_found[0].1,
-                    COLOR_RESET
-                );
+            let resolved_path = match cwd {
+                Some(ref cwd_str) => crate::config::loader::resolve_path(cwd_str).join(target_file),
+                None => std::env::current_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                    .join(target_file),
+            };
 
-                // Group by file path and collect errors
-                let target_file = &errors_found[0].0;
-                let line_num = errors_found[0].1;
+            let original_opt = resolved_path
+                .exists()
+                .then(|| std::fs::read_to_string(&resolved_path).ok())
+                .flatten();
 
-                let resolved_path = if let Some(ref cwd_str) = cwd {
-                    crate::config::loader::resolve_path(cwd_str).join(target_file)
-                } else {
-                    std::env::current_dir()
-                        .unwrap_or_else(|_| std::path::PathBuf::from("."))
-                        .join(target_file)
-                };
+            match original_opt {
+                Some(original_content) => {
+                    let error_context = collect_error_context(&stderr, target_file, line_num);
+                    let system_prompt = "You are a specialized Rust Compiler Error Resolver.\n\
+                        Your task is to fix a compiler error in a Rust source file.\n\
+                        Analyze the file content and the compiler errors provided.\n\
+                        Correct the code to fix the errors while maintaining all original functionality and styling.\n\
+                        Return ONLY the full corrected file content. Do not include any explanation, markdown fences, formatting, or commentary. Just output the raw corrected source code.";
 
-                if resolved_path.exists() {
-                    if let Ok(original_content) = std::fs::read_to_string(&resolved_path) {
-                        // Gather relevant error context lines
-                        let mut error_context = String::new();
-                        let mut collect = false;
-                        let mut error_lines_count = 0;
-                        for line in stderr.lines() {
-                            if line.contains(target_file)
-                                && line.contains(&format!(":{}", line_num))
-                            {
-                                collect = true;
-                                error_lines_count = 0;
-                            }
-                            if collect {
-                                error_context.push_str(line);
-                                error_context.push('\n');
-                                error_lines_count += 1;
-                                if error_lines_count > 12
-                                    || (line.trim().is_empty() && error_lines_count > 4)
-                                {
-                                    collect = false;
-                                }
-                            }
-                        }
+                    let user_prompt = format!(
+                        "File: {}\n\nCompiler Errors:\n{}\n\nOriginal File Content:\n{}\n\nPlease provide the full corrected file content.",
+                        target_file, error_context, original_content
+                    );
 
-                        let system_prompt = "You are a specialized Rust Compiler Error Resolver.\n\
-                            Your task is to fix a compiler error in a Rust source file.\n\
-                            Analyze the file content and the compiler errors provided.\n\
-                            Correct the code to fix the errors while maintaining all original functionality and styling.\n\
-                            Return ONLY the full corrected file content. Do not include any explanation, markdown fences, formatting, or commentary. Just output the raw corrected source code.";
+                    let messages = vec![crate::session::Message {
+                        role: "user".to_string(),
+                        content: user_prompt,
+                        timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                        extra: serde_json::Map::new(),
+                    }];
 
-                        let user_prompt = format!(
-                            "File: {}\n\nCompiler Errors:\n{}\n\nOriginal File Content:\n{}\n\nPlease provide the full corrected file content.",
-                            target_file, error_context, original_content
-                        );
+                    let settings = GenerationSettings {
+                        temperature: 0.1,
+                        max_tokens: 16384,
+                        reasoning_effort: None,
+                    };
 
-                        let messages = vec![crate::session::Message {
-                            role: "user".to_string(),
-                            content: user_prompt,
-                            timestamp: Some(chrono::Utc::now().to_rfc3339()),
-                            extra: serde_json::Map::new(),
-                        }];
-
-                        let settings = GenerationSettings {
-                            temperature: 0.1,
-                            max_tokens: 16384,
-                            reasoning_effort: None,
-                        };
-
-                        match self
-                            .provider
-                            .chat(system_prompt, &messages, &[], &settings)
-                            .await
-                        {
-                            Ok(resp) => {
-                                if let Some(content) = resp.content {
-                                    let mut corrected_code = content.trim();
-                                    if corrected_code.starts_with("```") {
-                                        if let Some(pos) = corrected_code.find('\n') {
-                                            corrected_code = &corrected_code[pos + 1..];
-                                        }
-                                    }
-                                    if corrected_code.ends_with("```") {
-                                        corrected_code =
-                                            corrected_code[..corrected_code.len() - 3].trim();
-                                    }
-                                    let corrected_code = corrected_code.trim().to_string();
-
-                                    if !corrected_code.is_empty() {
-                                        // Create backup before writing LLM-generated code
-                                        let backup_path = resolved_path.with_extension("rs.bak");
-                                        let _ = std::fs::copy(&resolved_path, &backup_path);
-                                        if std::fs::write(&resolved_path, corrected_code).is_ok() {
+                    match self
+                        .provider
+                        .chat(system_prompt, &messages, &[], &settings)
+                        .await
+                    {
+                        Ok(resp) => {
+                            let corrected_opt = resp
+                                .content
+                                .as_deref()
+                                .map(strip_code_fences)
+                                .filter(|code| !code.is_empty());
+                            match corrected_opt {
+                                Some(corrected_code) => {
+                                    let backup_path = resolved_path.with_extension("rs.bak");
+                                    let _ = std::fs::copy(&resolved_path, &backup_path);
+                                    match std::fs::write(&resolved_path, corrected_code).is_ok() {
+                                        true => {
                                             crate::tui_println!(
                                                 "{}✓ [Self-Heal] Successfully patched '{}'. Re-compiling...{}",
                                                 EMERALD_GREEN,
                                                 target_file,
                                                 COLOR_RESET
                                             );
-                                            // Re-run cargo build
-                                            output = run_cargo_cmd(&action, &cwd, &extra_args, package).await?;
+                                            output =
+                                                run_cargo_cmd(&action, &cwd, &extra_args, package)
+                                                    .await?;
                                             stdout =
                                                 String::from_utf8_lossy(&output.stdout).to_string();
                                             stderr =
                                                 String::from_utf8_lossy(&output.stderr).to_string();
-
-                                            // Clean up backup file
                                             let _ = std::fs::remove_file(&backup_path);
-                                        } else {
-                                            // Restore from backup on write failure
+                                        }
+                                        false => {
                                             let _ = std::fs::copy(&backup_path, &resolved_path);
                                             let _ = std::fs::remove_file(&backup_path);
                                         }
                                     }
                                 }
+                                None => {}
                             }
-                            Err(e) => {
-                                tracing::warn!("Self-heal LLM completion request failed: {:?}", e);
-                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Self-heal LLM completion request failed: {:?}", e);
                         }
                     }
                 }
-
-                retries += 1;
+                None => {}
             }
+
+            retries += 1;
         }
 
-        if action == "clippy" {
-            let mut diagnostics = Vec::new();
-            for line in stdout.lines() {
-                if let Ok(msg) = serde_json::from_str::<Value>(line) {
-                    if let Some(reason) = msg.get("reason").and_then(|v| v.as_str()) {
-                        if reason == "compiler-message" {
-                            if let Some(message) = msg.get("message") {
-                                let level = message
-                                    .get("level")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("unknown");
-                                let msg_text = message
-                                    .get("message")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("");
-                                let spans = message.get("spans").and_then(|v| v.as_array());
+        let status_label = match output.status.success() {
+            true => "success",
+            false => "error",
+        };
 
-                                let mut file_path = String::new();
-                                let mut line_num = 0;
-
-                                if let Some(spans_arr) = spans {
-                                    if !spans_arr.is_empty() {
-                                        let first_span = &spans_arr[0];
-                                        file_path = first_span
-                                            .get("file_name")
-                                            .and_then(|v| v.as_str())
-                                            .unwrap_or("")
-                                            .to_string();
-                                        line_num = first_span
-                                            .get("line_start")
-                                            .and_then(|v| v.as_u64())
-                                            .unwrap_or(0);
-                                    }
-                                }
-
-                                diagnostics.push(json!({
-                                    "level": level,
-                                    "message": msg_text,
-                                    "file": file_path,
-                                    "line": line_num
-                                }));
-                            }
-                        }
-                    }
-                }
-            }
-
-            return Ok(json!({
-                "status": if output.status.success() { "success" } else { "error" },
-                "diagnostics": diagnostics,
+        match action == "clippy" {
+            true => Ok(json!({
+                "status": status_label,
+                "diagnostics": parse_clippy_diagnostics(&stdout),
                 "code": output.status.code()
-            }));
+            })),
+            false => Ok(json!({
+                "status": status_label,
+                "stdout": stdout,
+                "stderr": stderr,
+                "code": output.status.code()
+            })),
         }
-
-        Ok(json!({
-            "status": if output.status.success() { "success" } else { "error" },
-            "stdout": stdout,
-            "stderr": stderr,
-            "code": output.status.code()
-        }))
     }
 }
 

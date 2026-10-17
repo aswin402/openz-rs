@@ -12,7 +12,7 @@ fn read_secret_file(path: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
-fn configured_git_token(
+pub(crate) fn configured_git_token(
     config: Option<&crate::config::schema::GitIntegrationConfig>,
 ) -> Option<String> {
     config.and_then(|cfg| {
@@ -25,53 +25,120 @@ fn configured_git_token(
     })
 }
 
+pub(crate) fn build_git_http_client() -> Result<reqwest::Client> {
+    let redirect_policy = reqwest::redirect::Policy::custom(
+        |attempt| match crate::tools::web::validate_url_sync(attempt.url()).is_err() {
+            true => attempt.stop(),
+            false => attempt.follow(),
+        },
+    );
+
+    reqwest::Client::builder()
+        .use_rustls_tls()
+        .connect_timeout(crate::core::http::DEFAULT_CONNECT_TIMEOUT)
+        .timeout(crate::core::http::DEFAULT_REQUEST_TIMEOUT)
+        .redirect(redirect_policy)
+        .build()
+        .map_err(|e| anyhow!("Failed to build HTTP client: {}", e))
+}
+
+async fn read_checked_response_text(resp: reqwest::Response, label: &str) -> Result<String> {
+    let status = resp.status();
+    let text = resp.text().await?;
+    match status.is_success() {
+        true => Ok(text),
+        false => Err(anyhow!("{} API Error ({}): {}", label, status, text)),
+    }
+}
+
+async fn read_checked_response_json(resp: reqwest::Response, label: &str) -> Result<Value> {
+    let text = read_checked_response_text(resp, label).await?;
+    let val: Value = serde_json::from_str(&text)?;
+    Ok(val)
+}
+
+fn extract_pr_number(arguments: &Value) -> Result<i64> {
+    arguments
+        .get("pr_number")
+        .or_else(|| arguments.get("number"))
+        .or_else(|| arguments.get("pr"))
+        .and_then(|n| {
+            n.as_i64()
+                .or_else(|| n.as_str().and_then(|s| s.trim().parse::<i64>().ok()))
+        })
+        .ok_or_else(|| anyhow!("Missing pr_number for get_pr_diff"))
+}
+
+fn extract_create_pr_fields<'a>(
+    arguments: &'a Value,
+) -> Result<(&'a str, &'a str, &'a str, &'a str)> {
+    let title = arguments
+        .get("title")
+        .and_then(|t| t.as_str())
+        .ok_or_else(|| anyhow!("Missing title for create_pr"))?;
+    let body = arguments.get("body").and_then(|b| b.as_str()).unwrap_or("");
+    let head = arguments
+        .get("head")
+        .and_then(|h| h.as_str())
+        .ok_or_else(|| anyhow!("Missing head for create_pr"))?;
+    let base = arguments
+        .get("base")
+        .and_then(|b| b.as_str())
+        .ok_or_else(|| anyhow!("Missing base for create_pr"))?;
+    Ok((title, body, head, base))
+}
+
 pub fn parse_repo_from_git_url(url: &str) -> Option<String> {
     let trimmed = url.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    let path = if let Some(stripped) = trimmed.strip_prefix("git@") {
-        let parts: Vec<&str> = stripped.splitn(2, ':').collect();
-        if parts.len() == 2 {
-            parts[1]
-        } else {
-            return None;
+    (!trimmed.is_empty()).then_some(())?;
+
+    let path = match trimmed.strip_prefix("git@") {
+        Some(stripped) => {
+            let parts: Vec<&str> = stripped.splitn(2, ':').collect();
+            (parts.len() == 2).then(|| parts[1])?
         }
-    } else if let Some(pos) = trimmed.find("://") {
-        let after_scheme = &trimmed[pos + 3..];
-        let parts: Vec<&str> = after_scheme.splitn(2, '/').collect();
-        if parts.len() == 2 {
-            parts[1]
-        } else {
-            return None;
-        }
-    } else {
-        trimmed
+        None => match trimmed.find("://") {
+            Some(pos) => {
+                let after_scheme = &trimmed[pos + 3..];
+                let parts: Vec<&str> = after_scheme.splitn(2, '/').collect();
+                (parts.len() == 2).then(|| parts[1])?
+            }
+            None => trimmed,
+        },
     };
 
     let repo_path = path.strip_suffix(".git").unwrap_or(path).trim_matches('/');
     let parts: Vec<&str> = repo_path.split('/').collect();
-    if parts.len() >= 2 {
-        Some(format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1]))
-    } else {
-        None
-    }
+    (parts.len() >= 2).then(|| format!("{}/{}", parts[parts.len() - 2], parts[parts.len() - 1]))
 }
 
 pub fn detect_git_remote_repo(cwd: Option<&str>) -> Option<String> {
     let mut cmd = std::process::Command::new("git");
     cmd.args(["config", "--get", "remote.origin.url"]);
-    if let Some(c) = cwd {
-        cmd.current_dir(crate::config::loader::resolve_path(c));
-    } else {
-        crate::config::loader::set_command_cwd(&mut cmd);
+    match cwd {
+        Some(c) => {
+            cmd.current_dir(crate::config::loader::resolve_path(c));
+        }
+        None => {
+            crate::config::loader::set_command_cwd(&mut cmd);
+        }
     }
     let output = cmd.output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
+    output.status.success().then_some(())?;
     let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
     parse_repo_from_git_url(&url)
+}
+
+fn resolve_target_repo(repo_arg: Option<String>, cwd: Option<&str>) -> Result<String> {
+    match repo_arg {
+        Some(r) => match r.trim().eq_ignore_ascii_case("auto") {
+            true => detect_git_remote_repo(cwd).ok_or_else(|| {
+                anyhow!("Missing repo parameter (could not auto-detect git origin)")
+            }),
+            false => Ok(r),
+        },
+        None => detect_git_remote_repo(cwd).ok_or_else(|| anyhow!("Missing repo parameter")),
+    }
 }
 
 pub struct GitProviderTool;
@@ -178,18 +245,8 @@ impl Tool for GitProviderTool {
             .or_else(|| arguments.get("repository"))
             .and_then(|r| r.as_str())
             .map(|s| s.to_string());
-        let repo = if let Some(r) = repo_arg {
-            if r.trim().eq_ignore_ascii_case("auto") {
-                detect_git_remote_repo(cwd).ok_or_else(|| anyhow!("Missing repo parameter (could not auto-detect git origin)"))?
-            } else {
-                r
-            }
-        } else if let Some(detected) = detect_git_remote_repo(cwd) {
-            detected
-        } else {
-            return Err(anyhow!("Missing repo parameter"));
-        };
-        let repo = repo.as_str();
+        let repo_owned = resolve_target_repo(repo_arg, cwd)?;
+        let repo = repo_owned.as_str();
 
         let token_arg = arguments
             .get("token")
@@ -200,20 +257,7 @@ impl Tool for GitProviderTool {
             .and_then(|b| b.as_str())
             .map(|s| s.to_string());
 
-        let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
-            if crate::tools::web::validate_url_sync(attempt.url()).is_err() {
-                attempt.stop()
-            } else {
-                attempt.follow()
-            }
-        });
-
-        let client = reqwest::Client::builder()
-            .use_rustls_tls()
-            .connect_timeout(crate::core::http::DEFAULT_CONNECT_TIMEOUT)
-            .timeout(crate::core::http::DEFAULT_REQUEST_TIMEOUT)
-            .redirect(redirect_policy)
-            .build()?;
+        let client = build_git_http_client()?;
 
         match platform {
             "github" => {
@@ -244,20 +288,7 @@ impl Tool for GitProviderTool {
 
                 match action {
                     "create_pr" => {
-                        let title = arguments
-                            .get("title")
-                            .and_then(|t| t.as_str())
-                            .ok_or_else(|| anyhow!("Missing title for create_pr"))?;
-                        let body = arguments.get("body").and_then(|b| b.as_str()).unwrap_or("");
-                        let head = arguments
-                            .get("head")
-                            .and_then(|h| h.as_str())
-                            .ok_or_else(|| anyhow!("Missing head for create_pr"))?;
-                        let base = arguments
-                            .get("base")
-                            .and_then(|b| b.as_str())
-                            .ok_or_else(|| anyhow!("Missing base for create_pr"))?;
-
+                        let (title, body, head, base) = extract_create_pr_fields(arguments)?;
                         let url = format!("{}/repos/{}/pulls", api_base, repo);
                         let payload = serde_json::json!({
                             "title": title,
@@ -272,15 +303,7 @@ impl Tool for GitProviderTool {
                             .json(&payload)
                             .send()
                             .await?;
-
-                        let status = resp.status();
-                        let text = resp.text().await?;
-                        if !status.is_success() {
-                            return Err(anyhow!("GitHub API Error ({}): {}", status, text));
-                        }
-
-                        let res_val: Value = serde_json::from_str(&text)?;
-                        Ok(res_val)
+                        read_checked_response_json(resp, "GitHub").await
                     }
                     "list_issues" => {
                         let state = arguments
@@ -288,17 +311,8 @@ impl Tool for GitProviderTool {
                             .and_then(|s| s.as_str())
                             .unwrap_or("open");
                         let url = format!("{}/repos/{}/issues?state={}", api_base, repo, state);
-
                         let resp = client.get(&url).headers(headers).send().await?;
-
-                        let status = resp.status();
-                        let text = resp.text().await?;
-                        if !status.is_success() {
-                            return Err(anyhow!("GitHub API Error ({}): {}", status, text));
-                        }
-
-                        let res_val: Value = serde_json::from_str(&text)?;
-                        Ok(res_val)
+                        read_checked_response_json(resp, "GitHub").await
                     }
                     "search_code" => {
                         let query = arguments
@@ -312,44 +326,19 @@ impl Tool for GitProviderTool {
                         .to_string();
 
                         let url = format!("{}/search/code?q={}", api_base, encoded_query);
-
                         let resp = client.get(&url).headers(headers).send().await?;
-
-                        let status = resp.status();
-                        let text = resp.text().await?;
-                        if !status.is_success() {
-                            return Err(anyhow!("GitHub API Error ({}): {}", status, text));
-                        }
-
-                        let res_val: Value = serde_json::from_str(&text)?;
-                        Ok(res_val)
+                        read_checked_response_json(resp, "GitHub").await
                     }
                     "get_pr_diff" => {
-                        let pr_number = arguments
-                            .get("pr_number")
-                            .or_else(|| arguments.get("number"))
-                            .or_else(|| arguments.get("pr"))
-                            .and_then(|n| {
-                                n.as_i64().or_else(|| {
-                                    n.as_str().and_then(|s| s.trim().parse::<i64>().ok())
-                                })
-                            })
-                            .ok_or_else(|| anyhow!("Missing pr_number for get_pr_diff"))?;
+                        let pr_number = extract_pr_number(arguments)?;
                         let url = format!("{}/repos/{}/pulls/{}", api_base, repo, pr_number);
-
                         headers.insert(
                             ACCEPT,
                             HeaderValue::from_static("application/vnd.github.diff"),
                         );
 
                         let resp = client.get(&url).headers(headers).send().await?;
-
-                        let status = resp.status();
-                        let text = resp.text().await?;
-                        if !status.is_success() {
-                            return Err(anyhow!("GitHub API Error ({}): {}", status, text));
-                        }
-
+                        let text = read_checked_response_text(resp, "GitHub").await?;
                         Ok(serde_json::json!({
                             "pr_number": pr_number,
                             "diff": text
@@ -385,20 +374,7 @@ impl Tool for GitProviderTool {
 
                 match action {
                     "create_pr" => {
-                        let title = arguments
-                            .get("title")
-                            .and_then(|t| t.as_str())
-                            .ok_or_else(|| anyhow!("Missing title for create_pr"))?;
-                        let body = arguments.get("body").and_then(|b| b.as_str()).unwrap_or("");
-                        let head = arguments
-                            .get("head")
-                            .and_then(|h| h.as_str())
-                            .ok_or_else(|| anyhow!("Missing head for create_pr"))?;
-                        let base = arguments
-                            .get("base")
-                            .and_then(|b| b.as_str())
-                            .ok_or_else(|| anyhow!("Missing base for create_pr"))?;
-
+                        let (title, body, head, base) = extract_create_pr_fields(arguments)?;
                         let url =
                             format!("{}/projects/{}/merge_requests", api_base, urlencoded_repo);
                         let payload = serde_json::json!({
@@ -414,15 +390,7 @@ impl Tool for GitProviderTool {
                             .json(&payload)
                             .send()
                             .await?;
-
-                        let status = resp.status();
-                        let text = resp.text().await?;
-                        if !status.is_success() {
-                            return Err(anyhow!("GitLab API Error ({}): {}", status, text));
-                        }
-
-                        let res_val: Value = serde_json::from_str(&text)?;
-                        Ok(res_val)
+                        read_checked_response_json(resp, "GitLab").await
                     }
                     "list_issues" => {
                         let state = arguments
@@ -438,17 +406,8 @@ impl Tool for GitProviderTool {
                             "{}/projects/{}/issues?state={}",
                             api_base, urlencoded_repo, gitlab_state
                         );
-
                         let resp = client.get(&url).headers(headers).send().await?;
-
-                        let status = resp.status();
-                        let text = resp.text().await?;
-                        if !status.is_success() {
-                            return Err(anyhow!("GitLab API Error ({}): {}", status, text));
-                        }
-
-                        let res_val: Value = serde_json::from_str(&text)?;
-                        Ok(res_val)
+                        read_checked_response_json(resp, "GitLab").await
                     }
                     "search_code" => {
                         let query = arguments
@@ -467,71 +426,41 @@ impl Tool for GitProviderTool {
                         );
 
                         let resp = client.get(&url).headers(headers.clone()).send().await?;
-
-                        let status = resp.status();
-                        let text = resp.text().await?;
-                        if !status.is_success() {
-                            let url_main = format!(
-                                "{}/projects/{}/search?scope=blobs&ref=main&search={}",
-                                api_base, urlencoded_repo, encoded_query
-                            );
-                            let resp_main = client.get(&url_main).headers(headers).send().await?;
-                            let status_main = resp_main.status();
-                            let text_main = resp_main.text().await?;
-                            if !status_main.is_success() {
-                                return Err(anyhow!(
-                                    "GitLab API Error ({}): {}",
-                                    status_main,
-                                    text_main
-                                ));
+                        match read_checked_response_json(resp, "GitLab").await {
+                            Ok(val) => Ok(val),
+                            Err(_) => {
+                                let url_main = format!(
+                                    "{}/projects/{}/search?scope=blobs&ref=main&search={}",
+                                    api_base, urlencoded_repo, encoded_query
+                                );
+                                let resp_main =
+                                    client.get(&url_main).headers(headers).send().await?;
+                                read_checked_response_json(resp_main, "GitLab").await
                             }
-                            let res_val: Value = serde_json::from_str(&text_main)?;
-                            return Ok(res_val);
                         }
-
-                        let res_val: Value = serde_json::from_str(&text)?;
-                        Ok(res_val)
                     }
                     "get_pr_diff" => {
-                        let pr_number = arguments
-                            .get("pr_number")
-                            .or_else(|| arguments.get("number"))
-                            .or_else(|| arguments.get("pr"))
-                            .and_then(|n| {
-                                n.as_i64().or_else(|| {
-                                    n.as_str().and_then(|s| s.trim().parse::<i64>().ok())
-                                })
-                            })
-                            .ok_or_else(|| anyhow!("Missing pr_number for get_pr_diff"))?;
+                        let pr_number = extract_pr_number(arguments)?;
                         let url = format!(
                             "{}/projects/{}/merge_requests/{}/diffs",
                             api_base, urlencoded_repo, pr_number
                         );
 
                         let resp = client.get(&url).headers(headers).send().await?;
-
-                        let status = resp.status();
-                        let text = resp.text().await?;
-                        if !status.is_success() {
-                            return Err(anyhow!("GitLab API Error ({}): {}", status, text));
-                        }
-
-                        let res_val: Value = serde_json::from_str(&text)?;
+                        let res_val = read_checked_response_json(resp, "GitLab").await?;
 
                         let mut diff_output = String::new();
-                        if let Some(diffs) = res_val.as_array() {
-                            for item in diffs {
-                                let old_path =
-                                    item.get("old_path").and_then(|v| v.as_str()).unwrap_or("");
-                                let new_path =
-                                    item.get("new_path").and_then(|v| v.as_str()).unwrap_or("");
-                                let diff = item.get("diff").and_then(|v| v.as_str()).unwrap_or("");
+                        for item in res_val.as_array().into_iter().flatten() {
+                            let old_path =
+                                item.get("old_path").and_then(|v| v.as_str()).unwrap_or("");
+                            let new_path =
+                                item.get("new_path").and_then(|v| v.as_str()).unwrap_or("");
+                            let diff = item.get("diff").and_then(|v| v.as_str()).unwrap_or("");
 
-                                diff_output
-                                    .push_str(&format!("--- a/{}\n+++ b/{}\n", old_path, new_path));
-                                diff_output.push_str(diff);
-                                diff_output.push('\n');
-                            }
+                            diff_output
+                                .push_str(&format!("--- a/{}\n+++ b/{}\n", old_path, new_path));
+                            diff_output.push_str(diff);
+                            diff_output.push('\n');
                         }
 
                         Ok(serde_json::json!({

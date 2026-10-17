@@ -32,36 +32,34 @@ fn extract_document_child(child: &DocumentChild, text: &mut String) {
 }
 
 fn extract_paragraph(p: &docx_rs::Paragraph, text: &mut String) {
-    for p_child in &p.children {
-        if let ParagraphChild::Run(r) = p_child {
-            for r_child in &r.children {
-                if let RunChild::Text(t) = r_child {
-                    text.push_str(&t.text);
-                }
-            }
-        }
-    }
+    extract_paragraph_inline(p, text);
     text.push('\n');
 }
 
 fn extract_paragraph_inline(p: &docx_rs::Paragraph, text: &mut String) {
     for p_child in &p.children {
-        if let ParagraphChild::Run(r) = p_child {
-            for r_child in &r.children {
-                if let RunChild::Text(t) = r_child {
-                    text.push_str(&t.text);
+        match p_child {
+            ParagraphChild::Run(r) => {
+                for r_child in &r.children {
+                    match r_child {
+                        RunChild::Text(t) => text.push_str(&t.text),
+                        _ => {}
+                    }
                 }
             }
+            _ => {}
         }
     }
 }
 
 fn extract_table(t: &docx_rs::Table, text: &mut String, depth: usize) {
-    // Guard against deeply nested tables causing stack overflow
     const MAX_TABLE_DEPTH: usize = 20;
-    if depth > MAX_TABLE_DEPTH {
-        text.push_str("[...nested table truncated...]\n");
-        return;
+    match depth > MAX_TABLE_DEPTH {
+        true => {
+            text.push_str("[...nested table truncated...]\n");
+            return;
+        }
+        false => {}
     }
     for row_child in &t.rows {
         match row_child {
@@ -109,15 +107,17 @@ fn is_image_ocr_extension(extension: Option<&str>) -> bool {
 }
 
 fn ocr_text_from_result(result: &Value) -> Option<String> {
-    if result.get("success").and_then(|value| value.as_bool()) != Some(true) {
-        return None;
-    }
-    result
-        .get("text")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(ToString::to_string)
+    let is_ok = result.get("success").and_then(|value| value.as_bool()) == Some(true);
+    is_ok
+        .then(|| {
+            result
+                .get("text")
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(ToString::to_string)
+        })
+        .flatten()
 }
 
 fn run_opendoc_ocr(path: &std::path::Path, language: Option<&str>) -> Value {
@@ -148,14 +148,12 @@ fn should_analyze_document_complexity(extension: Option<&str>, arguments: &Value
         _ => None,
     };
 
-    if let Some(enabled) = explicit {
-        return enabled;
-    }
-
-    matches!(
-        extension.map(|ext| ext.to_ascii_lowercase()).as_deref(),
-        Some("pdf")
-    )
+    explicit.unwrap_or_else(|| {
+        matches!(
+            extension.map(|ext| ext.to_ascii_lowercase()).as_deref(),
+            Some("pdf")
+        )
+    })
 }
 
 fn run_opendoc_complexity_analysis(path: &std::path::Path) -> Value {
@@ -225,31 +223,34 @@ impl Tool for DocReaderTool {
         };
 
         let clean_path = path_str.strip_prefix("file://").unwrap_or(&path_str);
-        let mut resolved_path = crate::config::loader::resolve_path(clean_path);
-        if !resolved_path.exists() && resolved_path.extension().is_none() {
-            for ext in &[
-                "pdf", "docx", "xlsx", "xls", "ods", "xlsb", "pptx", "ppt", "csv", "html", "md", "txt",
-            ] {
-                let with_ext = resolved_path.with_extension(ext);
-                if with_ext.exists() {
-                    resolved_path = with_ext;
-                    break;
-                }
-            }
-        }
-        if !resolved_path.exists() {
-            return Err(anyhow!("File does not exist: {}", path_str));
+        let base_path = crate::config::loader::resolve_path(clean_path);
+        let resolved_path = match !base_path.exists() && base_path.extension().is_none() {
+            true => [
+                "pdf", "docx", "xlsx", "xls", "ods", "xlsb", "pptx", "ppt", "csv", "html", "md",
+                "txt",
+            ]
+            .iter()
+            .map(|ext| base_path.with_extension(ext))
+            .find(|candidate| candidate.exists())
+            .unwrap_or(base_path),
+            false => base_path,
+        };
+        match resolved_path.exists() {
+            true => {}
+            false => return Err(anyhow!("File does not exist: {}", path_str)),
         }
 
-        // Guard against oversized files (50 MB limit)
         let metadata = std::fs::metadata(&resolved_path)?;
         const MAX_DOC_SIZE: u64 = 50 * 1024 * 1024;
-        if metadata.len() > MAX_DOC_SIZE {
-            return Err(anyhow!(
-                "Document file too large ({} bytes, max {} bytes)",
-                metadata.len(),
-                MAX_DOC_SIZE
-            ));
+        match metadata.len() > MAX_DOC_SIZE {
+            true => {
+                return Err(anyhow!(
+                    "Document file too large ({} bytes, max {} bytes)",
+                    metadata.len(),
+                    MAX_DOC_SIZE
+                ));
+            }
+            false => {}
         }
 
         let extension = resolved_path
@@ -279,12 +280,10 @@ impl Tool for DocReaderTool {
             _ => None,
         };
 
-        let mut complexity_analyzed = false;
-        let mut complexity_result: Option<Value> = None;
-        if should_analyze_document_complexity(extension.as_deref(), arguments) {
-            complexity_analyzed = true;
-            complexity_result = Some(run_opendoc_complexity_analysis(&resolved_path));
-        }
+        let complexity_analyzed =
+            should_analyze_document_complexity(extension.as_deref(), arguments);
+        let complexity_result = complexity_analyzed
+            .then(|| run_opendoc_complexity_analysis(&resolved_path));
 
         let mut extraction_method = "native";
         let mut ocr_attempted = false;
@@ -293,27 +292,32 @@ impl Tool for DocReaderTool {
         let mut content = match extension.as_deref() {
             Some("pdf") => match pdf_extract::extract_text(&resolved_path) {
                 Ok(text) => text,
-                Err(err) if auto_ocr => {
-                    ocr_result = Some(json!({
-                        "native_extract_error": err.to_string()
-                    }));
-                    String::new()
-                }
-                Err(err) => return Err(err.into()),
+                Err(err) => match auto_ocr {
+                    true => {
+                        ocr_result = Some(json!({
+                            "native_extract_error": err.to_string()
+                        }));
+                        String::new()
+                    }
+                    false => return Err(err.into()),
+                },
             },
             Some("xlsx") | Some("xls") | Some("ods") | Some("xlsb") => {
                 let mut sheets = calamine::open_workbook_auto(&resolved_path)?;
                 let mut text = String::new();
                 for sheet_name in sheets.sheet_names().to_owned() {
-                    if let Ok(range) = sheets.worksheet_range(&sheet_name) {
-                        text.push_str(&format!("--- Sheet: {} ---\n", sheet_name));
-                        for row in range.rows() {
-                            let row_strs: Vec<String> =
-                                row.iter().map(|cell| cell.to_string()).collect();
-                            text.push_str(&row_strs.join("\t"));
+                    match sheets.worksheet_range(&sheet_name) {
+                        Ok(range) => {
+                            text.push_str(&format!("--- Sheet: {} ---\n", sheet_name));
+                            for row in range.rows() {
+                                let row_strs: Vec<String> =
+                                    row.iter().map(|cell| cell.to_string()).collect();
+                                text.push_str(&row_strs.join("\t"));
+                                text.push('\n');
+                            }
                             text.push('\n');
                         }
-                        text.push('\n');
+                        Err(_) => {}
                     }
                 }
                 text
@@ -322,9 +326,9 @@ impl Tool for DocReaderTool {
                 let mut file = File::open(&resolved_path)?;
                 let mut buf = Vec::new();
                 file.read_to_end(&mut buf)?;
-                match extract_docx_text(&buf) {
-                    Ok(text) if !text.trim().is_empty() => text,
-                    _ => {
+                match extract_docx_text(&buf).ok().filter(|t| !t.trim().is_empty()) {
+                    Some(text) => text,
+                    None => {
                         let resp = crate::tools::opendoc::get_server().read_document_text(
                             resolved_path.to_string_lossy().to_string(),
                             None,
@@ -345,47 +349,52 @@ impl Tool for DocReaderTool {
                     resolved_path.to_string_lossy().to_string(),
                     None,
                 );
-                if let Ok(v) = serde_json::from_str::<Value>(&resp) {
-                    if let Some(text) = v.get("text").and_then(|t| t.as_str()) {
-                        text.to_string()
-                    } else if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
-                        return Err(anyhow!("Failed to read document: {err}"));
-                    } else {
-                        resp
-                    }
-                } else {
-                    resp
+                match serde_json::from_str::<Value>(&resp) {
+                    Ok(v) => match (
+                        v.get("text").and_then(|t| t.as_str()),
+                        v.get("error").and_then(|e| e.as_str()),
+                    ) {
+                        (Some(text), _) => text.to_string(),
+                        (None, Some(err)) => return Err(anyhow!("Failed to read document: {err}")),
+                        (None, None) => resp,
+                    },
+                    Err(_) => resp,
                 }
             }
-            ext if auto_ocr && is_image_ocr_extension(ext) => String::new(),
-            _ => {
-                return Err(anyhow!(
-                    "Unsupported file extension. Supported formats: .pdf, .docx, .xlsx, .xls, .ods, .pptx, .ppt, .csv, .html, .md, .txt, .png, .jpg, .jpeg, .bmp, .tiff"
-                ));
-            }
+            ext => match auto_ocr && is_image_ocr_extension(ext) {
+                true => String::new(),
+                false => {
+                    return Err(anyhow!(
+                        "Unsupported file extension. Supported formats: .pdf, .docx, .xlsx, .xls, .ods, .pptx, .ppt, .csv, .html, .md, .txt, .png, .jpg, .jpeg, .bmp, .tiff"
+                    ));
+                }
+            },
         };
 
-        if auto_ocr
+        let should_run_ocr = auto_ocr
             && is_ocr_supported_extension(extension.as_deref())
-            && (is_image_ocr_extension(extension.as_deref()) || document_text_needs_ocr(&content))
-        {
-            ocr_attempted = true;
-            let ocr = run_opendoc_ocr(&resolved_path, ocr_language);
-            if let Some(ocr_text) = ocr_text_from_result(&ocr) {
-                content = ocr_text;
-                extraction_method = "ocr";
+            && (is_image_ocr_extension(extension.as_deref())
+                || document_text_needs_ocr(&content));
+        match should_run_ocr {
+            true => {
+                ocr_attempted = true;
+                let ocr = run_opendoc_ocr(&resolved_path, ocr_language);
+                let _ = ocr_text_from_result(&ocr).map(|ocr_text| {
+                    content = ocr_text;
+                    extraction_method = "ocr";
+                });
+                ocr_result = Some(match ocr_result.take() {
+                    Some(mut prior) => match prior.as_object_mut() {
+                        Some(obj) => {
+                            obj.insert("ocr".to_string(), ocr);
+                            prior
+                        }
+                        None => ocr,
+                    },
+                    None => ocr,
+                });
             }
-            ocr_result = Some(match ocr_result.take() {
-                Some(mut prior) => {
-                    if let Some(obj) = prior.as_object_mut() {
-                        obj.insert("ocr".to_string(), ocr);
-                        prior
-                    } else {
-                        ocr
-                    }
-                }
-                None => ocr,
-            });
+            false => {}
         }
 
         let _ = crate::tools::shared_memory::archive_research_entry(
@@ -395,8 +404,13 @@ impl Tool for DocReaderTool {
         )
         .await;
 
+        let status = match ocr_attempted && document_text_needs_ocr(&content) {
+            true => "partial_success",
+            false => "success",
+        };
+
         Ok(json!({
-            "status": if ocr_attempted && document_text_needs_ocr(&content) { "partial_success" } else { "success" },
+            "status": status,
             "content": content,
             "extraction_method": extraction_method,
             "complexity_analyzed": complexity_analyzed,

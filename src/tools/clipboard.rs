@@ -37,13 +37,12 @@ impl Tool for ClipboardTool {
         let (action_str, text_opt) = match arguments {
             Value::String(s) => {
                 let trimmed = s.trim();
-                if trimmed.eq_ignore_ascii_case("get")
+                let is_get = trimmed.eq_ignore_ascii_case("get")
                     || trimmed.eq_ignore_ascii_case("read")
-                    || trimmed.eq_ignore_ascii_case("paste")
-                {
-                    ("get".to_string(), None)
-                } else {
-                    ("set".to_string(), Some(s.to_string()))
+                    || trimmed.eq_ignore_ascii_case("paste");
+                match is_get {
+                    true => ("get".to_string(), None),
+                    false => ("set".to_string(), Some(s.to_string())),
                 }
             }
             Value::Object(map) => {
@@ -54,14 +53,10 @@ impl Tool for ClipboardTool {
                     .or_else(|| map.get("data"))
                     .or_else(|| map.get("message"))
                     .or_else(|| map.get("input"))
-                    .and_then(|v| {
-                        if let Some(s) = v.as_str() {
-                            Some(s.to_string())
-                        } else if v.is_number() || v.is_boolean() {
-                            Some(v.to_string())
-                        } else {
-                            None
-                        }
+                    .and_then(|v| match v {
+                        Value::String(s) => Some(s.clone()),
+                        Value::Number(_) | Value::Bool(_) => Some(v.to_string()),
+                        _ => None,
                     });
 
                 let action_raw = map
@@ -72,12 +67,9 @@ impl Tool for ClipboardTool {
                     .or_else(|| map.get("command"))
                     .and_then(|v| v.as_str())
                     .map(|s| s.trim().to_string())
-                    .unwrap_or_else(|| {
-                        if text.is_some() {
-                            "set".to_string()
-                        } else {
-                            "get".to_string()
-                        }
+                    .unwrap_or_else(|| match text.is_some() {
+                        true => "set".to_string(),
+                        false => "get".to_string(),
                     });
 
                 (action_raw, text)

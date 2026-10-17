@@ -8,18 +8,85 @@ use anyhow::{anyhow, Result};
 use base64::prelude::*;
 use serde_json::{json, Value};
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
 pub struct GenerateImageTool;
 
-struct ServerGuard(Option<tokio::task::JoinHandle<()>>);
+pub(crate) struct LocalHtmlServerGuard(pub(crate) Option<tokio::task::JoinHandle<()>>);
 
-impl Drop for ServerGuard {
+impl Drop for LocalHtmlServerGuard {
     fn drop(&mut self) {
-        if let Some(ref handle) = self.0 {
-            handle.abort();
+        match self.0 {
+            Some(ref handle) => handle.abort(),
+            None => {}
         }
+    }
+}
+
+pub(crate) async fn force_utf8(
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let mut response = next.run(req).await;
+    let should_rewrite = response
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|ct| ct.to_str().ok())
+        .map(|s| s.starts_with("text/html") && !s.contains("charset"))
+        .unwrap_or(false);
+    match should_rewrite {
+        true => match axum::http::header::HeaderValue::from_str("text/html; charset=utf-8") {
+            Ok(new_val) => {
+                response
+                    .headers_mut()
+                    .insert(axum::http::header::CONTENT_TYPE, new_val);
+            }
+            Err(_) => {}
+        },
+        false => {}
+    }
+    response
+}
+
+pub(crate) async fn serve_local_html_file(mut raw_path: PathBuf) -> (String, LocalHtmlServerGuard) {
+    match raw_path.is_absolute() {
+        true => {}
+        false => match std::env::current_dir() {
+            Ok(cwd) => {
+                raw_path = cwd.join(raw_path);
+            }
+            Err(_) => {}
+        },
+    }
+
+    let fallback_url = format!("file://{}", raw_path.to_string_lossy());
+    let parent_dir = raw_path.parent().unwrap_or(&raw_path).to_path_buf();
+    let filename = raw_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("index.html")
+        .to_string();
+
+    match tokio::net::TcpListener::bind("127.0.0.1:0").await {
+        Ok(listener) => match listener.local_addr() {
+            Ok(addr) => {
+                let port = addr.port();
+                let app = axum::Router::new()
+                    .nest_service("/", tower_http::services::ServeDir::new(&parent_dir))
+                    .layer(axum::middleware::from_fn(force_utf8));
+                let handle = tokio::spawn(async move {
+                    let _ = axum::serve(listener, app).await;
+                });
+                (
+                    format!("http://127.0.0.1:{}/{}", port, filename),
+                    LocalHtmlServerGuard(Some(handle)),
+                )
+            }
+            Err(_) => (fallback_url, LocalHtmlServerGuard(None)),
+        },
+        Err(_) => (fallback_url, LocalHtmlServerGuard(None)),
     }
 }
 
@@ -36,6 +103,196 @@ fn escape_html(text: &str) -> String {
         }
     }
     escaped
+}
+
+fn fill_stroke_attrs(fill: bool, color_str: &str) -> (&str, &str, u8) {
+    match fill {
+        true => (color_str, "none", 0),
+        false => ("none", color_str, 2),
+    }
+}
+
+fn render_shape_svg(shape: &Value) -> String {
+    let shape_type = shape.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    let color_str = shape
+        .get("color")
+        .and_then(|v| v.as_str())
+        .unwrap_or("#000000");
+    let fill = shape.get("fill").and_then(|v| v.as_bool()).unwrap_or(true);
+    let (fill_val, stroke_val, stroke_w) = fill_stroke_attrs(fill, color_str);
+    match shape_type {
+        "rect" => {
+            let x = shape.get("x").and_then(|v| v.as_i64()).unwrap_or(0);
+            let y = shape.get("y").and_then(|v| v.as_i64()).unwrap_or(0);
+            let w = shape.get("w").and_then(|v| v.as_u64()).unwrap_or(10);
+            let h = shape.get("h").and_then(|v| v.as_u64()).unwrap_or(10);
+            format!(
+                r#"<rect x="{}" y="{}" width="{}" height="{}" fill="{}" stroke="{}" stroke-width="{}" />"#,
+                x, y, w, h, fill_val, stroke_val, stroke_w
+            )
+        }
+        "circle" => {
+            let cx = shape.get("cx").and_then(|v| v.as_i64()).unwrap_or(0);
+            let cy = shape.get("cy").and_then(|v| v.as_i64()).unwrap_or(0);
+            let r = shape.get("r").and_then(|v| v.as_i64()).unwrap_or(10);
+            format!(
+                r#"<circle cx="{}" cy="{}" r="{}" fill="{}" stroke="{}" stroke-width="{}" />"#,
+                cx, cy, r, fill_val, stroke_val, stroke_w
+            )
+        }
+        "line" => {
+            let x1 = shape.get("x1").and_then(|v| v.as_i64()).unwrap_or(0);
+            let y1 = shape.get("y1").and_then(|v| v.as_i64()).unwrap_or(0);
+            let x2 = shape.get("x2").and_then(|v| v.as_i64()).unwrap_or(0);
+            let y2 = shape.get("y2").and_then(|v| v.as_i64()).unwrap_or(0);
+            format!(
+                r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="2" />"#,
+                x1, y1, x2, y2, color_str
+            )
+        }
+        "text" => {
+            let x = shape.get("x").and_then(|v| v.as_i64()).unwrap_or(0);
+            let y = shape.get("y").and_then(|v| v.as_i64()).unwrap_or(0);
+            let text_val = shape.get("text").and_then(|v| v.as_str()).unwrap_or("");
+            let size = shape.get("size").and_then(|v| v.as_f64()).unwrap_or(16.0);
+            format!(
+                r#"<text x="{}" y="{}" fill="{}" font-size="{}px" font-family="sans-serif" dominant-baseline="hanging">{}</text>"#,
+                x, y, color_str, size, escape_html(text_val)
+            )
+        }
+        _ => String::new(),
+    }
+}
+
+fn write_temp_html_file(html_content: &str) -> Result<(String, Option<PathBuf>)> {
+    let temp_html_path =
+        std::env::temp_dir().join(format!("openz_img_{}.html", uuid::Uuid::new_v4()));
+    fs::write(&temp_html_path, html_content)?;
+    let url = format!("file://{}", temp_html_path.to_string_lossy());
+    Ok((url, Some(temp_html_path)))
+}
+
+fn resolve_target_url_from_arguments(
+    arguments: &Value,
+    width: i64,
+    height: i64,
+    bg_color_str: &str,
+) -> Result<(String, Option<PathBuf>)> {
+    match arguments.get("html").and_then(|v| v.as_str()) {
+        Some(html_content) => write_temp_html_file(html_content),
+        None => match arguments.get("html_path").and_then(|v| v.as_str()) {
+            Some(html_path_str) => {
+                let has_scheme = html_path_str.starts_with("http://")
+                    || html_path_str.starts_with("https://")
+                    || html_path_str.starts_with("file://");
+                let url = match has_scheme {
+                    true => html_path_str.to_string(),
+                    false => {
+                        let path = resolve_path(html_path_str);
+                        format!("file://{}", path.to_string_lossy())
+                    }
+                };
+                Ok((url, None))
+            }
+            None => match arguments.get("url").and_then(|v| v.as_str()) {
+                Some(url_str) => Ok((url_str.to_string(), None)),
+                None => match arguments.get("shapes").and_then(|v| v.as_array()) {
+                    Some(shapes_val) => {
+                        let svg_elements: String =
+                            shapes_val.iter().map(render_shape_svg).collect();
+                        let html_content = format!(
+                            r#"<!DOCTYPE html>
+                <html>
+                <head>
+                <style>
+                  body, html {{
+                    margin: 0;
+                    padding: 0;
+                    width: {}px;
+                    height: {}px;
+                    background-color: {};
+                    overflow: hidden;
+                  }}
+                  svg {{
+                    display: block;
+                    width: 100%;
+                    height: 100%;
+                  }}
+                </style>
+                </head>
+                <body>
+                  <svg width="{}" height="{}" viewBox="0 0 {} {}" xmlns="http://www.w3.org/2000/svg">
+                    {}
+                  </svg>
+                </body>
+                </html>"#,
+                            width, height, bg_color_str, width, height, width, height, svg_elements
+                        );
+                        write_temp_html_file(&html_content)
+                    }
+                    None => {
+                        let default_html = r#"<!DOCTYPE html><html><body style="margin:0; background:white;"></body></html>"#;
+                        write_temp_html_file(default_html)
+                    }
+                },
+            },
+        },
+    }
+}
+
+fn cleanup_temp_file(temp_file_path: &Option<PathBuf>) {
+    match temp_file_path {
+        Some(path) => {
+            let _ = fs::remove_file(path);
+        }
+        None => {}
+    }
+}
+
+fn ensure_parent_dir(output_path: &Path) -> Result<()> {
+    match output_path.parent() {
+        Some(parent) => fs::create_dir_all(parent)?,
+        None => {}
+    }
+    Ok(())
+}
+
+async fn try_openmedia_fallback(
+    html_content: &str,
+    width: i64,
+    height: i64,
+    device_scale_factor: f64,
+    output_path: &Path,
+    temp_file_path: &Option<PathBuf>,
+) -> Option<Value> {
+    let server = crate::tools::openmedia::get_server().await.ok()?;
+    let req = crate::tools::openmedia::server::HtmlToImageRequest {
+        html: html_content.to_string(),
+        width: Some(width as u32),
+        height: Some(height as u32),
+        device_scale_factor: Some(device_scale_factor),
+        output_format: Some("png".to_string()),
+    };
+    let val = server.html_to_image(req).await.ok()?;
+    let path_str = val.get("path").and_then(|v| v.as_str())?;
+    let gen_path = Path::new(path_str);
+    gen_path.exists().then_some(())?;
+    match output_path.parent() {
+        Some(parent) => {
+            let _ = fs::create_dir_all(parent);
+        }
+        None => {}
+    }
+    let _ = fs::copy(gen_path, output_path);
+    cleanup_temp_file(temp_file_path);
+    Some(json!({
+        "status": "success",
+        "complete": true,
+        "output_path": output_path.to_string_lossy(),
+        "backend": "openmedia_chromiumoxide_fallback",
+        "width": width,
+        "height": height,
+    }))
 }
 
 #[async_trait::async_trait]
@@ -171,166 +428,12 @@ impl Tool for GenerateImageTool {
             .and_then(|v| v.as_i64())
             .unwrap_or(300);
 
-        let mut temp_file_path = None;
+        let (initial_target_url, temp_file_path) =
+            resolve_target_url_from_arguments(arguments, width, height, bg_color_str)?;
 
-        // Resolve target URL to load
-        let target_url = if let Some(html_content) = arguments.get("html").and_then(|v| v.as_str())
-        {
-            let temp_html_path =
-                std::env::temp_dir().join(format!("openz_img_{}.html", uuid::Uuid::new_v4()));
-            fs::write(&temp_html_path, html_content)?;
-            temp_file_path = Some(temp_html_path.clone());
-            format!("file://{}", temp_html_path.to_string_lossy())
-        } else if let Some(html_path_str) = arguments.get("html_path").and_then(|v| v.as_str()) {
-            if html_path_str.starts_with("http://")
-                || html_path_str.starts_with("https://")
-                || html_path_str.starts_with("file://")
-            {
-                html_path_str.to_string()
-            } else {
-                let path = resolve_path(html_path_str);
-                format!("file://{}", path.to_string_lossy())
-            }
-        } else if let Some(url_str) = arguments.get("url").and_then(|v| v.as_str()) {
-            url_str.to_string()
-        } else if let Some(shapes_val) = arguments.get("shapes").and_then(|v| v.as_array()) {
-            // Compile shapes to premium anti-aliased SVG
-            let mut svg_elements = String::new();
-            for shape in shapes_val {
-                let shape_type = shape.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                let color_str = shape
-                    .get("color")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("#000000");
-                let fill = shape.get("fill").and_then(|v| v.as_bool()).unwrap_or(true);
-                match shape_type {
-                    "rect" => {
-                        let x = shape.get("x").and_then(|v| v.as_i64()).unwrap_or(0);
-                        let y = shape.get("y").and_then(|v| v.as_i64()).unwrap_or(0);
-                        let w = shape.get("w").and_then(|v| v.as_u64()).unwrap_or(10);
-                        let h = shape.get("h").and_then(|v| v.as_u64()).unwrap_or(10);
-                        let fill_val = if fill { color_str } else { "none" };
-                        let stroke_val = if fill { "none" } else { color_str };
-                        let stroke_w = if fill { 0 } else { 2 };
-                        svg_elements.push_str(&format!(
-                            r#"<rect x="{}" y="{}" width="{}" height="{}" fill="{}" stroke="{}" stroke-width="{}" />"#,
-                            x, y, w, h, fill_val, stroke_val, stroke_w
-                        ));
-                    }
-                    "circle" => {
-                        let cx = shape.get("cx").and_then(|v| v.as_i64()).unwrap_or(0);
-                        let cy = shape.get("cy").and_then(|v| v.as_i64()).unwrap_or(0);
-                        let r = shape.get("r").and_then(|v| v.as_i64()).unwrap_or(10);
-                        let fill_val = if fill { color_str } else { "none" };
-                        let stroke_val = if fill { "none" } else { color_str };
-                        let stroke_w = if fill { 0 } else { 2 };
-                        svg_elements.push_str(&format!(
-                            r#"<circle cx="{}" cy="{}" r="{}" fill="{}" stroke="{}" stroke-width="{}" />"#,
-                            cx, cy, r, fill_val, stroke_val, stroke_w
-                        ));
-                    }
-                    "line" => {
-                        let x1 = shape.get("x1").and_then(|v| v.as_i64()).unwrap_or(0);
-                        let y1 = shape.get("y1").and_then(|v| v.as_i64()).unwrap_or(0);
-                        let x2 = shape.get("x2").and_then(|v| v.as_i64()).unwrap_or(0);
-                        let y2 = shape.get("y2").and_then(|v| v.as_i64()).unwrap_or(0);
-                        svg_elements.push_str(&format!(
-                            r#"<line x1="{}" y1="{}" x2="{}" y2="{}" stroke="{}" stroke-width="2" />"#,
-                            x1, y1, x2, y2, color_str
-                        ));
-                    }
-                    "text" => {
-                        let x = shape.get("x").and_then(|v| v.as_i64()).unwrap_or(0);
-                        let y = shape.get("y").and_then(|v| v.as_i64()).unwrap_or(0);
-                        let text_val = shape.get("text").and_then(|v| v.as_str()).unwrap_or("");
-                        let size = shape.get("size").and_then(|v| v.as_f64()).unwrap_or(16.0);
-                        svg_elements.push_str(&format!(
-                            r#"<text x="{}" y="{}" fill="{}" font-size="{}px" font-family="sans-serif" dominant-baseline="hanging">{}</text>"#,
-                            x, y, color_str, size, escape_html(text_val)
-                        ));
-                    }
-                    _ => {}
-                }
-            }
-            let html_content = format!(
-                r#"<!DOCTYPE html>
-                <html>
-                <head>
-                <style>
-                  body, html {{
-                    margin: 0;
-                    padding: 0;
-                    width: {}px;
-                    height: {}px;
-                    background-color: {};
-                    overflow: hidden;
-                  }}
-                  svg {{
-                    display: block;
-                    width: 100%;
-                    height: 100%;
-                  }}
-                </style>
-                </head>
-                <body>
-                  <svg width="{}" height="{}" viewBox="0 0 {} {}" xmlns="http://www.w3.org/2000/svg">
-                    {}
-                  </svg>
-                </body>
-                </html>"#,
-                width, height, bg_color_str, width, height, width, height, svg_elements
-            );
-            let temp_html_path =
-                std::env::temp_dir().join(format!("openz_img_{}.html", uuid::Uuid::new_v4()));
-            fs::write(&temp_html_path, html_content)?;
-            temp_file_path = Some(temp_html_path.clone());
-            format!("file://{}", temp_html_path.to_string_lossy())
-        } else {
-            // Default blank white page if nothing specified
-            let default_html =
-                r#"<!DOCTYPE html><html><body style="margin:0; background:white;"></body></html>"#;
-            let temp_html_path =
-                std::env::temp_dir().join(format!("openz_img_{}.html", uuid::Uuid::new_v4()));
-            fs::write(&temp_html_path, default_html)?;
-            temp_file_path = Some(temp_html_path.clone());
-            format!("file://{}", temp_html_path.to_string_lossy())
-        };
-
-        let mut _server_guard = ServerGuard(None);
-        let target_url = if let Some(file_path_str) = target_url.strip_prefix("file://") {
-            let mut raw_path = std::path::PathBuf::from(file_path_str);
-            if !raw_path.is_absolute() {
-                if let Ok(cwd) = std::env::current_dir() {
-                    raw_path = cwd.join(raw_path);
-                }
-            }
-            let parent_dir = raw_path.parent().unwrap_or(&raw_path).to_path_buf();
-            let filename = raw_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("index.html")
-                .to_string();
-
-            match tokio::net::TcpListener::bind("127.0.0.1:0").await {
-                Ok(listener) => {
-                    if let Ok(addr) = listener.local_addr() {
-                        let port = addr.port();
-                        let app = axum::Router::new()
-                            .nest_service("/", tower_http::services::ServeDir::new(&parent_dir))
-                            .layer(axum::middleware::from_fn(force_utf8));
-                        let handle = tokio::spawn(async move {
-                            let _ = axum::serve(listener, app).await;
-                        });
-                        _server_guard.0 = Some(handle);
-                        format!("http://127.0.0.1:{}/{}", port, filename)
-                    } else {
-                        target_url
-                    }
-                }
-                Err(_) => target_url,
-            }
-        } else {
-            target_url
+        let (target_url, _server_guard) = match initial_target_url.strip_prefix("file://") {
+            Some(file_path_str) => serve_local_html_file(PathBuf::from(file_path_str)).await,
+            None => (initial_target_url, LocalHtmlServerGuard(None)),
         };
 
         // Ensure browser is running
@@ -414,48 +517,54 @@ impl Tool for GenerateImageTool {
             )
             .await?;
 
-            if let Some(state) = eval_res
+            let ready = eval_res
                 .get("result")
                 .and_then(|r| r.get("result"))
                 .and_then(|res| res.get("value"))
                 .and_then(|v| v.as_str())
-            {
-                if state == "complete" {
+                == Some("complete");
+            match ready {
+                true => {
                     is_complete = true;
                     break;
                 }
+                false => {}
             }
         }
 
         // Inject custom CSS if provided
-        if let Some(css_str) = arguments.get("css").and_then(|v| v.as_str()) {
-            let inject_css_js = format!(
-                r#"(() => {{
-                    const style = document.createElement('style');
-                    style.textContent = `{}`;
-                    document.head.appendChild(style);
-                }})()"#,
-                css_str
-                    .replace('\\', "\\\\")
-                    .replace('`', "\\`")
-                    .replace("${", "\\${")
-            );
-            let _ = send_cdp_cmd(
-                &mut write,
-                &mut read,
-                &mut message_id,
-                "Runtime.evaluate",
-                json!({
-                    "expression": inject_css_js,
-                    "returnByValue": true
-                }),
-            )
-            .await?;
+        match arguments.get("css").and_then(|v| v.as_str()) {
+            Some(css_str) => {
+                let inject_css_js = format!(
+                    r#"(() => {{
+                        const style = document.createElement('style');
+                        style.textContent = `{}`;
+                        document.head.appendChild(style);
+                    }})()"#,
+                    css_str
+                        .replace('\\', "\\\\")
+                        .replace('`', "\\`")
+                        .replace("${", "\\${")
+                );
+                let _ = send_cdp_cmd(
+                    &mut write,
+                    &mut read,
+                    &mut message_id,
+                    "Runtime.evaluate",
+                    json!({
+                        "expression": inject_css_js,
+                        "returnByValue": true
+                    }),
+                )
+                .await?;
+            }
+            None => {}
         }
 
         // Settle delay
-        if settle_ms > 0 {
-            sleep(Duration::from_millis(settle_ms as u64)).await;
+        match settle_ms > 0 {
+            true => sleep(Duration::from_millis(settle_ms as u64)).await,
+            false => {}
         }
 
         // Determine screenshot bounding box if selector is provided
@@ -463,51 +572,55 @@ impl Tool for GenerateImageTool {
             "format": "png"
         });
 
-        if let Some(sel) = selector {
-            // Properly escape the selector for safe JS injection
-            let escaped_sel = sel
-                .replace('\\', "\\\\")
-                .replace('"', "\\\"")
-                .replace('\'', "\\'")
-                .replace('\n', "\\n")
-                .replace('\r', "\\r");
-            let js_expr = format!(
-                r#"((sel) => {{
-                    const el = document.querySelector(sel);
-                    if (!el) return null;
-                    const rect = el.getBoundingClientRect();
-                    return {{
-                        x: rect.left + window.scrollX,
-                        y: rect.top + window.scrollY,
-                        width: rect.width,
-                        height: rect.height,
-                        scale: 1.0
-                    }};
-                }})('{}')"#,
-                escaped_sel
-            );
+        match selector {
+            Some(sel) => {
+                let escaped_sel = sel
+                    .replace('\\', "\\\\")
+                    .replace('"', "\\\"")
+                    .replace('\'', "\\'")
+                    .replace('\n', "\\n")
+                    .replace('\r', "\\r");
+                let js_expr = format!(
+                    r#"((sel) => {{
+                        const el = document.querySelector(sel);
+                        if (!el) return null;
+                        const rect = el.getBoundingClientRect();
+                        return {{
+                            x: rect.left + window.scrollX,
+                            y: rect.top + window.scrollY,
+                            width: rect.width,
+                            height: rect.height,
+                            scale: 1.0
+                        }};
+                    }})('{}')"#,
+                    escaped_sel
+                );
 
-            let eval_res = send_cdp_cmd(
-                &mut write,
-                &mut read,
-                &mut message_id,
-                "Runtime.evaluate",
-                json!({
-                    "expression": js_expr,
-                    "returnByValue": true
-                }),
-            )
-            .await?;
+                let eval_res = send_cdp_cmd(
+                    &mut write,
+                    &mut read,
+                    &mut message_id,
+                    "Runtime.evaluate",
+                    json!({
+                        "expression": js_expr,
+                        "returnByValue": true
+                    }),
+                )
+                .await?;
 
-            if let Some(rect_val) = eval_res
-                .get("result")
-                .and_then(|r| r.get("result"))
-                .and_then(|res| res.get("value"))
-            {
-                if !rect_val.is_null() {
-                    screenshot_params["clip"] = rect_val.clone();
+                match eval_res
+                    .get("result")
+                    .and_then(|r| r.get("result"))
+                    .and_then(|res| res.get("value"))
+                    .filter(|v| !v.is_null())
+                {
+                    Some(rect_val) => {
+                        screenshot_params["clip"] = rect_val.clone();
+                    }
+                    None => {}
                 }
             }
+            None => {}
         }
 
         // Capture screenshot
@@ -520,54 +633,36 @@ impl Tool for GenerateImageTool {
         )
         .await?;
 
-        let image_bytes = if let Some(base64_data) = screenshot_res
+        let image_bytes = match screenshot_res
             .pointer("/result/data")
             .and_then(|v| v.as_str())
         {
-            BASE64_STANDARD.decode(base64_data)?
-        } else if let Some(html_content) = arguments.get("html").and_then(|v| v.as_str()) {
-            if let Ok(server) = crate::tools::openmedia::get_server().await {
-                let req = crate::tools::openmedia::server::HtmlToImageRequest {
-                    html: html_content.to_string(),
-                    width: Some(width as u32),
-                    height: Some(height as u32),
-                    device_scale_factor: Some(device_scale_factor),
-                    output_format: Some("png".to_string()),
-                };
-                if let Ok(val) = server.html_to_image(req).await {
-                    if let Some(path_str) = val.get("path").and_then(|v| v.as_str()) {
-                        let gen_path = std::path::Path::new(path_str);
-                        if gen_path.exists() {
-                            if let Some(parent) = output_path.parent() {
-                                let _ = fs::create_dir_all(parent);
-                            }
-                            let _ = fs::copy(gen_path, &output_path);
-                            if let Some(path) = &temp_file_path {
-                                let _ = fs::remove_file(path);
-                            }
-                            return Ok(json!({
-                                "status": "success",
-                                "complete": true,
-                                "output_path": output_path.to_string_lossy(),
-                                "backend": "openmedia_chromiumoxide_fallback",
-                                "width": width,
-                                "height": height,
-                            }));
+            Some(base64_data) => BASE64_STANDARD.decode(base64_data)?,
+            None => match arguments.get("html").and_then(|v| v.as_str()) {
+                Some(html_content) => {
+                    match try_openmedia_fallback(
+                        html_content,
+                        width,
+                        height,
+                        device_scale_factor,
+                        &output_path,
+                        &temp_file_path,
+                    )
+                    .await
+                    {
+                        Some(fallback_res) => return Ok(fallback_res),
+                        None => {
+                            return Err(anyhow!(
+                                "Failed to capture screenshot data via CDP and fallback renderer"
+                            ));
                         }
                     }
                 }
-            }
-            return Err(anyhow!("Failed to capture screenshot data via CDP and fallback renderer"));
-        } else {
-            return Err(anyhow!("Failed to capture screenshot data"));
+                None => return Err(anyhow!("Failed to capture screenshot data")),
+            },
         };
 
-        // Ensure parent directories exist
-        if let Some(parent) = output_path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
-        // Write screenshot to file
+        ensure_parent_dir(&output_path)?;
         fs::write(&output_path, image_bytes)?;
 
         // Close the tab
@@ -575,10 +670,7 @@ impl Tool for GenerateImageTool {
         let close_url = format!("http://127.0.0.1:{cdp_port}/json/close/{}", tab_id);
         let _ = client.get(&close_url).send().await;
 
-        // Clean up temp file if created
-        if let Some(path) = &temp_file_path {
-            let _ = fs::remove_file(path);
-        }
+        cleanup_temp_file(&temp_file_path);
 
         Ok(json!({
             "status": "success",
@@ -587,27 +679,6 @@ impl Tool for GenerateImageTool {
             "message": format!("High-fidelity image successfully generated and saved to '{}'.", output_path_str)
         }))
     }
-}
-
-async fn force_utf8(
-    req: axum::http::Request<axum::body::Body>,
-    next: axum::middleware::Next,
-) -> axum::response::Response {
-    let mut response = next.run(req).await;
-    if let Some(content_type) = response.headers().get(axum::http::header::CONTENT_TYPE) {
-        if let Ok(content_type_str) = content_type.to_str() {
-            if content_type_str.starts_with("text/html") && !content_type_str.contains("charset") {
-                if let Ok(new_val) =
-                    axum::http::header::HeaderValue::from_str("text/html; charset=utf-8")
-                {
-                    response
-                        .headers_mut()
-                        .insert(axum::http::header::CONTENT_TYPE, new_val);
-                }
-            }
-        }
-    }
-    response
 }
 
 #[cfg(test)]

@@ -1,3 +1,4 @@
+use crate::tools::github::{build_git_http_client, configured_git_token};
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT};
@@ -11,33 +12,7 @@ fn resolve_github_token() -> Option<String> {
         .ok()
         .or_else(|| env::var("OCTOCRAB_TOKEN").ok())
         .or_else(|| env::var("GITHUB_PAT").ok())
-        .or_else(|| {
-            configured_github.and_then(|cfg| {
-                cfg.token_env
-                    .as_deref()
-                    .and_then(|e| env::var(e).ok())
-                    .filter(|t| !t.trim().is_empty())
-                    .or_else(|| cfg.token.clone().filter(|t| !t.trim().is_empty()))
-            })
-        })
-}
-
-fn get_github_client() -> Result<reqwest::Client> {
-    let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
-        if crate::tools::web::validate_url_sync(attempt.url()).is_err() {
-            attempt.stop()
-        } else {
-            attempt.follow()
-        }
-    });
-
-    reqwest::Client::builder()
-        .use_rustls_tls()
-        .connect_timeout(crate::core::http::DEFAULT_CONNECT_TIMEOUT)
-        .timeout(crate::core::http::DEFAULT_REQUEST_TIMEOUT)
-        .redirect(redirect_policy)
-        .build()
-        .map_err(|e| anyhow!("Failed to build HTTP client: {}", e))
+        .or_else(|| configured_git_token(configured_github))
 }
 
 fn get_github_headers(token: Option<&str>) -> Result<HeaderMap> {
@@ -47,15 +22,63 @@ fn get_github_headers(token: Option<&str>) -> Result<HeaderMap> {
         ACCEPT,
         HeaderValue::from_static("application/vnd.github+json"),
     );
-    if let Some(tok) = token {
-        if !tok.trim().is_empty() {
+    match token.map(str::trim).filter(|t| !t.is_empty()) {
+        Some(tok) => {
             headers.insert(
                 AUTHORIZATION,
-                HeaderValue::from_str(&format!("Bearer {}", tok.trim()))?,
+                HeaderValue::from_str(&format!("Bearer {}", tok))?,
             );
         }
+        None => {}
     }
     Ok(headers)
+}
+
+async fn execute_github_mcp_request<F>(
+    url: &str,
+    token: Option<&str>,
+    post_payload: Option<&Value>,
+    format_json: F,
+) -> Value
+where
+    F: FnOnce(&Value) -> String,
+{
+    match crate::tools::web::validate_url(url).await {
+        Ok(_) => {}
+        Err(e) => return json!({ "success": false, "error": format!("SSRF check failed: {}", e) }),
+    }
+
+    let client = match build_git_http_client() {
+        Ok(c) => c,
+        Err(e) => return json!({ "success": false, "error": e.to_string() }),
+    };
+    let headers = match get_github_headers(token) {
+        Ok(h) => h,
+        Err(e) => return json!({ "success": false, "error": e.to_string() }),
+    };
+
+    let request = match post_payload {
+        Some(payload) => client.post(url).headers(headers).json(payload),
+        None => client.get(url).headers(headers),
+    };
+
+    match request.send().await {
+        Ok(resp) => {
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            match status.is_success() {
+                false => json!({
+                    "success": false,
+                    "error": format!("GitHub API Error ({}): {}", status, text)
+                }),
+                true => match serde_json::from_str::<Value>(&text) {
+                    Ok(val) => json!({ "success": true, "result": format_json(&val) }),
+                    Err(_) => json!({ "success": true, "result": text }),
+                },
+            }
+        }
+        Err(e) => json!({ "success": false, "error": e.to_string() }),
+    }
 }
 
 pub struct GithubCreatePullRequestTool;
@@ -137,52 +160,33 @@ impl Tool for GithubCreatePullRequestTool {
         };
 
         let url = format!("https://api.github.com/repos/{}/{}/pulls", owner, repo);
-        if let Err(e) = crate::tools::web::validate_url(&url).await {
-            return Ok(json!({ "success": false, "error": format!("SSRF check failed: {}", e) }));
-        }
-
-        let client = match get_github_client() {
-            Ok(c) => c,
-            Err(e) => return Ok(json!({ "success": false, "error": e.to_string() })),
-        };
-        let headers = match get_github_headers(Some(&token)) {
-            Ok(h) => h,
-            Err(e) => return Ok(json!({ "success": false, "error": e.to_string() })),
-        };
-
         let mut payload = json!({
             "title": title,
             "head": head,
             "base": base,
         });
-        if let Some(b) = body {
-            payload["body"] = json!(b);
+        match body {
+            Some(b) => {
+                payload["body"] = json!(b);
+            }
+            None => {}
         }
 
-        match client.post(&url).headers(headers).json(&payload).send().await {
-            Ok(resp) => {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                if !status.is_success() {
-                    Ok(json!({
-                        "success": false,
-                        "error": format!("GitHub API Error ({}): {}", status, text)
-                    }))
-                } else if let Ok(val) = serde_json::from_str::<Value>(&text) {
-                    let number = val.get("number").and_then(|v| v.as_i64()).unwrap_or(0);
-                    let pr_title = val.get("title").and_then(|v| v.as_str()).unwrap_or(title);
-                    let html_url = val.get("html_url").and_then(|v| v.as_str()).unwrap_or("");
-                    let msg = format!(
-                        "Successfully created Pull Request #{}: {}\nURL: {}",
-                        number, pr_title, html_url
-                    );
-                    Ok(json!({ "success": true, "result": msg }))
-                } else {
-                    Ok(json!({ "success": true, "result": text }))
-                }
-            }
-            Err(e) => Ok(json!({ "success": false, "error": e.to_string() })),
-        }
+        Ok(execute_github_mcp_request(
+            &url,
+            Some(&token),
+            Some(&payload),
+            |val| {
+                let number = val.get("number").and_then(|v| v.as_i64()).unwrap_or(0);
+                let pr_title = val.get("title").and_then(|v| v.as_str()).unwrap_or(title);
+                let html_url = val.get("html_url").and_then(|v| v.as_str()).unwrap_or("");
+                format!(
+                    "Successfully created Pull Request #{}: {}\nURL: {}",
+                    number, pr_title, html_url
+                )
+            },
+        )
+        .await)
     }
 }
 
@@ -225,55 +229,31 @@ impl Tool for GithubSearchIssuesTool {
         .to_string();
         let url = format!("https://api.github.com/search/issues?q={}", encoded_query);
 
-        if let Err(e) = crate::tools::web::validate_url(&url).await {
-            return Ok(json!({ "success": false, "error": format!("SSRF check failed: {}", e) }));
-        }
-
-        let client = match get_github_client() {
-            Ok(c) => c,
-            Err(e) => return Ok(json!({ "success": false, "error": e.to_string() })),
-        };
-        let headers = match get_github_headers(token.as_deref()) {
-            Ok(h) => h,
-            Err(e) => return Ok(json!({ "success": false, "error": e.to_string() })),
-        };
-
-        match client.get(&url).headers(headers).send().await {
-            Ok(resp) => {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                if !status.is_success() {
-                    Ok(json!({
-                        "success": false,
-                        "error": format!("GitHub API Error ({}): {}", status, text)
-                    }))
-                } else if let Ok(val) = serde_json::from_str::<Value>(&text) {
-                    let total_count = val.get("total_count").and_then(|v| v.as_u64()).unwrap_or(0);
-                    let mut output = format!("Found {} matching issues/PRs:\n\n", total_count);
-                    if let Some(items) = val.get("items").and_then(|v| v.as_array()) {
-                        for item in items {
-                            let number = item.get("number").and_then(|v| v.as_i64()).unwrap_or(0);
-                            let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("");
-                            let state = item.get("state").and_then(|v| v.as_str()).unwrap_or("");
-                            let is_pr = item.get("pull_request").is_some();
-                            let html_url = item.get("html_url").and_then(|v| v.as_str()).unwrap_or("");
-                            output.push_str(&format!(
-                                "- [#{}] {} (State: {:?}, Type: {})\n  URL: {}\n",
-                                number,
-                                title,
-                                state,
-                                if is_pr { "PR" } else { "Issue" },
-                                html_url
-                            ));
-                        }
-                    }
-                    Ok(json!({ "success": true, "result": output }))
-                } else {
-                    Ok(json!({ "success": true, "result": text }))
-                }
+        Ok(execute_github_mcp_request(&url, token.as_deref(), None, |val| {
+            let total_count = val.get("total_count").and_then(|v| v.as_u64()).unwrap_or(0);
+            let mut output = format!("Found {} matching issues/PRs:\n\n", total_count);
+            for item in val
+                .get("items")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+            {
+                let number = item.get("number").and_then(|v| v.as_i64()).unwrap_or(0);
+                let title = item.get("title").and_then(|v| v.as_str()).unwrap_or("");
+                let state = item.get("state").and_then(|v| v.as_str()).unwrap_or("");
+                let item_type = match item.get("pull_request").is_some() {
+                    true => "PR",
+                    false => "Issue",
+                };
+                let html_url = item.get("html_url").and_then(|v| v.as_str()).unwrap_or("");
+                output.push_str(&format!(
+                    "- [#{}] {} (State: {:?}, Type: {})\n  URL: {}\n",
+                    number, title, state, item_type, html_url
+                ));
             }
-            Err(e) => Ok(json!({ "success": false, "error": e.to_string() })),
-        }
+            output
+        })
+        .await)
     }
 }
 
@@ -334,58 +314,30 @@ impl Tool for GithubGetIssueCommentsTool {
             owner, repo, issue_number
         );
 
-        if let Err(e) = crate::tools::web::validate_url(&url).await {
-            return Ok(json!({ "success": false, "error": format!("SSRF check failed: {}", e) }));
-        }
-
-        let client = match get_github_client() {
-            Ok(c) => c,
-            Err(e) => return Ok(json!({ "success": false, "error": e.to_string() })),
-        };
-        let headers = match get_github_headers(token.as_deref()) {
-            Ok(h) => h,
-            Err(e) => return Ok(json!({ "success": false, "error": e.to_string() })),
-        };
-
-        match client.get(&url).headers(headers).send().await {
-            Ok(resp) => {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                if !status.is_success() {
-                    Ok(json!({
-                        "success": false,
-                        "error": format!("GitHub API Error ({}): {}", status, text)
-                    }))
-                } else if let Ok(val) = serde_json::from_str::<Value>(&text) {
-                    let mut output = format!("Comments for Issue #{}:\n\n", issue_number);
-                    if let Some(items) = val.as_array() {
-                        for comment in items {
-                            let user = comment
-                                .get("user")
-                                .and_then(|u| u.get("login"))
-                                .and_then(|l| l.as_str())
-                                .unwrap_or("unknown");
-                            let created_at = comment
-                                .get("created_at")
-                                .and_then(|c| c.as_str())
-                                .unwrap_or("");
-                            let body = comment
-                                .get("body")
-                                .and_then(|b| b.as_str())
-                                .unwrap_or("");
-                            output.push_str(&format!(
-                                "--- Comment by {} at {} ---\n{}\n\n",
-                                user, created_at, body
-                            ));
-                        }
-                    }
-                    Ok(json!({ "success": true, "result": output }))
-                } else {
-                    Ok(json!({ "success": true, "result": text }))
-                }
+        Ok(execute_github_mcp_request(&url, token.as_deref(), None, |val| {
+            let mut output = format!("Comments for Issue #{}:\n\n", issue_number);
+            for comment in val.as_array().into_iter().flatten() {
+                let user = comment
+                    .get("user")
+                    .and_then(|u| u.get("login"))
+                    .and_then(|l| l.as_str())
+                    .unwrap_or("unknown");
+                let created_at = comment
+                    .get("created_at")
+                    .and_then(|c| c.as_str())
+                    .unwrap_or("");
+                let body = comment
+                    .get("body")
+                    .and_then(|b| b.as_str())
+                    .unwrap_or("");
+                output.push_str(&format!(
+                    "--- Comment by {} at {} ---\n{}\n\n",
+                    user, created_at, body
+                ));
             }
-            Err(e) => Ok(json!({ "success": false, "error": e.to_string() })),
-        }
+            output
+        })
+        .await)
     }
 }
 

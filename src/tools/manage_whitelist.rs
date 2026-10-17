@@ -53,21 +53,25 @@ impl Tool for ManageWhitelistTool {
                     .ok_or_else(|| anyhow!("Missing 'value' parameter for add_command"))?
                     .trim()
                     .to_string();
-                if val.is_empty() {
-                    return Err(anyhow!("Whitelisted command prefix cannot be empty"));
+                match val.is_empty() {
+                    true => return Err(anyhow!("Whitelisted command prefix cannot be empty")),
+                    false => {}
                 }
-                if !config
+                let missing = !config
                     .agents
                     .defaults
                     .whitelisted_command_prefixes
-                    .contains(&val)
-                {
-                    config
-                        .agents
-                        .defaults
-                        .whitelisted_command_prefixes
-                        .push(val.clone());
-                    save_config(&config)?;
+                    .contains(&val);
+                match missing {
+                    true => {
+                        config
+                            .agents
+                            .defaults
+                            .whitelisted_command_prefixes
+                            .push(val.clone());
+                        save_config(&config)?;
+                    }
+                    false => {}
                 }
                 Ok(json!({
                     "status": "success",
@@ -85,8 +89,9 @@ impl Tool for ManageWhitelistTool {
                     .defaults
                     .whitelisted_command_prefixes
                     .retain(|v| v != val);
-                if config.agents.defaults.whitelisted_command_prefixes.len() < len_before {
-                    save_config(&config)?;
+                match config.agents.defaults.whitelisted_command_prefixes.len() < len_before {
+                    true => save_config(&config)?,
+                    false => {}
                 }
                 Ok(json!({
                     "status": "success",
@@ -99,23 +104,27 @@ impl Tool for ManageWhitelistTool {
                     .ok_or_else(|| anyhow!("Missing 'value' parameter for add_path"))?
                     .trim()
                     .to_string();
-                if val.is_empty() {
-                    return Err(anyhow!("Whitelisted path cannot be empty"));
+                match val.is_empty() {
+                    true => return Err(anyhow!("Whitelisted path cannot be empty")),
+                    false => {}
                 }
                 let resolved = crate::config::resolve_path(&val);
                 let val_resolved = resolved.to_string_lossy().to_string();
-                if !config
+                let missing = !config
                     .agents
                     .defaults
                     .whitelisted_paths
-                    .contains(&val_resolved)
-                {
-                    config
-                        .agents
-                        .defaults
-                        .whitelisted_paths
-                        .push(val_resolved.clone());
-                    save_config(&config)?;
+                    .contains(&val_resolved);
+                match missing {
+                    true => {
+                        config
+                            .agents
+                            .defaults
+                            .whitelisted_paths
+                            .push(val_resolved.clone());
+                        save_config(&config)?;
+                    }
+                    false => {}
                 }
                 Ok(json!({
                     "status": "success",
@@ -135,8 +144,9 @@ impl Tool for ManageWhitelistTool {
                     .defaults
                     .whitelisted_paths
                     .retain(|v| v != val && v != &*val_resolved);
-                if config.agents.defaults.whitelisted_paths.len() < len_before {
-                    save_config(&config)?;
+                match config.agents.defaults.whitelisted_paths.len() < len_before {
+                    true => save_config(&config)?,
+                    false => {}
                 }
                 Ok(json!({
                     "status": "success",

@@ -83,14 +83,16 @@ impl Tool for ManageMcpTool {
                     .trim()
                     .to_string();
 
-                let mut args = Vec::new();
-                if let Some(arr) = arguments.get("args").and_then(|v| v.as_array()) {
-                    for arg in arr {
-                        if let Some(s) = arg.as_str() {
-                            args.push(s.to_string());
-                        }
-                    }
-                }
+                let args = arguments
+                    .get("args")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_string)
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
 
                 let enabled = arguments
                     .get("enabled")
@@ -119,64 +121,55 @@ impl Tool for ManageMcpTool {
                     .trim()
                     .to_string();
 
-                if !config.mcp_servers.contains_key(&name) {
-                    return Err(anyhow!("MCP server '{}' not found in configuration", name));
+                match config.mcp_servers.contains_key(&name) {
+                    true => {}
+                    false => {
+                        return Err(anyhow!("MCP server '{}' not found in configuration", name));
+                    }
                 }
 
                 let confirm = arguments
                     .get("confirm")
                     .and_then(|v| v.as_bool())
                     .unwrap_or(false);
-                if !confirm {
-                    return Ok(json!({
+                match confirm {
+                    false => Ok(json!({
                         "status": "requires_confirmation",
                         "message": format!("MCP server '{}' exists. Pass 'confirm: true' to permanently remove it.", name)
-                    }));
+                    })),
+                    true => {
+                        config.mcp_servers.remove(&name);
+                        save_config(&config)?;
+                        Ok(json!({
+                            "status": "success",
+                            "message": format!("Successfully removed MCP server '{}'", name)
+                        }))
+                    }
                 }
-
-                config.mcp_servers.remove(&name);
-                save_config(&config)?;
-                Ok(json!({
-                    "status": "success",
-                    "message": format!("Successfully removed MCP server '{}'", name)
-                }))
             }
-            "enable" => {
+            "enable" | "disable" => {
+                let enabled = action == "enable";
+                let verb = match enabled {
+                    true => "enabled",
+                    false => "disabled",
+                };
                 let name = arguments
                     .get("name")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'name' parameter for action 'enable'"))?
+                    .ok_or_else(|| anyhow!("Missing 'name' parameter for action '{}'", action))?
                     .trim()
                     .to_string();
 
-                if let Some(server) = config.mcp_servers.get_mut(&name) {
-                    server.enabled = true;
-                    save_config(&config)?;
-                    Ok(json!({
-                        "status": "success",
-                        "message": format!("Successfully enabled MCP server '{}'", name)
-                    }))
-                } else {
-                    Err(anyhow!("MCP server '{}' not found in configuration", name))
-                }
-            }
-            "disable" => {
-                let name = arguments
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing 'name' parameter for action 'disable'"))?
-                    .trim()
-                    .to_string();
-
-                if let Some(server) = config.mcp_servers.get_mut(&name) {
-                    server.enabled = false;
-                    save_config(&config)?;
-                    Ok(json!({
-                        "status": "success",
-                        "message": format!("Successfully disabled MCP server '{}'", name)
-                    }))
-                } else {
-                    Err(anyhow!("MCP server '{}' not found in configuration", name))
+                match config.mcp_servers.get_mut(&name) {
+                    Some(server) => {
+                        server.enabled = enabled;
+                        save_config(&config)?;
+                        Ok(json!({
+                            "status": "success",
+                            "message": format!("Successfully {} MCP server '{}'", verb, name)
+                        }))
+                    }
+                    None => Err(anyhow!("MCP server '{}' not found in configuration", name)),
                 }
             }
             _ => Err(anyhow!("Invalid action '{}'", action)),

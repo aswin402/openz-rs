@@ -70,30 +70,27 @@ struct DeviceCapability {
 
 impl DeviceCapability {
     fn score_for(&self, category: Option<&str>, target_hint: Option<&str>) -> f64 {
-        if !self.enabled {
-            return -1.0;
-        }
+        match self.enabled {
+            false => -1.0,
+            true => {
+                let mut score = self.confidence.clamp(0.0, 1.0) * 100.0;
+                let cat_match = category
+                    .map(|cat| self.category.eq_ignore_ascii_case(cat))
+                    .unwrap_or(false);
+                let _ = cat_match.then(|| score += 35.0);
 
-        let mut score = self.confidence.clamp(0.0, 1.0) * 100.0;
-        if category
-            .map(|cat| self.category.eq_ignore_ascii_case(cat))
-            .unwrap_or(false)
-        {
-            score += 35.0;
-        }
+                let hint_match = target_hint
+                    .map(|hint| {
+                        self.works_for
+                            .iter()
+                            .any(|entry| entry.eq_ignore_ascii_case(hint))
+                    })
+                    .unwrap_or(false);
+                let _ = hint_match.then(|| score += 25.0);
 
-        if target_hint
-            .map(|hint| {
-                self.works_for
-                    .iter()
-                    .any(|entry| entry.eq_ignore_ascii_case(hint))
-            })
-            .unwrap_or(false)
-        {
-            score += 25.0;
+                score + f64::from(self.success_count) * 3.0 - f64::from(self.failure_count) * 4.0
+            }
         }
-
-        score + f64::from(self.success_count) * 3.0 - f64::from(self.failure_count) * 4.0
     }
 }
 
@@ -108,51 +105,55 @@ pub(crate) fn record_successful_desktop_notification() -> Result<Option<String>>
     let mut inventory = tool.load_inventory()?;
     let id = "desktop-notification-notify-send".to_string();
     let now = now_timestamp();
-    if let Some(entry) = inventory
+    match inventory
         .capabilities
         .iter_mut()
         .find(|entry| entry.id == id)
     {
-        entry.success_count = entry.success_count.saturating_add(1);
-        entry.last_success = Some(now.clone());
-        entry.updated_at = now;
-        entry.confidence = confidence(entry.success_count, entry.failure_count);
-    } else {
-        inventory.capabilities.push(DeviceCapability {
-            id: id.clone(),
-            category: "notification".to_string(),
-            name: "Desktop notifications".to_string(),
-            command: "notify-send".to_string(),
-            args: vec![
-                "--app-name".to_string(),
-                "OpenZ".to_string(),
-                "{title}".to_string(),
-                "{message}".to_string(),
-            ],
-            works_for: vec!["desktop".to_string(), "notification".to_string()],
-            paths: Vec::new(),
-            notes: Some(
-                "Recorded after notify-send delivered successfully in the current desktop session."
-                    .to_string(),
-            ),
-            source: "successful_notification".to_string(),
-            enabled: true,
-            success_count: 1,
-            failure_count: 0,
-            confidence: confidence(1, 0),
-            created_at: now.clone(),
-            updated_at: now.clone(),
-            last_success: Some(now),
-            last_failure: None,
-        });
+        Some(entry) => {
+            entry.success_count = entry.success_count.saturating_add(1);
+            entry.last_success = Some(now.clone());
+            entry.updated_at = now;
+            entry.confidence = confidence(entry.success_count, entry.failure_count);
+        }
+        None => {
+            inventory.capabilities.push(DeviceCapability {
+                id: id.clone(),
+                category: "notification".to_string(),
+                name: "Desktop notifications".to_string(),
+                command: "notify-send".to_string(),
+                args: vec![
+                    "--app-name".to_string(),
+                    "OpenZ".to_string(),
+                    "{title}".to_string(),
+                    "{message}".to_string(),
+                ],
+                works_for: vec!["desktop".to_string(), "notification".to_string()],
+                paths: Vec::new(),
+                notes: Some(
+                    "Recorded after notify-send delivered successfully in the current desktop session."
+                        .to_string(),
+                ),
+                source: "successful_notification".to_string(),
+                enabled: true,
+                success_count: 1,
+                failure_count: 0,
+                confidence: confidence(1, 0),
+                created_at: now.clone(),
+                updated_at: now.clone(),
+                last_success: Some(now),
+                last_failure: None,
+            });
+        }
     }
     tool.save_inventory(&inventory)?;
     Ok(Some(id))
 }
 
 fn record_successful_default_open_at(path: PathBuf, target: &str) -> Result<Option<String>> {
-    let Some((category, hint)) = classify_target(target) else {
-        return Ok(None);
+    let (category, hint) = match classify_target(target) {
+        Some(pair) => pair,
+        None => return Ok(None),
     };
 
     let tool = DeviceInventoryTool { path };
@@ -160,43 +161,49 @@ fn record_successful_default_open_at(path: PathBuf, target: &str) -> Result<Opti
     let id = format!("system-default-{}-{}", category, normalize_token(&hint));
     let now = now_timestamp();
 
-    if let Some(entry) = inventory
+    match inventory
         .capabilities
         .iter_mut()
         .find(|entry| entry.id == id)
     {
-        if !entry
-            .works_for
-            .iter()
-            .any(|item| item.eq_ignore_ascii_case(&hint))
-        {
-            entry.works_for.push(hint.clone());
-            entry.works_for = normalize_list(std::mem::take(&mut entry.works_for));
+        Some(entry) => {
+            let missing_hint = !entry
+                .works_for
+                .iter()
+                .any(|item| item.eq_ignore_ascii_case(&hint));
+            match missing_hint {
+                true => {
+                    entry.works_for.push(hint.clone());
+                    entry.works_for = normalize_list(std::mem::take(&mut entry.works_for));
+                }
+                false => {}
+            }
+            entry.success_count = entry.success_count.saturating_add(1);
+            entry.last_success = Some(now.clone());
+            entry.updated_at = now;
+            entry.confidence = confidence(entry.success_count, entry.failure_count);
         }
-        entry.success_count = entry.success_count.saturating_add(1);
-        entry.last_success = Some(now.clone());
-        entry.updated_at = now;
-        entry.confidence = confidence(entry.success_count, entry.failure_count);
-    } else {
-        inventory.capabilities.push(DeviceCapability {
-            id: id.clone(),
-            category,
-            name: "System default opener".to_string(),
-            command: "system-default".to_string(),
-            args: vec!["{target}".to_string()],
-            works_for: vec![hint],
-            paths: Vec::new(),
-            notes: Some("Recorded automatically after open_path succeeded.".to_string()),
-            source: "successful_open".to_string(),
-            enabled: true,
-            success_count: 1,
-            failure_count: 0,
-            confidence: confidence(1, 0),
-            created_at: now.clone(),
-            updated_at: now.clone(),
-            last_success: Some(now),
-            last_failure: None,
-        });
+        None => {
+            inventory.capabilities.push(DeviceCapability {
+                id: id.clone(),
+                category,
+                name: "System default opener".to_string(),
+                command: "system-default".to_string(),
+                args: vec!["{target}".to_string()],
+                works_for: vec![hint],
+                paths: Vec::new(),
+                notes: Some("Recorded automatically after open_path succeeded.".to_string()),
+                source: "successful_open".to_string(),
+                enabled: true,
+                success_count: 1,
+                failure_count: 0,
+                confidence: confidence(1, 0),
+                created_at: now.clone(),
+                updated_at: now.clone(),
+                last_success: Some(now),
+                last_failure: None,
+            });
+        }
     }
 
     tool.save_inventory(&inventory)?;
@@ -205,21 +212,18 @@ fn record_successful_default_open_at(path: PathBuf, target: &str) -> Result<Opti
 
 fn classify_target(target: &str) -> Option<(String, String)> {
     let hint = target_hint(target)?;
-    let category = if hint == "url" {
-        "browser"
-    } else {
-        match hint.as_str() {
-            ".png" | ".jpg" | ".jpeg" | ".webp" | ".gif" | ".bmp" | ".svg" => "image_viewer",
-            ".mp4" | ".mkv" | ".webm" | ".mov" | ".avi" => "video_player",
-            ".mp3" | ".wav" | ".ogg" | ".flac" | ".m4a" => "audio_player",
-            ".pdf" => "pdf_viewer",
-            ".doc" | ".docx" | ".xls" | ".xlsx" | ".ppt" | ".pptx" | ".odt" | ".ods" | ".odp" => {
-                "office_docs"
-            }
-            ".txt" | ".md" | ".rs" | ".js" | ".ts" | ".html" | ".css" | ".json" | ".toml"
-            | ".yaml" | ".yml" => "editor",
-            _ => "file_manager",
+    let category = match hint.as_str() {
+        "url" => "browser",
+        ".png" | ".jpg" | ".jpeg" | ".webp" | ".gif" | ".bmp" | ".svg" => "image_viewer",
+        ".mp4" | ".mkv" | ".webm" | ".mov" | ".avi" => "video_player",
+        ".mp3" | ".wav" | ".ogg" | ".flac" | ".m4a" => "audio_player",
+        ".pdf" => "pdf_viewer",
+        ".doc" | ".docx" | ".xls" | ".xlsx" | ".ppt" | ".pptx" | ".odt" | ".ods" | ".odp" => {
+            "office_docs"
         }
+        ".txt" | ".md" | ".rs" | ".js" | ".ts" | ".html" | ".css" | ".json" | ".toml"
+        | ".yaml" | ".yml" => "editor",
+        _ => "file_manager",
     };
     Some((category.to_string(), hint))
 }
@@ -350,19 +354,24 @@ impl Tool for DeviceInventoryTool {
 
 impl DeviceInventoryTool {
     fn load_inventory(&self) -> Result<DeviceInventory> {
-        if !self.path.exists() {
-            return Ok(DeviceInventory::default());
+        match self.path.exists() {
+            false => Ok(DeviceInventory::default()),
+            true => {
+                let content = std::fs::read_to_string(&self.path)
+                    .with_context(|| format!("Failed to read {}", self.path.display()))?;
+                serde_json::from_str(&content)
+                    .with_context(|| format!("Failed to parse {}", self.path.display()))
+            }
         }
-        let content = std::fs::read_to_string(&self.path)
-            .with_context(|| format!("Failed to read {}", self.path.display()))?;
-        serde_json::from_str(&content)
-            .with_context(|| format!("Failed to parse {}", self.path.display()))
     }
 
     fn save_inventory(&self, inventory: &DeviceInventory) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("Failed to create {}", parent.display()))?;
+        match self.path.parent() {
+            Some(parent) => {
+                std::fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create {}", parent.display()))?;
+            }
+            None => {}
         }
 
         let tmp_path = self
@@ -429,8 +438,9 @@ impl DeviceInventoryTool {
             .filter(|id| !id.is_empty())
             .unwrap_or_else(|| format!("{}-{}", category, uuid::Uuid::new_v4()));
 
-        if inventory.capabilities.iter().any(|entry| entry.id == id) {
-            return Err(anyhow!("Capability already exists: {id}"));
+        match inventory.capabilities.iter().any(|entry| entry.id == id) {
+            true => return Err(anyhow!("Capability already exists: {id}")),
+            false => {}
         }
 
         let now = now_timestamp();
@@ -480,34 +490,42 @@ impl DeviceInventoryTool {
         let id = required_str(arguments, "id")?;
         let entry = find_entry_mut(inventory, id)?;
 
-        if let Some(category) = arguments.get("category").and_then(Value::as_str) {
-            entry.category = normalize_token(category);
+        let _ = arguments
+            .get("category")
+            .and_then(Value::as_str)
+            .map(|category| entry.category = normalize_token(category));
+        let _ = arguments
+            .get("name")
+            .and_then(Value::as_str)
+            .map(|name| entry.name = name.trim().to_string());
+        match arguments.get("command").and_then(Value::as_str) {
+            Some(command) => {
+                validate_command(command)?;
+                entry.command = command.trim().to_string();
+            }
+            None => {}
         }
-        if let Some(name) = arguments.get("name").and_then(Value::as_str) {
-            entry.name = name.trim().to_string();
-        }
-        if let Some(command) = arguments.get("command").and_then(Value::as_str) {
-            validate_command(command)?;
-            entry.command = command.trim().to_string();
-        }
-        if arguments.get("args").is_some() {
-            entry.args = string_array(arguments, "args");
-        }
-        if arguments.get("works_for").is_some() {
+        let _ = arguments
+            .get("args")
+            .map(|_| entry.args = string_array(arguments, "args"));
+        let _ = arguments.get("works_for").map(|_| {
             entry.works_for = normalize_list(string_array(arguments, "works_for"));
-        }
-        if arguments.get("paths").is_some() {
-            entry.paths = string_array(arguments, "paths");
-        }
-        if let Some(notes) = arguments.get("notes").and_then(Value::as_str) {
-            entry.notes = Some(notes.trim().to_string()).filter(|s| !s.is_empty());
-        }
-        if let Some(source) = arguments.get("source").and_then(Value::as_str) {
-            entry.source = source.trim().to_string();
-        }
-        if let Some(enabled) = arguments.get("enabled").and_then(Value::as_bool) {
-            entry.enabled = enabled;
-        }
+        });
+        let _ = arguments
+            .get("paths")
+            .map(|_| entry.paths = string_array(arguments, "paths"));
+        let _ = arguments
+            .get("notes")
+            .and_then(Value::as_str)
+            .map(|notes| entry.notes = Some(notes.trim().to_string()).filter(|s| !s.is_empty()));
+        let _ = arguments
+            .get("source")
+            .and_then(Value::as_str)
+            .map(|source| entry.source = source.trim().to_string());
+        let _ = arguments
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .map(|enabled| entry.enabled = enabled);
         entry.updated_at = now_timestamp();
         let updated = entry.clone();
 
@@ -523,15 +541,16 @@ impl DeviceInventoryTool {
         let before = inventory.capabilities.len();
         inventory.capabilities.retain(|entry| entry.id != id);
         let deleted = before != inventory.capabilities.len();
-        if !deleted {
-            return Err(anyhow!("Capability not found: {id}"));
+        match deleted {
+            false => Err(anyhow!("Capability not found: {id}")),
+            true => {
+                self.save_inventory(inventory)?;
+                Ok(json!({
+                    "status": "success",
+                    "deleted": id,
+                }))
+            }
         }
-
-        self.save_inventory(inventory)?;
-        Ok(json!({
-            "status": "success",
-            "deleted": id,
-        }))
     }
 
     fn record_outcome(
@@ -543,12 +562,15 @@ impl DeviceInventoryTool {
         let id = required_str(arguments, "id")?;
         let entry = find_entry_mut(inventory, id)?;
         let now = now_timestamp();
-        if success {
-            entry.success_count = entry.success_count.saturating_add(1);
-            entry.last_success = Some(now.clone());
-        } else {
-            entry.failure_count = entry.failure_count.saturating_add(1);
-            entry.last_failure = Some(now.clone());
+        match success {
+            true => {
+                entry.success_count = entry.success_count.saturating_add(1);
+                entry.last_success = Some(now.clone());
+            }
+            false => {
+                entry.failure_count = entry.failure_count.saturating_add(1);
+                entry.last_failure = Some(now.clone());
+            }
         }
         entry.updated_at = now;
         entry.confidence = confidence(entry.success_count, entry.failure_count);
@@ -656,12 +678,9 @@ fn normalize_token(value: &str) -> String {
         .trim()
         .to_ascii_lowercase()
         .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '_' || c == '-' {
-                c
-            } else {
-                '_'
-            }
+        .map(|c| match c.is_ascii_alphanumeric() || c == '_' || c == '-' {
+            true => c,
+            false => '_',
         })
         .collect::<String>()
         .trim_matches('_')
@@ -669,27 +688,27 @@ fn normalize_token(value: &str) -> String {
 }
 
 fn validate_command(command: &str) -> Result<()> {
-    if command.chars().any(|c| matches!(c, '\n' | '\r' | '\0')) {
-        return Err(anyhow!("Command must be a single executable name or path"));
+    match command.chars().any(|c| matches!(c, '\n' | '\r' | '\0')) {
+        true => Err(anyhow!("Command must be a single executable name or path")),
+        false => Ok(()),
     }
-    Ok(())
 }
 
 fn target_hint(target: &str) -> Option<String> {
     let trimmed = target.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        return Some("url".to_string());
-    }
-    if trimmed.contains('/') || trimmed.contains('\\') {
-        return std::path::Path::new(trimmed)
+    match (
+        trimmed.is_empty(),
+        trimmed.starts_with("http://") || trimmed.starts_with("https://"),
+        trimmed.contains('/') || trimmed.contains('\\'),
+    ) {
+        (true, _, _) => None,
+        (false, true, _) => Some("url".to_string()),
+        (false, false, true) => std::path::Path::new(trimmed)
             .extension()
             .and_then(|ext| ext.to_str())
-            .map(|ext| format!(".{}", ext.to_ascii_lowercase()));
+            .map(|ext| format!(".{}", ext.to_ascii_lowercase())),
+        (false, false, false) => Some(trimmed.to_ascii_lowercase()),
     }
-    Some(trimmed.to_ascii_lowercase())
 }
 
 fn now_timestamp() -> String {

@@ -19,64 +19,66 @@ fn parse_notify_policy(arguments: &Value) -> Result<CronNotifyPolicy> {
     }
 }
 
+fn value_to_nonempty_string(val: &Value) -> Option<String> {
+    match val {
+        Value::String(s) => {
+            let trimmed = s.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        }
+        Value::Number(n) => n
+            .as_i64()
+            .map(|v| v.to_string())
+            .or_else(|| n.as_u64().map(|v| v.to_string())),
+        _ => None,
+    }
+}
+
 fn job_id_arg(arguments: &Value) -> Result<String> {
-    if let Some(s) = arguments.as_str() {
-        let trimmed = s.trim();
-        if !trimmed.is_empty() {
-            return Ok(trimmed.to_string());
-        }
-    }
-    for key in &[
-        "id",
-        "job_id",
-        "jobId",
-        "name",
-        "job",
-        "target",
-        "job_name",
-        "jobName",
-    ] {
-        if let Some(val) = arguments.get(key) {
-            if let Some(s) = val.as_str() {
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    return Ok(trimmed.to_string());
-                }
-            } else if let Some(n) = val.as_i64() {
-                return Ok(n.to_string());
-            } else if let Some(u) = val.as_u64() {
-                return Ok(u.to_string());
-            }
-        }
-    }
-    Err(anyhow!("Missing 'id' or 'job_id' argument"))
+    let direct = arguments
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    direct
+        .or_else(|| {
+            [
+                "id",
+                "job_id",
+                "jobId",
+                "name",
+                "job",
+                "target",
+                "job_name",
+                "jobName",
+            ]
+            .iter()
+            .find_map(|key| arguments.get(*key).and_then(value_to_nonempty_string))
+        })
+        .ok_or_else(|| anyhow!("Missing 'id' or 'job_id' argument"))
 }
 
 fn generate_job_id(prompt: &str) -> String {
     let slug: String = prompt
         .chars()
         .take(24)
-        .filter_map(|c| {
-            if c.is_ascii_alphanumeric() {
-                Some(c.to_ascii_lowercase())
-            } else if c == ' ' || c == '_' || c == '-' {
-                Some('_')
-            } else {
-                None
-            }
+        .filter_map(|c| match c.is_ascii_alphanumeric() {
+            true => Some(c.to_ascii_lowercase()),
+            false => match c {
+                ' ' | '_' | '-' => Some('_'),
+                _ => None,
+            },
         })
         .collect();
     let cleaned_slug = slug.trim_matches('_');
     let short_uuid = &uuid::Uuid::new_v4().to_string()[..8];
-    if cleaned_slug.is_empty() {
-        format!("job_{}", short_uuid)
-    } else {
-        format!("{}_{}", cleaned_slug, short_uuid)
+    match cleaned_slug.is_empty() {
+        true => format!("job_{}", short_uuid),
+        false => format!("{}_{}", cleaned_slug, short_uuid),
     }
 }
 
 fn extract_schedule_arg(arguments: &Value) -> Option<String> {
-    for key in &[
+    [
         "schedule",
         "cron",
         "cron_expression",
@@ -88,25 +90,26 @@ fn extract_schedule_arg(arguments: &Value) -> Option<String> {
         "every",
         "duration",
         "frequency",
-    ] {
-        if let Some(val) = arguments.get(key) {
-            if let Some(s) = val.as_str() {
+    ]
+    .iter()
+    .find_map(|key| {
+        let val = arguments.get(*key)?;
+        match val {
+            Value::String(s) => {
                 let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
-            } else if let Some(n) = val.as_i64() {
-                return Some(format!("{}s", n));
-            } else if let Some(u) = val.as_u64() {
-                return Some(format!("{}s", u));
+                (!trimmed.is_empty()).then(|| trimmed.to_string())
             }
+            Value::Number(n) => n
+                .as_i64()
+                .map(|v| format!("{v}s"))
+                .or_else(|| n.as_u64().map(|v| format!("{v}s"))),
+            _ => None,
         }
-    }
-    None
+    })
 }
 
 fn extract_prompt_arg(arguments: &Value) -> Option<String> {
-    for key in &[
+    [
         "prompt",
         "goal",
         "task",
@@ -118,45 +121,45 @@ fn extract_prompt_arg(arguments: &Value) -> Option<String> {
         "action",
         "job_prompt",
         "text",
-    ] {
-        if let Some(val) = arguments.get(key) {
-            if let Some(s) = val.as_str() {
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
-            }
-        }
-    }
-    None
+    ]
+    .iter()
+    .find_map(|key| {
+        arguments
+            .get(*key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    })
 }
 
 fn get_system_crontab() -> Vec<Value> {
     #[cfg(unix)]
     {
         match std::process::Command::new("crontab").arg("-l").output() {
-            Ok(output) if output.status.success() => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                stdout
-                    .lines()
-                    .map(str::trim)
-                    .filter(|l| !l.is_empty())
-                    .map(|line| {
-                        serde_json::json!({
-                            "raw": line,
-                            "is_comment": line.starts_with('#')
+            Ok(output) => match output.status.success() {
+                true => {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    stdout
+                        .lines()
+                        .map(str::trim)
+                        .filter(|l| !l.is_empty())
+                        .map(|line| {
+                            serde_json::json!({
+                                "raw": line,
+                                "is_comment": line.starts_with('#')
+                            })
                         })
-                    })
-                    .collect()
-            }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-                if stderr.is_empty() {
-                    vec![]
-                } else {
-                    vec![serde_json::json!({ "info": stderr })]
+                        .collect()
                 }
-            }
+                false => {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    match stderr.is_empty() {
+                        true => vec![],
+                        false => vec![serde_json::json!({ "info": stderr })],
+                    }
+                }
+            },
             Err(err) => {
                 vec![serde_json::json!({ "error": err.to_string() })]
             }
@@ -244,45 +247,49 @@ impl Tool for ScheduleJobTool {
         let notify_on = parse_notify_policy(arguments)?;
         let now = chrono::Utc::now().to_rfc3339();
 
-        if crate::cron::calculate_next_run(&schedule, None).is_none() {
-            return Err(anyhow!(
-                "Invalid schedule format: {}. Use simple duration like '10s', '5m', '1h', local clock time like '18:00', or standard Unix cron like '*/5 * * * *'",
-                schedule
-            ));
+        match crate::cron::calculate_next_run(&schedule, None) {
+            Some(_) => {}
+            None => {
+                return Err(anyhow!(
+                    "Invalid schedule format: {}. Use simple duration like '10s', '5m', '1h', local clock time like '18:00', or standard Unix cron like '*/5 * * * *'",
+                    schedule
+                ));
+            }
         }
 
-        let mut found = false;
         let id_str = id.clone();
         let schedule_str = schedule.clone();
         let prompt_str = prompt.clone();
 
         crate::cron::with_cron_jobs_mut(|jobs| {
-            for job in jobs.iter_mut() {
-                if job.id == id_str {
+            match jobs.iter_mut().find(|job| job.id == id_str) {
+                Some(job) => {
                     job.schedule = schedule_str.clone();
                     job.prompt = prompt_str.clone();
                     job.run_once = run_once;
                     job.next_run = None;
                     job.quiet = quiet;
                     job.notify_on = notify_on.clone();
-                    job.status = if job.enabled {
-                        CronJobStatus::Idle
-                    } else {
-                        CronJobStatus::Disabled
+                    job.status = match job.enabled {
+                        true => CronJobStatus::Idle,
+                        false => CronJobStatus::Disabled,
                     };
                     job.updated_at = Some(now.clone());
-                    found = true;
-                    break;
                 }
-            }
-
-            if !found {
-                let mut job = CronJob::new(id_str.clone(), schedule_str.clone(), prompt_str, true, run_once);
-                job.quiet = quiet;
-                job.notify_on = notify_on;
-                job.created_at = Some(now.clone());
-                job.updated_at = Some(now);
-                jobs.push(job);
+                None => {
+                    let mut job = CronJob::new(
+                        id_str.clone(),
+                        schedule_str.clone(),
+                        prompt_str,
+                        true,
+                        run_once,
+                    );
+                    job.quiet = quiet;
+                    job.notify_on = notify_on;
+                    job.created_at = Some(now.clone());
+                    job.updated_at = Some(now);
+                    jobs.push(job);
+                }
             }
         })?;
 
@@ -328,9 +335,9 @@ impl Tool for ListJobsTool {
             .into_iter()
             .filter_map(|j| {
                 let mut val = serde_json::to_value(&j).ok()?;
-                if let Some(obj) = val.as_object_mut() {
-                    obj.insert("job_id".to_string(), serde_json::Value::String(j.id.clone()));
-                }
+                let _ = val.as_object_mut().map(|obj| {
+                    obj.insert("job_id".to_string(), serde_json::Value::String(j.id.clone()))
+                });
                 Some(val)
             })
             .collect();
@@ -343,15 +350,16 @@ impl Tool for ListJobsTool {
             .and_then(|v| v.as_bool().or_else(|| v.as_str().and_then(|s| s.parse::<bool>().ok())))
             .unwrap_or(false);
 
-        if include_system {
-            let system_entries = get_system_crontab();
-            Ok(serde_json::json!({
-                "status": "success",
-                "openz_jobs": job_values,
-                "system_crontab": system_entries
-            }))
-        } else {
-            Ok(serde_json::Value::Array(job_values))
+        match include_system {
+            true => {
+                let system_entries = get_system_crontab();
+                Ok(serde_json::json!({
+                    "status": "success",
+                    "openz_jobs": job_values,
+                    "system_crontab": system_entries
+                }))
+            }
+            false => Ok(serde_json::Value::Array(job_values)),
         }
     }
 }
@@ -395,16 +403,15 @@ impl Tool for RemoveJobTool {
             removed = jobs.len() < original_len;
         })?;
 
-        if !removed {
-            return Err(anyhow!("Cron job with ID '{}' not found.", id));
+        match removed {
+            true => Ok(serde_json::json!({
+                "status": "success",
+                "id": id,
+                "job_id": id,
+                "message": format!("Job '{}' successfully removed.", id)
+            })),
+            false => Err(anyhow!("Cron job with ID '{}' not found.", id)),
         }
-
-        Ok(serde_json::json!({
-            "status": "success",
-            "id": id,
-            "job_id": id,
-            "message": format!("Job '{}' successfully removed.", id)
-        }))
     }
 }
 
@@ -443,15 +450,49 @@ impl Tool for GetJobTool {
             .find(|j| j.id == id)
             .ok_or_else(|| anyhow!("Cron job with ID '{}' not found.", id))?;
         let mut job_val = serde_json::to_value(&job)?;
-        if let Some(obj) = job_val.as_object_mut() {
-            obj.insert("job_id".to_string(), serde_json::Value::String(job.id.clone()));
-        }
+        let _ = job_val.as_object_mut().map(|obj| {
+            obj.insert(
+                "job_id".to_string(),
+                serde_json::Value::String(job.id.clone()),
+            )
+        });
         Ok(serde_json::json!({
             "status": "success",
             "id": job.id,
             "job_id": job.id,
             "job": job_val
         }))
+    }
+}
+
+fn set_job_enabled_state(
+    arguments: &Value,
+    enabled: bool,
+    status: CronJobStatus,
+    verb: &str,
+) -> Result<Value> {
+    let id = job_id_arg(arguments)?;
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut found = false;
+
+    crate::cron::with_cron_jobs_mut(|jobs| {
+        let _ = jobs.iter_mut().find(|j| j.id == id).map(|j| {
+            j.enabled = enabled;
+            j.status = status;
+            j.updated_at = Some(now);
+            j.next_run = None;
+            found = true;
+        });
+    })?;
+
+    match found {
+        true => Ok(serde_json::json!({
+            "status": "success",
+            "id": id,
+            "job_id": id,
+            "message": format!("Job '{}' {}.", id, verb)
+        })),
+        false => Err(anyhow!("Cron job with ID '{}' not found.", id)),
     }
 }
 
@@ -484,30 +525,7 @@ impl Tool for PauseJobTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let id = job_id_arg(arguments)?;
-        let now = chrono::Utc::now().to_rfc3339();
-        let mut found = false;
-
-        crate::cron::with_cron_jobs_mut(|jobs| {
-            if let Some(j) = jobs.iter_mut().find(|j| j.id == id) {
-                j.enabled = false;
-                j.status = CronJobStatus::Disabled;
-                j.updated_at = Some(now);
-                j.next_run = None;
-                found = true;
-            }
-        })?;
-
-        if !found {
-            return Err(anyhow!("Cron job with ID '{}' not found.", id));
-        }
-
-        Ok(serde_json::json!({
-            "status": "success",
-            "id": id,
-            "job_id": id,
-            "message": format!("Job '{}' paused.", id)
-        }))
+        set_job_enabled_state(arguments, false, CronJobStatus::Disabled, "paused")
     }
 }
 
@@ -540,30 +558,7 @@ impl Tool for ResumeJobTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let id = job_id_arg(arguments)?;
-        let now = chrono::Utc::now().to_rfc3339();
-        let mut found = false;
-
-        crate::cron::with_cron_jobs_mut(|jobs| {
-            if let Some(j) = jobs.iter_mut().find(|j| j.id == id) {
-                j.enabled = true;
-                j.status = CronJobStatus::Idle;
-                j.updated_at = Some(now);
-                j.next_run = None;
-                found = true;
-            }
-        })?;
-
-        if !found {
-            return Err(anyhow!("Cron job with ID '{}' not found.", id));
-        }
-
-        Ok(serde_json::json!({
-            "status": "success",
-            "id": id,
-            "job_id": id,
-            "message": format!("Job '{}' resumed.", id)
-        }))
+        set_job_enabled_state(arguments, true, CronJobStatus::Idle, "resumed")
     }
 }
 
@@ -645,23 +640,18 @@ impl Tool for GetJobLogsTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let id = if let Some(s) = arguments.as_str() {
-            let trimmed = s.trim();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(trimmed.to_string())
+        let id = match arguments.as_str() {
+            Some(s) => {
+                let trimmed = s.trim();
+                (!trimmed.is_empty()).then(|| trimmed.to_string())
             }
-        } else {
-            job_id_arg(arguments).ok()
+            None => job_id_arg(arguments).ok(),
         };
         let limit = arguments
             .get("limit")
             .and_then(|v| {
-                v.as_u64().or_else(|| {
-                    v.as_str()
-                        .and_then(|s| s.trim().parse::<u64>().ok())
-                })
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
             })
             .unwrap_or(20) as usize;
         let runs = load_cron_run_records(id.as_deref(), limit)?;

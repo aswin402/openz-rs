@@ -53,9 +53,7 @@ struct DevDocsIndex {
 
 /// Ensure documentation tables exist and WAL mode is enabled.
 pub fn init_docs_db(db_path: &Path) -> Result<(), rusqlite::Error> {
-    if let Some(parent) = db_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
+    let _ = db_path.parent().map(std::fs::create_dir_all);
     let conn = Connection::open(db_path)?;
     conn.execute_batch(
         "PRAGMA journal_mode = WAL;
@@ -131,8 +129,9 @@ impl DocsService {
 
     pub async fn install_docset(&self, docset_name: &str) -> Result<String> {
         let docset = docset_name.trim().to_lowercase();
-        if docset.is_empty() {
-            anyhow::bail!("Docset name cannot be empty.");
+        match docset.is_empty() {
+            true => anyhow::bail!("Docset name cannot be empty."),
+            false => {}
         }
 
         let index_url = format!("https://documents.devdocs.io/{}/index.json", docset);
@@ -154,12 +153,15 @@ impl DocsService {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to fetch index.json: {}", e))?;
 
-        if !index_resp.status().is_success() {
-            anyhow::bail!(
-                "Library '{}' not found or failed to fetch index (HTTP {}).",
-                docset,
-                index_resp.status()
-            );
+        match index_resp.status().is_success() {
+            true => {}
+            false => {
+                anyhow::bail!(
+                    "Library '{}' not found or failed to fetch index (HTTP {}).",
+                    docset,
+                    index_resp.status()
+                );
+            }
         }
 
         let devdocs_index: DevDocsIndex = index_resp
@@ -174,12 +176,15 @@ impl DocsService {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to fetch db.json: {}", e))?;
 
-        if !db_resp.status().is_success() {
-            anyhow::bail!(
-                "Failed to fetch database content for '{}' (HTTP {}).",
-                docset,
-                db_resp.status()
-            );
+        match db_resp.status().is_success() {
+            true => {}
+            false => {
+                anyhow::bail!(
+                    "Failed to fetch database content for '{}' (HTTP {}).",
+                    docset,
+                    db_resp.status()
+                );
+            }
         }
 
         let devdocs_db: HashMap<String, String> = db_resp
@@ -230,8 +235,9 @@ impl DocsService {
     pub fn search_docs(&self, docset_name: &str, query: &str) -> Result<Vec<DocSearchResult>> {
         let docset = docset_name.trim().to_lowercase();
         let query_trimmed = query.trim();
-        if docset.is_empty() || query_trimmed.is_empty() {
-            anyhow::bail!("Docset name and query cannot be empty.");
+        match docset.is_empty() || query_trimmed.is_empty() {
+            true => anyhow::bail!("Docset name and query cannot be empty."),
+            false => {}
         }
 
         let conn = self.get_db_conn()?;
@@ -261,12 +267,14 @@ impl DocsService {
         let docset = docset_name.trim().to_lowercase();
         let path_trimmed = path.trim();
 
-        if docset.is_empty() || path_trimmed.is_empty() {
-            anyhow::bail!("Docset name and path cannot be empty.");
+        match docset.is_empty() || path_trimmed.is_empty() {
+            true => anyhow::bail!("Docset name and path cannot be empty."),
+            false => {}
         }
 
         let conn = self.get_db_conn()?;
-        let mut stmt = conn.prepare("SELECT html, markdown FROM contents WHERE docset = ? AND path = ?")?;
+        let mut stmt =
+            conn.prepare("SELECT html, markdown FROM contents WHERE docset = ? AND path = ?")?;
 
         let mut rows = stmt.query_map([&docset, path_trimmed], |row| {
             let html: Option<String> = row.get(0).ok();
@@ -274,21 +282,26 @@ impl DocsService {
             Ok((html, markdown))
         })?;
 
-        if let Some(first) = rows.next() {
-            let (html, markdown) = first?;
-            if let Some(md) = markdown {
-                if !md.is_empty() {
-                    return Ok(md);
+        match rows.next() {
+            Some(first) => {
+                let (html, markdown) = first?;
+                match markdown.filter(|md| !md.is_empty()) {
+                    Some(md) => return Ok(md),
+                    None => {}
+                }
+                match html {
+                    Some(h) => {
+                        let md = html2md::parse_html(&h);
+                        let _ = conn.execute(
+                            "UPDATE contents SET markdown = ? WHERE docset = ? AND path = ?",
+                            [&md, &docset, path_trimmed],
+                        );
+                        return Ok(md);
+                    }
+                    None => {}
                 }
             }
-            if let Some(h) = html {
-                let md = html2md::parse_html(&h);
-                let _ = conn.execute(
-                    "UPDATE contents SET markdown = ? WHERE docset = ? AND path = ?",
-                    [&md, &docset, path_trimmed],
-                );
-                return Ok(md);
-            }
+            None => {}
         }
 
         anyhow::bail!(
@@ -299,12 +312,15 @@ impl DocsService {
 
     pub async fn search_rust_crate(&self, query: &str) -> Result<Vec<CrateInfo>> {
         let query_trimmed = query.trim();
-        if query_trimmed.is_empty() {
-            anyhow::bail!("Query cannot be empty.");
+        match query_trimmed.is_empty() {
+            true => anyhow::bail!("Query cannot be empty."),
+            false => {}
         }
 
-        let encoded_query =
-            percent_encoding::utf8_percent_encode(query_trimmed, percent_encoding::NON_ALPHANUMERIC);
+        let encoded_query = percent_encoding::utf8_percent_encode(
+            query_trimmed,
+            percent_encoding::NON_ALPHANUMERIC,
+        );
         let url = format!(
             "https://crates.io/api/v1/crates?q={}&per_page=5",
             encoded_query
@@ -322,8 +338,9 @@ impl DocsService {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to search crates.io: {}", e))?;
 
-        if !resp.status().is_success() {
-            anyhow::bail!("Crates.io returned HTTP {}", resp.status());
+        match resp.status().is_success() {
+            true => {}
+            false => anyhow::bail!("Crates.io returned HTTP {}", resp.status()),
         }
 
         let data: Value = resp
@@ -331,56 +348,75 @@ impl DocsService {
             .await
             .map_err(|e| anyhow::anyhow!("Failed to parse crates.io response: {}", e))?;
 
-        let mut results = Vec::new();
-        if let Some(arr) = data.get("crates").and_then(|v| v.as_array()) {
-            for item in arr {
-                results.push(CrateInfo {
-                    name: item.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    version: item.get("max_version").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    description: item.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                    documentation: item.get("documentation").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                });
-            }
-        }
+        let results = data
+            .get("crates")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .map(|item| CrateInfo {
+                        name: item
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        version: item
+                            .get("max_version")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        description: item
+                            .get("description")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        documentation: item
+                            .get("documentation")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
         Ok(results)
     }
 
+    fn read_cached_rust_markdown(&self, db_cache_path: &str) -> Option<String> {
+        let conn = self.get_db_conn().ok()?;
+        let mut stmt = conn
+            .prepare("SELECT markdown FROM contents WHERE docset = 'rust-crates' AND path = ?")
+            .ok()?;
+        let mut rows = stmt
+            .query_map([db_cache_path], |row| Ok(row.get::<_, Option<String>>(0).ok().flatten()))
+            .ok()?;
+        rows.next()?.ok()?.filter(|md| !md.is_empty())
+    }
+
     pub async fn read_rust_docs(&self, crate_name: &str, sub_path: Option<&str>) -> Result<String> {
         let crate_trimmed = crate_name.trim();
-        if crate_trimmed.is_empty() {
-            anyhow::bail!("Crate name cannot be empty.");
+        match crate_trimmed.is_empty() {
+            true => anyhow::bail!("Crate name cannot be empty."),
+            false => {}
         }
 
         let sub_path_actual = sub_path.unwrap_or("index.html").trim();
         let db_cache_path = format!("rust_docs/{}/{}", crate_trimmed, sub_path_actual);
 
-        // Check SQLite cache
-        if let Ok(conn) = self.get_db_conn() {
-            if let Ok(mut stmt) = conn.prepare(
-                "SELECT markdown FROM contents WHERE docset = 'rust-crates' AND path = ?",
-            ) {
-                if let Ok(mut rows) = stmt.query_map([&db_cache_path], |row| {
-                    let markdown: Option<String> = row.get(0).ok();
-                    Ok(markdown)
-                }) {
-                    if let Some(Ok(Some(md))) = rows.next() {
-                        if !md.is_empty() {
-                            return Ok(md);
-                        }
-                    }
-                }
-            }
+        match self.read_cached_rust_markdown(&db_cache_path) {
+            Some(md) => return Ok(md),
+            None => {}
         }
 
         let module_name = crate_trimmed.replace('-', "_");
-        let url = if sub_path_actual.starts_with("http://") || sub_path_actual.starts_with("https://") {
-            sub_path_actual.to_string()
-        } else {
-            format!(
+        let url = match sub_path_actual.starts_with("http://")
+            || sub_path_actual.starts_with("https://")
+        {
+            true => sub_path_actual.to_string(),
+            false => format!(
                 "https://docs.rs/{}/latest/{}/{}",
                 crate_trimmed, module_name, sub_path_actual
-            )
+            ),
         };
 
         crate::tools::web::validate_url(&url)
@@ -394,10 +430,12 @@ impl DocsService {
             .send()
             .await;
 
-        let resp = match resp_result {
-            Ok(r) if r.status().is_success() => r,
-            _ => {
-                let fallback_url = format!("https://docs.rs/{}/latest/{}/", crate_trimmed, module_name);
+        let ok_resp = resp_result.ok().filter(|r| r.status().is_success());
+        let resp = match ok_resp {
+            Some(r) => r,
+            None => {
+                let fallback_url =
+                    format!("https://docs.rs/{}/latest/{}/", crate_trimmed, module_name);
                 client
                     .get(&fallback_url)
                     .header(reqwest::header::USER_AGENT, USER_AGENT)
@@ -407,12 +445,15 @@ impl DocsService {
             }
         };
 
-        if !resp.status().is_success() {
-            anyhow::bail!(
-                "Failed to retrieve docs from docs.rs for {} (HTTP {})",
-                crate_trimmed,
-                resp.status()
-            );
+        match resp.status().is_success() {
+            true => {}
+            false => {
+                anyhow::bail!(
+                    "Failed to retrieve docs from docs.rs for {} (HTTP {})",
+                    crate_trimmed,
+                    resp.status()
+                );
+            }
         }
 
         let html_content = resp
@@ -422,25 +463,22 @@ impl DocsService {
 
         let fragment = scraper::Html::parse_document(&html_content);
         let main_selectors = ["main", "#main-content", ".content"];
-        let mut main_html = html_content.clone();
-
-        for selector_str in main_selectors {
-            if let Ok(selector) = scraper::Selector::parse(selector_str) {
-                if let Some(el) = fragment.select(&selector).next() {
-                    main_html = el.html();
-                    break;
-                }
-            }
-        }
+        let main_html = main_selectors
+            .iter()
+            .find_map(|selector_str| {
+                let selector = scraper::Selector::parse(selector_str).ok()?;
+                fragment.select(&selector).next().map(|el| el.html())
+            })
+            .unwrap_or_else(|| html_content.clone());
 
         let markdown = html2md::parse_html(&main_html);
 
-        if let Ok(conn) = self.get_db_conn() {
-            let _ = conn.execute(
+        let _ = self.get_db_conn().map(|conn| {
+            conn.execute(
                 "INSERT OR REPLACE INTO contents (docset, path, html, markdown) VALUES ('rust-crates', ?, NULL, ?)",
                 [&db_cache_path, &markdown],
-            );
-        }
+            )
+        });
 
         Ok(markdown)
     }
@@ -478,16 +516,13 @@ impl crate::tools::Tool for DocsListDocsetsTool {
     async fn call(&self, _arguments: &Value) -> Result<Value> {
         let service = global_docs_service();
         match service.list_docsets() {
-            Ok(list) => {
-                if list.is_empty() {
-                    Ok(json!({
-                        "success": true,
-                        "result": "No documentation sets are currently installed. Use docs_install_docset to download one (e.g. 'react', 'python', 'javascript', 'css', 'zod', 'prisma', 'rust')."
-                    }))
-                } else {
-                    Ok(json!({ "success": true, "result": list }))
-                }
-            }
+            Ok(list) => match list.is_empty() {
+                true => Ok(json!({
+                    "success": true,
+                    "result": "No documentation sets are currently installed. Use docs_install_docset to download one (e.g. 'react', 'python', 'javascript', 'css', 'zod', 'prisma', 'rust')."
+                })),
+                false => Ok(json!({ "success": true, "result": list })),
+            },
             Err(e) => Ok(json!({ "success": false, "error": e.to_string() })),
         }
     }
@@ -528,17 +563,18 @@ impl crate::tools::Tool for DocsInstallDocsetTool {
             .unwrap_or("")
             .trim();
 
-        if docset_name.is_empty() {
-            return Ok(json!({
+        match docset_name.is_empty() {
+            true => Ok(json!({
                 "success": false,
                 "error": "Missing required parameter 'docset_name'."
-            }));
-        }
-
-        let service = global_docs_service();
-        match service.install_docset(docset_name).await {
-            Ok(msg) => Ok(json!({ "success": true, "result": msg })),
-            Err(e) => Ok(json!({ "success": false, "error": e.to_string() })),
+            })),
+            false => {
+                let service = global_docs_service();
+                match service.install_docset(docset_name).await {
+                    Ok(msg) => Ok(json!({ "success": true, "result": msg })),
+                    Err(e) => Ok(json!({ "success": false, "error": e.to_string() })),
+                }
+            }
         }
     }
 }
@@ -590,26 +626,24 @@ impl crate::tools::Tool for DocsSearchDocsTool {
             .unwrap_or("")
             .trim();
 
-        if docset_name.is_empty() || query.is_empty() {
-            return Ok(json!({
+        match docset_name.is_empty() || query.is_empty() {
+            true => Ok(json!({
                 "success": false,
                 "error": "Both 'docset_name' and 'query' parameters are required."
-            }));
-        }
-
-        let service = global_docs_service();
-        match service.search_docs(docset_name, query) {
-            Ok(results) => {
-                if results.is_empty() {
-                    Ok(json!({
-                        "success": true,
-                        "result": format!("No results found for query '{}' in docset '{}'.", query, docset_name)
-                    }))
-                } else {
-                    Ok(json!({ "success": true, "result": results }))
+            })),
+            false => {
+                let service = global_docs_service();
+                match service.search_docs(docset_name, query) {
+                    Ok(results) => match results.is_empty() {
+                        true => Ok(json!({
+                            "success": true,
+                            "result": format!("No results found for query '{}' in docset '{}'.", query, docset_name)
+                        })),
+                        false => Ok(json!({ "success": true, "result": results })),
+                    },
+                    Err(e) => Ok(json!({ "success": false, "error": e.to_string() })),
                 }
             }
-            Err(e) => Ok(json!({ "success": false, "error": e.to_string() })),
         }
     }
 }
@@ -660,17 +694,18 @@ impl crate::tools::Tool for DocsReadDocPageTool {
             .unwrap_or("")
             .trim();
 
-        if docset_name.is_empty() || path.is_empty() {
-            return Ok(json!({
+        match docset_name.is_empty() || path.is_empty() {
+            true => Ok(json!({
                 "success": false,
                 "error": "Both 'docset_name' and 'path' parameters are required."
-            }));
-        }
-
-        let service = global_docs_service();
-        match service.read_doc_page(docset_name, path) {
-            Ok(content) => Ok(json!({ "success": true, "result": content })),
-            Err(e) => Ok(json!({ "success": false, "error": e.to_string() })),
+            })),
+            false => {
+                let service = global_docs_service();
+                match service.read_doc_page(docset_name, path) {
+                    Ok(content) => Ok(json!({ "success": true, "result": content })),
+                    Err(e) => Ok(json!({ "success": false, "error": e.to_string() })),
+                }
+            }
         }
     }
 }
@@ -711,17 +746,18 @@ impl crate::tools::Tool for DocsSearchRustCrateTool {
             .unwrap_or("")
             .trim();
 
-        if query.is_empty() {
-            return Ok(json!({
+        match query.is_empty() {
+            true => Ok(json!({
                 "success": false,
                 "error": "Missing required parameter 'query'."
-            }));
-        }
-
-        let service = global_docs_service();
-        match service.search_rust_crate(query).await {
-            Ok(results) => Ok(json!({ "success": true, "result": results })),
-            Err(e) => Ok(json!({ "success": false, "error": e.to_string() })),
+            })),
+            false => {
+                let service = global_docs_service();
+                match service.search_rust_crate(query).await {
+                    Ok(results) => Ok(json!({ "success": true, "result": results })),
+                    Err(e) => Ok(json!({ "success": false, "error": e.to_string() })),
+                }
+            }
         }
     }
 }
@@ -770,17 +806,18 @@ impl crate::tools::Tool for DocsReadRustDocsTool {
             .or_else(|| arguments.get("subPath"))
             .and_then(|v| v.as_str());
 
-        if crate_name.is_empty() {
-            return Ok(json!({
+        match crate_name.is_empty() {
+            true => Ok(json!({
                 "success": false,
                 "error": "Missing required parameter 'crate_name'."
-            }));
-        }
-
-        let service = global_docs_service();
-        match service.read_rust_docs(crate_name, sub_path).await {
-            Ok(content) => Ok(json!({ "success": true, "result": content })),
-            Err(e) => Ok(json!({ "success": false, "error": e.to_string() })),
+            })),
+            false => {
+                let service = global_docs_service();
+                match service.read_rust_docs(crate_name, sub_path).await {
+                    Ok(content) => Ok(json!({ "success": true, "result": content })),
+                    Err(e) => Ok(json!({ "success": false, "error": e.to_string() })),
+                }
+            }
         }
     }
 }

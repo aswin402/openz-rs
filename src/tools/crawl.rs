@@ -17,25 +17,36 @@ async fn validate_url(url: &str) -> Result<()> {
         .ok_or_else(|| anyhow!("URL has no host"))?
         .to_lowercase();
 
-    if parsed.scheme() != "http" && parsed.scheme() != "https" {
-        return Err(anyhow!(
-            "SSRF blocked: only http/https URLs are allowed (got '{}')",
-            parsed.scheme()
-        ));
+    match parsed.scheme() {
+        "http" | "https" => {}
+        other => {
+            return Err(anyhow!(
+                "SSRF blocked: only http/https URLs are allowed (got '{}')",
+                other
+            ));
+        }
     }
 
-    if host == "169.254.169.254" || host == "metadata.google.internal" {
-        return Err(anyhow!(
-            "SSRF blocked: cloud metadata endpoints are not allowed"
-        ));
+    match host.as_str() {
+        "169.254.169.254" | "metadata.google.internal" => {
+            return Err(anyhow!(
+                "SSRF blocked: cloud metadata endpoints are not allowed"
+            ));
+        }
+        _ => {}
     }
 
-    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        if !is_safe_ip(&ip) {
+    let unsafe_host_ip = host
+        .parse::<std::net::IpAddr>()
+        .ok()
+        .is_some_and(|ip| !is_safe_ip(&ip));
+    match unsafe_host_ip {
+        true => {
             return Err(anyhow!(
                 "SSRF blocked: private/reserved IP addresses are not allowed"
             ));
         }
+        false => {}
     }
 
     // DNS resolution check — prevents rebinding attacks
@@ -45,23 +56,25 @@ async fn validate_url(url: &str) -> Result<()> {
     };
 
     for ip in &resolved {
-        if !is_safe_ip(ip) {
-            return Err(anyhow!(
-                "SSRF blocked: hostname '{}' resolved to private/reserved IP {}",
-                host,
-                ip
-            ));
+        match is_safe_ip(ip) {
+            true => {}
+            false => {
+                return Err(anyhow!(
+                    "SSRF blocked: hostname '{}' resolved to private/reserved IP {}",
+                    host,
+                    ip
+                ));
+            }
         }
     }
 
-    if resolved.is_empty() {
-        return Err(anyhow!(
+    match resolved.is_empty() {
+        true => Err(anyhow!(
             "SSRF blocked: hostname '{}' could not be resolved",
             host
-        ));
+        )),
+        false => Ok(()),
     }
-
-    Ok(())
 }
 
 pub struct CrawlSiteTool;
@@ -79,38 +92,27 @@ impl CrawlSiteTool {
 }
 
 fn get_u64_arg(arguments: &Value, keys: &[&str], default: u64) -> u64 {
-    for key in keys {
-        if let Some(val) = arguments.get(*key) {
-            if let Some(n) = val.as_u64() {
-                return n;
-            }
-            if let Some(s) = val.as_str() {
-                if let Ok(n) = s.trim().parse::<u64>() {
-                    return n;
-                }
-            }
-        }
-    }
-    default
+    keys.iter()
+        .find_map(|key| {
+            let val = arguments.get(*key)?;
+            val.as_u64().or_else(|| val.as_str()?.trim().parse::<u64>().ok())
+        })
+        .unwrap_or(default)
 }
 
 fn get_bool_arg(arguments: &Value, keys: &[&str], default: bool) -> bool {
-    for key in keys {
-        if let Some(val) = arguments.get(*key) {
-            if let Some(b) = val.as_bool() {
-                return b;
-            }
-            if let Some(s) = val.as_str() {
-                let trimmed = s.trim().to_lowercase();
-                if trimmed == "true" || trimmed == "1" || trimmed == "yes" {
-                    return true;
-                } else if trimmed == "false" || trimmed == "0" || trimmed == "no" {
-                    return false;
+    keys.iter()
+        .find_map(|key| {
+            let val = arguments.get(*key)?;
+            val.as_bool().or_else(|| {
+                match val.as_str()?.trim().to_lowercase().as_str() {
+                    "true" | "1" | "yes" => Some(true),
+                    "false" | "0" | "no" => Some(false),
+                    _ => None,
                 }
-            }
-        }
-    }
-    default
+            })
+        })
+        .unwrap_or(default)
 }
 
 fn crawl_timeout_secs(arguments: &Value) -> u64 {
@@ -125,8 +127,12 @@ fn crawl_timeout_response(
     url: &str,
 ) -> Value {
     let pages_crawled = pages.len();
+    let status = match pages_crawled > 0 {
+        true => "partial_success",
+        false => "timeout",
+    };
     json!({
-        "status": if pages_crawled > 0 { "partial_success" } else { "timeout" },
+        "status": status,
         "error_kind": "timeout",
         "retryable": true,
         "stopped_reason": "global_timeout",
@@ -141,10 +147,9 @@ fn crawl_timeout_response(
 }
 
 pub fn extract_crawl_url(arguments: &Value) -> Result<String> {
-    let raw_url = if let Some(s) = arguments.as_str() {
-        s.trim()
-    } else {
-        arguments
+    let raw_url = match arguments.as_str() {
+        Some(s) => s.trim(),
+        None => arguments
             .get("url")
             .or_else(|| arguments.get("target_url"))
             .or_else(|| arguments.get("targetUrl"))
@@ -162,14 +167,13 @@ pub fn extract_crawl_url(arguments: &Value) -> Result<String> {
             .or_else(|| arguments.get("address"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'url' parameter"))?
-            .trim()
+            .trim(),
     };
 
-    if raw_url.is_empty() {
-        return Err(anyhow!("Missing 'url' parameter (received empty string)"));
+    match raw_url.is_empty() {
+        true => Err(anyhow!("Missing 'url' parameter (received empty string)")),
+        false => Ok(crate::tools::web::normalize_web_url(raw_url)),
     }
-
-    Ok(crate::tools::web::normalize_web_url(raw_url))
 }
 
 #[async_trait::async_trait]
@@ -258,8 +262,9 @@ impl Tool for CrawlSiteTool {
             let body_selector = Selector::parse("body").ok();
             let mut count = 0u32;
             while let Ok(page) = rx.recv().await {
-                if count >= limit {
-                    break;
+                match count >= limit {
+                    true => break,
+                    false => {}
                 }
                 let html_str = page.get_html();
                 let (title, snippet) = {
@@ -279,12 +284,13 @@ impl Tool for CrawlSiteTool {
                         .map(|el| el.text().collect::<Vec<_>>().join(" "))
                         .unwrap_or_else(|| html_str.clone());
 
-                    let snippet = if body_text.chars().count() > 300 {
-                        let mut snippet_str: String = body_text.chars().take(300).collect();
-                        snippet_str.push_str("...");
-                        snippet_str
-                    } else {
-                        body_text.clone()
+                    let snippet = match body_text.chars().count() > 300 {
+                        true => {
+                            let mut snippet_str: String = body_text.chars().take(300).collect();
+                            snippet_str.push_str("...");
+                            snippet_str
+                        }
+                        false => body_text.clone(),
                     };
                     (title, snippet)
                 };
@@ -305,26 +311,28 @@ impl Tool for CrawlSiteTool {
             tokio::time::timeout(Duration::from_secs(timeout_secs), website.crawl())
                 .await
                 .is_err();
-        if crawl_timed_out {
-            handle.abort();
-            let results = pages.lock().await.clone();
-            return Ok(crawl_timeout_response(
-                results,
-                timeout_secs,
-                limit,
-                depth,
-                url_str,
-            ));
-        }
-        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
-
-        let results = pages.lock().await.clone();
-        if results.is_empty() {
-            Err(anyhow!(
-                "Crawl returned no results. The site may be unreachable or block automated access."
-            ))
-        } else {
-            Ok(Value::Array(results))
+        match crawl_timed_out {
+            true => {
+                handle.abort();
+                let results = pages.lock().await.clone();
+                Ok(crawl_timeout_response(
+                    results,
+                    timeout_secs,
+                    limit,
+                    depth,
+                    url_str,
+                ))
+            }
+            false => {
+                let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
+                let results = pages.lock().await.clone();
+                match results.is_empty() {
+                    true => Err(anyhow!(
+                        "Crawl returned no results. The site may be unreachable or block automated access."
+                    )),
+                    false => Ok(Value::Array(results)),
+                }
+            }
         }
     }
 }

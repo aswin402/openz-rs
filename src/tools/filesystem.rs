@@ -1575,75 +1575,90 @@ impl FindFilesTool {
         cmd.arg(dir);
 
         let output = cmd.output().await?;
-        if !output.status.success() && output.status.code() != Some(1) {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(anyhow!("fd failed: {}", stderr));
+        match output.status.success() || output.status.code() == Some(1) {
+            true => Ok(String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .map(|s| s.to_string())
+                .collect()),
+            false => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                Err(anyhow!("fd failed: {}", stderr))
+            }
         }
+    }
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let results = stdout
-            .lines()
-            .map(|s| s.to_string())
-            .collect::<Vec<String>>();
+    fn is_symlink_path(dir: &std::path::Path) -> bool {
+        dir.symlink_metadata()
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
+    }
 
-        Ok(results)
+    fn is_excluded_dir_name(dir: &std::path::Path) -> bool {
+        matches!(
+            dir.file_name().and_then(|s| s.to_str()),
+            Some("target" | "node_modules" | ".git")
+        )
+    }
+
+    fn glob_matches_chars(pat: &[char], txt: &[char]) -> bool {
+        match (pat.first(), txt.first()) {
+            (None, None) => true,
+            (Some('*'), _) => {
+                let next_non_star = pat.iter().position(|c| *c != '*').unwrap_or(pat.len());
+                let rest_pat = &pat[next_non_star..];
+                match rest_pat.is_empty() {
+                    true => true,
+                    false => (0..=txt.len()).any(|idx| Self::glob_matches_chars(rest_pat, &txt[idx..])),
+                }
+            }
+            (Some('?'), Some(_)) => Self::glob_matches_chars(&pat[1..], &txt[1..]),
+            (Some(p), Some(t)) => (*p == *t) && Self::glob_matches_chars(&pat[1..], &txt[1..]),
+            _ => false,
+        }
+    }
+
+    fn glob_matches(pattern: &str, candidate: &str) -> bool {
+        let pat_chars: Vec<char> = pattern.chars().collect();
+        let txt_chars: Vec<char> = candidate.chars().collect();
+        Self::glob_matches_chars(&pat_chars, &txt_chars)
     }
 
     fn walk_and_find(
         dir: &std::path::Path,
-        re: &regex::Regex,
+        pattern: &str,
         results: &mut Vec<String>,
     ) -> Result<()> {
-        if let Ok(metadata) = dir.symlink_metadata() {
-            if metadata.file_type().is_symlink() {
-                return Ok(());
-            }
-        }
-        if results.len() >= 1000 {
-            return Ok(());
-        }
-
-        if let Some(name) = dir.file_name().and_then(|s| s.to_str()) {
-            if name == "target" || name == "node_modules" || name == ".git" {
-                return Ok(());
-            }
-        }
-
-        if dir.is_file() {
-            if let Some(name) = dir.file_name().and_then(|s| s.to_str()) {
-                if re.is_match(name) {
-                    results.push(dir.to_string_lossy().to_string());
+        let stop =
+            Self::is_symlink_path(dir) || results.len() >= 1000 || Self::is_excluded_dir_name(dir);
+        match stop {
+            true => Ok(()),
+            false => match (dir.is_file(), dir.is_dir()) {
+                (true, _) => {
+                    let matched = dir
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .map(|name| Self::glob_matches(pattern, name))
+                        .unwrap_or(false);
+                    match matched {
+                        true => results.push(dir.to_string_lossy().to_string()),
+                        false => {}
+                    }
+                    Ok(())
                 }
-            }
-            return Ok(());
-        }
-
-        if dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    Self::walk_and_find(&entry.path(), re, results)?;
+                (false, true) => {
+                    match std::fs::read_dir(dir) {
+                        Ok(entries) => {
+                            for entry in entries.flatten() {
+                                Self::walk_and_find(&entry.path(), pattern, results)?;
+                            }
+                        }
+                        Err(_) => {}
+                    }
+                    Ok(())
                 }
-            }
+                (false, false) => Ok(()),
+            },
         }
-
-        Ok(())
-    }
-
-    fn glob_to_regex(&self, pattern: &str) -> Result<regex::Regex> {
-        let mut regex_str = String::from("^");
-        for c in pattern.chars() {
-            match c {
-                '*' => regex_str.push_str(".*"),
-                '?' => regex_str.push('.'),
-                '.' | '+' | '(' | ')' | '[' | ']' | '{' | '}' | '^' | '$' | '|' | '\\' => {
-                    regex_str.push('\\');
-                    regex_str.push(c);
-                }
-                _ => regex_str.push(c),
-            }
-        }
-        regex_str.push('$');
-        regex::Regex::new(&regex_str).map_err(|e| anyhow!("Invalid pattern: {}", e))
     }
 }
 
@@ -1675,21 +1690,21 @@ impl Tool for FindFilesTool {
         let search_dir = resolve_path(&args.dir);
         crate::config::loader::verify_safe_path(&search_dir)?;
 
-        if !search_dir.exists() {
-            return Err(anyhow!("Directory '{}' does not exist", args.dir));
+        match search_dir.exists() {
+            false => return Err(anyhow!("Directory '{}' does not exist", args.dir)),
+            true => {}
         }
 
         // Try using fd first since it is installed and extremely fast
-        if let Ok(results) = self.run_fd(&search_dir, &args.pattern).await {
-            return Ok(serde_json::json!({ "status": "success", "results": results }));
+        match self.run_fd(&search_dir, &args.pattern).await {
+            Ok(results) => Ok(serde_json::json!({ "status": "success", "results": results })),
+            Err(_) => {
+                // Fallback to manual recursive search when fd fails or is not found
+                let mut results = Vec::new();
+                Self::walk_and_find(&search_dir, &args.pattern, &mut results)?;
+                Ok(serde_json::json!({ "status": "success", "results": results }))
+            }
         }
-
-        // Fallback to manual recursive search if fd fails or is not found
-        let re = self.glob_to_regex(&args.pattern)?;
-        let mut results = Vec::new();
-        Self::walk_and_find(&search_dir, &re, &mut results)?;
-
-        Ok(serde_json::json!({ "status": "success", "results": results }))
     }
 }
 

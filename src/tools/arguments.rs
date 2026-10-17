@@ -68,8 +68,9 @@ pub fn argument_values(
     args: &serde_json::Value,
     kind: ToolArgumentKind,
 ) -> Vec<String> {
-    let Some(map) = args.as_object() else {
-        return Vec::new();
+    let map = match args.as_object() {
+        Some(m) => m,
+        None => return Vec::new(),
     };
     argument_keys(kind)
         .iter()
@@ -126,13 +127,13 @@ pub fn normalize_tool_args(args: &serde_json::Value) -> serde_json::Value {
 pub fn to_snake_case(value: &str) -> String {
     let mut result = String::new();
     for character in value.chars() {
-        if character.is_uppercase() {
-            if !result.is_empty() && !result.ends_with('_') {
-                result.push('_');
+        match character.is_uppercase() {
+            true => {
+                let needs_sep = !result.is_empty() && !result.ends_with('_');
+                let _ = needs_sep.then(|| result.push('_'));
+                result.extend(character.to_lowercase());
             }
-            result.extend(character.to_lowercase());
-        } else {
-            result.push(character);
+            false => result.push(character),
         }
     }
     result

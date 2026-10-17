@@ -13,9 +13,12 @@ async fn test_git_manager_actions() -> Result<()> {
         .status()
         .await?;
 
-    if !init_status.success() {
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        return Ok(());
+    match init_status.success() {
+        true => {}
+        false => {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            return Ok(());
+        }
     }
 
     // Configure git locally

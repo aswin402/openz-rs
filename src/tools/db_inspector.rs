@@ -3,23 +3,81 @@ use anyhow::{anyhow, Result};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
+const INSPECTOR_BLOCKED_KEYWORDS: &[&str] = &[
+    "INSERT",
+    "UPDATE",
+    "DELETE",
+    "DROP",
+    "ALTER",
+    "CREATE",
+    "ATTACH",
+    "DETACH",
+    "PRAGMA",
+    "REINDEX",
+    "REPLACE",
+    "VACUUM",
+    "ANALYZE",
+    "INTO",
+    "UNION",
+    "EXCEPT",
+    "INTERSECT",
+    "LOAD",
+    "OVERWRITE",
+    "CALL",
+    "EXECUTE",
+];
+
+const WRITE_BLOCKED_KEYWORDS: &[&str] = &["ATTACH", "DETACH", "LOAD"];
+
+const BLOCKED_DOT_COMMANDS: &[&str] = &[".shell", ".import", ".output", ".read", ".system"];
+
 fn normalize_sql(sql: &str) -> String {
-    let sql_upper = sql.to_uppercase();
-    sql_upper
+    sql.to_uppercase()
         .chars()
-        .map(|c| {
-            if c.is_whitespace() {
-                ' '
-            } else {
-                match c {
-                    '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{FEFF}' => '\0', // zero-width chars
-                    '\u{FF10}'..='\u{FF19}' => ((c as u32 - 0xFF10) as u8 + b'0') as char, // fullwidth digits → ASCII
-                    _ => c,
-                }
-            }
+        .map(|c| match c.is_whitespace() {
+            true => ' ',
+            false => match c {
+                '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{FEFF}' => '\0',
+                '\u{FF10}'..='\u{FF19}' => ((c as u32 - 0xFF10) as u8 + b'0') as char,
+                _ => c,
+            },
         })
         .filter(|c| *c != '\0')
         .collect()
+}
+
+fn find_blocked_sql_keyword<'a>(normalized_sql: &str, blocklist: &[&'a str]) -> Option<&'a str> {
+    normalized_sql
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .find_map(|token| blocklist.iter().copied().find(|&kw| kw == token))
+}
+
+fn extract_db_path_arg(arguments: &Value) -> Option<&str> {
+    arguments
+        .get("db_path")
+        .or_else(|| arguments.get("path"))
+        .or_else(|| arguments.get("database"))
+        .or_else(|| arguments.get("db"))
+        .or_else(|| arguments.get("file"))
+        .or_else(|| arguments.get("file_path"))
+        .or_else(|| arguments.get("filePath"))
+        .or_else(|| arguments.get("target"))
+        .or_else(|| arguments.get("uri"))
+        .and_then(|v| v.as_str())
+}
+
+fn resolve_safe_db_path(raw_path_input: Option<&str>) -> Result<std::path::PathBuf> {
+    let db_path = match raw_path_input.map(str::trim).filter(|s| !s.is_empty()) {
+        Some("memory" | "openz" | "default") | None => {
+            crate::config::loader::runtime_db_path("memory.db")
+        }
+        Some(p) => {
+            let clean = p.strip_prefix("file://").unwrap_or(p);
+            crate::config::loader::resolve_path(clean)
+        }
+    };
+    crate::config::loader::verify_safe_path(&db_path)?;
+    Ok(db_path)
 }
 
 pub struct DbInspectorTool;
@@ -57,41 +115,19 @@ impl Tool for DbInspectorTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let (raw_path_input, sql_from_arg) = if let Some(s) = arguments.as_str() {
-            let s_trimmed = s.trim();
-            let upper = s_trimmed.to_uppercase();
-            if upper.starts_with("SELECT") || upper.starts_with("EXPLAIN") {
-                (None, Some(s_trimmed))
-            } else {
-                (Some(s_trimmed), None)
+        let (raw_path_input, sql_from_arg) = match arguments.as_str() {
+            Some(s) => {
+                let s_trimmed = s.trim();
+                let upper = s_trimmed.to_uppercase();
+                match upper.starts_with("SELECT") || upper.starts_with("EXPLAIN") {
+                    true => (None, Some(s_trimmed)),
+                    false => (Some(s_trimmed), None),
+                }
             }
-        } else {
-            (
-                arguments
-                    .get("db_path")
-                    .or_else(|| arguments.get("path"))
-                    .or_else(|| arguments.get("database"))
-                    .or_else(|| arguments.get("db"))
-                    .or_else(|| arguments.get("file"))
-                    .or_else(|| arguments.get("file_path"))
-                    .or_else(|| arguments.get("filePath"))
-                    .or_else(|| arguments.get("target"))
-                    .or_else(|| arguments.get("uri"))
-                    .and_then(|v| v.as_str()),
-                None,
-            )
+            None => (extract_db_path_arg(arguments), None),
         };
 
-        let db_path = match raw_path_input.map(str::trim).filter(|s| !s.is_empty()) {
-            Some("memory" | "openz" | "default") | None => {
-                crate::config::loader::runtime_db_path("memory.db")
-            }
-            Some(p) => {
-                let clean = p.strip_prefix("file://").unwrap_or(p);
-                crate::config::loader::resolve_path(clean)
-            }
-        };
-        crate::config::loader::verify_safe_path(&db_path)?;
+        let db_path = resolve_safe_db_path(raw_path_input)?;
 
         let sql_opt = sql_from_arg.or_else(|| {
             arguments
@@ -113,13 +149,10 @@ impl Tool for DbInspectorTool {
             Some("schema" | "tables" | "structure" | "desc" | "describe" | "list") => "schema",
             Some("query" | "select" | "run" | "sql" | "exec") => "query",
             Some(other) => other,
-            None => {
-                if sql_opt.is_some() {
-                    "query"
-                } else {
-                    "schema"
-                }
-            }
+            None => match sql_opt.is_some() {
+                true => "query",
+                false => "schema",
+            },
         };
 
         let conn =
@@ -143,47 +176,48 @@ impl Tool for DbInspectorTool {
                 let sql = sql_opt
                     .ok_or_else(|| anyhow!("Missing 'sql' parameter for query action"))?;
 
-                // Block dangerous SQL operations — use a strict blocklist
                 let normalized = normalize_sql(sql);
-                static INSPECTOR_BLOCKLIST_RE: std::sync::OnceLock<regex::Regex> =
-                    std::sync::OnceLock::new();
-                let re = INSPECTOR_BLOCKLIST_RE.get_or_init(|| {
-                    regex::Regex::new(r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|ATTACH|DETACH|PRAGMA|REINDEX|REPLACE|VACUUM|ANALYZE|INTO|UNION|EXCEPT|INTERSECT|LOAD|OVERWRITE|CALL|EXECUTE)\b")
-                        .expect("static db inspector blocklist regex must compile")
-                });
-
-                // Also block semicolons (stacked queries) and comment sequences.
-                // Allow a single trailing semicolon (normal SQL syntax) but block mid-query semicolons.
                 let trimmed_sql = sql.trim_end_matches(';').trim();
-                if trimmed_sql.contains(';') {
-                    return Err(anyhow!(
-                        "Only simple SELECT queries are allowed. Semicolons (stacked queries) are blocked."
-                    ));
+                match trimmed_sql.contains(';') {
+                    true => {
+                        return Err(anyhow!(
+                            "Only simple SELECT queries are allowed. Semicolons (stacked queries) are blocked."
+                        ));
+                    }
+                    false => {}
                 }
-                if sql.contains("--") || sql.contains("/*") {
-                    return Err(anyhow!(
-                        "Only simple SELECT queries are allowed. SQL comments are blocked."
-                    ));
+                match sql.contains("--") || sql.contains("/*") {
+                    true => {
+                        return Err(anyhow!(
+                            "Only simple SELECT queries are allowed. SQL comments are blocked."
+                        ));
+                    }
+                    false => {}
                 }
-                // Also block shell-like dot commands used by sqlite3 CLI
-                let blocked_dot = [".shell", ".import", ".output", ".read", ".system"];
-                if let Some(mat) = re.find(&normalized) {
-                    return Err(anyhow!(
-                        "Only simple SELECT queries are allowed. Blocked keyword: {}",
-                        mat.as_str()
-                    ));
+                match find_blocked_sql_keyword(&normalized, INSPECTOR_BLOCKED_KEYWORDS) {
+                    Some(keyword) => {
+                        return Err(anyhow!(
+                            "Only simple SELECT queries are allowed. Blocked keyword: {}",
+                            keyword
+                        ));
+                    }
+                    None => {}
                 }
-                for dot_cmd in &blocked_dot {
-                    if sql.trim().starts_with(dot_cmd) {
-                        return Err(anyhow!("Blocked sqlite3 dot-command: {}", dot_cmd));
+                let trimmed_raw = sql.trim();
+                for dot_cmd in BLOCKED_DOT_COMMANDS {
+                    match trimmed_raw.starts_with(dot_cmd) {
+                        true => return Err(anyhow!("Blocked sqlite3 dot-command: {}", dot_cmd)),
+                        false => {}
                     }
                 }
-                // Must start with SELECT or EXPLAIN (for EXPLAIN QUERY PLAN)
-                let trimmed = sql.trim().to_uppercase();
-                if !trimmed.starts_with("SELECT") && !trimmed.starts_with("EXPLAIN") {
-                    return Err(anyhow!(
-                        "Only SELECT (or EXPLAIN) queries are allowed for safety."
-                    ));
+                let trimmed = trimmed_raw.to_uppercase();
+                match trimmed.starts_with("SELECT") || trimmed.starts_with("EXPLAIN") {
+                    true => {}
+                    false => {
+                        return Err(anyhow!(
+                            "Only SELECT (or EXPLAIN) queries are allowed for safety."
+                        ));
+                    }
                 }
 
                 let mut stmt = conn
@@ -262,35 +296,12 @@ impl Tool for DbWriteTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let (raw_path_input, sql_from_arg) = if let Some(s) = arguments.as_str() {
-            (None, Some(s.trim()))
-        } else {
-            (
-                arguments
-                    .get("db_path")
-                    .or_else(|| arguments.get("path"))
-                    .or_else(|| arguments.get("database"))
-                    .or_else(|| arguments.get("db"))
-                    .or_else(|| arguments.get("file"))
-                    .or_else(|| arguments.get("file_path"))
-                    .or_else(|| arguments.get("filePath"))
-                    .or_else(|| arguments.get("target"))
-                    .or_else(|| arguments.get("uri"))
-                    .and_then(|v| v.as_str()),
-                None,
-            )
+        let (raw_path_input, sql_from_arg) = match arguments.as_str() {
+            Some(s) => (None, Some(s.trim())),
+            None => (extract_db_path_arg(arguments), None),
         };
 
-        let db_path = match raw_path_input.map(str::trim).filter(|s| !s.is_empty()) {
-            Some("memory" | "openz" | "default") | None => {
-                crate::config::loader::runtime_db_path("memory.db")
-            }
-            Some(p) => {
-                let clean = p.strip_prefix("file://").unwrap_or(p);
-                crate::config::loader::resolve_path(clean)
-            }
-        };
-        crate::config::loader::verify_safe_path(&db_path)?;
+        let db_path = resolve_safe_db_path(raw_path_input)?;
 
         let sql = sql_from_arg
             .or_else(|| {
@@ -305,28 +316,34 @@ impl Tool for DbWriteTool {
             })
             .ok_or_else(|| anyhow!("Missing 'sql' parameter"))?;
 
-        // Safety checks for db_write
         let trimmed_sql = sql.trim_end_matches(';').trim();
-        if trimmed_sql.contains(';') {
-            return Err(anyhow!(
-                "Stacked queries are not allowed. Use separate calls for multiple statements."
-            ));
+        match trimmed_sql.contains(';') {
+            true => {
+                return Err(anyhow!(
+                    "Stacked queries are not allowed. Use separate calls for multiple statements."
+                ));
+            }
+            false => {}
         }
-        if sql.contains("--") || sql.contains("/*") {
-            return Err(anyhow!("SQL comments are not allowed in write operations."));
+        match sql.contains("--") || sql.contains("/*") {
+            true => {
+                return Err(anyhow!("SQL comments are not allowed in write operations."));
+            }
+            false => {}
         }
-        let blocked_dot = [".shell", ".import", ".output", ".read", ".system"];
-        for dot_cmd in &blocked_dot {
-            if sql.trim().to_lowercase().starts_with(dot_cmd) {
-                return Err(anyhow!("Blocked sqlite3 dot-command: {}", dot_cmd));
+        let lower_trimmed = sql.trim().to_lowercase();
+        for dot_cmd in BLOCKED_DOT_COMMANDS {
+            match lower_trimmed.starts_with(dot_cmd) {
+                true => return Err(anyhow!("Blocked sqlite3 dot-command: {}", dot_cmd)),
+                false => {}
             }
         }
         let normalized = normalize_sql(sql);
-        static WRITE_BLOCKLIST_RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-        let re = WRITE_BLOCKLIST_RE
-            .get_or_init(|| regex::Regex::new(r"\b(ATTACH|DETACH|LOAD)\b").expect("static write blocklist regex must compile"));
-        if let Some(mat) = re.find(&normalized) {
-            return Err(anyhow!("Blocked SQL keyword for safety: {}", mat.as_str()));
+        match find_blocked_sql_keyword(&normalized, WRITE_BLOCKED_KEYWORDS) {
+            Some(keyword) => {
+                return Err(anyhow!("Blocked SQL keyword for safety: {}", keyword));
+            }
+            None => {}
         }
 
         let conn =

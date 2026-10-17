@@ -53,11 +53,14 @@ impl Tool for DesktopNotifyTool {
             .output()
             .await
             .map_err(|error| anyhow!("notify-send is unavailable: {error}"))?;
-        if !status.status.success() {
-            return Err(anyhow!(
-                "Desktop notification failed: {}",
-                String::from_utf8_lossy(&status.stderr).trim()
-            ));
+        match status.status.success() {
+            true => {}
+            false => {
+                return Err(anyhow!(
+                    "Desktop notification failed: {}",
+                    String::from_utf8_lossy(&status.stderr).trim()
+                ));
+            }
         }
 
         let inventory_id = crate::tools::device_inventory::record_successful_desktop_notification()

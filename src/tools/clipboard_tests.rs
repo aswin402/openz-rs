@@ -19,16 +19,19 @@ async fn test_clipboard_tool() {
             let get_val = json!({
                 "action": "get"
             });
-            if let Ok(get_res) = tool.call(&get_val).await {
-                assert_eq!(get_res["status"], "success");
-                if let Some(text_val) = get_res.get("text").and_then(|v| v.as_str()) {
-                    // It could be that another concurrent test or tool changed it, but we check if we can get it
-                    println!("Retrieved clipboard text successfully: {}", text_val);
+            match tool.call(&get_val).await {
+                Ok(get_res) => {
+                    assert_eq!(get_res["status"], "success");
+                    let _ = get_res
+                        .get("text")
+                        .and_then(|v| v.as_str())
+                        .map(|text_val| println!("Retrieved clipboard text successfully: {}", text_val));
                 }
-            } else {
-                println!(
-                    "Get clipboard text failed (which is normal on Linux if no clipboard manager daemon is active to persist dropped clipboard buffers)."
-                );
+                Err(_) => {
+                    println!(
+                        "Get clipboard text failed (which is normal on Linux if no clipboard manager daemon is active to persist dropped clipboard buffers)."
+                    );
+                }
             }
         }
         Err(e) => {

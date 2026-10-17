@@ -87,9 +87,12 @@ async fn test_db_inspector_actions() -> Result<()> {
         .arg("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO users (name) VALUES ('Alice');")
         .status()?;
 
-    if !init_status.success() {
-        let _ = std::fs::remove_dir_all(&temp_dir);
-        return Ok(());
+    match init_status.success() {
+        true => {}
+        false => {
+            let _ = std::fs::remove_dir_all(&temp_dir);
+            return Ok(());
+        }
     }
 
     let tool = DbInspectorTool;

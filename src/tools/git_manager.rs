@@ -59,33 +59,43 @@ impl Tool for GitManagerTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let action_raw = if let Some(s) = arguments.as_str() {
-            s.to_string()
-        } else {
-            arguments
-                .get("action")
-                .or_else(|| arguments.get("command"))
-                .or_else(|| arguments.get("subcommand"))
-                .or_else(|| arguments.get("cmd"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("status")
-                .to_string()
-        };
+        let action_raw = arguments
+            .as_str()
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                arguments
+                    .get("action")
+                    .or_else(|| arguments.get("command"))
+                    .or_else(|| arguments.get("subcommand"))
+                    .or_else(|| arguments.get("cmd"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("status")
+                    .to_string()
+            });
         let action = action_raw.trim().to_lowercase();
 
         let mut cmd = Command::new("git");
 
-        if let Some(cwd_str) = arguments
+        match arguments
             .get("cwd")
             .or_else(|| arguments.get("dir"))
             .or_else(|| arguments.get("path"))
             .and_then(|v| v.as_str())
         {
-            let path = crate::config::loader::resolve_path(cwd_str);
-            cmd.current_dir(path);
-        } else {
-            crate::config::loader::set_tokio_command_cwd(&mut cmd);
+            Some(cwd_str) => {
+                let path = crate::config::loader::resolve_path(cwd_str);
+                cmd.current_dir(path);
+            }
+            None => {
+                crate::config::loader::set_tokio_command_cwd(&mut cmd);
+            }
         }
+
+        let target_ref_opt = arguments
+            .get("ref")
+            .or_else(|| arguments.get("commit"))
+            .or_else(|| arguments.get("revision"))
+            .and_then(|v| v.as_str());
 
         match action.as_str() {
             "status" | "st" | "s" => {
@@ -102,64 +112,53 @@ impl Tool for GitManagerTool {
                     })
                     .unwrap_or(false);
 
-                if is_staged {
-                    cmd.args(["diff", "--staged"]);
-                } else if let Some(target_ref) = arguments
-                    .get("ref")
-                    .or_else(|| arguments.get("commit"))
-                    .or_else(|| arguments.get("revision"))
-                    .and_then(|v| v.as_str())
-                {
-                    cmd.args(["diff", target_ref]);
-                } else {
-                    cmd.args(["diff", "HEAD"]);
+                match (is_staged, target_ref_opt) {
+                    (true, _) => {
+                        cmd.args(["diff", "--staged"]);
+                    }
+                    (false, Some(target_ref)) => {
+                        cmd.args(["diff", target_ref]);
+                    }
+                    (false, None) => {
+                        cmd.args(["diff", "HEAD"]);
+                    }
                 }
             }
             "branch" | "branches" | "br" => {
                 cmd.args(["branch", "-a"]);
             }
             "show" => {
-                if let Some(target_ref) = arguments
-                    .get("ref")
-                    .or_else(|| arguments.get("commit"))
-                    .or_else(|| arguments.get("revision"))
-                    .and_then(|v| v.as_str())
-                {
-                    cmd.args(["show", target_ref]);
-                } else {
-                    cmd.args(["show", "HEAD"]);
-                }
+                cmd.args(["show", target_ref_opt.unwrap_or("HEAD")]);
             }
             "add" | "stage" => {
-                let mut files_to_add = Vec::new();
-                if let Some(files_val) = arguments
+                let files_val_opt = arguments
                     .get("files")
                     .or_else(|| arguments.get("file"))
-                    .or_else(|| arguments.get("path"))
-                {
-                    if let Some(arr) = files_val.as_array() {
-                        for item in arr {
-                            if let Some(s) = item.as_str() {
-                                files_to_add.push(s.to_string());
-                            }
-                        }
-                    } else if let Some(s) = files_val.as_str() {
-                        if s.contains(',') {
-                            for part in s.split(',') {
-                                let trimmed = part.trim();
-                                if !trimmed.is_empty() {
-                                    files_to_add.push(trimmed.to_string());
-                                }
-                            }
-                        } else {
-                            files_to_add.push(s.to_string());
-                        }
+                    .or_else(|| arguments.get("path"));
+                let files_to_add = match files_val_opt {
+                    Some(Value::Array(arr)) => arr
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect::<Vec<_>>(),
+                    Some(Value::String(s)) => match s.contains(',') {
+                        true => s
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|part| !part.is_empty())
+                            .map(str::to_string)
+                            .collect::<Vec<_>>(),
+                        false => vec![s.to_string()],
+                    },
+                    _ => Vec::new(),
+                };
+                match files_to_add.is_empty() {
+                    true => {
+                        return Err(anyhow!(
+                            "At least one file must be specified for 'add' action"
+                        ));
                     }
-                }
-                if files_to_add.is_empty() {
-                    return Err(anyhow!(
-                        "At least one file must be specified for 'add' action"
-                    ));
+                    false => {}
                 }
                 cmd.arg("add");
                 for f in files_to_add {
@@ -176,8 +175,9 @@ impl Tool for GitManagerTool {
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'message' argument for 'commit' action"))?
                     .trim();
-                if message.is_empty() {
-                    return Err(anyhow!("Commit message cannot be empty"));
+                match message.is_empty() {
+                    true => return Err(anyhow!("Commit message cannot be empty")),
+                    false => {}
                 }
                 cmd.args(["commit", "-m", message]);
             }
@@ -186,9 +186,8 @@ impl Tool for GitManagerTool {
                     .get("limit")
                     .or_else(|| arguments.get("n"))
                     .and_then(|v| {
-                        v.as_u64().or_else(|| {
-                            v.as_str().and_then(|s| s.trim().parse::<u64>().ok())
-                        })
+                        v.as_u64()
+                            .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
                     })
                     .unwrap_or(5);
                 cmd.args(["log", &format!("-n{}", limit), "--oneline"]);
@@ -200,9 +199,13 @@ impl Tool for GitManagerTool {
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let status = match output.status.success() {
+            true => "success",
+            false => "error",
+        };
 
         Ok(json!({
-            "status": if output.status.success() { "success" } else { "error" },
+            "status": status,
             "stdout": stdout,
             "stderr": stderr,
             "code": output.status.code()

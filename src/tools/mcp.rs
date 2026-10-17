@@ -20,8 +20,11 @@ static SPAWNED_MCP_CLIENTS: OnceLock<Mutex<std::collections::HashMap<String, Mcp
 
 pub fn set_memory_mcp_client(client: McpClient) {
     let cell = MEMORY_MCP_CLIENT.get_or_init(|| StdMutex::new(None));
-    if let Ok(mut lock) = cell.lock() {
-        *lock = Some(client);
+    match cell.lock() {
+        Ok(mut lock) => {
+            *lock = Some(client);
+        }
+        Err(_) => {}
     }
 }
 
@@ -32,23 +35,24 @@ pub fn get_memory_mcp_client() -> Option<McpClient> {
 }
 
 pub fn clear_memory_mcp_client() {
-    if let Some(cell) = MEMORY_MCP_CLIENT.get() {
-        if let Ok(mut lock) = cell.lock() {
+    match MEMORY_MCP_CLIENT.get().and_then(|cell| cell.lock().ok()) {
+        Some(mut lock) => {
             *lock = None;
         }
+        None => {}
     }
 }
 
 pub async fn terminate_all_mcp_clients() {
-    let cell = SPAWNED_MCP_CLIENTS.get();
-    if let Some(mutex) = cell {
-        let mut lock = mutex.lock().await;
-        for (_key, client) in lock.drain() {
-            let mut client_lock = client.0.lock().await;
-            if let Some(inner) = client_lock.take() {
-                drop(inner);
+    match SPAWNED_MCP_CLIENTS.get() {
+        Some(mutex) => {
+            let mut lock = mutex.lock().await;
+            for (_key, client) in lock.drain() {
+                let mut client_lock = client.0.lock().await;
+                drop(client_lock.take());
             }
         }
+        None => {}
     }
     clear_memory_mcp_client();
 }
@@ -74,15 +78,19 @@ pub struct McpClientInner {
 
 impl Drop for McpClientInner {
     fn drop(&mut self) {
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(());
+        match self.shutdown_tx.take() {
+            Some(tx) => {
+                let _ = tx.send(());
+            }
+            None => {}
         }
         match &mut self.client_type {
-            McpClientType::Grpc { ref mut child, .. } => {
-                if let Some(ref mut c) = child {
+            McpClientType::Grpc { ref mut child, .. } => match child {
+                Some(ref mut c) => {
                     let _ = c.start_kill();
                 }
-            }
+                None => {}
+            },
         }
     }
 }
@@ -92,18 +100,85 @@ impl Drop for McpClientInner {
 /// Returns 0 when the server has not been spawned (e.g. disabled or not yet started).
 pub async fn spawned_tools_count(command: &str, args: &[String]) -> usize {
     let cache_key = format!("{}:{}", command, args.join(" "));
-    let cell = SPAWNED_MCP_CLIENTS.get();
-    let Some(mutex) = cell else {
-        return 0;
-    };
-    let lock = mutex.lock().await;
-    let Some(client) = lock.get(&cache_key) else {
-        return 0;
-    };
-    match client.list_tools().await {
-        Ok(tools) => tools.len(),
-        Err(_) => 0,
+    match SPAWNED_MCP_CLIENTS.get() {
+        None => 0,
+        Some(mutex) => {
+            let lock = mutex.lock().await;
+            match lock.get(&cache_key) {
+                None => 0,
+                Some(client) => match client.list_tools().await {
+                    Ok(tools) => tools.len(),
+                    Err(_) => 0,
+                },
+            }
+        }
     }
+}
+
+async fn connect_and_initialize_grpc_client(
+    port: u16,
+    target_label: &str,
+) -> Result<mcp_grpc::mcp_service_client::McpServiceClient<tonic::transport::Channel>> {
+    let mut channel = None;
+    for i in 0..20 {
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        match tonic::transport::Channel::from_shared(format!("http://127.0.0.1:{}", port))?
+            .connect_timeout(std::time::Duration::from_secs(1))
+            .connect()
+            .await
+        {
+            Ok(ch) => {
+                channel = Some(ch);
+                break;
+            }
+            Err(e) => match i == 19 {
+                true => {
+                    return Err(anyhow!(
+                        "Failed to connect to {} after 3s: {}",
+                        target_label,
+                        e
+                    ));
+                }
+                false => {}
+            },
+        }
+    }
+    let channel =
+        channel.ok_or_else(|| anyhow!("Failed to connect to {} after 3s", target_label))?;
+    let mut grpc_client = mcp_grpc::mcp_service_client::McpServiceClient::new(channel);
+
+    let init_params = serde_json::json!({
+        "protocolVersion": "2024-11-05",
+        "capabilities": {},
+        "clientInfo": {
+            "name": "openz",
+            "version": "0.1.0"
+        }
+    });
+
+    let req = mcp_grpc::McpRequest {
+        method: "initialize".to_string(),
+        params_json: serde_json::to_string(&init_params)?,
+        id: 1,
+        has_id: true,
+    };
+    let _init_resp = grpc_client.call(req).await?;
+
+    let notif_req = mcp_grpc::McpRequest {
+        method: "notifications/initialized".to_string(),
+        params_json: "{}".to_string(),
+        id: 0,
+        has_id: false,
+    };
+    grpc_client.call(notif_req).await?;
+
+    Ok(grpc_client)
+}
+
+fn extract_grpc_port(args_vec: &[String]) -> Option<u16> {
+    let pos = args_vec.iter().position(|a| a == "--grpc")?;
+    let port_str = args_vec.get(pos + 1)?;
+    port_str.parse::<u16>().ok()
 }
 
 #[derive(Clone)]
@@ -116,8 +191,9 @@ impl McpClient {
 
         {
             let lock = cell.lock().await;
-            if let Some(client) = lock.get(&cache_key) {
-                return Ok(client.clone());
+            match lock.get(&cache_key) {
+                Some(client) => return Ok(client.clone()),
+                None => {}
             }
         }
 
@@ -125,187 +201,77 @@ impl McpClient {
         let args_vec = args.to_vec();
 
         let fut = async move {
-            let mut grpc_port = None;
-            if let Some(pos) = args_vec.iter().position(|a| a == "--grpc") {
-                if let Some(port_str) = args_vec.get(pos + 1) {
-                    if let Ok(port) = port_str.parse::<u16>() {
-                        grpc_port = Some(port);
-                    }
+            match extract_grpc_port(&args_vec) {
+                Some(port) => {
+                    let child = Command::new(&cmd)
+                        .args(&args_vec)
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .kill_on_drop(true)
+                        .spawn()?;
+
+                    let label = format!("gRPC MCP server at 127.0.0.1:{}", port);
+                    let grpc_client = connect_and_initialize_grpc_client(port, &label).await?;
+
+                    let client = McpClientInner {
+                        client_type: McpClientType::Grpc {
+                            child: Some(child),
+                            client: grpc_client,
+                        },
+                        next_id: 2,
+                        shutdown_tx: None,
+                        command: cmd.clone(),
+                        args: args_vec.clone(),
+                    };
+
+                    Ok(McpClient(Arc::new(Mutex::new(Some(client)))))
                 }
-            }
+                None => {
+                    let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
+                    let (bridge_port, port_guard) = find_free_port()?;
+                    let cmd_string = cmd.clone();
+                    let cmd_args = args_vec.clone();
 
-            if let Some(port) = grpc_port {
-                let child = Command::new(&cmd)
-                    .args(&args_vec)
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .kill_on_drop(true)
-                    .spawn()?;
-
-                // Use a robust retry connection loop to connect to the gRPC MCP server, allowing time to bind.
-                let mut channel = None;
-                for i in 0..20 {
-                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-                    match tonic::transport::Channel::from_shared(format!(
-                        "http://127.0.0.1:{}",
-                        port
-                    ))?
-                    .connect_timeout(std::time::Duration::from_secs(1))
-                    .connect()
-                    .await
-                    {
-                        Ok(ch) => {
-                            channel = Some(ch);
-                            break;
-                        }
-                        Err(e) => {
-                            if i == 19 {
-                                return Err(anyhow!(
-                                    "Failed to connect to gRPC MCP server at 127.0.0.1:{} after 3s: {}",
-                                    port,
+                    tokio::spawn(async move {
+                        match run_mcp_bridge(
+                            bridge_port,
+                            port_guard,
+                            &cmd_string,
+                            &cmd_args,
+                            shutdown_rx,
+                        )
+                        .await
+                        {
+                            Ok(()) => {}
+                            Err(e) => {
+                                tracing::error!(
+                                    "In-process gRPC MCP bridge failed for {}: {:?}",
+                                    cmd_string,
                                     e
-                                ));
+                                );
                             }
                         }
-                    }
-                }
-                let channel = channel.ok_or_else(|| {
-                    anyhow!("Failed to connect to gRPC MCP server at 127.0.0.1:{}", port)
-                })?;
+                    });
 
-                let mut grpc_client = mcp_grpc::mcp_service_client::McpServiceClient::new(channel);
+                    let label = format!("local gRPC bridge for {}", cmd);
+                    let grpc_client =
+                        connect_and_initialize_grpc_client(bridge_port, &label).await?;
 
-                let init_params = serde_json::json!({
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": {
-                        "name": "openz",
-                        "version": "0.1.0"
-                    }
-                });
+                    let client = McpClientInner {
+                        client_type: McpClientType::Grpc {
+                            child: None,
+                            client: grpc_client,
+                        },
+                        next_id: 2,
+                        shutdown_tx: Some(shutdown_tx),
+                        command: cmd.clone(),
+                        args: args_vec.clone(),
+                    };
 
-                let req = mcp_grpc::McpRequest {
-                    method: "initialize".to_string(),
-                    params_json: serde_json::to_string(&init_params)?,
-                    id: 1,
-                    has_id: true,
-                };
-
-                let _init_resp = grpc_client.call(req).await?;
-
-                let notif_req = mcp_grpc::McpRequest {
-                    method: "notifications/initialized".to_string(),
-                    params_json: "{}".to_string(),
-                    id: 0,
-                    has_id: false,
-                };
-
-                grpc_client.call(notif_req).await?;
-
-                let client = McpClientInner {
-                    client_type: McpClientType::Grpc {
-                        child: Some(child),
-                        client: grpc_client,
-                    },
-                    next_id: 2,
-                    shutdown_tx: None,
-                    command: cmd.clone(),
-                    args: args_vec.clone(),
-                };
-
-                return Ok(McpClient(Arc::new(Mutex::new(Some(client)))));
-            }
-
-            // Automatic in-process gRPC bridge for all stdio servers to avoid stdio pollution
-            let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
-            let (bridge_port, port_guard) = find_free_port()?;
-            let cmd_string = cmd.clone();
-            let cmd_args = args_vec.clone();
-
-            tokio::spawn(async move {
-                if let Err(e) =
-                    run_mcp_bridge(bridge_port, port_guard, &cmd_string, &cmd_args, shutdown_rx)
-                        .await
-                {
-                    tracing::error!(
-                        "In-process gRPC MCP bridge failed for {}: {:?}",
-                        cmd_string,
-                        e
-                    );
-                }
-            });
-
-            // Robust retry connection loop to connect to the dynamic bridge port
-            let mut client = None;
-            for i in 0..20 {
-                tokio::time::sleep(std::time::Duration::from_millis(150)).await;
-                match tonic::transport::Channel::from_shared(format!(
-                    "http://127.0.0.1:{}",
-                    bridge_port
-                ))?
-                .connect_timeout(std::time::Duration::from_secs(1))
-                .connect()
-                .await
-                {
-                    Ok(channel) => {
-                        client = Some(mcp_grpc::mcp_service_client::McpServiceClient::new(channel));
-                        break;
-                    }
-                    Err(e) => {
-                        if i == 19 {
-                            return Err(anyhow!(
-                                "Failed to connect to local gRPC bridge for {} after 3s: {}",
-                                cmd,
-                                e
-                            ));
-                        }
-                    }
+                    Ok(McpClient(Arc::new(Mutex::new(Some(client)))))
                 }
             }
-            let mut grpc_client = client.ok_or_else(|| {
-                anyhow!("Failed to connect to local gRPC bridge for {} after 3s", cmd)
-            })?;
-
-            let init_params = serde_json::json!({
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {
-                    "name": "openz",
-                    "version": "0.1.0"
-                }
-            });
-
-            let req = mcp_grpc::McpRequest {
-                method: "initialize".to_string(),
-                params_json: serde_json::to_string(&init_params)?,
-                id: 1,
-                has_id: true,
-            };
-
-            let _init_resp = grpc_client.call(req).await?;
-
-            let notif_req = mcp_grpc::McpRequest {
-                method: "notifications/initialized".to_string(),
-                params_json: "{}".to_string(),
-                id: 0,
-                has_id: false,
-            };
-
-            grpc_client.call(notif_req).await?;
-
-            let client = McpClientInner {
-                client_type: McpClientType::Grpc {
-                    child: None,
-                    client: grpc_client,
-                },
-                next_id: 2,
-                shutdown_tx: Some(shutdown_tx),
-                command: cmd.clone(),
-                args: args_vec.clone(),
-            };
-
-            Ok(McpClient(Arc::new(Mutex::new(Some(client)))))
         };
 
         let result = match tokio::time::timeout(std::time::Duration::from_secs(15), fut).await {
@@ -323,39 +289,49 @@ impl McpClient {
         }
     }
 
+    async fn send_grpc_request(
+        &self,
+        method: &str,
+        params_json: String,
+        err_prefix: &str,
+    ) -> Result<String> {
+        let mut lock = self.0.lock().await;
+        let client = lock.as_mut().ok_or_else(|| anyhow!("Client closed"))?;
+
+        match &mut client.client_type {
+            McpClientType::Grpc {
+                client: grpc_client,
+                ..
+            } => {
+                let req = mcp_grpc::McpRequest {
+                    method: method.to_string(),
+                    params_json,
+                    id: client.next_id as i64,
+                    has_id: true,
+                };
+                client.next_id += 1;
+
+                let resp = grpc_client.call(req).await?.into_inner();
+                match resp.error_json.is_empty() {
+                    true => Ok(resp.result_json),
+                    false => Err(anyhow!("{}: {}", err_prefix, resp.error_json)),
+                }
+            }
+        }
+    }
+
     pub async fn list_tools(&self) -> Result<Vec<Value>> {
         let self_clone = self.clone();
         let fut = async move {
-            let mut lock = self_clone.0.lock().await;
-            let client = lock.as_mut().ok_or_else(|| anyhow!("Client closed"))?;
-
-            match &mut client.client_type {
-                McpClientType::Grpc {
-                    client: grpc_client,
-                    ..
-                } => {
-                    let req = mcp_grpc::McpRequest {
-                        method: "tools/list".to_string(),
-                        params_json: "{}".to_string(),
-                        id: client.next_id as i64,
-                        has_id: true,
-                    };
-                    client.next_id += 1;
-
-                    let resp = grpc_client.call(req).await?.into_inner();
-                    if !resp.error_json.is_empty() {
-                        return Err(anyhow!("MCP error: {}", resp.error_json));
-                    }
-
-                    let result_val: Value = serde_json::from_str(&resp.result_json)?;
-                    let tools = result_val
-                        .get("tools")
-                        .and_then(|t| t.as_array())
-                        .ok_or_else(|| anyhow!("Invalid tools/list response"))?;
-
-                    Ok(tools.clone())
-                }
-            }
+            let result_json = self_clone
+                .send_grpc_request("tools/list", "{}".to_string(), "MCP error")
+                .await?;
+            let result_val: Value = serde_json::from_str(&result_json)?;
+            let tools = result_val
+                .get("tools")
+                .and_then(|t| t.as_array())
+                .ok_or_else(|| anyhow!("Invalid tools/list response"))?;
+            Ok(tools.clone())
         };
 
         match tokio::time::timeout(std::time::Duration::from_secs(15), fut).await {
@@ -370,36 +346,19 @@ impl McpClient {
         let args_val = arguments.clone();
 
         let fut = async move {
-            let mut lock = self_clone.0.lock().await;
-            let client = lock.as_mut().ok_or_else(|| anyhow!("Client closed"))?;
-
-            match &mut client.client_type {
-                McpClientType::Grpc {
-                    client: grpc_client,
-                    ..
-                } => {
-                    let params = serde_json::json!({
-                        "name": name_str,
-                        "arguments": args_val
-                    });
-
-                    let req = mcp_grpc::McpRequest {
-                        method: "tools/call".to_string(),
-                        params_json: serde_json::to_string(&params)?,
-                        id: client.next_id as i64,
-                        has_id: true,
-                    };
-                    client.next_id += 1;
-
-                    let resp = grpc_client.call(req).await?.into_inner();
-                    if !resp.error_json.is_empty() {
-                        return Err(anyhow!("MCP tool call error: {}", resp.error_json));
-                    }
-
-                    let result_val: Value = serde_json::from_str(&resp.result_json)?;
-                    Ok(result_val)
-                }
-            }
+            let params = serde_json::json!({
+                "name": name_str,
+                "arguments": args_val
+            });
+            let result_json = self_clone
+                .send_grpc_request(
+                    "tools/call",
+                    serde_json::to_string(&params)?,
+                    "MCP tool call error",
+                )
+                .await?;
+            let result_val: Value = serde_json::from_str(&result_json)?;
+            Ok(result_val)
         };
 
         match tokio::time::timeout(std::time::Duration::from_secs(30), fut).await {
@@ -411,29 +370,10 @@ impl McpClient {
     pub async fn ping(&self) -> Result<()> {
         let self_clone = self.clone();
         let fut = async move {
-            let mut lock = self_clone.0.lock().await;
-            let client = lock.as_mut().ok_or_else(|| anyhow!("Client closed"))?;
-
-            match &mut client.client_type {
-                McpClientType::Grpc {
-                    client: grpc_client,
-                    ..
-                } => {
-                    let req = mcp_grpc::McpRequest {
-                        method: "tools/list".to_string(),
-                        params_json: "{}".to_string(),
-                        id: client.next_id as i64,
-                        has_id: true,
-                    };
-                    client.next_id += 1;
-
-                    let resp = grpc_client.call(req).await?.into_inner();
-                    if !resp.error_json.is_empty() {
-                        return Err(anyhow!("MCP error: {}", resp.error_json));
-                    }
-                    Ok(())
-                }
-            }
+            let _ = self_clone
+                .send_grpc_request("tools/list", "{}".to_string(), "MCP error")
+                .await?;
+            Ok(())
         };
 
         match tokio::time::timeout(std::time::Duration::from_millis(2000), fut).await {
@@ -445,9 +385,12 @@ impl McpClient {
     /// Remove a stale entry from the spawn cache so the next spawn creates a fresh connection.
     pub async fn invalidate(command: &str, args: &[String]) {
         let cache_key = format!("{}:{}", command, args.join(" "));
-        if let Some(cell) = SPAWNED_MCP_CLIENTS.get() {
-            let mut lock = cell.lock().await;
-            lock.remove(&cache_key);
+        match SPAWNED_MCP_CLIENTS.get() {
+            Some(cell) => {
+                let mut lock = cell.lock().await;
+                lock.remove(&cache_key);
+            }
+            None => {}
         }
     }
 }
@@ -477,9 +420,6 @@ impl Tool for LazyMcpToolWrapper {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        // Delegate to McpClient::spawn() which has its own internal cache
-        // (SPAWNED_MCP_CLIENTS). Fast path returns existing client; slow path
-        // spawns a fresh process and caches it.
         let client = McpClient::spawn(&self.command, &self.args)
             .await
             .map_err(|e| {
@@ -489,8 +429,9 @@ impl Tool for LazyMcpToolWrapper {
                 )
             })?;
 
-        if self.is_memory_server {
-            set_memory_mcp_client(client.clone());
+        match self.is_memory_server {
+            true => set_memory_mcp_client(client.clone()),
+            false => {}
         }
 
         match client.call_tool(&self.name, arguments).await {
@@ -501,8 +442,9 @@ impl Tool for LazyMcpToolWrapper {
                     e
                 );
                 McpClient::invalidate(&self.command, &self.args).await;
-                if self.is_memory_server {
-                    clear_memory_mcp_client();
+                match self.is_memory_server {
+                    true => clear_memory_mcp_client(),
+                    false => {}
                 }
                 let client = McpClient::spawn(&self.command, &self.args)
                     .await
@@ -512,8 +454,9 @@ impl Tool for LazyMcpToolWrapper {
                             self.server_name
                         )
                     })?;
-                if self.is_memory_server {
-                    set_memory_mcp_client(client.clone());
+                match self.is_memory_server {
+                    true => set_memory_mcp_client(client.clone()),
+                    false => {}
                 }
                 client.call_tool(&self.name, arguments).await
             }
@@ -525,8 +468,9 @@ static HEALTH_CHECK_STARTED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
 pub fn start_mcp_health_checks() {
-    if HEALTH_CHECK_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return; // Already started
+    match HEALTH_CHECK_STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        true => return,
+        false => {}
     }
 
     tokio::spawn(async move {
@@ -541,8 +485,9 @@ pub fn start_mcp_health_checks() {
         };
 
         loop {
-            if *shutdown_rx.borrow() {
-                break;
+            match *shutdown_rx.borrow() {
+                true => break,
+                false => {}
             }
 
             tokio::select! {
@@ -553,26 +498,27 @@ pub fn start_mcp_health_checks() {
                 _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {}
             }
 
-            let cell = if let Some(cell) = SPAWNED_MCP_CLIENTS.get() {
-                cell
-            } else {
-                continue;
+            let cell = match SPAWNED_MCP_CLIENTS.get() {
+                Some(cell) => cell,
+                None => continue,
             };
 
-            // Snapshot cache keys and their details
             let mut clients_info = Vec::new();
             {
                 let lock = cell.lock().await;
                 for (cache_key, client) in lock.iter() {
-                    if let Ok(guard) = client.0.try_lock() {
-                        if let Some(inner) = guard.as_ref() {
-                            clients_info.push((
+                    match client.0.try_lock().ok().and_then(|g| {
+                        g.as_ref().map(|inner| {
+                            (
                                 cache_key.clone(),
                                 inner.command.clone(),
                                 inner.args.clone(),
                                 client.clone(),
-                            ));
-                        }
+                            )
+                        })
+                    }) {
+                        Some(info) => clients_info.push(info),
+                        None => {}
                     }
                 }
             }
@@ -584,27 +530,29 @@ pub fn start_mcp_health_checks() {
                 };
 
                 match client.ping().await {
-                    Ok(_) => {
-                        if unhealthy_servers.remove(&cache_key) {
+                    Ok(_) => match unhealthy_servers.remove(&cache_key) {
+                        true => {
                             let recovery_msg =
                                 format!("⚡ MCP Server reconnected: {}", server_name);
                             tracing::info!("{}", recovery_msg);
                             crate::channels::send_notification(&recovery_msg);
                         }
-                    }
+                        false => {}
+                    },
                     Err(e) => {
-                        let is_already_unhealthy = unhealthy_servers.contains(&cache_key);
-                        if !is_already_unhealthy {
-                            unhealthy_servers.insert(cache_key.clone());
-                            let warn_msg = format!(
-                                "⚠️ MCP Server '{}' is unresponsive ({}). Attempting auto-reconnect...",
-                                server_name, e
-                            );
-                            tracing::warn!("{}", warn_msg);
-                            crate::channels::send_notification(&warn_msg);
+                        match unhealthy_servers.contains(&cache_key) {
+                            false => {
+                                unhealthy_servers.insert(cache_key.clone());
+                                let warn_msg = format!(
+                                    "⚠️ MCP Server '{}' is unresponsive ({}). Attempting auto-reconnect...",
+                                    server_name, e
+                                );
+                                tracing::warn!("{}", warn_msg);
+                                crate::channels::send_notification(&warn_msg);
+                            }
+                            true => {}
                         }
 
-                        // Invalidate and try to spawn
                         McpClient::invalidate(&command, &args).await;
                         match McpClient::spawn(&command, &args).await {
                             Ok(_) => {
@@ -638,16 +586,19 @@ static NEXT_PORT: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::n
 
 fn find_free_port() -> Result<(u16, std::net::TcpListener)> {
     let start_port = NEXT_PORT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    if start_port > 65000 {
-        NEXT_PORT.store(50060, std::sync::atomic::Ordering::Relaxed);
+    match start_port > 65000 {
+        true => NEXT_PORT.store(50060, std::sync::atomic::Ordering::Relaxed),
+        false => {}
     }
 
     let mut port = start_port;
     for _ in 0..100 {
-        if let Ok(listener) = std::net::TcpListener::bind(format!("127.0.0.1:{}", port)) {
-            return Ok((port, listener));
+        match std::net::TcpListener::bind(format!("127.0.0.1:{}", port)) {
+            Ok(listener) => return Ok((port, listener)),
+            Err(_) => {
+                port = NEXT_PORT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
         }
-        port = NEXT_PORT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
     tracing::warn!(
         "Could not find free port after 100 attempts, using last port {}",
@@ -686,20 +637,21 @@ impl mcp_grpc::mcp_service_server::McpService for McpBridgeService {
         request: tonic::Request<mcp_grpc::McpRequest>,
     ) -> std::result::Result<tonic::Response<mcp_grpc::McpResponse>, tonic::Status> {
         let req = request.into_inner();
+        let params_val = serde_json::from_str::<serde_json::Value>(&req.params_json)
+            .unwrap_or(serde_json::Value::Null);
 
-        let rpc_req = if !req.has_id {
-            serde_json::json!({
+        let rpc_req = match req.has_id {
+            false => serde_json::json!({
                 "jsonrpc": "2.0",
                 "method": req.method,
-                "params": serde_json::from_str::<serde_json::Value>(&req.params_json).unwrap_or(serde_json::Value::Null)
-            })
-        } else {
-            serde_json::json!({
+                "params": params_val
+            }),
+            true => serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": req.id,
                 "method": req.method,
-                "params": serde_json::from_str::<serde_json::Value>(&req.params_json).unwrap_or(serde_json::Value::Null)
-            })
+                "params": params_val
+            }),
         };
 
         let req_str = format!(
@@ -708,21 +660,24 @@ impl mcp_grpc::mcp_service_server::McpService for McpBridgeService {
                 .map_err(|e| tonic::Status::invalid_argument(e.to_string()))?
         );
 
-        if !req.has_id {
-            let mut writer_lock = self.writer.lock().await;
-            writer_lock
-                .write_all(req_str.as_bytes())
-                .await
-                .map_err(|e| tonic::Status::internal(e.to_string()))?;
-            writer_lock
-                .flush()
-                .await
-                .map_err(|e| tonic::Status::internal(e.to_string()))?;
-            return Ok(tonic::Response::new(mcp_grpc::McpResponse {
-                result_json: String::new(),
-                error_json: String::new(),
-                id: 0,
-            }));
+        match req.has_id {
+            false => {
+                let mut writer_lock = self.writer.lock().await;
+                writer_lock
+                    .write_all(req_str.as_bytes())
+                    .await
+                    .map_err(|e| tonic::Status::internal(e.to_string()))?;
+                writer_lock
+                    .flush()
+                    .await
+                    .map_err(|e| tonic::Status::internal(e.to_string()))?;
+                return Ok(tonic::Response::new(mcp_grpc::McpResponse {
+                    result_json: String::new(),
+                    error_json: String::new(),
+                    id: 0,
+                }));
+            }
+            true => {}
         }
 
         let (tx, rx) = tokio::sync::oneshot::channel();
@@ -737,15 +692,17 @@ impl mcp_grpc::mcp_service_server::McpService for McpBridgeService {
 
         {
             let mut writer_lock = self.writer.lock().await;
-            if let Err(e) = writer_lock.write_all(req_str.as_bytes()).await {
-                let mut senders_lock = self.senders.lock().await;
-                senders_lock.remove(&req.id);
-                return Err(tonic::Status::internal(e.to_string()));
-            }
-            if let Err(e) = writer_lock.flush().await {
-                let mut senders_lock = self.senders.lock().await;
-                senders_lock.remove(&req.id);
-                return Err(tonic::Status::internal(e.to_string()));
+            let write_res = match writer_lock.write_all(req_str.as_bytes()).await {
+                Ok(()) => writer_lock.flush().await,
+                Err(e) => Err(e),
+            };
+            match write_res {
+                Ok(()) => {}
+                Err(e) => {
+                    let mut senders_lock = self.senders.lock().await;
+                    senders_lock.remove(&req.id);
+                    return Err(tonic::Status::internal(e.to_string()));
+                }
             }
         }
 
@@ -784,6 +741,13 @@ impl mcp_grpc::mcp_service_server::McpService for McpBridgeService {
     }
 }
 
+fn try_extract_jsonrpc_response(line: &str) -> Option<(i64, Value)> {
+    let resp_val = serde_json::from_str::<Value>(line).ok()?;
+    resp_val.get("jsonrpc")?;
+    let id = resp_val.get("id").and_then(|v| v.as_i64())?;
+    Some((id, resp_val))
+}
+
 pub async fn run_mcp_bridge(
     port: u16,
     port_guard: std::net::TcpListener,
@@ -817,15 +781,18 @@ pub async fn run_mcp_bridge(
     let stderr_handle = tokio::spawn(async move {
         let mut reader = BufReader::new(stderr);
         let mut line = String::new();
-        while let Ok(n) = reader.read_line(&mut line).await {
-            if n == 0 {
-                break;
-            }
-            let trimmed = line.trim();
-            if !trimmed.is_empty() {
-                tracing::warn!("[MCP Stderr - {}] {}", cmd_log, trimmed);
-            }
+        loop {
             line.clear();
+            match reader.read_line(&mut line).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {
+                    let trimmed = line.trim();
+                    match trimmed.is_empty() {
+                        false => tracing::warn!("[MCP Stderr - {}] {}", cmd_log, trimmed),
+                        true => {}
+                    }
+                }
+            }
         }
     });
 
@@ -843,29 +810,26 @@ pub async fn run_mcp_bridge(
                     tracing::info!("Child stdout EOF reached");
                     break;
                 }
-                Ok(_) => {
-                    if line.trim().is_empty() {
-                        continue;
-                    }
-                    if let Ok(resp_val) = serde_json::from_str::<serde_json::Value>(&line) {
-                        if resp_val.get("jsonrpc").is_some() {
-                            if let Some(id_val) = resp_val.get("id") {
-                                if let Some(id) = id_val.as_i64() {
-                                    let mut senders_lock = senders_clone.lock().await;
-                                    if let Some(tx) = senders_lock.remove(&id) {
-                                        let _ = tx.send(resp_val);
-                                    }
-                                    continue;
+                Ok(_) => match line.trim().is_empty() {
+                    true => continue,
+                    false => match try_extract_jsonrpc_response(&line) {
+                        Some((id, resp_val)) => {
+                            let mut senders_lock = senders_clone.lock().await;
+                            match senders_lock.remove(&id) {
+                                Some(tx) => {
+                                    let _ = tx.send(resp_val);
                                 }
+                                None => {}
                             }
                         }
-                    }
-                    // Filter out non-JSON-RPC stdout messages
-                    tracing::warn!(
-                        "Filtered non-JSON-RPC stdio output from bridge: {}",
-                        line.trim()
-                    );
-                }
+                        None => {
+                            tracing::warn!(
+                                "Filtered non-JSON-RPC stdio output from bridge: {}",
+                                line.trim()
+                            );
+                        }
+                    },
+                },
                 Err(e) => {
                     tracing::error!("Error reading child stdout: {:?}", e);
                     break;
@@ -891,7 +855,6 @@ pub async fn run_mcp_bridge(
         .add_service(mcp_grpc::mcp_service_server::McpServiceServer::new(service))
         .serve_with_incoming(incoming);
 
-    // Monitor child process exit so we can shut down the bridge if the child crashes
     let cmd_name = command.to_string();
     let child_exit = async move {
         let status = child.wait().await?;
@@ -909,13 +872,13 @@ pub async fn run_mcp_bridge(
             res?;
         }
         res = child_exit => {
-            if let Err(e) = res {
-                tracing::error!("MCP child process '{}' wait error: {}", command, e);
+            match res {
+                Ok(()) => {}
+                Err(e) => tracing::error!("MCP child process '{}' wait error: {}", command, e),
             }
         }
     }
 
-    // Abort reader tasks — they're no longer needed.
     reader_handle.abort();
     stderr_handle.abort();
     Ok(())

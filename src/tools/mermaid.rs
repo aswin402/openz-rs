@@ -48,8 +48,9 @@ impl Tool for MermaidRendererTool {
         let svg = mermaid_rs_renderer::render(chart)
             .map_err(|e| anyhow!("Mermaid rendering failed: {}", e))?;
 
-        if let Some(parent) = output_path.parent() {
-            fs::create_dir_all(parent)?;
+        match output_path.parent() {
+            Some(parent) => fs::create_dir_all(parent)?,
+            None => {}
         }
         fs::write(&output_path, &svg)?;
 

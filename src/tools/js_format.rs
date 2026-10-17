@@ -53,28 +53,31 @@ impl Tool for JsFormatTool {
         let allocator = Allocator::default();
         let parser_res = Parser::new(&allocator, code, source_type).parse();
 
-        if !parser_res.errors.is_empty() {
-            let mut err_msg = String::new();
-            for err in parser_res.errors {
-                err_msg.push_str(&format!("{:?}\n", err));
+        match parser_res.errors.is_empty() {
+            false => {
+                let mut err_msg = String::new();
+                for err in parser_res.errors {
+                    err_msg.push_str(&format!("{:?}\n", err));
+                }
+                Ok(json!({
+                    "status": "error",
+                    "errors": err_msg,
+                    "formatted": ""
+                }))
             }
-            return Ok(json!({
-                "status": "error",
-                "errors": err_msg,
-                "formatted": ""
-            }));
+            true => {
+                let options = CodegenOptions::default();
+                let printed = CodeGenerator::new()
+                    .with_options(options)
+                    .build(&parser_res.program);
+
+                Ok(json!({
+                    "status": "success",
+                    "errors": "",
+                    "formatted": printed.source_text
+                }))
+            }
         }
-
-        let options = CodegenOptions::default();
-        let printed = CodeGenerator::new()
-            .with_options(options)
-            .build(&parser_res.program);
-
-        Ok(json!({
-            "status": "success",
-            "errors": "",
-            "formatted": printed.source_text
-        }))
     }
 }
 

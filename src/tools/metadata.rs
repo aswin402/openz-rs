@@ -270,10 +270,9 @@ pub(crate) fn tool_repetition_block_threshold(
     name: &str,
     args: &serde_json::Value,
 ) -> usize {
-    if is_progress_sensitive_repeat(name, args) {
-        1
-    } else {
-        2
+    match is_progress_sensitive_repeat(name, args) {
+        true => 1,
+        false => 2,
     }
 }
 
@@ -298,163 +297,177 @@ pub(crate) fn is_state_changing_tool(name: &str) -> bool {
     )
 }
 
+type DomainRule = (&'static str, fn(&str) -> bool);
+
+const DOMAIN_INFERENCE_RULES: &[DomainRule] = &[
+    ("self_management", |name| {
+        matches!(
+            name,
+            "manage_servers"
+                | "openz_inventory"
+                | "workflow_memory"
+                | "curate_skill"
+                | "schedule_job"
+                | "list_jobs"
+                | "remove_job"
+                | "pause_job"
+                | "resume_job"
+                | "get_job"
+                | "get_job_logs"
+                | "run_job_now"
+                | "desktop_notify"
+        )
+    }),
+    ("subagent", |name| {
+        matches!(
+            name,
+            "delegate_task" | "parallel_research" | "evaluator_optimizer_loop"
+        ) || name.contains("subagent")
+    }),
+    ("filesystem", |name| {
+        matches!(
+            name,
+            "read_file"
+                | "write_file"
+                | "patch_file"
+                | "replace_lines"
+                | "list_dir"
+                | "find_files"
+                | "zenflow_edit"
+        )
+    }),
+    ("shell", |name| {
+        matches!(name, "exec_command" | "python_sandbox" | "wasm_sandbox")
+    }),
+    ("git", |name| {
+        name.starts_with("git") || name.starts_with("github")
+    }),
+    ("code", |name| {
+        name.starts_with("cargo")
+            || name.contains("compiler")
+            || name.contains("grep")
+            || name.contains("outline")
+            || name.contains("ast_grep")
+            || name.contains("rust_docs")
+    }),
+    ("web", |name| {
+        name.starts_with("web")
+            || name.contains("browser")
+            || name.contains("crawl")
+            || name.starts_with("searchxyz")
+            || name.contains("social_search")
+    }),
+    ("memory", |name| {
+        name.contains("memory")
+            || name.contains("entities")
+            || name.contains("relations")
+            || name.contains("observations")
+            || name.contains("graph")
+            || name.contains("recall")
+    }),
+    ("context", |name| {
+        name.contains("headroom")
+            || name.contains("compress")
+            || name.contains("cache")
+            || name.contains("scope_context")
+    }),
+    ("reasoning", |name| {
+        name.contains("thinking") || name.contains("reasoning")
+    }),
+    ("document", |name| {
+        name.starts_with("opendoc") || name.starts_with("docs_") || name.contains("document")
+    }),
+    ("media", |name| {
+        name.starts_with("openmedia")
+            || name.contains("image")
+            || name.contains("video")
+            || name.contains("svg")
+            || name.contains("mermaid")
+    }),
+    ("self_management", |name| {
+        name.contains("config")
+            || name.contains("diagnose")
+            || name.contains("session")
+            || name.contains("backup")
+            || name.contains("tool_catalog")
+            || name.contains("tool_scope")
+    }),
+    ("mcp", |name| name.starts_with("mcp") || name.contains("mcp")),
+];
+
 fn infer_tool_domain(name: &str) -> &'static str {
-    if let Some(def) = super::tool_spec(name) {
-        return def.domain;
-    }
-    if matches!(
-        name,
-        "manage_servers"
-            | "openz_inventory"
-            | "workflow_memory"
-            | "curate_skill"
-            | "schedule_job"
-            | "list_jobs"
-            | "remove_job"
-            | "pause_job"
-            | "resume_job"
-            | "get_job"
-            | "get_job_logs"
-            | "run_job_now"
-            | "desktop_notify"
-    ) {
-        "self_management"
-    } else if matches!(
-        name,
-        "delegate_task" | "parallel_research" | "evaluator_optimizer_loop"
-    ) || name.contains("subagent")
-    {
-        "subagent"
-    } else if matches!(
-        name,
-        "read_file"
-            | "write_file"
-            | "patch_file"
-            | "replace_lines"
-            | "list_dir"
-            | "find_files"
-            | "zenflow_edit"
-    ) {
-        "filesystem"
-    } else if matches!(name, "exec_command" | "python_sandbox" | "wasm_sandbox") {
-        "shell"
-    } else if name.starts_with("git") || name.starts_with("github") {
-        "git"
-    } else if name.starts_with("cargo")
-        || name.contains("compiler")
-        || name.contains("grep")
-        || name.contains("outline")
-        || name.contains("ast_grep")
-        || name.contains("rust_docs")
-    {
-        "code"
-    } else if name.starts_with("web")
-        || name.contains("browser")
-        || name.contains("crawl")
-        || name.starts_with("searchxyz")
-        || name.contains("social_search")
-    {
-        "web"
-    } else if name.contains("memory")
-        || name.contains("entities")
-        || name.contains("relations")
-        || name.contains("observations")
-        || name.contains("graph")
-        || name.contains("recall")
-    {
-        "memory"
-    } else if name.contains("headroom")
-        || name.contains("compress")
-        || name.contains("cache")
-        || name.contains("scope_context")
-    {
-        "context"
-    } else if name.contains("thinking") || name.contains("reasoning") {
-        "reasoning"
-    } else if name.starts_with("opendoc") || name.starts_with("docs_") || name.contains("document")
-    {
-        "document"
-    } else if name.starts_with("openmedia")
-        || name.contains("image")
-        || name.contains("video")
-        || name.contains("svg")
-        || name.contains("mermaid")
-    {
-        "media"
-    } else if name.contains("config")
-        || name.contains("diagnose")
-        || name.contains("session")
-        || name.contains("backup")
-        || name.contains("tool_catalog")
-        || name.contains("tool_scope")
-    {
-        "self_management"
-    } else if name.starts_with("mcp") || name.contains("mcp") {
-        "mcp"
-    } else {
-        "general"
-    }
+    super::tool_spec(name)
+        .map(|def| def.domain)
+        .or_else(|| {
+            DOMAIN_INFERENCE_RULES
+                .iter()
+                .find(|(_, predicate)| predicate(name))
+                .map(|(domain, _)| *domain)
+        })
+        .unwrap_or("general")
 }
 
 fn tool_writes_disk(name: &str) -> bool {
-    if let Some(def) = super::tool_spec(name) {
-        return def.writes_disk;
-    }
-    matches!(
-        name,
-        "write_file"
-            | "patch_file"
-            | "replace_lines"
-            | "zenflow_edit"
-            | "db_write"
-            | "manage_config"
-            | "manage_sessions"
-            | "manage_backups"
-            | "curate_skill"
-            | "schedule_job"
-            | "create_subagent"
-            | "delete_subagent"
-            | "optimize_subagent"
-    ) || name.contains("create")
-        || name.contains("update")
-        || name.contains("delete")
-        || name.contains("remove")
-        || name.contains("clear")
-        || name.contains("import")
-        || name.contains("download")
+    super::tool_spec(name)
+        .map(|def| def.writes_disk)
+        .unwrap_or_else(|| {
+            matches!(
+                name,
+                "write_file"
+                    | "patch_file"
+                    | "replace_lines"
+                    | "zenflow_edit"
+                    | "db_write"
+                    | "manage_config"
+                    | "manage_sessions"
+                    | "manage_backups"
+                    | "curate_skill"
+                    | "schedule_job"
+                    | "create_subagent"
+                    | "delete_subagent"
+                    | "optimize_subagent"
+            ) || [
+                "create", "update", "delete", "remove", "clear", "import", "download",
+            ]
+            .iter()
+            .any(|kw| name.contains(kw))
+        })
 }
 
 fn tool_uses_network(name: &str) -> bool {
-    if let Some(def) = super::tool_spec(name) {
-        return def.uses_network;
-    }
-    matches!(
-        name,
-        "web_fetch" | "web_search" | "social_search" | "check_port"
-    ) || name.starts_with("searchxyz")
-        || name.starts_with("github")
-        || name.starts_with("docs_install")
-        || name == "docs_search_rust_crate"
-        || name == "docs_read_rust_docs"
-        || name.contains("browser")
-        || name.contains("download")
-        || name.contains("mcp")
+    super::tool_spec(name)
+        .map(|def| def.uses_network)
+        .unwrap_or_else(|| {
+            matches!(
+                name,
+                "web_fetch"
+                    | "web_search"
+                    | "social_search"
+                    | "check_port"
+                    | "docs_search_rust_crate"
+                    | "docs_read_rust_docs"
+            ) || name.starts_with("searchxyz")
+                || name.starts_with("github")
+                || name.starts_with("docs_install")
+                || ["browser", "download", "mcp"]
+                    .iter()
+                    .any(|kw| name.contains(kw))
+        })
 }
 
 fn tool_recommended_timeout(name: &str) -> Option<u64> {
-    if let Some(def) = super::tool_spec(name) {
-        return def.recommended_timeout_secs;
-    }
-    // Dynamic tool families only — named tools belong in the static registry
-    // so name drift is caught by the registration drift test.
-    if name.contains("browser") || name.contains("obscura") {
-        Some(600)
-    } else if name.starts_with("opendoc_") {
-        Some(300)
-    } else if name.starts_with("mcp_") {
-        Some(180)
-    } else {
-        None
+    match super::tool_spec(name) {
+        Some(def) => def.recommended_timeout_secs,
+        None => match (
+            name.contains("browser") || name.contains("obscura"),
+            name.starts_with("opendoc_"),
+            name.starts_with("mcp_"),
+        ) {
+            (true, _, _) => Some(600),
+            (false, true, _) => Some(300),
+            (false, false, true) => Some(180),
+            (false, false, false) => None,
+        },
     }
 }
 
@@ -475,57 +488,77 @@ fn tool_aliases(name: &str, _domain: &str) -> &'static [&'static str] {
 }
 
 fn tool_examples(name: &str, domain: &str) -> &'static [&'static str] {
-    if let Some(def) = super::tool_spec(name) {
-        return def.examples;
-    }
-    match domain {
-        "code" => &["Analyze or modify source code"],
-        "web" => &["Research a website or URL"],
-        "media" => &["Create or transform visual media"],
-        "document" => &["Read, convert, or edit documents"],
-        "memory" => &["Store or retrieve durable facts"],
-        _ => &[],
-    }
+    super::tool_spec(name)
+        .map(|def| def.examples)
+        .unwrap_or_else(|| match domain {
+            "code" => &["Analyze or modify source code"],
+            "web" => &["Research a website or URL"],
+            "media" => &["Create or transform visual media"],
+            "document" => &["Read, convert, or edit documents"],
+            "memory" => &["Store or retrieve durable facts"],
+            _ => &[],
+        })
 }
 
 fn tool_usage_hints(name: &str, domain: &str) -> (&'static str, &'static str) {
-    if let Some(def) = super::tool_spec(name) {
-        return (def.when_to_use, def.when_not_to_use);
-    }
-    match domain {
-        "code" => (
-            "Use for source-code analysis, build, test, or refactor tasks.",
-            "Avoid for non-code document or media tasks.",
-        ),
-        "filesystem" => (
-            "Use for project-local file and directory operations.",
-            "Avoid for web or provider operations.",
-        ),
-        "web" => (
-            "Use for URLs, browsers, crawling, and online research.",
-            "Avoid for local-only codebase questions.",
-        ),
-        "media" => (
-            "Use for image, video, SVG, Mermaid, and rendering tasks.",
-            "Avoid for plain text or source-code edits.",
-        ),
-        "document" => (
-            "Use for PDF, DOCX, XLSX, PPTX, and document conversion tasks.",
-            "Avoid for source-code builds or shell commands.",
-        ),
-        "memory" => (
-            "Use for durable facts, recall, graph memory, and knowledge retrieval.",
-            "Avoid for transient one-turn calculations.",
-        ),
-        "subagent" => (
-            "Use for delegated specialist tasks and parallel work.",
-            "Avoid for simple single-step local tool calls.",
-        ),
-        "self_management" => (
-            "Use for OpenZ diagnostics, config, sessions, and tool routing introspection.",
-            "Avoid for user project modifications.",
-        ),
-        _ => ("", ""),
+    super::tool_spec(name)
+        .map(|def| (def.when_to_use, def.when_not_to_use))
+        .unwrap_or_else(|| match domain {
+            "code" => (
+                "Use for source-code analysis, build, test, or refactor tasks.",
+                "Avoid for non-code document or media tasks.",
+            ),
+            "filesystem" => (
+                "Use for project-local file and directory operations.",
+                "Avoid for web or provider operations.",
+            ),
+            "web" => (
+                "Use for URLs, browsers, crawling, and online research.",
+                "Avoid for local-only codebase questions.",
+            ),
+            "media" => (
+                "Use for image, video, SVG, Mermaid, and rendering tasks.",
+                "Avoid for plain text or source-code edits.",
+            ),
+            "document" => (
+                "Use for PDF, DOCX, XLSX, PPTX, and document conversion tasks.",
+                "Avoid for source-code builds or shell commands.",
+            ),
+            "memory" => (
+                "Use for durable facts, recall, graph memory, and knowledge retrieval.",
+                "Avoid for transient one-turn calculations.",
+            ),
+            "subagent" => (
+                "Use for delegated specialist tasks and parallel work.",
+                "Avoid for simple single-step local tool calls.",
+            ),
+            "self_management" => (
+                "Use for OpenZ diagnostics, config, sessions, and tool routing introspection.",
+                "Avoid for user project modifications.",
+            ),
+            _ => ("", ""),
+        })
+}
+
+fn infer_fallback_risk(
+    name: &str,
+    writes_disk: bool,
+    uses_network: bool,
+    spawns_process: bool,
+) -> ToolRisk {
+    let is_high = matches!(name, "exec_command" | "db_write")
+        || writes_disk
+        || ["delete", "remove", "restore", "clear"]
+            .iter()
+            .any(|kw| name.contains(kw));
+    let is_medium = uses_network
+        || spawns_process
+        || name.contains("create")
+        || name.contains("update");
+    match (is_high, is_medium) {
+        (true, _) => ToolRisk::High,
+        (false, true) => ToolRisk::Medium,
+        (false, false) => ToolRisk::Low,
     }
 }
 
@@ -542,25 +575,9 @@ impl ToolMetadata {
             || name.starts_with("opendoc_convert")
             || name.starts_with("mcp_");
         let uses_network = tool_uses_network(name);
-        let risk = super::tool_spec(name).map(|spec| spec.risk).unwrap_or_else(|| {
-            if matches!(name, "exec_command" | "db_write")
-                || writes_disk
-                || name.contains("delete")
-                || name.contains("remove")
-                || name.contains("restore")
-                || name.contains("clear")
-            {
-                ToolRisk::High
-            } else if uses_network
-                || spawns_process
-                || name.contains("create")
-                || name.contains("update")
-            {
-                ToolRisk::Medium
-            } else {
-                ToolRisk::Low
-            }
-        });
+        let risk = super::tool_spec(name)
+            .map(|spec| spec.risk)
+            .unwrap_or_else(|| infer_fallback_risk(name, writes_disk, uses_network, spawns_process));
         let requires_approval = matches!(risk, ToolRisk::High);
         let priority = match domain {
             "subagent" => 100,

@@ -23,13 +23,15 @@ async fn test_generate_image_tool_execution() -> Result<()> {
         "output_path": temp_png.to_string_lossy()
     });
 
-    // Skip execution if browser is not available/runnable in the sandbox context
-    if let Err(e) = ensure_browser_running().await {
-        tracing::warn!(
-            "Skipping execution test as headless browser is unavailable: {}",
-            e
-        );
-        return Ok(());
+    match ensure_browser_running().await {
+        Ok(()) => {}
+        Err(e) => {
+            tracing::warn!(
+                "Skipping execution test as headless browser is unavailable: {}",
+                e
+            );
+            return Ok(());
+        }
     }
 
     let result = match tool.call(&args).await {
