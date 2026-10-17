@@ -103,23 +103,27 @@ impl Tool for ParallelResearchTool {
             .and_then(|v| v.as_array())
             .ok_or_else(|| anyhow!("Missing or invalid 'tasks' argument"))?;
 
-        if tasks_val.is_empty() {
-            return Err(anyhow!("The 'tasks' array cannot be empty"));
+        match tasks_val.is_empty() {
+            true => return Err(anyhow!("The 'tasks' array cannot be empty")),
+            false => {}
         }
 
         let is_parent_silent = crate::agent::style::is_silent();
-        if !is_parent_silent {
-            let prefix = crate::agent::style::get_tree_prefix(false);
-            crate::tui_println!(
-                "{}{}{}◎ {}{}ParallelResearch spawning {} subagents{}",
-                AURA_SLATE,
-                prefix,
-                COLOR_RESET,
-                AURA_PURPLE,
-                COLOR_BOLD,
-                tasks_val.len(),
-                COLOR_RESET
-            );
+        match !is_parent_silent {
+            true => {
+                let prefix = crate::agent::style::get_tree_prefix(false);
+                crate::tui_println!(
+                    "{}{}{}◎ {}{}ParallelResearch spawning {} subagents{}",
+                    AURA_SLATE,
+                    prefix,
+                    COLOR_RESET,
+                    AURA_PURPLE,
+                    COLOR_BOLD,
+                    tasks_val.len(),
+                    COLOR_RESET
+                );
+            }
+            false => {}
         }
 
         let current_depth = DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
@@ -157,17 +161,20 @@ impl Tool for ParallelResearchTool {
 
             let role = get_heuristic_role(idx, &goal);
 
-            if !is_parent_silent {
-                let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                crate::tui_println!(
-                    "{}{}{}◌ {}{}\u{2014} queued{}",
-                    AURA_SLATE,
-                    leaf_prefix,
-                    AURA_SLATE,
-                    COLOR_BOLD,
-                    role,
-                    COLOR_RESET
-                );
+            match !is_parent_silent {
+                true => {
+                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                    crate::tui_println!(
+                        "{}{}{}◌ {}{}\u{2014} queued{}",
+                        AURA_SLATE,
+                        leaf_prefix,
+                        AURA_SLATE,
+                        COLOR_BOLD,
+                        role,
+                        COLOR_RESET
+                    );
+                }
+                false => {}
             }
 
             let config = self.config.clone();
@@ -176,49 +183,52 @@ impl Tool for ParallelResearchTool {
             let cancellation_token = self.cancellation_token.clone();
             let capability_policy = self.capability_policy.clone();
 
-            let mut read_only_parent_tools = Vec::new();
-            for tool in &self.parent_tools {
-                if READ_ONLY_TOOLS.contains(&tool.name())
-                    && capability_policy
-                        .as_ref()
-                        .map(|policy| {
-                            crate::tools::orchestrator::tool_allowed_by_policy(tool.name(), policy)
-                        })
-                        .unwrap_or(true)
-                {
-                    read_only_parent_tools.push(tool.clone());
-                }
-            }
+            let read_only_parent_tools: Vec<Arc<dyn Tool>> = self
+                .parent_tools
+                .iter()
+                .filter(|tool| {
+                    READ_ONLY_TOOLS.contains(&tool.name())
+                        && capability_policy
+                            .as_ref()
+                            .map(|policy| {
+                                crate::tools::orchestrator::tool_allowed_by_policy(
+                                    tool.name(),
+                                    policy,
+                                )
+                            })
+                            .unwrap_or(true)
+                })
+                .cloned()
+                .collect();
 
             let current_workspace = current_workspace.clone();
             let role_clone = role.clone();
             let goal_clone = goal.clone();
 
             join_set.spawn(async move {
-                if !is_parent_silent {
-                    let leaf_prefix =
-                        crate::agent::style::get_tree_prefix_for_depth(true, current_depth);
-                    crate::tui_println!(
-                        "{}{}{}• {}{}\u{2014} running...{}",
-                        AURA_SLATE,
-                        leaf_prefix,
-                        RED_ORANGE,
-                        COLOR_BOLD,
-                        role_clone,
-                        COLOR_RESET
-                    );
+                match !is_parent_silent {
+                    true => {
+                        let leaf_prefix =
+                            crate::agent::style::get_tree_prefix_for_depth(true, current_depth);
+                        crate::tui_println!(
+                            "{}{}{}• {}{}\u{2014} running...{}",
+                            AURA_SLATE,
+                            leaf_prefix,
+                            RED_ORANGE,
+                            COLOR_BOLD,
+                            role_clone,
+                            COLOR_RESET
+                        );
+                    }
+                    false => {}
                 }
 
                 let run_res_fut = crate::config::loader::ACTIVE_WORKSPACE.scope(current_workspace, async {
                     DELEGATION_DEPTH.scope(current_depth + 1, async {
-                        let provider = if let Some(ref m) = model_override {
-                            match build_provider_for_model(&config, m) {
-                                Ok(p) => p,
-                                Err(_) => parent_provider.clone()
-                            }
-                        } else {
-                            parent_provider.clone()
-                        };
+                        let provider = model_override
+                            .as_deref()
+                            .and_then(|m| build_provider_for_model(&config, m).ok())
+                            .unwrap_or_else(|| parent_provider.clone());
 
                         let child_registry = ToolRegistry::new_with_context(
                             config.clone(),
@@ -269,41 +279,44 @@ impl Tool for ParallelResearchTool {
                     )),
                 };
 
-                if !is_parent_silent {
-                    let leaf_prefix =
-                        crate::agent::style::get_tree_prefix_for_depth(true, current_depth);
-                    match run_res {
-                        Ok(ref run_res) => {
-                            let summary =
-                                crate::agent::style::format_subagent_summary(&run_res.content);
-                            crate::tui_println!(
-                                "{}{}{}{}✓ {}{} \u{2014} {}{}{}",
-                                AURA_SLATE,
-                                leaf_prefix,
-                                AURA_GREEN,
-                                COLOR_BOLD,
-                                role_clone,
-                                COLOR_RESET,
-                                AURA_GREEN,
-                                summary,
-                                COLOR_RESET
-                            );
-                        }
-                        Err(ref e) => {
-                            crate::tui_println!(
-                                "{}{}{}{}✕ {}{} \u{2014} failed: {}{}{}",
-                                AURA_SLATE,
-                                leaf_prefix,
-                                AURA_ROSE,
-                                COLOR_BOLD,
-                                role_clone,
-                                COLOR_RESET,
-                                AURA_ROSE,
-                                e,
-                                COLOR_RESET
-                            );
+                match !is_parent_silent {
+                    true => {
+                        let leaf_prefix =
+                            crate::agent::style::get_tree_prefix_for_depth(true, current_depth);
+                        match run_res {
+                            Ok(ref run_res) => {
+                                let summary =
+                                    crate::agent::style::format_subagent_summary(&run_res.content);
+                                crate::tui_println!(
+                                    "{}{}{}{}✓ {}{} \u{2014} {}{}{}",
+                                    AURA_SLATE,
+                                    leaf_prefix,
+                                    AURA_GREEN,
+                                    COLOR_BOLD,
+                                    role_clone,
+                                    COLOR_RESET,
+                                    AURA_GREEN,
+                                    summary,
+                                    COLOR_RESET
+                                );
+                            }
+                            Err(ref e) => {
+                                crate::tui_println!(
+                                    "{}{}{}{}✕ {}{} \u{2014} failed: {}{}{}",
+                                    AURA_SLATE,
+                                    leaf_prefix,
+                                    AURA_ROSE,
+                                    COLOR_BOLD,
+                                    role_clone,
+                                    COLOR_RESET,
+                                    AURA_ROSE,
+                                    e,
+                                    COLOR_RESET
+                                );
+                            }
                         }
                     }
+                    false => {}
                 }
                 (idx, goal_clone, run_res)
             });
@@ -328,14 +341,17 @@ impl Tool for ParallelResearchTool {
                 _ = &mut aggregate_deadline => {
                     join_set.abort_all();
                     for (idx, goal) in task_goals.iter().enumerate() {
-                        if !completed[idx] {
-                            results.push(parallel_task_error_json(
-                                goal,
-                                "timeout",
-                                &format!(
-                                    "Parallel research aggregate deadline reached after {aggregate_deadline_secs}s; unfinished task aborted so completed partial results can be returned before the outer tool timeout."
-                                ),
-                            ));
+                        match !completed[idx] {
+                            true => {
+                                results.push(parallel_task_error_json(
+                                    goal,
+                                    "timeout",
+                                    &format!(
+                                        "Parallel research aggregate deadline reached after {aggregate_deadline_secs}s; unfinished task aborted so completed partial results can be returned before the outer tool timeout."
+                                    ),
+                                ));
+                            }
+                            false => {}
                         }
                     }
                     break;
@@ -343,22 +359,27 @@ impl Tool for ParallelResearchTool {
                 joined = join_set.join_next() => {
                     match joined {
                         Some(Ok((idx, goal, Ok(run_res)))) => {
-                            if idx < completed.len() && !completed[idx] {
-                                completed[idx] = true;
-                                completed_count += 1;
+                            match idx < completed.len() && !completed[idx] {
+                                true => {
+                                    completed[idx] = true;
+                                    completed_count += 1;
+                                }
+                                false => {}
                             }
                             results.push(parallel_task_success_json(&goal, &run_res.content));
                         }
                         Some(Ok((idx, goal, Err(e)))) => {
-                            if idx < completed.len() && !completed[idx] {
-                                completed[idx] = true;
-                                completed_count += 1;
+                            match idx < completed.len() && !completed[idx] {
+                                true => {
+                                    completed[idx] = true;
+                                    completed_count += 1;
+                                }
+                                false => {}
                             }
                             let error = e.to_string();
-                            let status = if error.to_lowercase().contains("timed out") {
-                                "timeout"
-                            } else {
-                                "error"
+                            let status = match error.to_lowercase().contains("timed out") {
+                                true => "timeout",
+                                false => "error",
                             };
                             results.push(parallel_task_error_json(&goal, status, &error));
                         }
@@ -407,12 +428,10 @@ pub fn parallel_research_response(results: Vec<Value>) -> Value {
         .filter(|result| result.get("status").and_then(|v| v.as_str()) == Some("success"))
         .count();
     let failed = results.len().saturating_sub(succeeded);
-    let status = if failed == 0 {
-        "success"
-    } else if succeeded > 0 {
-        "partial_success"
-    } else {
-        "error"
+    let status = match (failed == 0, succeeded > 0) {
+        (true, _) => "success",
+        (false, true) => "partial_success",
+        (false, false) => "error",
     };
 
     serde_json::json!({
@@ -423,50 +442,50 @@ pub fn parallel_research_response(results: Vec<Value>) -> Value {
     })
 }
 
+const GOAL_STATUS_PREFIXES: &[(&str, &str)] = &[
+    ("review ", "reviewing"),
+    ("analyze ", "analyzing"),
+    ("debug ", "debugging"),
+    ("scaffold ", "scaffolding"),
+];
+
 pub fn get_status_from_goal(goal: &str) -> String {
-    let trimmed = goal.trim().to_lowercase();
-    if trimmed.starts_with("review ") {
-        format!("reviewing {}...", goal.trim()[7..].trim_end_matches('.'))
-    } else if trimmed.starts_with("analyze ") {
-        format!("analyzing {}...", goal.trim()[8..].trim_end_matches('.'))
-    } else if trimmed.starts_with("debug ") {
-        format!("debugging {}...", goal.trim()[6..].trim_end_matches('.'))
-    } else if trimmed.starts_with("scaffold ") {
-        format!("scaffolding {}...", goal.trim()[9..].trim_end_matches('.'))
-    } else {
-        format!("running {}...", goal.trim().trim_end_matches('.'))
-    }
+    let raw = goal.trim();
+    let lower = raw.to_lowercase();
+    GOAL_STATUS_PREFIXES
+        .iter()
+        .find_map(|(prefix, verb)| {
+            lower
+                .starts_with(prefix)
+                .then(|| format!("{} {}...", verb, raw[prefix.len()..].trim_end_matches('.')))
+        })
+        .unwrap_or_else(|| format!("running {}...", raw.trim_end_matches('.')))
 }
+
+const HEURISTIC_ROLE_RULES: &[(&[&str], &str)] = &[
+    (&["test"], "Tester"),
+    (&["debug", "error", "fail"], "Debugger"),
+    (&["architect", "design", "structure"], "Architect"),
+    (&["write", "code", "implement"], "Developer"),
+    (&["review", "audit"], "Reviewer"),
+];
 
 pub fn get_heuristic_role(index: usize, goal: &str) -> String {
     let goal_lower = goal.to_lowercase();
-    if goal_lower.contains("test") {
-        "Tester".to_string()
-    } else if goal_lower.contains("debug")
-        || goal_lower.contains("error")
-        || goal_lower.contains("fail")
-    {
-        "Debugger".to_string()
-    } else if goal_lower.contains("architect")
-        || goal_lower.contains("design")
-        || goal_lower.contains("structure")
-    {
-        "Architect".to_string()
-    } else if goal_lower.contains("write")
-        || goal_lower.contains("code")
-        || goal_lower.contains("implement")
-    {
-        "Developer".to_string()
-    } else if goal_lower.contains("review") || goal_lower.contains("audit") {
-        "Reviewer".to_string()
-    } else {
-        match index % 4 {
+    HEURISTIC_ROLE_RULES
+        .iter()
+        .find_map(|(keywords, role)| {
+            keywords
+                .iter()
+                .any(|kw| goal_lower.contains(kw))
+                .then(|| (*role).to_string())
+        })
+        .unwrap_or_else(|| match index % 4 {
             0 => "Researcher".to_string(),
             1 => "Debugger".to_string(),
             2 => "Architect".to_string(),
             _ => "Developer".to_string(),
-        }
-    }
+        })
 }
 
 #[cfg(test)]

@@ -90,8 +90,8 @@ impl Tool for QueryRepositoryEvolutionTool {
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let file_path = arguments["filePath"].as_str();
 
-        with_db(|conn| {
-            if let Some(fp) = file_path {
+        with_db(|conn| match file_path {
+            Some(fp) => {
                 let mut stmt = conn.prepare(
                     "SELECT * FROM repo_evolution WHERE file_path = ?1 ORDER BY created_at DESC",
                 )?;
@@ -101,7 +101,8 @@ impl Tool for QueryRepositoryEvolutionTool {
                     entries.push(r?);
                 }
                 Ok(json!({ "entries": entries, "totalCount": entries.len() }))
-            } else {
+            }
+            None => {
                 let mut stmt = conn.prepare(
                     "SELECT file_path, COUNT(*) as changes, SUM(bug_introduced) as bugs_introduced, SUM(bug_fixed) as bugs_fixed FROM repo_evolution GROUP BY file_path ORDER BY changes DESC"
                 )?;
@@ -181,12 +182,13 @@ impl Tool for TraverseGraphTool {
             queue.push_back((start.to_string(), 0usize));
 
             while let Some((current, depth)) = queue.pop_front() {
-                if !visited.insert(current.clone()) || depth > max_depth {
-                    continue;
+                match !visited.insert(current.clone()) || depth > max_depth {
+                    true => continue,
+                    false => {}
                 }
 
                 // Get node info
-                if let Ok(node) = conn.query_row(
+                match conn.query_row(
                     "SELECT name, entity_type, observations FROM graph_nodes WHERE name = ?1 AND (?2 IS NULL OR user_id = ?2 OR user_id = '*') AND (?3 IS NULL OR session_id = ?3 OR session_id = '*') AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')",
                     params![current, uid, sid, aid],
                     |row| {
@@ -194,13 +196,15 @@ impl Tool for TraverseGraphTool {
                         let etype: String = row.get(1)?;
                         let obs: String = row.get(2)?;
                         Ok(json!({ "name": name, "entityType": etype, "observations": serde_json::from_str::<Vec<String>>(&obs).unwrap_or_default() }))
-                    }
+                    },
                 ) {
-                    nodes.push(node);
+                    Ok(node) => nodes.push(node),
+                    Err(_) => {}
                 }
 
-                if depth >= max_depth {
-                    continue;
+                match depth >= max_depth {
+                    true => continue,
+                    false => {}
                 }
 
                 // Get neighbors
@@ -219,9 +223,13 @@ impl Tool for TraverseGraphTool {
                     edges.push(
                         json!({ "from": from.clone(), "to": to.clone(), "relationType": rel_type }),
                     );
-                    let neighbor = if from == current { &to } else { &from };
-                    if !visited.contains(neighbor) {
-                        queue.push_back((neighbor.clone(), depth + 1));
+                    let neighbor = match from == current {
+                        true => &to,
+                        false => &from,
+                    };
+                    match visited.contains(neighbor) {
+                        false => queue.push_back((neighbor.clone(), depth + 1)),
+                        true => {}
                     }
                 }
             }
@@ -277,9 +285,12 @@ impl Tool for FindPathTool {
 
             let mut found = false;
             while let Some(current) = queue.pop_front() {
-                if current == target {
-                    found = true;
-                    break;
+                match current == target {
+                    true => {
+                        found = true;
+                        break;
+                    }
+                    false => {}
                 }
 
                 let mut stmt = conn.prepare(
@@ -294,27 +305,35 @@ impl Tool for FindPathTool {
                 })?;
                 for r in rows {
                     let (from, to, rel_type) = r?;
-                    let neighbor = if from == current { &to } else { &from };
-                    if !parent.contains_key(neighbor) {
-                        parent.insert(neighbor.clone(), (current.clone(), rel_type));
-                        queue.push_back(neighbor.clone());
+                    let neighbor = match from == current {
+                        true => &to,
+                        false => &from,
+                    };
+                    match parent.contains_key(neighbor) {
+                        false => {
+                            parent.insert(neighbor.clone(), (current.clone(), rel_type));
+                            queue.push_back(neighbor.clone());
+                        }
+                        true => {}
                     }
                 }
             }
 
-            if !found {
-                return Ok(json!({ "found": false, "path": [] }));
+            match found {
+                false => return Ok(json!({ "found": false, "path": [] })),
+                true => {}
             }
 
             // Reconstruct path
             let mut path = Vec::new();
             let mut current = target.to_string();
             while current != start {
-                if let Some((p, rel)) = parent.get(&current) {
-                    path.push(json!({ "from": p, "to": current, "relationType": rel }));
-                    current = p.clone();
-                } else {
-                    break;
+                match parent.get(&current) {
+                    Some((p, rel)) => {
+                        path.push(json!({ "from": p, "to": current, "relationType": rel }));
+                        current = p.clone();
+                    }
+                    None => break,
                 }
             }
             path.reverse();
@@ -370,12 +389,13 @@ impl Tool for AnalyzeGraphCommunitiesTool {
 
             fn find(p: &mut HashMap<String, String>, x: &str) -> String {
                 let px = p.get(x).cloned().unwrap_or_default();
-                if px != x {
-                    let root = find(p, &px);
-                    p.insert(x.to_string(), root.clone());
-                    root
-                } else {
-                    x.to_string()
+                match px != x {
+                    true => {
+                        let root = find(p, &px);
+                        p.insert(x.to_string(), root.clone());
+                        root
+                    }
+                    false => x.to_string(),
                 }
             }
 
@@ -388,8 +408,11 @@ impl Tool for AnalyzeGraphCommunitiesTool {
             for (from, to) in edges.flatten() {
                 let rf = find(&mut parent, &from);
                 let rt = find(&mut parent, &to);
-                if rf != rt {
-                    parent.insert(rf, rt);
+                match rf != rt {
+                    true => {
+                        parent.insert(rf, rt);
+                    }
+                    false => {}
                 }
             }
 
@@ -402,8 +425,9 @@ impl Tool for AnalyzeGraphCommunitiesTool {
 
             let mut result = Vec::new();
             for (_, members) in communities {
-                if members.len() < 2 {
-                    continue;
+                match members.len() < 2 {
+                    true => continue,
+                    false => {}
                 }
                 let summary = format!("{} entities: {}", members.len(), members.join(", "));
                 result
@@ -477,13 +501,15 @@ impl Tool for DetectAndResolveConflictsTool {
                         entity, count, rel_type
                     );
 
-                    if !dry_run && strategy == "recency" {
-                        // Keep the most recent, expire others
-                        conn.execute(
-                            "UPDATE graph_edges SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE rowid NOT IN (SELECT rowid FROM graph_edges WHERE from_name = ?1 AND relation_type = ?2 AND valid_until IS NULL ORDER BY created_at DESC LIMIT 1) AND from_name = ?3 AND relation_type = ?4 AND valid_until IS NULL",
-                            params![entity, rel_type, entity, rel_type],
-                        )?;
-                        resolved += count - 1;
+                    match !dry_run && strategy == "recency" {
+                        true => {
+                            conn.execute(
+                                "UPDATE graph_edges SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE rowid NOT IN (SELECT rowid FROM graph_edges WHERE from_name = ?1 AND relation_type = ?2 AND valid_until IS NULL ORDER BY created_at DESC LIMIT 1) AND from_name = ?3 AND relation_type = ?4 AND valid_until IS NULL",
+                                params![entity, rel_type, entity, rel_type],
+                            )?;
+                            resolved += count - 1;
+                        }
+                        false => {}
                     }
 
                     conflicts.push(json!({ "entity": entity, "relationType": rel_type, "count": count, "description": description }));
@@ -493,7 +519,10 @@ impl Tool for DetectAndResolveConflictsTool {
             Ok(json!({
                 "conflictsFound": conflicts.len() as i64,
                 "conflicts": conflicts,
-                "resolved": if dry_run { 0 } else { resolved },
+                "resolved": match dry_run {
+                    true => 0,
+                    false => resolved,
+                },
                 "dryRun": dry_run,
                 "strategy": strategy,
             }))

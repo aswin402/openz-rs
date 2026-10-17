@@ -56,21 +56,22 @@ impl SubagentRunStatus {
 }
 
 pub fn classify_subagent_error(error: &str, token: &CancellationToken) -> SubagentRunStatus {
-    if token.is_cancelled() {
-        return SubagentRunStatus::Cancelled;
+    match token.is_cancelled() {
+        true => return SubagentRunStatus::Cancelled,
+        false => {}
     }
 
     let lower = error.to_lowercase();
-    if lower.contains("timed out") || lower.contains("timeout") {
-        SubagentRunStatus::TimedOut {
+    let is_timeout = lower.contains("timed out") || lower.contains("timeout");
+    let is_cancelled = lower.contains("cancelled") || lower.contains("canceled");
+    match (is_timeout, is_cancelled) {
+        (true, _) => SubagentRunStatus::TimedOut {
             duration_secs: parse_timeout_duration_secs(error),
-        }
-    } else if lower.contains("cancelled") || lower.contains("canceled") {
-        SubagentRunStatus::Cancelled
-    } else {
-        SubagentRunStatus::Failed {
+        },
+        (false, true) => SubagentRunStatus::Cancelled,
+        (false, false) => SubagentRunStatus::Failed {
             error: error.to_string(),
-        }
+        },
     }
 }
 
@@ -82,13 +83,10 @@ fn parse_timeout_duration_secs(error: &str) -> Option<u64> {
         .unwrap_or(&lower);
     let mut pending_number = None;
 
-    for token in searchable.split(|ch: char| {
-        ch.is_whitespace() || matches!(ch, ',' | '.' | ':' | ';' | '=' | '(' | ')')
-    }) {
-        if token.is_empty() {
-            continue;
-        }
-
+    for token in searchable
+        .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | '.' | ':' | ';' | '=' | '(' | ')'))
+        .filter(|token| !token.is_empty())
+    {
         let digit_len = token
             .char_indices()
             .take_while(|(_, ch)| ch.is_ascii_digit())
@@ -96,20 +94,19 @@ fn parse_timeout_duration_secs(error: &str) -> Option<u64> {
             .last()
             .unwrap_or(0);
 
-        if digit_len > 0 {
-            let value = token[..digit_len].parse::<u64>().ok()?;
-            let unit = &token[digit_len..];
-            if let Some(secs) = duration_unit_to_secs(value, unit) {
-                return Some(secs);
+        match digit_len > 0 {
+            true => {
+                let value = token[..digit_len].parse::<u64>().ok()?;
+                let unit = &token[digit_len..];
+                match duration_unit_to_secs(value, unit) {
+                    Some(secs) => return Some(secs),
+                    None => pending_number = Some(value),
+                }
             }
-            pending_number = Some(value);
-            continue;
-        }
-
-        if let Some(value) = pending_number.take() {
-            if let Some(secs) = duration_unit_to_secs(value, token) {
-                return Some(secs);
-            }
+            false => match pending_number.take().and_then(|v| duration_unit_to_secs(v, token)) {
+                Some(secs) => return Some(secs),
+                None => {}
+            },
         }
     }
 
@@ -118,17 +115,18 @@ fn parse_timeout_duration_secs(error: &str) -> Option<u64> {
 
 fn duration_unit_to_secs(value: u64, unit: &str) -> Option<u64> {
     let unit = unit.trim();
-    if unit.is_empty() {
-        return None;
+    match unit.is_empty() {
+        true => return None,
+        false => {}
     }
-    if matches!(unit, "s" | "sec" | "secs") || unit.starts_with("second") {
-        Some(value)
-    } else if matches!(unit, "m" | "min" | "mins") || unit.starts_with("minute") {
-        Some(value.saturating_mul(60))
-    } else if matches!(unit, "h" | "hr" | "hrs") || unit.starts_with("hour") {
-        Some(value.saturating_mul(3600))
-    } else {
-        None
+    let is_sec = matches!(unit, "s" | "sec" | "secs") || unit.starts_with("second");
+    let is_min = matches!(unit, "m" | "min" | "mins") || unit.starts_with("minute");
+    let is_hr = matches!(unit, "h" | "hr" | "hrs") || unit.starts_with("hour");
+    match (is_sec, is_min, is_hr) {
+        (true, _, _) => Some(value),
+        (false, true, _) => Some(value.saturating_mul(60)),
+        (false, false, true) => Some(value.saturating_mul(3600)),
+        (false, false, false) => None,
     }
 }
 
@@ -137,10 +135,9 @@ pub fn compact_lifecycle_line(name: &str, model: &str, status: &SubagentRunStatu
     let clean_model = model.trim();
     let label = status.label();
 
-    if clean_model.is_empty() {
-        format!("{clean_name} | {label}")
-    } else {
-        format!("{clean_name} | {clean_model} | {label}")
+    match clean_model.is_empty() {
+        true => format!("{clean_name} | {label}"),
+        false => format!("{clean_name} | {clean_model} | {label}"),
     }
 }
 
@@ -150,13 +147,16 @@ pub fn status_json(status: &SubagentRunStatus) -> serde_json::Value {
         "label": status.label(),
     });
 
-    if let SubagentRunStatus::TimedOut {
-        duration_secs: Some(secs),
-    } = status
-    {
-        if let Some(map) = value.as_object_mut() {
+    match (status, value.as_object_mut()) {
+        (
+            SubagentRunStatus::TimedOut {
+                duration_secs: Some(secs),
+            },
+            Some(map),
+        ) => {
             map.insert("durationSecs".to_string(), serde_json::json!(secs));
         }
+        _ => {}
     }
 
     value
@@ -178,13 +178,14 @@ pub fn cancellation_result_json(
         "error": error,
     });
 
-    if let Some(name) = subagent_name {
-        if let Some(map) = value.as_object_mut() {
+    match (subagent_name, value.as_object_mut()) {
+        (Some(name), Some(map)) => {
             map.insert(
                 "subagent".to_string(),
                 serde_json::Value::String(name.to_string()),
             );
         }
+        _ => {}
     }
 
     value

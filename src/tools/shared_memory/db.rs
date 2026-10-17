@@ -39,8 +39,9 @@ pub(crate) fn db_static() -> &'static OnceLock<Mutex<Connection>> {
 
 pub fn init_db() -> Result<Connection> {
     let path = get_sqlite_db_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+    match path.parent() {
+        Some(parent) => fs::create_dir_all(parent)?,
+        None => {}
     }
     let conn = Connection::open(&path)?;
 
@@ -49,24 +50,27 @@ pub fn init_db() -> Result<Connection> {
     let integrity: String = conn
         .query_row("PRAGMA integrity_check", [], |row| row.get(0))
         .unwrap_or_else(|_| "ok".to_string());
-    if integrity != "ok" {
-        tracing::warn!(
-            "Memory database integrity check failed: {}. Recreating database.",
-            integrity
-        );
-        drop(conn);
-        let backup = path.with_extension("db.corrupt");
-        let _ = std::fs::rename(&path, &backup);
-        let _ = std::fs::remove_file(format!("{}.wal", path.display()));
-        let _ = std::fs::remove_file(format!("{}.shm", path.display()));
-        let conn = Connection::open(&path)?;
-        crate::core::sqlite::apply_standard_pragmas(&conn)?;
-        create_schema(&conn)?;
-        return Ok(conn);
+    match integrity.as_str() {
+        "ok" => {
+            create_schema(&conn)?;
+            Ok(conn)
+        }
+        _ => {
+            tracing::warn!(
+                "Memory database integrity check failed: {}. Recreating database.",
+                integrity
+            );
+            drop(conn);
+            let backup = path.with_extension("db.corrupt");
+            let _ = std::fs::rename(&path, &backup);
+            let _ = std::fs::remove_file(format!("{}.wal", path.display()));
+            let _ = std::fs::remove_file(format!("{}.shm", path.display()));
+            let conn = Connection::open(&path)?;
+            crate::core::sqlite::apply_standard_pragmas(&conn)?;
+            create_schema(&conn)?;
+            Ok(conn)
+        }
     }
-
-    create_schema(&conn)?;
-    Ok(conn)
 }
 
 fn create_schema(conn: &Connection) -> Result<()> {
@@ -196,32 +200,34 @@ pub fn with_db<F, T>(f: F) -> Result<T>
 where
     F: FnOnce(&mut Connection) -> Result<T>,
 {
-    if let Some(mtx) = db_static().get() {
-        let mut guard = mtx
-            .lock()
-            .map_err(|e| anyhow::anyhow!("Shared memory lock error: {}", e))?;
-        return f(&mut guard);
+    match db_static().get() {
+        Some(mtx) => {
+            let mut guard = mtx
+                .lock()
+                .map_err(|e| anyhow::anyhow!("Shared memory lock error: {}", e))?;
+            f(&mut guard)
+        }
+        None => {
+            let conn = init_db()?;
+            let mtx = db_static().get_or_init(|| Mutex::new(conn));
+            let mut guard = mtx
+                .lock()
+                .map_err(|e| anyhow::anyhow!("Shared memory lock error: {}", e))?;
+            f(&mut guard)
+        }
     }
-    let conn = init_db()?;
-    let mtx = db_static().get_or_init(|| Mutex::new(conn));
-    let mut guard = mtx
-        .lock()
-        .map_err(|e| anyhow::anyhow!("Shared memory lock error: {}", e))?;
-    f(&mut guard)
+}
+
+fn canonical_or_lossy(dir: &std::path::Path) -> String {
+    std::fs::canonicalize(dir)
+        .unwrap_or_else(|_| dir.to_path_buf())
+        .to_string_lossy()
+        .to_string()
 }
 
 pub fn get_current_workspace() -> String {
-    if let Ok(dir) = crate::config::loader::ACTIVE_WORKSPACE.try_with(|w| w.clone()) {
-        if let Ok(abs_path) = std::fs::canonicalize(&dir) {
-            return abs_path.to_string_lossy().to_string();
-        }
-        return dir.to_string_lossy().to_string();
-    }
-    if let Ok(curr_dir) = std::env::current_dir() {
-        if let Ok(abs_path) = std::fs::canonicalize(&curr_dir) {
-            return abs_path.to_string_lossy().to_string();
-        }
-        return curr_dir.to_string_lossy().to_string();
-    }
-    ".".to_string()
+    crate::config::loader::ACTIVE_WORKSPACE
+        .try_with(|w| canonical_or_lossy(w))
+        .or_else(|_| std::env::current_dir().map(|curr_dir| canonical_or_lossy(&curr_dir)))
+        .unwrap_or_else(|_| ".".to_string())
 }

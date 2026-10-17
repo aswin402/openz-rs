@@ -97,8 +97,9 @@ impl Tool for OptimizeSubagentTool {
             .ok_or_else(|| anyhow!("Failed to generate optimized prompt from AI"))?;
 
         let clean_prompt = content.trim().to_string();
-        if clean_prompt.is_empty() {
-            return Err(anyhow!("Received empty optimized prompt from AI"));
+        match clean_prompt.is_empty() {
+            true => return Err(anyhow!("Received empty optimized prompt from AI")),
+            false => {}
         }
 
         profiles[pos].system_prompt = clean_prompt.clone();
@@ -120,20 +121,25 @@ impl Tool for OptimizeSubagentTool {
 }
 
 pub(crate) fn parse_subagent_settings(arguments: &Value) -> Result<Vec<String>> {
-    let Some(value) = arguments.get("fallbacks") else {
-        return Ok(Vec::new());
+    let value = match arguments.get("fallbacks") {
+        Some(v) => v,
+        None => return Ok(Vec::new()),
     };
-    if value.is_null() {
-        return Ok(Vec::new());
+    match value.is_null() {
+        true => return Ok(Vec::new()),
+        false => {}
     }
     let array = value
         .as_array()
         .ok_or_else(|| anyhow!("fallbacks must be an array of model names"))?;
-    if array.len() > crate::subagents::MAX_SUBAGENT_FALLBACKS {
-        return Err(anyhow!(
-            "a subagent may have at most {} fallback models",
-            crate::subagents::MAX_SUBAGENT_FALLBACKS
-        ));
+    match array.len() > crate::subagents::MAX_SUBAGENT_FALLBACKS {
+        true => {
+            return Err(anyhow!(
+                "a subagent may have at most {} fallback models",
+                crate::subagents::MAX_SUBAGENT_FALLBACKS
+            ));
+        }
+        false => {}
     }
     let mut result = Vec::new();
     for value in array {
@@ -142,11 +148,12 @@ pub(crate) fn parse_subagent_settings(arguments: &Value) -> Result<Vec<String>> 
             .map(str::trim)
             .filter(|model| !model.is_empty())
             .ok_or_else(|| anyhow!("fallbacks must contain only non-empty model names"))?;
-        if !result
+        match !result
             .iter()
             .any(|existing: &String| existing.eq_ignore_ascii_case(model))
         {
-            result.push(model.to_string());
+            true => result.push(model.to_string()),
+            false => {}
         }
     }
     Ok(result)
@@ -158,9 +165,7 @@ pub(crate) fn validate_subagent_models(
     fallbacks: &[String],
 ) -> Result<()> {
     let mut candidates = Vec::new();
-    if let Some(model) = model.map(str::trim).filter(|model| !model.is_empty()) {
-        candidates.push(model);
-    }
+    candidates.extend(model.map(str::trim).filter(|model| !model.is_empty()));
     candidates.extend(fallbacks.iter().map(String::as_str));
     for candidate in candidates {
         crate::tools::subagent::build_provider_for_model(config, candidate)
@@ -203,10 +208,9 @@ impl Tool for UpdateSubagentSettingsTool {
         .ok_or_else(|| anyhow!("Missing 'name' argument"))?;
         let mut profiles = crate::subagents::load_profiles()?;
         let requested_model = arguments.get("model").and_then(Value::as_str);
-        let requested_fallbacks = if arguments.get("fallbacks").is_some() {
-            parse_subagent_settings(arguments)?
-        } else {
-            Vec::new()
+        let requested_fallbacks = match arguments.get("fallbacks").is_some() {
+            true => parse_subagent_settings(arguments)?,
+            false => Vec::new(),
         };
         validate_subagent_models(&self.config, requested_model, &requested_fallbacks)?;
         let (model, fallbacks) = {
@@ -215,16 +219,22 @@ impl Tool for UpdateSubagentSettingsTool {
                 .find(|profile| profile.name == name)
                 .ok_or_else(|| anyhow!("Subagent profile {} not found", name))?;
 
-            if let Some(model) = arguments.get("model") {
-                profile.model = model
-                    .as_str()
-                    .map(str::trim)
-                    .filter(|model| !model.is_empty())
-                    .map(ToOwned::to_owned);
+            match arguments.get("model") {
+                Some(model) => {
+                    profile.model = model
+                        .as_str()
+                        .map(str::trim)
+                        .filter(|model| !model.is_empty())
+                        .map(ToOwned::to_owned);
+                }
+                None => {}
             }
-            if arguments.get("fallbacks").is_some() {
-                let fallbacks = parse_subagent_settings(arguments)?;
-                profile.fallbacks = (!fallbacks.is_empty()).then_some(fallbacks);
+            match arguments.get("fallbacks").is_some() {
+                true => {
+                    let fallbacks = parse_subagent_settings(arguments)?;
+                    profile.fallbacks = (!fallbacks.is_empty()).then_some(fallbacks);
+                }
+                false => {}
             }
             (profile.model.clone(), profile.fallbacks.clone())
         };
@@ -297,37 +307,38 @@ impl Tool for CreateSubagentTool {
         .ok_or_else(|| anyhow!("Missing 'system_prompt' argument"))?;
         let model = super::extract_string_arg(arguments, &["model", "model_name"]);
 
-        let mut fallbacks = Vec::new();
-        if let Some(arr) = arguments.get("fallbacks").and_then(|v| v.as_array()) {
-            for v in arr {
-                if let Some(s) = v.as_str() {
-                    let s_trimmed = s.trim().to_string();
-                    if !s_trimmed.is_empty() {
-                        fallbacks.push(s_trimmed);
-                    }
-                }
-            }
-        }
-        let fallbacks_opt = if fallbacks.is_empty() {
-            None
-        } else {
-            Some(fallbacks)
-        };
+        let fallbacks: Vec<String> = arguments
+            .get("fallbacks")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|v| {
+                v.as_str()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            })
+            .collect();
+        let fallbacks_opt = (!fallbacks.is_empty()).then_some(fallbacks);
 
         // Validate name format: starts with a letter, lowercase alphanumeric and underscore only
-        if !name.starts_with(|c: char| c.is_ascii_alphabetic())
+        let invalid_name = !name.starts_with(|c: char| c.is_ascii_alphabetic())
             || name
                 .chars()
-                .any(|c| !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '_')
-        {
-            return Err(anyhow!(
-                "Subagent name must start with a letter and contain only lowercase alphanumeric characters and underscores."
-            ));
+                .any(|c| !c.is_ascii_lowercase() && !c.is_ascii_digit() && c != '_');
+        match invalid_name {
+            true => {
+                return Err(anyhow!(
+                    "Subagent name must start with a letter and contain only lowercase alphanumeric characters and underscores."
+                ));
+            }
+            false => {}
         }
 
         // Do not allow overwriting default subagents
-        if crate::subagents::is_default_subagent(&name) {
-            return Err(anyhow!("Cannot overwrite default subagent '{}'", name));
+        match crate::subagents::is_default_subagent(&name) {
+            true => return Err(anyhow!("Cannot overwrite default subagent '{}'", name)),
+            false => {}
         }
 
         let mut profiles = crate::subagents::load_profiles()?;
@@ -340,10 +351,9 @@ impl Tool for CreateSubagentTool {
             extra: serde_json::Map::new(),
         };
 
-        if let Some(pos) = profiles.iter().position(|p| p.name == name) {
-            profiles[pos] = profile;
-        } else {
-            profiles.push(profile);
+        match profiles.iter().position(|p| p.name == name) {
+            Some(pos) => profiles[pos] = profile,
+            None => profiles.push(profile),
         }
 
         crate::subagents::save_profiles(&profiles)?;
@@ -391,8 +401,9 @@ impl Tool for DeleteSubagentTool {
         let name = super::extract_string_arg(arguments, &["name", "subagent_name"])
             .ok_or_else(|| anyhow!("Missing 'name' argument"))?;
 
-        if crate::subagents::is_default_subagent(&name) {
-            return Err(anyhow!("Cannot delete default subagent '{}'", name));
+        match crate::subagents::is_default_subagent(&name) {
+            true => return Err(anyhow!("Cannot delete default subagent '{}'", name)),
+            false => {}
         }
 
         let mut profiles = crate::subagents::load_profiles()?;

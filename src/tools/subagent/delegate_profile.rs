@@ -69,24 +69,33 @@ impl Tool for DelegateProfileTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         crate::agent::style::spinner::IS_SILENT.scope(crate::agent::style::is_silent(), async {
-        if let Some(policy) = &self.capability_policy {
-            let metadata = super::subagent_tool_metadata(&self.profile.name);
-            if !crate::tools::orchestrator::tool_allowed_by_policy_with_metadata(
-                &self.profile.name,
-                &metadata,
-                policy,
-            ) {
-                return Err(anyhow!(
-                    "Subagent profile '{}' is blocked by orchestrator capability policy",
-                    self.profile.name
-                ));
+        match &self.capability_policy {
+            Some(policy) => {
+                let metadata = super::subagent_tool_metadata(&self.profile.name);
+                match crate::tools::orchestrator::tool_allowed_by_policy_with_metadata(
+                    &self.profile.name,
+                    &metadata,
+                    policy,
+                ) {
+                    true => {}
+                    false => {
+                        return Err(anyhow!(
+                            "Subagent profile '{}' is blocked by orchestrator capability policy",
+                            self.profile.name
+                        ));
+                    }
+                }
             }
+            None => {}
         }
 
         let current_depth = DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
-        if current_depth >= 3 {
-            crate::tui_println!("{}⚠️ Delegation depth limit reached ({}). Aborting nested subagent '{}'.{}", AURA_GOLD, current_depth, self.profile.name, COLOR_RESET);
-            return Err(anyhow!("Delegation limit reached. Max nesting depth is 3."));
+        match current_depth >= 3 {
+            true => {
+                crate::tui_println!("{}⚠️ Delegation depth limit reached ({}). Aborting nested subagent '{}'.{}", AURA_GOLD, current_depth, self.profile.name, COLOR_RESET);
+                return Err(anyhow!("Delegation limit reached. Max nesting depth is 3."));
+            }
+            false => {}
         }
 
         let goal = super::extract_string_arg(
@@ -121,9 +130,7 @@ impl Tool for DelegateProfileTool {
             json_schema.as_ref(),
         );
 
-        let is_reviewer = self.profile.name == "reviewer";
-        let is_vision = self.profile.name == "vision_agent";
-        let is_vision_profile = is_vision;
+        let is_vision_profile = self.profile.name == "vision_agent";
         let formatted_name = format_subagent_name(&self.profile.name);
         let mut last_error = None;
         let filesystem_write_denied = super::filesystem_write_denied_by_policy(&self.capability_policy);
@@ -140,40 +147,48 @@ impl Tool for DelegateProfileTool {
         let _worktree_guard = WorktreeGuard::new(parent_dir.clone(), workspace_dir.clone());
 
         for (idx, model_name) in models_to_try.iter().enumerate() {
-            if self.cancellation_token.is_cancelled() {
-                return Ok(cancellation_result_json(
-                    "delegate_profile",
-                    Some(&self.profile.name),
-                    &child_session_id,
-                    model_name,
-                    "Subagent task cancelled",
-                ));
+            match self.cancellation_token.is_cancelled() {
+                true => {
+                    return Ok(cancellation_result_json(
+                        "delegate_profile",
+                        Some(&self.profile.name),
+                        &child_session_id,
+                        model_name,
+                        "Subagent task cancelled",
+                    ));
+                }
+                false => {}
             }
 
             // For vision_agent, skip models that don't support vision to avoid wasting fallbacks
-            if is_vision_profile && !crate::providers::model_supports_vision(model_name) {
-                crate::tui_println!("{}▲ Skipping non-vision model '{}' for vision task{}", AURA_GOLD, model_name, COLOR_RESET);
-                continue;
+            match is_vision_profile && !crate::providers::model_supports_vision(model_name) {
+                true => {
+                    crate::tui_println!("{}▲ Skipping non-vision model '{}' for vision task{}", AURA_GOLD, model_name, COLOR_RESET);
+                    continue;
+                }
+                false => {}
             }
 
-            if idx > 0 {
-                let fallback_status = SubagentRunStatus::Fallback {
-                    model: model_name.clone(),
-                    attempt: idx,
-                    total: models_to_try.len() - 1,
-                };
-                crate::tui_println!(
-                    "{}▲ Primary model failed. Trying {}{}",
-                    AURA_GOLD,
-                    fallback_status.label(),
-                    COLOR_RESET
-                );
+            match idx > 0 {
+                true => {
+                    let fallback_status = SubagentRunStatus::Fallback {
+                        model: model_name.clone(),
+                        attempt: idx,
+                        total: models_to_try.len() - 1,
+                    };
+                    crate::tui_println!(
+                        "{}▲ Primary model failed. Trying {}{}",
+                        AURA_GOLD,
+                        fallback_status.label(),
+                        COLOR_RESET
+                    );
+                }
+                false => {}
             }
 
-            let provider = if std::env::var("OPENZ_USE_MOCK_PROVIDER").is_ok() {
-                self.parent_provider.clone()
-            } else {
-                match build_provider_for_model(&self.config, model_name) {
+            let provider = match std::env::var("OPENZ_USE_MOCK_PROVIDER").is_ok() {
+                true => self.parent_provider.clone(),
+                false => match build_provider_for_model(&self.config, model_name) {
                     Ok(p) => p,
                     Err(e) => {
                         let error_text = e.to_string();
@@ -181,7 +196,7 @@ impl Tool for DelegateProfileTool {
                         last_error = Some(e);
                         continue;
                     }
-                }
+                },
             };
 
             let filtered_parent_tools = super::allowlist::filter_tools_for_profile(&self.profile, &self.parent_tools);
@@ -226,30 +241,31 @@ impl Tool for DelegateProfileTool {
                 self.session_manager.clone(),
             );
 
-            let label = if is_reviewer {
-                "Reviewer".to_string()
-            } else if is_vision {
-                "Vision Agent".to_string()
-            } else {
-                formatted_name.clone()
+            let label = match self.profile.name.as_str() {
+                "reviewer" => "Reviewer".to_string(),
+                "vision_agent" => "Vision Agent".to_string(),
+                _ => formatted_name.clone(),
             };
 
-            if !crate::agent::style::is_silent() {
-                let prefix = crate::agent::style::get_tree_prefix(false);
-                crate::tui_println!(
-                    "{}{}{}◎ {}{}{} {}{}subagent{} {}using {}{}",
-                    AURA_SLATE, prefix, COLOR_RESET,
-                    AURA_PURPLE, COLOR_BOLD, label, COLOR_RESET,
-                    AURA_SLATE, COLOR_RESET,
-                    AURA_SLATE, model_name, COLOR_RESET
-                );
+            match !crate::agent::style::is_silent() {
+                true => {
+                    let prefix = crate::agent::style::get_tree_prefix(false);
+                    crate::tui_println!(
+                        "{}{}{}◎ {}{}{} {}{}subagent{} {}using {}{}",
+                        AURA_SLATE, prefix, COLOR_RESET,
+                        AURA_PURPLE, COLOR_BOLD, label, COLOR_RESET,
+                        AURA_SLATE, COLOR_RESET,
+                        AURA_SLATE, model_name, COLOR_RESET
+                    );
 
-                let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                let status_text = get_status_from_goal(&goal);
-                crate::tui_println!(
-                    "{}{}{}{}",
-                    AURA_SLATE, leaf_prefix, status_text, COLOR_RESET
-                );
+                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                    let status_text = get_status_from_goal(&goal);
+                    crate::tui_println!(
+                        "{}{}{}{}",
+                        AURA_SLATE, leaf_prefix, status_text, COLOR_RESET
+                    );
+                }
+                false => {}
             }
 
             let spinner_msg = format!("{}{}{}Running...{}", AURA_SLATE, crate::agent::style::get_tree_prefix(true), AURA_SLATE, COLOR_RESET);

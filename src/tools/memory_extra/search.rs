@@ -142,19 +142,20 @@ impl Tool for RetrieveSharedTeamMemoryTool {
                 let target_agents: Vec<String> =
                     serde_json::from_str(&targets_json).unwrap_or_default();
 
-                if agent_id.is_empty()
+                match agent_id.is_empty()
                     || target_agents.contains(&agent_id.to_string())
                     || target_agents.contains(&"*".to_string())
                     || source_agent == agent_id
                 {
-                    results.push(json!({
+                    true => results.push(json!({
                         "key": key,
                         "value": value,
                         "sourceAgent": source_agent,
                         "targetAgents": target_agents,
                         "importance": importance,
                         "timestamp": timestamp,
-                    }));
+                    })),
+                    false => {}
                 }
             }
             Ok(results)
@@ -176,17 +177,15 @@ pub(crate) fn query_fts5(
 ) -> Result<Vec<Value>> {
     let clean_query: String = query
         .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c.is_whitespace() {
-                c
-            } else {
-                ' '
-            }
+        .map(|c| match c.is_alphanumeric() || c.is_whitespace() {
+            true => c,
+            false => ' ',
         })
         .collect();
     let words: Vec<&str> = clean_query.split_whitespace().collect();
-    if words.is_empty() {
-        return Ok(Vec::new());
+    match words.is_empty() {
+        true => return Ok(Vec::new()),
+        false => {}
     }
     let match_query = words
         .iter()
@@ -313,11 +312,10 @@ pub(crate) fn text_similarity(a: &str, b: &str) -> f64 {
     let b_lower = b.to_lowercase();
     let a_words: Vec<&str> = a_lower.split_whitespace().collect();
     let b_words: Vec<&str> = b_lower.split_whitespace().collect();
-    if a_words.is_empty() && b_words.is_empty() {
-        return 1.0;
-    }
-    if a_words.is_empty() || b_words.is_empty() {
-        return 0.0;
+    match (a_words.is_empty(), b_words.is_empty()) {
+        (true, true) => return 1.0,
+        (true, false) | (false, true) => return 0.0,
+        (false, false) => {}
     }
 
     let a_set: std::collections::HashSet<&&str> = a_words.iter().collect();
@@ -325,10 +323,9 @@ pub(crate) fn text_similarity(a: &str, b: &str) -> f64 {
 
     let intersection = a_set.intersection(&b_set).count();
     let union = a_set.union(&b_set).count();
-    if union == 0 {
-        0.0
-    } else {
-        intersection as f64 / union as f64
+    match union == 0 {
+        true => 0.0,
+        false => intersection as f64 / union as f64,
     }
 }
 

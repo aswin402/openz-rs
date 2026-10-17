@@ -205,10 +205,9 @@ async fn test_memory_stats_counts_session_skills_and_working_layers() {
     assert!(stats["totalActive"].as_i64().unwrap() >= 3);
 
     let _ = std::fs::remove_dir_all(&config_dir);
-    if let Some(prev) = previous_config_dir {
-        std::env::set_var("OPENZ_CONFIG_DIR", prev);
-    } else {
-        std::env::remove_var("OPENZ_CONFIG_DIR");
+    match previous_config_dir {
+        Some(prev) => std::env::set_var("OPENZ_CONFIG_DIR", prev),
+        None => std::env::remove_var("OPENZ_CONFIG_DIR"),
     }
 }
 

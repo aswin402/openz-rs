@@ -175,28 +175,32 @@ impl Tool for RetrieveEpisodicReflectionsTool {
         let (uid, sid, aid) = scope_from_args(arguments);
 
         let results = with_db(|conn| {
-            let sql = if query.is_empty() {
-                "SELECT id, task_description, status, attempt_number, steps_taken, error_encountered, root_cause, solution_applied, reflection, created_at
-                 FROM reflection_memory
-                 WHERE (?1 IS NULL OR user_id = ?1 OR user_id = '*')
-                   AND (?2 IS NULL OR session_id = ?2 OR session_id = '*')
-                   AND (?3 IS NULL OR agent_id = ?3 OR agent_id = '*')
-                 ORDER BY created_at DESC"
-            } else {
-                "SELECT id, task_description, status, attempt_number, steps_taken, error_encountered, root_cause, solution_applied, reflection, created_at
-                 FROM reflection_memory
-                 WHERE (task_description LIKE ?1 OR reflection LIKE ?1 OR root_cause LIKE ?1)
-                   AND (?2 IS NULL OR user_id = ?2 OR user_id = '*')
-                   AND (?3 IS NULL OR session_id = ?3 OR session_id = '*')
-                   AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')
-                 ORDER BY created_at DESC"
+            let sql = match query.is_empty() {
+                true => {
+                    "SELECT id, task_description, status, attempt_number, steps_taken, error_encountered, root_cause, solution_applied, reflection, created_at
+                     FROM reflection_memory
+                     WHERE (?1 IS NULL OR user_id = ?1 OR user_id = '*')
+                       AND (?2 IS NULL OR session_id = ?2 OR session_id = '*')
+                       AND (?3 IS NULL OR agent_id = ?3 OR agent_id = '*')
+                     ORDER BY created_at DESC"
+                }
+                false => {
+                    "SELECT id, task_description, status, attempt_number, steps_taken, error_encountered, root_cause, solution_applied, reflection, created_at
+                     FROM reflection_memory
+                     WHERE (task_description LIKE ?1 OR reflection LIKE ?1 OR root_cause LIKE ?1)
+                       AND (?2 IS NULL OR user_id = ?2 OR user_id = '*')
+                       AND (?3 IS NULL OR session_id = ?3 OR session_id = '*')
+                       AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')
+                     ORDER BY created_at DESC"
+                }
             };
             let mut stmt = conn.prepare(sql)?;
-            let mut rows = if query.is_empty() {
-                stmt.query(params![uid, sid, aid])?
-            } else {
-                let pattern = format!("%{}%", query);
-                stmt.query(params![pattern, uid, sid, aid])?
+            let mut rows = match query.is_empty() {
+                true => stmt.query(params![uid, sid, aid])?,
+                false => {
+                    let pattern = format!("%{}%", query);
+                    stmt.query(params![pattern, uid, sid, aid])?
+                }
             };
             let mut results = Vec::new();
             while let Some(row) = rows.next()? {
@@ -275,7 +279,6 @@ impl Tool for RecordToolPerformanceTool {
         let last_used = Utc::now().to_rfc3339();
 
         with_db(|conn| {
-            // Check if record exists
             let existing: Option<(i64, i64, f64)> = conn
                 .query_row(
                     "SELECT success_count, failure_count, average_latency FROM tool_performance
@@ -285,27 +288,31 @@ impl Tool for RecordToolPerformanceTool {
                 )
                 .ok();
 
-            if let Some((s_count, f_count, avg_lat)) = existing {
-                let new_s = s_count + success_count;
-                let new_f = f_count + failure_count;
-                let total_runs = new_s + new_f;
-                let new_lat = if total_runs > 0 {
-                    let current_total_lat = (s_count + f_count) as f64 * avg_lat;
-                    (current_total_lat + average_latency) / total_runs as f64
-                } else {
-                    0.0
-                };
-                conn.execute(
-                    "UPDATE tool_performance SET success_count = ?1, failure_count = ?2, average_latency = ?3, last_used = ?4
-                     WHERE tool_name = ?5 AND model_name = ?6 AND task_type = ?7 AND user_id = ?8 AND session_id = ?9 AND agent_id = ?10",
-                    params![new_s, new_f, new_lat, last_used, tool_name, model_name, task_type, uid, sid, aid],
-                )?;
-            } else {
-                conn.execute(
-                    "INSERT INTO tool_performance (tool_name, model_name, task_type, success_count, failure_count, average_latency, last_used, user_id, session_id, agent_id)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                    params![tool_name, model_name, task_type, success_count, failure_count, average_latency, last_used, uid, sid, aid],
-                )?;
+            match existing {
+                Some((s_count, f_count, avg_lat)) => {
+                    let new_s = s_count + success_count;
+                    let new_f = f_count + failure_count;
+                    let total_runs = new_s + new_f;
+                    let new_lat = match total_runs > 0 {
+                        true => {
+                            let current_total_lat = (s_count + f_count) as f64 * avg_lat;
+                            (current_total_lat + average_latency) / total_runs as f64
+                        }
+                        false => 0.0,
+                    };
+                    conn.execute(
+                        "UPDATE tool_performance SET success_count = ?1, failure_count = ?2, average_latency = ?3, last_used = ?4
+                         WHERE tool_name = ?5 AND model_name = ?6 AND task_type = ?7 AND user_id = ?8 AND session_id = ?9 AND agent_id = ?10",
+                        params![new_s, new_f, new_lat, last_used, tool_name, model_name, task_type, uid, sid, aid],
+                    )?;
+                }
+                None => {
+                    conn.execute(
+                        "INSERT INTO tool_performance (tool_name, model_name, task_type, success_count, failure_count, average_latency, last_used, user_id, session_id, agent_id)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                        params![tool_name, model_name, task_type, success_count, failure_count, average_latency, last_used, uid, sid, aid],
+                    )?;
+                }
             }
             Ok(())
         })?;

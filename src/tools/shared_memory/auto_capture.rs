@@ -1,5 +1,4 @@
 use anyhow::Result;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -21,11 +20,50 @@ struct SourceCandidate {
     trust: f64,
 }
 
-fn url_regex() -> &'static Regex {
-    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    RE.get_or_init(|| {
-        Regex::new(r#"https?://[^\s\]\)>'\"}]+"#).expect("static url regex must compile")
-    })
+fn is_url_terminator(c: char) -> bool {
+    c.is_whitespace() || matches!(c, ']' | ')' | '>' | '\'' | '"' | '}')
+}
+
+fn extract_urls(text: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let next_http = rest.find("http://");
+        let next_https = rest.find("https://");
+        let start = match (next_http, next_https) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+        match start {
+            Some(idx) => {
+                let after_start = &rest[idx..];
+                let scheme_len = match after_start.starts_with("https://") {
+                    true => 8,
+                    false => 7,
+                };
+                let body = &after_start[scheme_len..];
+                let body_len = body.find(is_url_terminator).unwrap_or(body.len());
+                let total_len = scheme_len + body_len;
+                match body_len > 0 {
+                    true => out.push(&after_start[..total_len]),
+                    false => {}
+                }
+                rest = &after_start[total_len.max(scheme_len)..];
+            }
+            None => break,
+        }
+    }
+    out
+}
+
+fn first_url(text: &str) -> Option<&str> {
+    extract_urls(text).into_iter().next()
+}
+
+fn has_url(text: &str) -> bool {
+    !extract_urls(text).is_empty()
 }
 
 fn is_research_tool(tool_name: &str) -> bool {
@@ -53,13 +91,13 @@ fn first_str<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
 
 pub fn canonical_research_topic(raw: &str) -> String {
     let mut text = raw.trim().to_lowercase();
-    let parse_target = url_regex()
-        .find(&text)
-        .map(|m| m.as_str())
-        .unwrap_or(text.as_str());
-    if let Ok(parsed) = reqwest::Url::parse(parse_target) {
-        if let Some(host) = parsed.host_str() {
-            let host = host.trim_start_matches("www.");
+    let parse_target = first_url(&text).unwrap_or(text.as_str());
+    let parsed_host = reqwest::Url::parse(parse_target).ok().and_then(|parsed| {
+        let host = parsed.host_str()?.trim_start_matches("www.").to_string();
+        Some((host, parsed))
+    });
+    match parsed_host {
+        Some((host, parsed)) => {
             let path_parts = parsed
                 .path()
                 .trim_matches('/')
@@ -74,16 +112,18 @@ pub fn canonical_research_topic(raw: &str) -> String {
                 .map(str::trim)
                 .filter(|part| !part.is_empty())
                 .map(|part| part.trim_end_matches(".html"));
-            text = if host == "github.com" || host == "raw.githubusercontent.com" {
-                path_parts.into_iter().take(2).collect::<Vec<_>>().join("/")
-            } else if path_parts.is_empty() {
-                fragment_part
+            text = match (
+                host == "github.com" || host == "raw.githubusercontent.com",
+                path_parts.is_empty(),
+            ) {
+                (true, _) => path_parts.into_iter().take(2).collect::<Vec<_>>().join("/"),
+                (false, true) => fragment_part
                     .map(|fragment| format!("{host}/{fragment}"))
-                    .unwrap_or_else(|| host.to_string())
-            } else {
-                format!("{}/{}", host, path_parts.join("/"))
+                    .unwrap_or(host),
+                (false, false) => format!("{}/{}", host, path_parts.join("/")),
             };
         }
+        None => {}
     }
     text = text
         .replace("%20", " ")
@@ -122,12 +162,14 @@ pub fn canonical_research_topic(raw: &str) -> String {
             "search ",
             "compare ",
         ] {
-            if let Some(rest) = text.strip_prefix(prefix) {
-                text = rest.trim().to_string();
+            match text.strip_prefix(prefix) {
+                Some(rest) => text = rest.trim().to_string(),
+                None => {}
             }
         }
-        if text == before {
-            break;
+        match text == before {
+            true => break,
+            false => {}
         }
     }
     let stop = [
@@ -138,31 +180,31 @@ pub fn canonical_research_topic(raw: &str) -> String {
         .filter(|w| !w.is_empty() && !stop.contains(w))
         .take(8)
         .collect::<Vec<_>>();
-    if words.is_empty() {
-        raw.trim().chars().take(160).collect()
-    } else if words.contains(&"rust") {
-        const KNOWN_RUST_CRATES: &[&str] = &[
-            "tokio",
-            "axum",
-            "hyper",
-            "tonic",
-            "serde",
-            "reqwest",
-            "clap",
-            "tracing",
-            "rusqlite",
-            "tantivy",
-            "crossterm",
-            "ratatui",
-            "bevy",
-        ];
-        KNOWN_RUST_CRATES
-            .iter()
-            .find(|crate_name| words.iter().any(|word| *word == **crate_name))
-            .map(|crate_name| format!("rust/{crate_name}"))
-            .unwrap_or_else(|| words.join(" ").chars().take(160).collect())
-    } else {
-        words.join(" ").chars().take(160).collect()
+    match (words.is_empty(), words.contains(&"rust")) {
+        (true, _) => raw.trim().chars().take(160).collect(),
+        (false, true) => {
+            const KNOWN_RUST_CRATES: &[&str] = &[
+                "tokio",
+                "axum",
+                "hyper",
+                "tonic",
+                "serde",
+                "reqwest",
+                "clap",
+                "tracing",
+                "rusqlite",
+                "tantivy",
+                "crossterm",
+                "ratatui",
+                "bevy",
+            ];
+            KNOWN_RUST_CRATES
+                .iter()
+                .find(|crate_name| words.iter().any(|word| *word == **crate_name))
+                .map(|crate_name| format!("rust/{crate_name}"))
+                .unwrap_or_else(|| words.join(" ").chars().take(160).collect())
+        }
+        (false, false) => words.join(" ").chars().take(160).collect(),
     }
 }
 
@@ -232,11 +274,13 @@ fn is_research_worthy_user_content(text: &str) -> bool {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    if normalized.trim().is_empty() {
-        return false;
+    match normalized.trim().is_empty() {
+        true => return false,
+        false => {}
     }
-    if url_regex().is_match(&normalized) {
-        return true;
+    match has_url(&normalized) {
+        true => return true,
+        false => {}
     }
     let explicit_research = [
         "research",
@@ -263,8 +307,9 @@ fn is_research_worthy_user_content(text: &str) -> bool {
     ]
     .iter()
     .any(|needle| normalized.contains(needle));
-    if explicit_research {
-        return true;
+    match explicit_research {
+        true => return true,
+        false => {}
     }
     let definition_query = [
         "what is ",
@@ -285,8 +330,9 @@ fn is_refresh_only_user_content(text: &str) -> bool {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    if !url_regex().is_match(&normalized) {
-        return false;
+    match has_url(&normalized) {
+        false => return false,
+        true => {}
     }
     let asks_refresh = [
         "again",
@@ -317,44 +363,49 @@ fn is_refresh_only_user_content(text: &str) -> bool {
 }
 
 fn topic_from(tool_name: &str, args: &Value, user_content: &str) -> String {
-    if let Some(topic) = first_str(
+    match first_str(
         args,
         &["query", "topic", "goal", "url", "repo", "repository"],
     ) {
-        return canonical_research_topic(topic);
+        Some(topic) => return canonical_research_topic(topic),
+        None => {}
     }
-    if tool_name == "parallel_research" {
-        if let Some(tasks) = args.get("tasks").and_then(|v| v.as_array()) {
-            let joined = tasks
-                .iter()
-                .filter_map(|task| task.get("goal").and_then(|v| v.as_str()))
-                .take(3)
-                .collect::<Vec<_>>()
-                .join("; ");
-            if !joined.trim().is_empty() {
-                return canonical_research_topic(&joined);
+    match tool_name == "parallel_research" {
+        true => match args.get("tasks").and_then(|v| v.as_array()) {
+            Some(tasks) => {
+                let joined = tasks
+                    .iter()
+                    .filter_map(|task| task.get("goal").and_then(|v| v.as_str()))
+                    .take(3)
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                match joined.trim().is_empty() {
+                    false => return canonical_research_topic(&joined),
+                    true => {}
+                }
             }
-        }
+            None => {}
+        },
+        false => {}
     }
     canonical_research_topic(user_content)
 }
 
 fn kind_for_url(url: &str) -> (&'static str, f64) {
     let lower = url.to_lowercase();
-    if lower.contains("github.com") || lower.contains("gitlab.com") {
-        ("repo", 0.85)
-    } else if lower.contains("/docs") || lower.contains("docs.") || lower.contains("documentation")
-    {
-        ("docs", 0.8)
-    } else if lower.contains("twitter.com")
+    let is_repo = lower.contains("github.com") || lower.contains("gitlab.com");
+    let is_docs =
+        lower.contains("/docs") || lower.contains("docs.") || lower.contains("documentation");
+    let is_social = lower.contains("twitter.com")
         || lower.contains("x.com")
         || lower.contains("reddit.com")
         || lower.contains("youtube.com")
-        || lower.contains("linkedin.com")
-    {
-        ("social", 0.55)
-    } else {
-        ("website", 0.65)
+        || lower.contains("linkedin.com");
+    match (is_repo, is_docs, is_social) {
+        (true, _, _) => ("repo", 0.85),
+        (false, true, _) => ("docs", 0.8),
+        (false, false, true) => ("social", 0.55),
+        (false, false, false) => ("website", 0.65),
     }
 }
 
@@ -367,44 +418,45 @@ fn label_for_url(url: &str) -> String {
                 .path_segments()
                 .map(|segments| segments.collect::<Vec<_>>())
                 .unwrap_or_default();
-            if host == "github.com" && parts.len() >= 2 {
-                let repo = format!("{}/{}", parts[0], parts[1]);
-                return match parts.get(2).copied() {
-                    Some("issues") => parts
-                        .get(3)
-                        .map(|num| format!("{repo} issue #{num}"))
-                        .or_else(|| Some(format!("{repo} issues"))),
-                    Some("pull") => parts
-                        .get(3)
-                        .map(|num| format!("{repo} PR #{num}"))
-                        .or_else(|| Some(format!("{repo} pull requests"))),
-                    Some("blob" | "tree") => {
-                        if parts.len() > 4 {
-                            Some(format!("{repo} {}", parts[4..].join("/")))
-                        } else {
-                            Some(repo)
-                        }
-                    }
-                    _ => Some(repo),
-                };
-            }
-            if host == "raw.githubusercontent.com" && parts.len() >= 2 {
-                let repo = format!("{}/{}", parts[0], parts[1]);
-                if parts.len() > 3 {
-                    return Some(format!("{repo} {}", parts[3..].join("/")));
+            match (host, parts.len() >= 2) {
+                ("github.com", true) => {
+                    let repo = format!("{}/{}", parts[0], parts[1]);
+                    return match parts.get(2).copied() {
+                        Some("issues") => parts
+                            .get(3)
+                            .map(|num| format!("{repo} issue #{num}"))
+                            .or_else(|| Some(format!("{repo} issues"))),
+                        Some("pull") => parts
+                            .get(3)
+                            .map(|num| format!("{repo} PR #{num}"))
+                            .or_else(|| Some(format!("{repo} pull requests"))),
+                        Some("blob" | "tree") => match parts.len() > 4 {
+                            true => Some(format!("{repo} {}", parts[4..].join("/"))),
+                            false => Some(repo),
+                        },
+                        _ => Some(repo),
+                    };
                 }
-                return Some(repo);
+                ("raw.githubusercontent.com", true) => {
+                    let repo = format!("{}/{}", parts[0], parts[1]);
+                    return match parts.len() > 3 {
+                        true => Some(format!("{repo} {}", parts[3..].join("/"))),
+                        false => Some(repo),
+                    };
+                }
+                _ => {}
             }
             let path = parsed.path().trim_matches('/');
-            if path.is_empty() {
-                Some(host.to_string())
-            } else {
-                let last = path
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(path)
-                    .replace(['-', '_'], " ");
-                Some(format!("{} - {}", host, last))
+            match path.is_empty() {
+                true => Some(host.to_string()),
+                false => {
+                    let last = path
+                        .rsplit('/')
+                        .next()
+                        .unwrap_or(path)
+                        .replace(['-', '_'], " ");
+                    Some(format!("{} - {}", host, last))
+                }
             }
         })
         .unwrap_or_else(|| url.chars().take(80).collect())
@@ -452,17 +504,17 @@ fn is_navigation_noise(text: &str) -> bool {
 fn trim_leading_noise_to_definition(text: &str) -> String {
     let cleaned = clean_text(text);
     let lower = cleaned.to_lowercase();
-    for marker in [" is ", " are ", " was ", " built "] {
-        if let Some(idx) = lower.find(marker) {
+    [" is ", " are ", " was ", " built "]
+        .into_iter()
+        .find_map(|marker| {
+            let idx = lower.find(marker)?;
             let prefix = &cleaned[..idx];
             let start = prefix.rfind(' ').map(|pos| pos + 1).unwrap_or(0);
             let trimmed = cleaned[start..].trim();
-            if trimmed.chars().filter(|c| c.is_alphabetic()).count() >= 40 {
-                return trimmed.to_string();
-            }
-        }
-    }
-    cleaned
+            (trimmed.chars().filter(|c| c.is_alphabetic()).count() >= 40)
+                .then(|| trimmed.to_string())
+        })
+        .unwrap_or(cleaned)
 }
 
 fn sentence_chunks(text: &str) -> Vec<String> {
@@ -476,8 +528,7 @@ fn sentence_chunks(text: &str) -> Vec<String> {
 
 fn signal_score(text: &str) -> i32 {
     let lower = text.to_lowercase();
-    let mut score = 0;
-    for term in [
+    let term_hits = [
         " is ",
         " built",
         " open-source",
@@ -490,15 +541,15 @@ fn signal_score(text: &str) -> i32 {
         " privacy",
         " rust",
         " typescript",
-    ] {
-        if lower.contains(term) {
-            score += 2;
-        }
-    }
-    if is_navigation_noise(text) {
-        score -= 10;
-    }
-    score
+    ]
+    .into_iter()
+    .filter(|term| lower.contains(term))
+    .count() as i32;
+    let penalty = match is_navigation_noise(text) {
+        true => 10,
+        false => 0,
+    };
+    term_hits * 2 - penalty
 }
 
 fn signal_excerpt(text: &str, max_chars: usize) -> String {
@@ -506,26 +557,27 @@ fn signal_excerpt(text: &str, max_chars: usize) -> String {
     chunks.sort_by_key(|b| std::cmp::Reverse(signal_score(b)));
     let mut out = Vec::new();
     for chunk in chunks.into_iter().filter(|c| signal_score(c) > 0) {
-        if out.iter().any(|existing: &String| existing == &chunk) {
-            continue;
+        match out.iter().any(|existing: &String| existing == &chunk) {
+            true => continue,
+            false => {}
         }
-        let candidate = if out.is_empty() {
-            chunk.clone()
-        } else {
-            format!("{}. {}", out.join(". "), chunk)
+        let candidate = match out.is_empty() {
+            true => chunk.clone(),
+            false => format!("{}. {}", out.join(". "), chunk),
         };
-        if candidate.chars().count() > max_chars {
-            break;
+        match candidate.chars().count() > max_chars {
+            true => break,
+            false => {}
         }
         out.push(chunk);
-        if out.len() >= 3 {
-            break;
+        match out.len() >= 3 {
+            true => break,
+            false => {}
         }
     }
-    if out.is_empty() {
-        text_excerpt(text, max_chars)
-    } else {
-        out.join(". ")
+    match out.is_empty() {
+        true => text_excerpt(text, max_chars),
+        false => out.join(". "),
     }
 }
 
@@ -535,10 +587,8 @@ fn object_str<'a>(obj: &'a serde_json::Map<String, Value>, keys: &[&str]) -> Opt
 }
 
 fn candidate_from_object(obj: &serde_json::Map<String, Value>) -> Option<SourceCandidate> {
-    let url = object_str(obj, &["url", "uri", "link", "href", "source"])?;
-    if !url.starts_with("http://") && !url.starts_with("https://") {
-        return None;
-    }
+    let url = object_str(obj, &["url", "uri", "link", "href", "source"])
+        .filter(|u| u.starts_with("http://") || u.starts_with("https://"))?;
     let label = object_str(obj, &["title", "name", "label"])
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -562,8 +612,9 @@ fn candidate_from_object(obj: &serde_json::Map<String, Value>) -> Option<SourceC
 fn collect_candidates(value: &Value, out: &mut Vec<SourceCandidate>) {
     match value {
         Value::Object(map) => {
-            if let Some(candidate) = candidate_from_object(map) {
-                out.push(candidate);
+            match candidate_from_object(map) {
+                Some(candidate) => out.push(candidate),
+                None => {}
             }
             for child in map.values() {
                 collect_candidates(child, out);
@@ -575,11 +626,8 @@ fn collect_candidates(value: &Value, out: &mut Vec<SourceCandidate>) {
             }
         }
         Value::String(text) => {
-            for mat in url_regex().find_iter(text) {
-                let url = mat
-                    .as_str()
-                    .trim_end_matches(['.', ',', ';', ':'])
-                    .to_string();
+            for raw_url in extract_urls(text) {
+                let url = raw_url.trim_end_matches(['.', ',', ';', ':']).to_string();
                 let (kind, trust) = kind_for_url(&url);
                 out.push(SourceCandidate {
                     label: label_for_url(&url),
@@ -613,30 +661,19 @@ fn is_repo_url(url: &str) -> bool {
 
 fn repo_topic_from_candidates(candidates: &[SourceCandidate]) -> Option<String> {
     candidates.iter().find_map(|candidate| {
-        if !is_repo_url(&candidate.url) {
-            return None;
-        }
-        let topic = canonical_research_topic(&candidate.url);
-        if topic.contains('/') {
-            Some(topic)
-        } else {
-            None
-        }
+        is_repo_url(&candidate.url)
+            .then(|| canonical_research_topic(&candidate.url))
+            .filter(|topic| topic.contains('/'))
     })
 }
 
 async fn existing_repo_topic_for(query: &str) -> Option<String> {
     let matches = search_source_bookmarks(query, 3).await.ok()?;
     matches.into_iter().find_map(|source| {
-        if source.kind.trim().to_lowercase() != "repo" && !is_repo_url(&source.uri) {
-            return None;
-        }
-        let topic = canonical_research_topic(&source.uri);
-        if topic.contains('/') {
-            Some(topic)
-        } else {
-            None
-        }
+        let is_repo = source.kind.trim().eq_ignore_ascii_case("repo") || is_repo_url(&source.uri);
+        is_repo
+            .then(|| canonical_research_topic(&source.uri))
+            .filter(|topic| topic.contains('/'))
     })
 }
 
@@ -644,11 +681,13 @@ fn dedupe_candidates(candidates: Vec<SourceCandidate>) -> Vec<SourceCandidate> {
     let mut seen = std::collections::HashSet::new();
     let mut out = Vec::new();
     for candidate in candidates {
-        if seen.insert(candidate.url.clone()) {
-            out.push(candidate);
+        match seen.insert(candidate.url.clone()) {
+            true => out.push(candidate),
+            false => {}
         }
-        if out.len() >= 5 {
-            break;
+        match out.len() >= 5 {
+            true => break,
+            false => {}
         }
     }
     out
@@ -666,45 +705,54 @@ fn result_summary(result: &Value) -> String {
                 )
                 .unwrap_or("");
                 let url = object_str(map, &["url", "uri", "link", "href"]).unwrap_or("");
-                if !title.is_empty() || !snippet.is_empty() {
-                    let mut line = String::new();
-                    if !title.is_empty() {
-                        line.push_str(title.trim());
-                    }
-                    if !snippet.is_empty() {
-                        if !line.is_empty() {
-                            line.push_str(": ");
+                match !title.is_empty() || !snippet.is_empty() {
+                    true => {
+                        let mut line = String::new();
+                        match title.is_empty() {
+                            true => {}
+                            false => line.push_str(title.trim()),
                         }
-                        line.push_str(&signal_excerpt(snippet, 420));
+                        match snippet.is_empty() {
+                            true => {}
+                            false => {
+                                match line.is_empty() {
+                                    true => {}
+                                    false => line.push_str(": "),
+                                }
+                                line.push_str(&signal_excerpt(snippet, 420));
+                            }
+                        }
+                        match url.is_empty() {
+                            true => {}
+                            false => {
+                                line.push_str(" (");
+                                line.push_str(url);
+                                line.push(')');
+                            }
+                        }
+                        parts.push(line);
                     }
-                    if !url.is_empty() {
-                        line.push_str(" (");
-                        line.push_str(url);
-                        line.push(')');
-                    }
-                    parts.push(line);
+                    false => {}
                 }
                 for child in map.values() {
                     collect(child, parts);
                 }
             }
             Value::Array(items) => items.iter().for_each(|item| collect(item, parts)),
-            Value::String(text) => {
-                if parts.is_empty() {
-                    parts.push(signal_excerpt(text, 900));
-                }
-            }
+            Value::String(text) => match parts.is_empty() {
+                true => parts.push(signal_excerpt(text, 900)),
+                false => {}
+            },
             _ => {}
         }
     }
     collect(result, &mut parts);
-    if parts.is_empty() {
-        signal_excerpt(&serde_json::to_string(result).unwrap_or_default(), 900)
-    } else {
-        text_excerpt(
+    match parts.is_empty() {
+        true => signal_excerpt(&serde_json::to_string(result).unwrap_or_default(), 900),
+        false => text_excerpt(
             &parts.into_iter().take(8).collect::<Vec<_>>().join("; "),
             1200,
-        )
+        ),
     }
 }
 
@@ -714,15 +762,12 @@ pub async fn auto_capture_research_memory(
     result: &Value,
     user_content: &str,
 ) -> Result<Option<AutoCaptureSummary>> {
-    if !is_research_tool(tool_name)
+    let skip_tool = !is_research_tool(tool_name)
         || result.get("error").is_some()
-        || result.get("status").and_then(|v| v.as_str()) == Some("skipped")
-    {
-        return Ok(None);
-    }
-
-    if is_acquisition_or_display_user_content(user_content) {
-        return Ok(None);
+        || result.get("status").and_then(|v| v.as_str()) == Some("skipped");
+    match skip_tool || is_acquisition_or_display_user_content(user_content) {
+        true => return Ok(None),
+        false => {}
     }
 
     let user_research_worthy = is_research_worthy_user_content(user_content);
@@ -732,11 +777,10 @@ pub async fn auto_capture_research_memory(
     )
     .map(is_research_worthy_user_content)
     .unwrap_or(false);
-    if !(user_research_worthy || (user_content.trim().is_empty() && has_research_target_arg)) {
-        return Ok(None);
-    }
-    if is_refresh_only_user_content(user_content) {
-        return Ok(None);
+    let allowed = user_research_worthy || (user_content.trim().is_empty() && has_research_target_arg);
+    match !allowed || is_refresh_only_user_content(user_content) {
+        true => return Ok(None),
+        false => {}
     }
 
     let mut candidates = Vec::new();
@@ -750,32 +794,31 @@ pub async fn auto_capture_research_memory(
     // If a vague follow-up like "what is dox" is attached to a concrete repo/docs
     // URL in tool args or result candidates, preserve the canonical URL topic
     // (e.g. agent0ai/dox).
-    let topic = if user_content.trim().is_empty() {
-        topic_from(tool_name, arguments, user_content)
-    } else {
-        let user_topic = canonical_research_topic(user_content);
-        let arg_topic = topic_from(tool_name, arguments, "");
-        let existing_repo_topic = if !user_topic.contains('/') {
-            existing_repo_topic_for(&user_topic).await
-        } else {
-            None
-        };
-        if !user_topic.contains('/') {
-            candidate_repo_topic
-                .or(existing_repo_topic)
-                .or_else(|| arg_topic.contains('/').then_some(arg_topic))
-                .unwrap_or(user_topic)
-        } else {
-            user_topic
+    let topic = match user_content.trim().is_empty() {
+        true => topic_from(tool_name, arguments, user_content),
+        false => {
+            let user_topic = canonical_research_topic(user_content);
+            let arg_topic = topic_from(tool_name, arguments, "");
+            match user_topic.contains('/') {
+                true => user_topic,
+                false => {
+                    let existing_repo_topic = existing_repo_topic_for(&user_topic).await;
+                    candidate_repo_topic
+                        .or(existing_repo_topic)
+                        .or_else(|| arg_topic.contains('/').then_some(arg_topic))
+                        .unwrap_or(user_topic)
+                }
+            }
         }
     };
-    if topic.trim().is_empty() {
-        return Ok(None);
+    match topic.trim().is_empty() {
+        true => return Ok(None),
+        false => {}
     }
 
     let mut source_ids = Vec::new();
     for candidate in candidates {
-        if let Ok(saved) = add_source_bookmark(
+        match add_source_bookmark(
             &candidate.label,
             &candidate.kind,
             &candidate.url,
@@ -786,21 +829,22 @@ pub async fn auto_capture_research_memory(
         )
         .await
         {
-            source_ids.push(saved.id);
+            Ok(saved) => source_ids.push(saved.id),
+            Err(_) => {}
         }
     }
 
     let summary = result_summary(result);
-    let brief_saved = if !summary.trim().is_empty() {
-        save_research_brief(&topic, &summary, source_ids.clone(), 0.65, 0)
+    let brief_saved = match summary.trim().is_empty() {
+        true => false,
+        false => save_research_brief(&topic, &summary, source_ids.clone(), 0.65, 0)
             .await
-            .is_ok()
-    } else {
-        false
+            .is_ok(),
     };
 
-    if source_ids.is_empty() && !brief_saved {
-        return Ok(None);
+    match source_ids.is_empty() && !brief_saved {
+        true => return Ok(None),
+        false => {}
     }
 
     Ok(Some(AutoCaptureSummary {

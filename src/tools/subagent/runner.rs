@@ -16,8 +16,9 @@ pub(crate) struct CancelOnDrop {
 
 impl Drop for CancelOnDrop {
     fn drop(&mut self) {
-        if !self.completed {
-            self.token.cancel();
+        match !self.completed {
+            true => self.token.cancel(),
+            false => {}
         }
     }
 }
@@ -41,8 +42,8 @@ pub(crate) async fn create_workspace_isolation(parent_dir: &std::path::Path) -> 
     })
     .await;
     match workspace_res {
-        Ok(Ok(dir)) => {
-            if delegate_task::is_scratch_workspace(&dir) {
+        Ok(Ok(dir)) => match delegate_task::is_scratch_workspace(&dir) {
+            true => {
                 let reason = Some(format!(
                     "Active workspace '{}' is unsafe to copy; using an empty scratch workspace with no sync-back.",
                     parent_dir.display()
@@ -58,7 +59,8 @@ pub(crate) async fn create_workspace_isolation(parent_dir: &std::path::Path) -> 
                     label: "scratch_workspace".to_string(),
                     reason,
                 }
-            } else {
+            }
+            false => {
                 crate::tui_println!(
                     "{}  ✓ Isolated workspace worktree created at {:?}{}",
                     crate::agent::style::EMERALD_GREEN,
@@ -71,7 +73,7 @@ pub(crate) async fn create_workspace_isolation(parent_dir: &std::path::Path) -> 
                     reason: None,
                 }
             }
-        }
+        },
         Ok(Err(e)) => {
             let reason = e.to_string();
             crate::tui_println!(
@@ -111,26 +113,22 @@ pub(crate) async fn prepare_workspace(
     filesystem_write_denied: bool,
     needs_workspace: bool,
 ) -> WorkspaceIsolation {
-    if filesystem_write_denied {
-        return WorkspaceIsolation {
+    match (filesystem_write_denied, needs_workspace) {
+        (true, _) => WorkspaceIsolation {
             dir: parent_dir.to_path_buf(),
             label: "policy_no_filesystem_write".to_string(),
             reason: Some(
                 "Capability policy denies filesystem writes; running without workspace isolation, graph branches, or sync-back."
                     .to_string(),
             ),
-        };
-    }
-
-    if !needs_workspace {
-        return WorkspaceIsolation {
+        },
+        (false, false) => WorkspaceIsolation {
             dir: parent_dir.to_path_buf(),
             label: "not_required".to_string(),
             reason: None,
-        };
+        },
+        (false, true) => create_workspace_isolation(parent_dir).await,
     }
-
-    create_workspace_isolation(parent_dir).await
 }
 
 /// Create the temporary database branch used by subagent runs when writes are
@@ -139,15 +137,16 @@ pub(crate) async fn prepare_workspace(
 pub(crate) async fn create_simulation_branch(
     enabled: bool,
 ) -> anyhow::Result<Option<String>> {
-    if !enabled {
-        return Ok(None);
+    match enabled {
+        false => Ok(None),
+        true => {
+            let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
+            crate::tools::graph_memory::CreateDatabaseBranchTool
+                .call(&serde_json::json!({ "branchId": branch_id }))
+                .await?;
+            Ok(Some(branch_id))
+        }
     }
-
-    let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
-    crate::tools::graph_memory::CreateDatabaseBranchTool
-        .call(&serde_json::json!({ "branchId": branch_id }))
-        .await?;
-    Ok(Some(branch_id))
 }
 
 /// Finalize a temporary database branch and optionally preserve the task-level
@@ -159,33 +158,38 @@ pub(crate) async fn finish_simulation_branch(
     scratch_workspace: bool,
     announce: bool,
 ) -> anyhow::Result<()> {
-    if run_success {
-        crate::tools::graph_memory::CommitDatabaseBranchTool
-            .call(&serde_json::json!({}))
-            .await?;
-    } else {
-        crate::tools::graph_memory::RollbackDatabaseBranchTool
-            .call(&serde_json::json!({}))
-            .await?;
+    match run_success {
+        true => {
+            crate::tools::graph_memory::CommitDatabaseBranchTool
+                .call(&serde_json::json!({}))
+                .await?;
+        }
+        false => {
+            crate::tools::graph_memory::RollbackDatabaseBranchTool
+                .call(&serde_json::json!({}))
+                .await?;
+        }
     }
 
-    if announce {
-        let message = delegate_task::simulation_space_teardown_message(
-            run_success,
-            branch_id,
-            scratch_workspace,
-        );
-        let color = if run_success {
-            crate::agent::style::EMERALD_GREEN
-        } else {
-            crate::agent::style::AURA_GOLD
-        };
-        crate::tui_println!(
-            "{}  ✓ {}{}",
-            color,
-            message,
-            crate::agent::style::COLOR_RESET
-        );
+    match announce {
+        true => {
+            let message = delegate_task::simulation_space_teardown_message(
+                run_success,
+                branch_id,
+                scratch_workspace,
+            );
+            let color = match run_success {
+                true => crate::agent::style::EMERALD_GREEN,
+                false => crate::agent::style::AURA_GOLD,
+            };
+            crate::tui_println!(
+                "{}  ✓ {}{}",
+                color,
+                message,
+                crate::agent::style::COLOR_RESET
+            );
+        }
+        false => {}
     }
 
     Ok(())
@@ -197,18 +201,21 @@ pub(crate) fn attach_workspace_fields(
     workspace_isolation: &str,
     workspace_isolation_reason: &Option<String>,
 ) -> serde_json::Value {
-    if let Some(obj) = json.as_object_mut() {
-        obj.insert(
-            "workspaceIsolation".to_string(),
-            serde_json::Value::String(workspace_isolation.to_string()),
-        );
-        obj.insert(
-            "workspaceIsolationReason".to_string(),
-            workspace_isolation_reason
-                .clone()
-                .map(serde_json::Value::String)
-                .unwrap_or(serde_json::Value::Null),
-        );
+    match json.as_object_mut() {
+        Some(obj) => {
+            obj.insert(
+                "workspaceIsolation".to_string(),
+                serde_json::Value::String(workspace_isolation.to_string()),
+            );
+            obj.insert(
+                "workspaceIsolationReason".to_string(),
+                workspace_isolation_reason
+                    .clone()
+                    .map(serde_json::Value::String)
+                    .unwrap_or(serde_json::Value::Null),
+            );
+        }
+        None => {}
     }
     json
 }
@@ -221,17 +228,21 @@ pub(crate) async fn finalize_simulation_branch(
     workspace_dir: &std::path::Path,
     announce: bool,
 ) {
-    if let Some(branch_id) = branch_id {
-        if let Err(e) = finish_simulation_branch(
-            branch_id,
-            run_success,
-            delegate_task::is_scratch_workspace(workspace_dir),
-            announce,
-        )
-        .await
-        {
-            tracing::warn!("Failed to finalize database branch: {:?}", e);
+    match branch_id {
+        Some(branch_id) => {
+            match finish_simulation_branch(
+                branch_id,
+                run_success,
+                delegate_task::is_scratch_workspace(workspace_dir),
+                announce,
+            )
+            .await
+            {
+                Ok(()) => {}
+                Err(e) => tracing::warn!("Failed to finalize database branch: {:?}", e),
+            }
         }
+        None => {}
     }
 }
 
@@ -241,9 +252,14 @@ pub(crate) fn sync_workspace_changes_back(
     workspace_dir: &std::path::Path,
     filesystem_write_denied: bool,
 ) {
-    if !filesystem_write_denied && delegate_task::should_sync_changes_back(parent_dir, workspace_dir) {
-        if let Err(e) = delegate_task::sync_changes_back(workspace_dir, parent_dir) {
-            if !crate::agent::style::is_silent() {
+    match !filesystem_write_denied
+        && delegate_task::should_sync_changes_back(parent_dir, workspace_dir)
+    {
+        true => match (
+            delegate_task::sync_changes_back(workspace_dir, parent_dir),
+            !crate::agent::style::is_silent(),
+        ) {
+            (Err(e), true) => {
                 let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                 crate::tui_println!(
                     "{}{}{}↶ Failed to sync changes back to active workspace: {}{}",
@@ -254,16 +270,19 @@ pub(crate) fn sync_workspace_changes_back(
                     crate::agent::style::COLOR_RESET
                 );
             }
-        } else if !crate::agent::style::is_silent() {
-            let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-            crate::tui_println!(
-                "{}{}{}✓ Synchronized changes back to active workspace{}",
-                crate::agent::style::AURA_SLATE,
-                leaf_prefix,
-                crate::agent::style::AURA_GREEN,
-                crate::agent::style::COLOR_RESET
-            );
-        }
+            (Ok(()), true) => {
+                let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                crate::tui_println!(
+                    "{}{}{}✓ Synchronized changes back to active workspace{}",
+                    crate::agent::style::AURA_SLATE,
+                    leaf_prefix,
+                    crate::agent::style::AURA_GREEN,
+                    crate::agent::style::COLOR_RESET
+                );
+            }
+            _ => {}
+        },
+        false => {}
     }
 }
 
@@ -280,34 +299,38 @@ pub(crate) fn handle_subagent_cancellation(
     workspace_isolation_reason: &Option<String>,
 ) -> Option<serde_json::Value> {
     let lifecycle = classify_subagent_error(error_text, token);
-    if matches!(lifecycle, SubagentRunStatus::Cancelled) {
-        if !crate::agent::style::is_silent() {
-            let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-            let target_name = profile_name.unwrap_or(tool_name);
-            let line = compact_lifecycle_line(target_name, model_name, &lifecycle);
-            crate::tui_println!(
-                "{}{}{}▲ {}{}",
-                crate::agent::style::AURA_SLATE,
-                leaf_prefix,
-                crate::agent::style::AURA_GOLD,
-                line,
-                crate::agent::style::COLOR_RESET
+    match matches!(lifecycle, SubagentRunStatus::Cancelled) {
+        true => {
+            match !crate::agent::style::is_silent() {
+                true => {
+                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                    let target_name = profile_name.unwrap_or(tool_name);
+                    let line = compact_lifecycle_line(target_name, model_name, &lifecycle);
+                    crate::tui_println!(
+                        "{}{}{}▲ {}{}",
+                        crate::agent::style::AURA_SLATE,
+                        leaf_prefix,
+                        crate::agent::style::AURA_GOLD,
+                        line,
+                        crate::agent::style::COLOR_RESET
+                    );
+                }
+                false => {}
+            }
+            let cancelled = attach_workspace_fields(
+                cancellation_result_json(
+                    tool_name,
+                    profile_name,
+                    session_id,
+                    model_name,
+                    error_text,
+                ),
+                workspace_isolation,
+                workspace_isolation_reason,
             );
+            Some(cancelled)
         }
-        let cancelled = attach_workspace_fields(
-            cancellation_result_json(
-                tool_name,
-                profile_name,
-                session_id,
-                model_name,
-                error_text,
-            ),
-            workspace_isolation,
-            workspace_isolation_reason,
-        );
-        Some(cancelled)
-    } else {
-        None
+        false => None,
     }
 }
 
@@ -325,34 +348,40 @@ pub(crate) async fn handle_subagent_success(
     workspace_isolation: &str,
     workspace_isolation_reason: &Option<String>,
 ) -> serde_json::Value {
-    if !crate::agent::style::is_silent() {
-        let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-        let summary = crate::agent::style::format_subagent_summary(content);
-        let line = compact_lifecycle_line(
-            tool_or_profile_name,
-            model_name,
-            &SubagentRunStatus::Completed,
-        );
-        crate::tui_println!(
-            "{}{}{}✓ {} - {}{}",
-            crate::agent::style::AURA_SLATE,
-            leaf_prefix,
-            crate::agent::style::AURA_GREEN,
-            line,
-            summary,
-            crate::agent::style::COLOR_RESET
-        );
+    match !crate::agent::style::is_silent() {
+        true => {
+            let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+            let summary = crate::agent::style::format_subagent_summary(content);
+            let line = compact_lifecycle_line(
+                tool_or_profile_name,
+                model_name,
+                &SubagentRunStatus::Completed,
+            );
+            crate::tui_println!(
+                "{}{}{}✓ {} - {}{}",
+                crate::agent::style::AURA_SLATE,
+                leaf_prefix,
+                crate::agent::style::AURA_GREEN,
+                line,
+                summary,
+                crate::agent::style::COLOR_RESET
+            );
+        }
+        false => {}
     }
 
-    if should_run_evolution_review(goal, context, content, filesystem_write_denied) {
-        let _ = delegate_task::run_evolution_review(
-            parent_provider,
-            tool_or_profile_name,
-            goal,
-            context,
-            content,
-        )
-        .await;
+    match should_run_evolution_review(goal, context, content, filesystem_write_denied) {
+        true => {
+            let _ = delegate_task::run_evolution_review(
+                parent_provider,
+                tool_or_profile_name,
+                goal,
+                context,
+                content,
+            )
+            .await;
+        }
+        false => {}
     }
 
     let result = serde_json::json!({
@@ -690,32 +719,38 @@ pub async fn run_subagent_attempt(
     cancellation_token: &CancellationToken,
     attempt: SubagentRunAttempt<'_>,
 ) -> SubagentRunOutcome {
-    if cancellation_token.is_cancelled() {
-        let cancelled = cancellation_result_json(
-            attempt.tool_name,
-            attempt.profile_name,
-            attempt.child_session_id,
-            attempt.model_name,
-            "Subagent task cancelled",
-        );
-        let cancelled = attach_workspace_fields(
-            cancelled,
-            attempt.workspace_isolation,
-            attempt.workspace_isolation_reason,
-        );
-        return SubagentRunOutcome::Cancelled(cancelled);
+    match cancellation_token.is_cancelled() {
+        true => {
+            let cancelled = cancellation_result_json(
+                attempt.tool_name,
+                attempt.profile_name,
+                attempt.child_session_id,
+                attempt.model_name,
+                "Subagent task cancelled",
+            );
+            let cancelled = attach_workspace_fields(
+                cancelled,
+                attempt.workspace_isolation,
+                attempt.workspace_isolation_reason,
+            );
+            return SubagentRunOutcome::Cancelled(cancelled);
+        }
+        false => {}
     }
 
-    let branch_id = if !attempt.filesystem_write_denied {
-        match create_simulation_branch(true).await {
+    let branch_id = match !attempt.filesystem_write_denied {
+        true => match create_simulation_branch(true).await {
             Ok(Some(bid)) => {
-                if attempt.announce_branch {
-                    crate::tui_println!(
-                        "{}  ✓ Isolated simulation space branch '{}' created{}",
-                        crate::agent::style::EMERALD_GREEN,
-                        bid,
-                        crate::agent::style::COLOR_RESET
-                    );
+                match attempt.announce_branch {
+                    true => {
+                        crate::tui_println!(
+                            "{}  ✓ Isolated simulation space branch '{}' created{}",
+                            crate::agent::style::EMERALD_GREEN,
+                            bid,
+                            crate::agent::style::COLOR_RESET
+                        );
+                    }
+                    false => {}
                 }
                 Some(bid)
             }
@@ -724,9 +759,8 @@ pub async fn run_subagent_attempt(
                 tracing::warn!("Failed to create database branch: {:?}", e);
                 None
             }
-        }
-    } else {
-        None
+        },
+        false => None,
     };
 
     let mut cancel_guard = CancelOnDrop {
@@ -750,41 +784,44 @@ pub async fn run_subagent_attempt(
     .await;
     cancel_guard.completed = true;
 
-    if let Some(schema) = attempt.json_schema {
-        let session_id = attempt.child_session_id;
-        let subagent_name = attempt.subagent_name;
-        let model_name = attempt.model_name;
-        let workspace_dir = attempt.workspace_dir.clone();
-        let current_depth = attempt.current_depth;
-        let token = cancellation_token;
-        let timeout_secs = attempt.timeout_secs;
-        let default_timeout = attempt.default_timeout_secs;
-        let spinner = attempt.spinner_msg;
+    match attempt.json_schema {
+        Some(schema) => {
+            let session_id = attempt.child_session_id;
+            let subagent_name = attempt.subagent_name;
+            let model_name = attempt.model_name;
+            let workspace_dir = attempt.workspace_dir.clone();
+            let current_depth = attempt.current_depth;
+            let token = cancellation_token;
+            let timeout_secs = attempt.timeout_secs;
+            let default_timeout = attempt.default_timeout_secs;
+            let spinner = attempt.spinner_msg;
 
-        run_res = schema_retry::execute_with_schema_retries(
-            run_res,
-            schema,
-            |retry_prompt| {
-                let workspace = workspace_dir.clone();
-                async move {
-                    execute_subagent_run(
-                        child_agent,
-                        &retry_prompt,
-                        session_id,
-                        subagent_name,
-                        model_name,
-                        workspace,
-                        current_depth,
-                        token,
-                        timeout_secs,
-                        default_timeout,
-                        spinner,
-                    )
-                    .await
-                }
-            },
-        )
-        .await;
+            run_res = schema_retry::execute_with_schema_retries(
+                run_res,
+                schema,
+                |retry_prompt| {
+                    let workspace = workspace_dir.clone();
+                    async move {
+                        execute_subagent_run(
+                            child_agent,
+                            &retry_prompt,
+                            session_id,
+                            subagent_name,
+                            model_name,
+                            workspace,
+                            current_depth,
+                            token,
+                            timeout_secs,
+                            default_timeout,
+                            spinner,
+                        )
+                        .await
+                    }
+                },
+            )
+            .await;
+        }
+        None => {}
     }
 
     finalize_simulation_branch(
@@ -797,8 +834,11 @@ pub async fn run_subagent_attempt(
 
     match run_res {
         Ok(res) => {
-            if let Some(profile) = attempt.profile_name {
-                let _ = crate::subagents::record_subagent_success(profile, attempt.model_name);
+            match attempt.profile_name {
+                Some(profile) => {
+                    let _ = crate::subagents::record_subagent_success(profile, attempt.model_name);
+                }
+                None => {}
             }
 
             sync_workspace_changes_back(
@@ -825,7 +865,7 @@ pub async fn run_subagent_attempt(
         }
         Err(e) => {
             let error_text = e.to_string();
-            if let Some(cancelled) = handle_subagent_cancellation(
+            match handle_subagent_cancellation(
                 attempt.tool_name,
                 attempt.profile_name,
                 attempt.model_name,
@@ -835,14 +875,22 @@ pub async fn run_subagent_attempt(
                 attempt.workspace_isolation,
                 attempt.workspace_isolation_reason,
             ) {
-                return SubagentRunOutcome::Cancelled(cancelled);
+                Some(cancelled) => return SubagentRunOutcome::Cancelled(cancelled),
+                None => {}
             }
 
             let lifecycle = classify_subagent_error(&error_text, cancellation_token);
-            if !crate::agent::style::is_silent() {
-                let leaf_prefix = crate::agent::style::get_tree_prefix(true);
-                let line = compact_lifecycle_line(attempt.subagent_name, attempt.model_name, &lifecycle);
-                if attempt.profile_name.is_some() {
+            match (
+                !crate::agent::style::is_silent(),
+                attempt.profile_name.is_some(),
+            ) {
+                (true, true) => {
+                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                    let line = compact_lifecycle_line(
+                        attempt.subagent_name,
+                        attempt.model_name,
+                        &lifecycle,
+                    );
                     crate::tui_println!(
                         "{}{}{}✕ {}{}",
                         crate::agent::style::AURA_SLATE,
@@ -851,7 +899,14 @@ pub async fn run_subagent_attempt(
                         line,
                         crate::agent::style::COLOR_RESET
                     );
-                } else {
+                }
+                (true, false) => {
+                    let leaf_prefix = crate::agent::style::get_tree_prefix(true);
+                    let line = compact_lifecycle_line(
+                        attempt.subagent_name,
+                        attempt.model_name,
+                        &lifecycle,
+                    );
                     crate::tui_println!(
                         "{}{}{}✗{} {}{}",
                         crate::agent::style::AURA_SLATE,
@@ -862,10 +917,14 @@ pub async fn run_subagent_attempt(
                         crate::agent::style::COLOR_RESET
                     );
                 }
+                (false, _) => {}
             }
 
-            if let Some(profile) = attempt.profile_name {
-                let _ = crate::subagents::record_subagent_failure(profile, &error_text);
+            match attempt.profile_name {
+                Some(profile) => {
+                    let _ = crate::subagents::record_subagent_failure(profile, &error_text);
+                }
+                None => {}
             }
 
             let response_json = serde_json::json!({

@@ -380,10 +380,11 @@ pub fn static_allowlist_for_subagent(subagent_name: &str) -> Option<&'static [&'
 /// Collects all tool names mentioned in static subagent allowlists, sorted and deduplicated.
 pub fn all_static_subagent_allowlist_tools() -> Vec<&'static str> {
     let mut out = Vec::new();
-    for profile in crate::subagents::DEFAULT_SUBAGENT_NAMES {
-        if let Some(tools) = static_allowlist_for_subagent(profile) {
-            out.extend_from_slice(tools);
-        }
+    for tools in crate::subagents::DEFAULT_SUBAGENT_NAMES
+        .iter()
+        .filter_map(|profile| static_allowlist_for_subagent(profile))
+    {
+        out.extend_from_slice(tools);
     }
     out.sort_unstable();
     out.dedup();
@@ -424,8 +425,12 @@ pub fn filter_tools_for_profile(
                 .collect()
         });
 
-    let mut filtered: Vec<Arc<dyn Tool>> = if let Some(ref tool_names) = explicit_tools {
-        all_tools
+    let mut filtered: Vec<Arc<dyn Tool>> = match (
+        explicit_tools.as_ref(),
+        explicit_domains.as_ref(),
+        static_allowlist_for_subagent(&profile.name),
+    ) {
+        (Some(tool_names), _, _) => all_tools
             .iter()
             .filter(|tool| {
                 tool_names
@@ -434,19 +439,20 @@ pub fn filter_tools_for_profile(
                     || crate::tools::tool_names_match("tool_catalog", tool.name())
             })
             .cloned()
-            .collect()
-    } else if let Some(ref domains) = explicit_domains {
-        all_tools
+            .collect(),
+        (None, Some(domains), _) => all_tools
             .iter()
             .filter(|tool| {
                 let d = tool.metadata().domain.to_lowercase();
                 domains.iter().any(|dom| dom == &d)
-                    || matches!(tool.name(), "read_file" | "list_dir" | "write_file" | "tool_catalog")
+                    || matches!(
+                        tool.name(),
+                        "read_file" | "list_dir" | "write_file" | "tool_catalog"
+                    )
             })
             .cloned()
-            .collect()
-    } else if let Some(allowed) = static_allowlist_for_subagent(&profile.name) {
-        all_tools
+            .collect(),
+        (None, None, Some(allowed)) => all_tools
             .iter()
             .filter(|tool| {
                 allowed
@@ -455,9 +461,8 @@ pub fn filter_tools_for_profile(
                     || crate::tools::tool_names_match("tool_catalog", tool.name())
             })
             .cloned()
-            .collect()
-    } else {
-        all_tools.to_vec()
+            .collect(),
+        (None, None, None) => all_tools.to_vec(),
     };
 
     filtered.retain(|t| t.name() != "send_remote_input");
@@ -494,6 +499,14 @@ pub fn profile_needs_workspace(profile_name: &str) -> bool {
     }
 }
 
+fn push_unique_trimmed_model(models_to_try: &mut Vec<String>, raw_model: &str) {
+    let trimmed = raw_model.trim();
+    match !trimmed.is_empty() && !models_to_try.iter().any(|existing| existing == trimmed) {
+        true => models_to_try.push(trimmed.to_string()),
+        false => {}
+    }
+}
+
 /// Builds the ordered list of LLM models to try for a given subagent profile run,
 /// cascading from explicit profile overrides, fallback models, role dynamic fallbacks,
 /// and finally the default agent model as last resort.
@@ -504,39 +517,34 @@ pub fn delegate_profile_models_to_try(
     let mut models_to_try = Vec::new();
 
     // 1. Add primary model from profile override
-    if let Some(m) = &profile.model {
-        if !m.trim().is_empty() {
-            models_to_try.push(m.trim().to_string());
-        }
+    match profile.model.as_deref() {
+        Some(m) => push_unique_trimmed_model(&mut models_to_try, m),
+        None => {}
     }
 
     // 2. Add fallback models from profile overrides
-    if let Some(fallbacks) = &profile.fallbacks {
-        for fallback in fallbacks {
-            if !fallback.trim().is_empty() && !models_to_try.contains(&fallback.trim().to_string()) {
-                models_to_try.push(fallback.trim().to_string());
-            }
-        }
+    for fallback in profile.fallbacks.iter().flatten() {
+        push_unique_trimmed_model(&mut models_to_try, fallback);
     }
 
     // 3. If no profile overrides were specified, populate with system dynamic fallbacks for this subagent role
-    if profile.model.is_none() && profile.fallbacks.is_none() {
-        let dynamic_fallbacks = config.get_dynamic_fallbacks(&profile.name);
-        for fallback in dynamic_fallbacks {
-            if !models_to_try.contains(&fallback) {
-                models_to_try.push(fallback);
+    match profile.model.is_none() && profile.fallbacks.is_none() {
+        true => {
+            for fallback in config.get_dynamic_fallbacks(&profile.name) {
+                push_unique_trimmed_model(&mut models_to_try, &fallback);
             }
         }
+        false => {}
     }
 
     // 4. Finally, append our main agent model as the absolute last resort fallback
     let default_model = config.agents.defaults.model.clone();
-    if !models_to_try.contains(&default_model) {
-        models_to_try.push(default_model);
-    } else {
-        // Move the default model to the end of the list if it is already present
-        if let Some(pos) = models_to_try.iter().position(|m| m == &default_model) {
+    match models_to_try.iter().position(|m| m == &default_model) {
+        Some(pos) => {
             models_to_try.remove(pos);
+            models_to_try.push(default_model);
+        }
+        None => {
             models_to_try.push(default_model);
         }
     }

@@ -75,7 +75,10 @@ pub fn calculate_auto_importance(
     let access_score = (access_count as f64 + 1.0).ln() / 10.0;
     let connection_score = (edge_count as f64 + 1.0).ln() / 5.0;
     let freshness = (-0.05 * age_hours).exp() / 3.0;
-    let reinforcement = if was_reinforced { 0.3 } else { 0.0 };
+    let reinforcement = match was_reinforced {
+        true => 0.3,
+        false => 0.0,
+    };
     (access_score + connection_score + freshness + reinforcement).min(1.0)
 }
 
@@ -85,8 +88,9 @@ fn is_exclusive_relation(relation_type: &str) -> bool {
 
 fn count_session_metadata_memories() -> i64 {
     let sessions_dir = crate::config::loader::runtime_data_dir().join("sessions");
-    let Ok(entries) = std::fs::read_dir(sessions_dir) else {
-        return 0;
+    let entries = match std::fs::read_dir(sessions_dir) {
+        Ok(entries) => entries,
+        Err(_) => return 0,
     };
     entries
         .filter_map(Result::ok)
@@ -131,7 +135,10 @@ fn normalize_semantic_text(text: &str) -> String {
     let lower = text.to_ascii_lowercase();
     lower
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { ' ' })
+        .map(|c| match c.is_ascii_alphanumeric() {
+            true => c,
+            false => ' ',
+        })
         .collect::<String>()
         .split_whitespace()
         .collect::<Vec<_>>()
@@ -140,15 +147,14 @@ fn normalize_semantic_text(text: &str) -> String {
 
 fn semantic_exclusive_slot(text: &str) -> Option<(String, &'static str)> {
     let normalized = format!(" {} ", normalize_semantic_text(text));
-    for (pattern, slot) in SEMANTIC_EXCLUSIVE_PATTERNS {
-        if let Some(idx) = normalized.find(pattern) {
-            let subject = normalized[..idx].trim();
-            if !subject.is_empty() {
-                return Some((subject.to_string(), *slot));
-            }
-        }
-    }
-    None
+    SEMANTIC_EXCLUSIVE_PATTERNS
+        .iter()
+        .find_map(|(pattern, slot)| {
+            normalized.find(pattern).and_then(|idx| {
+                let subject = normalized[..idx].trim();
+                (!subject.is_empty()).then(|| (subject.to_string(), *slot))
+            })
+        })
 }
 
 fn resolve_semantic_slot_conflicts(
@@ -156,8 +162,9 @@ fn resolve_semantic_slot_conflicts(
     importance: f64,
     scope: &MemoryScope,
 ) -> Result<i64> {
-    let Some((subject, slot)) = semantic_exclusive_slot(text) else {
-        return Ok(0);
+    let (subject, slot) = match semantic_exclusive_slot(text) {
+        Some(pair) => pair,
+        None => return Ok(0),
     };
 
     with_db(|conn| {
@@ -183,13 +190,19 @@ fn resolve_semantic_slot_conflicts(
         let mut expired = 0_i64;
         for row in rows {
             let (node_id, existing_text, existing_importance) = row?;
-            if existing_text == text || existing_importance > importance {
-                continue;
+            match existing_text == text || existing_importance > importance {
+                true => continue,
+                false => {}
             }
             let existing_slot = semantic_exclusive_slot(&existing_text);
-            if !matches!(existing_slot.as_ref(), Some((existing_subject, existing_slot)) if existing_subject == &subject && existing_slot == &slot)
-            {
-                continue;
+            let same_slot = existing_slot
+                .as_ref()
+                .is_some_and(|(existing_subject, existing_slot)| {
+                    existing_subject == &subject && existing_slot == &slot
+                });
+            match same_slot {
+                false => continue,
+                true => {}
             }
             expired += conn.execute(
                 "UPDATE semantic_metadata
@@ -238,13 +251,15 @@ fn resolve_semantic_similarity_conflicts(
         let mut expired = 0_i64;
         for row in rows {
             let (node_id, existing_text, existing_importance, blob) = row?;
-            if existing_text == text || existing_importance > importance {
-                continue;
+            match existing_text == text || existing_importance > importance {
+                true => continue,
+                false => {}
             }
             let existing_embedding = memory.hashed_semantic_embedding_from_blob(&blob);
             let similarity = memory.cosine_similarity(&new_embedding, &existing_embedding) as f64;
-            if similarity < 0.90 {
-                continue;
+            match similarity < 0.90 {
+                true => continue,
+                false => {}
             }
             expired += conn.execute(
                 "UPDATE semantic_metadata
@@ -280,10 +295,9 @@ impl MemoryCoordinator {
         importance: f64,
         scope: &MemoryScope,
     ) -> Result<MemoryWriteResult> {
-        let importance = if importance < 0.0 {
-            calculate_auto_importance(0, 0, 0.0, false)
-        } else {
-            importance.clamp(0.0, 1.0)
+        let importance = match importance < 0.0 {
+            true => calculate_auto_importance(0, 0, 0.0, false),
+            false => importance.clamp(0.0, 1.0),
         };
         let _ = resolve_semantic_slot_conflicts(text, importance, scope)?;
         let _ = resolve_semantic_similarity_conflicts(text, importance, scope)?;
@@ -322,36 +336,40 @@ impl MemoryCoordinator {
                 params![from, to, relation_type, scope.user_id, scope.session_id, scope.agent_id],
                 |row| row.get(0),
             )?;
-            if exists {
-                return Ok(GraphWriteResult {
-                    layer: MemoryLayer::Graph,
-                    created: false,
-                    conflicts_resolved: 0,
-                });
+            match exists {
+                true => {
+                    return Ok(GraphWriteResult {
+                        layer: MemoryLayer::Graph,
+                        created: false,
+                        conflicts_resolved: 0,
+                    });
+                }
+                false => {}
             }
 
-            let conflicts_resolved = if is_exclusive_relation(relation_type) {
-                conn.execute(
-                    "UPDATE graph_edges
-                     SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-                     WHERE from_name = ?1
-                       AND relation_type = ?2
-                       AND to_name <> ?3
-                       AND valid_until IS NULL
-                       AND user_id = ?4
-                       AND session_id = ?5
-                       AND agent_id = ?6",
-                    params![
-                        from,
-                        relation_type,
-                        to,
-                        scope.user_id,
-                        scope.session_id,
-                        scope.agent_id
-                    ],
-                )? as i64
-            } else {
-                0
+            let conflicts_resolved = match is_exclusive_relation(relation_type) {
+                true => {
+                    conn.execute(
+                        "UPDATE graph_edges
+                         SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                         WHERE from_name = ?1
+                           AND relation_type = ?2
+                           AND to_name <> ?3
+                           AND valid_until IS NULL
+                           AND user_id = ?4
+                           AND session_id = ?5
+                           AND agent_id = ?6",
+                        params![
+                            from,
+                            relation_type,
+                            to,
+                            scope.user_id,
+                            scope.session_id,
+                            scope.agent_id
+                        ],
+                    )? as i64
+                }
+                false => 0,
             };
 
             conn.execute(
@@ -439,8 +457,9 @@ impl MemoryCoordinator {
                 let blob: Vec<u8> = row.get(4)?;
                 let embedding = memory.hashed_semantic_embedding_from_blob(&blob);
                 let similarity = memory.cosine_similarity(&query_embedding, &embedding) as f64;
-                if similarity <= 0.0 {
-                    continue;
+                match similarity <= 0.0 {
+                    true => continue,
+                    false => {}
                 }
                 let importance: f64 = row.get(3)?;
                 let score = (similarity * 0.85) + (importance * 0.15);
@@ -610,20 +629,23 @@ impl MemoryCoordinator {
             ];
             let mut tombstones = 0i64;
             for (source, count) in sources {
-                if count > 0 {
-                    conn.execute(
-                        "INSERT INTO memory_tombstones (id, query, source, scope_user_id, scope_session_id, scope_agent_id)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                        params![
-                            format!("tombstone-{}", uuid::Uuid::new_v4()),
-                            query,
-                            source,
-                            scope.user_id,
-                            scope.session_id,
-                            scope.agent_id
-                        ],
-                    )?;
-                    tombstones += 1;
+                match count > 0 {
+                    true => {
+                        conn.execute(
+                            "INSERT INTO memory_tombstones (id, query, source, scope_user_id, scope_session_id, scope_agent_id)
+                             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                            params![
+                                format!("tombstone-{}", uuid::Uuid::new_v4()),
+                                query,
+                                source,
+                                scope.user_id,
+                                scope.session_id,
+                                scope.agent_id
+                            ],
+                        )?;
+                        tombstones += 1;
+                    }
+                    false => {}
                 }
             }
 

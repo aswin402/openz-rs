@@ -1,4 +1,5 @@
 use crate::memory::{scope_from_args, with_graph_db as with_db};
+use crate::tools::memory_extra::codebase::STOP_WORDS;
 use crate::tools::memory_extra::search::{query_fts5, text_similarity};
 use crate::tools::memory_extra::working::semantic_embedding_blob;
 use crate::tools::Tool;
@@ -43,63 +44,65 @@ impl Tool for InvalidateFactTool {
         let mut messages = Vec::new();
         let mut parameter_provided = false;
 
-        if let Some(fact_id) = arguments.get("factId").and_then(|v| v.as_str()) {
-            parameter_provided = true;
-            let updated = with_db(|conn| {
-                let rows = conn.execute(
-                    "UPDATE semantic_metadata SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-                     WHERE node_id = ?1 AND user_id = ?2 AND session_id = ?3 AND agent_id = ?4 AND valid_until IS NULL",
-                    params![fact_id, uid, sid, aid],
-                )?;
-                Ok(rows > 0)
-            })?;
-            if updated {
-                messages.push(format!(
-                    "Semantic fact '{}' invalidated successfully",
-                    fact_id
-                ));
-            } else {
-                messages.push(format!(
-                    "Semantic fact '{}' not found or already invalidated",
-                    fact_id
-                ));
+        match arguments.get("factId").and_then(|v| v.as_str()) {
+            Some(fact_id) => {
+                parameter_provided = true;
+                let updated = with_db(|conn| {
+                    let rows = conn.execute(
+                        "UPDATE semantic_metadata SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                         WHERE node_id = ?1 AND user_id = ?2 AND session_id = ?3 AND agent_id = ?4 AND valid_until IS NULL",
+                        params![fact_id, uid, sid, aid],
+                    )?;
+                    Ok(rows > 0)
+                })?;
+                let msg = match updated {
+                    true => format!("Semantic fact '{}' invalidated successfully", fact_id),
+                    false => format!(
+                        "Semantic fact '{}' not found or already invalidated",
+                        fact_id
+                    ),
+                };
+                messages.push(msg);
             }
+            None => {}
         }
 
-        if let (Some(from), Some(to), Some(rel_type)) = (
+        match (
             arguments.get("from").and_then(|v| v.as_str()),
             arguments.get("to").and_then(|v| v.as_str()),
             arguments.get("relationType").and_then(|v| v.as_str()),
         ) {
-            parameter_provided = true;
-            let updated = with_db(|conn| {
-                let rows = conn.execute(
-                    "UPDATE graph_edges SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-                     WHERE from_name = ?1 AND to_name = ?2 AND relation_type = ?3 AND valid_until IS NULL
-                       AND (user_id = ?4 OR user_id = '*')
-                       AND (session_id = ?5 OR session_id = '*')
-                       AND (agent_id = ?6 OR agent_id = '*')",
-                    params![from, to, rel_type, uid, sid, aid],
-                )?;
-                Ok(rows > 0)
-            })?;
-            if updated {
-                messages.push(format!(
-                    "Graph relation '{}->{} ({})' invalidated",
-                    from, to, rel_type
-                ));
-            } else {
-                messages.push("Graph relation not found or already invalidated".to_string());
+            (Some(from), Some(to), Some(rel_type)) => {
+                parameter_provided = true;
+                let updated = with_db(|conn| {
+                    let rows = conn.execute(
+                        "UPDATE graph_edges SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                         WHERE from_name = ?1 AND to_name = ?2 AND relation_type = ?3 AND valid_until IS NULL
+                           AND (user_id = ?4 OR user_id = '*')
+                           AND (session_id = ?5 OR session_id = '*')
+                           AND (agent_id = ?6 OR agent_id = '*')",
+                        params![from, to, rel_type, uid, sid, aid],
+                    )?;
+                    Ok(rows > 0)
+                })?;
+                let msg = match updated {
+                    true => format!(
+                        "Graph relation '{}->{} ({})' invalidated",
+                        from, to, rel_type
+                    ),
+                    false => "Graph relation not found or already invalidated".to_string(),
+                };
+                messages.push(msg);
             }
+            _ => {}
         }
 
-        if !parameter_provided {
-            return Err(anyhow!(
+        match parameter_provided {
+            false => Err(anyhow!(
                 "Either factId or all of (from, to, relationType) must be provided"
-            ));
+            )),
+            true => Ok(json!({ "status": messages.join("\n") })),
         }
-
-        Ok(json!({ "status": messages.join("\n") }))
     }
 }
 
@@ -119,10 +122,9 @@ fn scrub_lines_containing(text: &str, query: &str) -> (String, bool) {
         })
         .collect::<Vec<_>>();
 
-    if changed {
-        (kept.join("\n"), true)
-    } else {
-        (text.to_string(), false)
+    match changed {
+        true => (kept.join("\n"), true),
+        false => (text.to_string(), false),
     }
 }
 
@@ -132,15 +134,17 @@ fn session_files_dir() -> PathBuf {
 
 pub(crate) fn forget_session_metadata_memories(query: &str) -> Result<i64> {
     let sessions_dir = session_files_dir();
-    if !sessions_dir.exists() {
-        return Ok(0);
+    match sessions_dir.exists() {
+        false => return Ok(0),
+        true => {}
     }
 
     let mut scrubbed = 0i64;
     for entry in fs::read_dir(sessions_dir)? {
         let path = entry?.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("json") {
-            continue;
+        match path.extension().and_then(|s| s.to_str()) == Some("json") {
+            false => continue,
+            true => {}
         }
 
         let content = fs::read_to_string(&path)?;
@@ -149,19 +153,22 @@ pub(crate) fn forget_session_metadata_memories(query: &str) -> Result<i64> {
             Err(_) => continue,
         };
 
-        let Some(memory) = value
+        let memory = match value
             .get_mut("metadata")
             .and_then(|metadata| metadata.get_mut("memory"))
-        else {
-            continue;
+        {
+            Some(memory) => memory,
+            None => continue,
         };
-        let Some(memory_text) = memory.as_str() else {
-            continue;
+        let memory_text = match memory.as_str() {
+            Some(text) => text,
+            None => continue,
         };
 
         let (updated, changed) = scrub_lines_containing(memory_text, query);
-        if !changed {
-            continue;
+        match changed {
+            false => continue,
+            true => {}
         }
 
         *memory = Value::String(updated);
@@ -173,31 +180,39 @@ pub(crate) fn forget_session_metadata_memories(query: &str) -> Result<i64> {
 }
 
 fn scrub_skill_file(path: &Path, query: &str) -> Result<bool> {
-    if !path.is_file() {
-        return Ok(false);
+    match path.is_file() {
+        false => return Ok(false),
+        true => {}
     }
     let content = fs::read_to_string(path)?;
     let (updated, changed) = scrub_lines_containing(&content, query);
-    if changed {
-        fs::write(path, updated)?;
+    match changed {
+        true => fs::write(path, updated)?,
+        false => {}
     }
     Ok(changed)
 }
 
 fn forget_skill_files_in_dir(dir: &Path, query: &str) -> Result<i64> {
-    if !dir.exists() || !dir.is_dir() {
-        return Ok(0);
+    match dir.exists() && dir.is_dir() {
+        false => return Ok(0),
+        true => {}
     }
 
     let mut scrubbed = 0i64;
     for entry in fs::read_dir(dir)? {
         let path = entry?.path();
-        if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
-            if scrub_skill_file(&path, query)? {
-                scrubbed += 1;
-            }
-        } else if path.is_dir() && scrub_skill_file(&path.join("SKILL.md"), query)? {
-            scrubbed += 1;
+        let is_md_file = path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md");
+        match (is_md_file, path.is_dir()) {
+            (true, _) => match scrub_skill_file(&path, query)? {
+                true => scrubbed += 1,
+                false => {}
+            },
+            (false, true) => match scrub_skill_file(&path.join("SKILL.md"), query)? {
+                true => scrubbed += 1,
+                false => {}
+            },
+            (false, false) => {}
         }
     }
 
@@ -228,32 +243,36 @@ pub(crate) fn forget_skills(query: &str) -> Result<i64> {
     let mut scrubbed = 0i64;
     for (name, profile, content) in rows {
         let (updated, changed) = scrub_lines_containing(&content, query);
-        if !changed {
-            continue;
+        match changed {
+            false => continue,
+            true => {}
         }
 
-        if updated.trim().is_empty() {
-            if let Some(profile) = profile {
+        match (updated.trim().is_empty(), profile) {
+            (true, Some(profile)) => {
                 conn.execute(
                     "DELETE FROM skills WHERE name = ?1 AND profile = ?2",
                     params![name, profile],
                 )?;
-            } else {
+            }
+            (true, None) => {
                 conn.execute(
                     "DELETE FROM skills WHERE name = ?1 AND profile IS NULL",
                     params![name],
                 )?;
             }
-        } else if let Some(profile) = profile {
-            conn.execute(
-                "UPDATE skills SET content = ?1 WHERE name = ?2 AND profile = ?3",
-                params![updated, name, profile],
-            )?;
-        } else {
-            conn.execute(
-                "UPDATE skills SET content = ?1 WHERE name = ?2 AND profile IS NULL",
-                params![updated, name],
-            )?;
+            (false, Some(profile)) => {
+                conn.execute(
+                    "UPDATE skills SET content = ?1 WHERE name = ?2 AND profile = ?3",
+                    params![updated, name, profile],
+                )?;
+            }
+            (false, None) => {
+                conn.execute(
+                    "UPDATE skills SET content = ?1 WHERE name = ?2 AND profile IS NULL",
+                    params![updated, name],
+                )?;
+            }
         }
         scrubbed += 1;
     }
@@ -294,11 +313,13 @@ impl Tool for ForgetMemoryTool {
             .as_str()
             .ok_or_else(|| anyhow!("Missing 'query'"))?
             .trim();
-        if query.len() < 3 {
-            return Err(anyhow!("query must be at least 3 characters"));
+        match query.len() < 3 {
+            true => return Err(anyhow!("query must be at least 3 characters")),
+            false => {}
         }
-        if !arguments["confirm"].as_bool().unwrap_or(false) {
-            return Err(anyhow!("forget_memory requires confirm=true"));
+        match arguments["confirm"].as_bool().unwrap_or(false) {
+            false => return Err(anyhow!("forget_memory requires confirm=true")),
+            true => {}
         }
 
         let (uid, sid, aid) = scope_from_args(arguments);
@@ -346,29 +367,31 @@ impl Tool for QueryFactHistoryTool {
         let (uid, sid, aid) = scope_from_args(arguments);
 
         let results = with_db(|conn| {
-            let sql = if let Some(_rel) = relation_type {
-                "SELECT from_name, to_name, relation_type, valid_from, valid_until
-                 FROM graph_edges
-                 WHERE (from_name = ?1 OR to_name = ?1)
-                   AND relation_type = ?2
-                   AND (user_id = ?3 OR user_id = '*')
-                   AND (session_id = ?4 OR session_id = '*')
-                   AND (agent_id = ?5 OR agent_id = '*')
-                 ORDER BY valid_from DESC"
-            } else {
-                "SELECT from_name, to_name, relation_type, valid_from, valid_until
-                 FROM graph_edges
-                 WHERE (from_name = ?1 OR to_name = ?1)
-                   AND (user_id = ?2 OR user_id = '*')
-                   AND (session_id = ?3 OR session_id = '*')
-                   AND (agent_id = ?4 OR agent_id = '*')
-                 ORDER BY valid_from DESC"
+            let sql = match relation_type {
+                Some(_) => {
+                    "SELECT from_name, to_name, relation_type, valid_from, valid_until
+                     FROM graph_edges
+                     WHERE (from_name = ?1 OR to_name = ?1)
+                       AND relation_type = ?2
+                       AND (user_id = ?3 OR user_id = '*')
+                       AND (session_id = ?4 OR session_id = '*')
+                       AND (agent_id = ?5 OR agent_id = '*')
+                     ORDER BY valid_from DESC"
+                }
+                None => {
+                    "SELECT from_name, to_name, relation_type, valid_from, valid_until
+                     FROM graph_edges
+                     WHERE (from_name = ?1 OR to_name = ?1)
+                       AND (user_id = ?2 OR user_id = '*')
+                       AND (session_id = ?3 OR session_id = '*')
+                       AND (agent_id = ?4 OR agent_id = '*')
+                     ORDER BY valid_from DESC"
+                }
             };
             let mut stmt = conn.prepare(sql)?;
-            let mut rows = if relation_type.is_some() {
-                stmt.query(params![entity_name, relation_type, uid, sid, aid])?
-            } else {
-                stmt.query(params![entity_name, uid, sid, aid])?
+            let mut rows = match relation_type.is_some() {
+                true => stmt.query(params![entity_name, relation_type, uid, sid, aid])?,
+                false => stmt.query(params![entity_name, uid, sid, aid])?,
             };
             let mut results = Vec::new();
             while let Some(row) = rows.next()? {
@@ -390,6 +413,20 @@ impl Tool for QueryFactHistoryTool {
 // ─── Tool: QueryAsOfTool ─────────────────────────────────────────
 
 pub struct QueryAsOfTool;
+
+fn normalize_as_of_timestamp(as_of: &str) -> Result<String> {
+    chrono::DateTime::parse_from_rfc3339(as_of)
+        .map(|dt| dt.with_timezone(&Utc).format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        .or_else(|_| {
+            chrono::NaiveDateTime::parse_from_str(as_of, "%Y-%m-%dT%H:%M:%SZ")
+                .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        })
+        .or_else(|_| {
+            chrono::NaiveDateTime::parse_from_str(as_of, "%Y-%m-%d %H:%M:%S")
+                .map(|dt| dt.format("%Y-%m-%dT%H:%M:%SZ").to_string())
+        })
+        .map_err(|_| anyhow!("Invalid datetime format: '{}'. Expected RFC3339.", as_of))
+}
 
 #[async_trait::async_trait]
 impl Tool for QueryAsOfTool {
@@ -419,22 +456,7 @@ impl Tool for QueryAsOfTool {
             .as_str()
             .ok_or_else(|| anyhow!("Missing 'asOf'"))?;
         let (uid, sid, aid) = scope_from_args(arguments);
-
-        // Normalize timestamp
-        let normalized = if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(as_of) {
-            dt.with_timezone(&Utc)
-                .format("%Y-%m-%dT%H:%M:%SZ")
-                .to_string()
-        } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(as_of, "%Y-%m-%dT%H:%M:%SZ") {
-            dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()
-        } else if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(as_of, "%Y-%m-%d %H:%M:%S") {
-            dt.format("%Y-%m-%dT%H:%M:%SZ").to_string()
-        } else {
-            return Err(anyhow!(
-                "Invalid datetime format: '{}'. Expected RFC3339.",
-                as_of
-            ));
-        };
+        let normalized = normalize_as_of_timestamp(as_of)?;
 
         let graph_snapshot = with_db(|conn| {
             let mut entities = Vec::new();
@@ -551,161 +573,177 @@ impl Tool for SmartStoreTool {
         let relation = arguments.get("relation");
         let (uid, sid, aid) = scope_from_args(arguments);
 
-        // Handle relation input (Graph Layer)
-        if let Some(rel) = relation {
-            let from = rel["from"]
-                .as_str()
-                .ok_or_else(|| anyhow!("Relation missing 'from'"))?;
-            let to = rel["to"]
-                .as_str()
-                .ok_or_else(|| anyhow!("Relation missing 'to'"))?;
-            let rel_type = rel["relationType"]
-                .as_str()
-                .ok_or_else(|| anyhow!("Relation missing 'relationType'"))?;
+        match relation {
+            Some(rel) => {
+                let from = rel["from"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Relation missing 'from'"))?;
+                let to = rel["to"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Relation missing 'to'"))?;
+                let rel_type = rel["relationType"]
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Relation missing 'relationType'"))?;
 
-            let exclusive_relations = [
-                "lives_in",
-                "current_job",
-                "spouse",
-                "has_status",
-                "is_born_in",
-                "located_in",
-            ];
+                let exclusive_relations = [
+                    "lives_in",
+                    "current_job",
+                    "spouse",
+                    "has_status",
+                    "is_born_in",
+                    "located_in",
+                ];
 
-            if exclusive_relations.contains(&rel_type) {
-                // Check for existing relation and supersede if needed
-                let existing = with_db(|conn| -> Result<Option<String>> {
-                    let mut stmt = conn.prepare(
-                        "SELECT to_name FROM graph_edges
-                         WHERE from_name = ?1 AND relation_type = ?2 AND valid_until IS NULL
-                           AND (user_id = ?3 OR user_id = '*')
-                           AND (session_id = ?4 OR session_id = '*')
-                           AND (agent_id = ?5 OR agent_id = '*')",
-                    )?;
-                    let mut rows = stmt.query(params![from, rel_type, uid, sid, aid])?;
-                    if let Some(row) = rows.next()? {
-                        Ok(Some(row.get(0)?))
-                    } else {
-                        Ok(None)
-                    }
-                })?;
-
-                if let Some(old_to) = existing {
-                    if old_to != to {
-                        with_db(|conn| {
-                            conn.execute(
-                                "UPDATE graph_edges SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-                                 WHERE from_name = ?1 AND to_name = ?2 AND relation_type = ?3 AND valid_until IS NULL
-                                   AND user_id = ?4 AND session_id = ?5 AND agent_id = ?6",
-                                params![from, old_to, rel_type, uid, sid, aid],
+                match exclusive_relations.contains(&rel_type) {
+                    true => {
+                        let existing = with_db(|conn| -> Result<Option<String>> {
+                            let mut stmt = conn.prepare(
+                                "SELECT to_name FROM graph_edges
+                                 WHERE from_name = ?1 AND relation_type = ?2 AND valid_until IS NULL
+                                   AND (user_id = ?3 OR user_id = '*')
+                                   AND (session_id = ?4 OR session_id = '*')
+                                   AND (agent_id = ?5 OR agent_id = '*')",
                             )?;
-                            Ok(())
+                            let mut rows = stmt.query(params![from, rel_type, uid, sid, aid])?;
+                            match rows.next()? {
+                                Some(row) => Ok(Some(row.get(0)?)),
+                                None => Ok(None),
+                            }
                         })?;
 
-                        // Insert new edge via graph_memory tables directly
-                        with_db(|conn| {
-                            conn.execute(
-                                "INSERT INTO graph_edges (from_name, to_name, relation_type, user_id, session_id, agent_id)
-                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                                params![from, to, rel_type, uid, sid, aid],
-                            )?;
-                            Ok(())
-                        })?;
+                        match existing {
+                            Some(old_to) => match old_to != to {
+                                true => {
+                                    with_db(|conn| {
+                                        conn.execute(
+                                            "UPDATE graph_edges SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+                                             WHERE from_name = ?1 AND to_name = ?2 AND relation_type = ?3 AND valid_until IS NULL
+                                               AND user_id = ?4 AND session_id = ?5 AND agent_id = ?6",
+                                            params![from, old_to, rel_type, uid, sid, aid],
+                                        )?;
+                                        Ok(())
+                                    })?;
 
-                        return Ok(json!({
-                            "action": "superseded",
-                            "layer": "graph",
-                            "message": format!("Superseded '{} {} {}' -> '{} {} {}'", from, rel_type, old_to, to, rel_type, from),
-                        }));
-                    } else {
-                        return Ok(json!({
-                            "action": "no-op",
-                            "layer": "graph",
-                            "message": format!("Relation already exists: '{} {} {}'", from, rel_type, to),
-                        }));
+                                    with_db(|conn| {
+                                        conn.execute(
+                                            "INSERT INTO graph_edges (from_name, to_name, relation_type, user_id, session_id, agent_id)
+                                             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                                            params![from, to, rel_type, uid, sid, aid],
+                                        )?;
+                                        Ok(())
+                                    })?;
+
+                                    return Ok(json!({
+                                        "action": "superseded",
+                                        "layer": "graph",
+                                        "message": format!("Superseded '{} {} {}' -> '{} {} {}'", from, rel_type, old_to, to, rel_type, from),
+                                    }));
+                                }
+                                false => {
+                                    return Ok(json!({
+                                        "action": "no-op",
+                                        "layer": "graph",
+                                        "message": format!("Relation already exists: '{} {} {}'", from, rel_type, to),
+                                    }));
+                                }
+                            },
+                            None => {}
+                        }
                     }
+                    false => {}
                 }
+
+                let scope =
+                    crate::tools::memory_extra::coordinator::MemoryScope::new(uid, sid, aid);
+                let result = crate::tools::memory_extra::coordinator::MemoryCoordinator
+                    .write_graph_relation(from, rel_type, to, &scope)
+                    .await?;
+
+                let action = match result.created {
+                    true => "add",
+                    false => "no-op",
+                };
+                return Ok(json!({
+                    "action": action,
+                    "layer": "graph",
+                    "message": format!("Created relation '{}->{} ({})'", from, to, rel_type),
+                }));
             }
-
-            let scope = crate::tools::memory_extra::coordinator::MemoryScope::new(uid, sid, aid);
-            let result = crate::tools::memory_extra::coordinator::MemoryCoordinator
-                .write_graph_relation(from, rel_type, to, &scope)
-                .await?;
-
-            return Ok(json!({
-                "action": if result.created { "add" } else { "no-op" },
-                "layer": "graph",
-                "message": format!("Created relation '{}->{} ({})'", from, to, rel_type),
-            }));
+            None => {}
         }
 
-        // Handle text input (Semantic Layer)
-        if let Some(t) = text {
-            // Check for duplicates via FTS5
-            let fts_matches = with_db(|conn| query_fts5(conn, t, 5, &uid, &sid, &aid))?;
-            let best_match = fts_matches.into_iter().max_by(|a, b| {
-                let sim_a = text_similarity(t, a["rawText"].as_str().unwrap_or(""));
-                let sim_b = text_similarity(t, b["rawText"].as_str().unwrap_or(""));
-                sim_a
-                    .partial_cmp(&sim_b)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
+        match text {
+            Some(t) => {
+                let fts_matches = with_db(|conn| query_fts5(conn, t, 5, &uid, &sid, &aid))?;
+                let best_match = fts_matches.into_iter().max_by(|a, b| {
+                    let sim_a = text_similarity(t, a["rawText"].as_str().unwrap_or(""));
+                    let sim_b = text_similarity(t, b["rawText"].as_str().unwrap_or(""));
+                    sim_a
+                        .partial_cmp(&sim_b)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
 
-            if let Some(matched) = best_match {
-                let node_id = matched["nodeId"].as_str().unwrap_or("");
-                let existing_text = matched["rawText"].as_str().unwrap_or("");
-                let similarity = text_similarity(t, existing_text);
+                match best_match {
+                    Some(matched) => {
+                        let node_id = matched["nodeId"].as_str().unwrap_or("");
+                        let existing_text = matched["rawText"].as_str().unwrap_or("");
+                        let similarity = text_similarity(t, existing_text);
 
-                if similarity >= 0.98 {
-                    return Ok(json!({
-                        "action": "no-op",
-                        "layer": "semantic",
-                        "message": format!("Duplicate found (sim: {:.3}). No action needed.", similarity),
-                        "winnerId": node_id,
-                    }));
-                } else if similarity >= 0.85 {
-                    // Merge: keep the longer text
-                    let merged = if t.len() >= existing_text.len() {
-                        t.to_string()
-                    } else {
-                        existing_text.to_string()
-                    };
-                    let merged_embedding = semantic_embedding_blob(&merged);
-                    with_db(|conn| {
-                        conn.execute(
-                            "UPDATE semantic_metadata SET raw_text = ?1, embedding = ?2 WHERE node_id = ?3 AND user_id = ?4 AND session_id = ?5 AND agent_id = ?6",
-                            params![merged, merged_embedding, node_id, uid, sid, aid],
-                        )?;
-                        let _ = conn.execute(
-                            "UPDATE semantic_fts SET raw_text = ?1 WHERE node_id = ?2",
-                            params![merged, node_id],
-                        );
-                        Ok(())
-                    })?;
+                        match (similarity >= 0.98, similarity >= 0.85) {
+                            (true, _) => {
+                                return Ok(json!({
+                                    "action": "no-op",
+                                    "layer": "semantic",
+                                    "message": format!("Duplicate found (sim: {:.3}). No action needed.", similarity),
+                                    "winnerId": node_id,
+                                }));
+                            }
+                            (false, true) => {
+                                let merged = match t.len() >= existing_text.len() {
+                                    true => t.to_string(),
+                                    false => existing_text.to_string(),
+                                };
+                                let merged_embedding = semantic_embedding_blob(&merged);
+                                with_db(|conn| {
+                                    conn.execute(
+                                        "UPDATE semantic_metadata SET raw_text = ?1, embedding = ?2 WHERE node_id = ?3 AND user_id = ?4 AND session_id = ?5 AND agent_id = ?6",
+                                        params![merged, merged_embedding, node_id, uid, sid, aid],
+                                    )?;
+                                    let _ = conn.execute(
+                                        "UPDATE semantic_fts SET raw_text = ?1 WHERE node_id = ?2",
+                                        params![merged, node_id],
+                                    );
+                                    Ok(())
+                                })?;
 
-                    return Ok(json!({
-                        "action": "merge",
-                        "layer": "semantic",
-                        "message": format!("Merged with existing fact '{}'", node_id),
-                        "winnerId": node_id,
-                    }));
+                                return Ok(json!({
+                                    "action": "merge",
+                                    "layer": "semantic",
+                                    "message": format!("Merged with existing fact '{}'", node_id),
+                                    "winnerId": node_id,
+                                }));
+                            }
+                            (false, false) => {}
+                        }
+                    }
+                    None => {}
                 }
+
+                let scope =
+                    crate::tools::memory_extra::coordinator::MemoryScope::new(uid, sid, aid);
+                let written = crate::tools::memory_extra::coordinator::MemoryCoordinator
+                    .write_semantic(t, -1.0, &scope)
+                    .await?;
+
+                Ok(json!({
+                    "action": "add",
+                    "layer": "semantic",
+                    "message": format!("Added new fact '{}'", written.id),
+                    "winnerId": written.id,
+                }))
             }
-
-            let scope = crate::tools::memory_extra::coordinator::MemoryScope::new(uid, sid, aid);
-            let written = crate::tools::memory_extra::coordinator::MemoryCoordinator
-                .write_semantic(t, -1.0, &scope)
-                .await?;
-
-            return Ok(json!({
-                "action": "add",
-                "layer": "semantic",
-                "message": format!("Added new fact '{}'", written.id),
-                "winnerId": written.id,
-            }));
+            None => Err(anyhow!("Either text or relation must be provided")),
         }
-
-        Err(anyhow!("Either text or relation must be provided"))
     }
 }
 
@@ -720,7 +758,7 @@ impl Tool for ExtractAndStoreFactsTool {
     }
 
     fn description(&self) -> &str {
-        "Extract facts from text using regular expressions and store them in the graph memory."
+        "Extract facts from text and store them in the graph memory."
     }
 
     fn parameters(&self) -> Value {
@@ -773,8 +811,9 @@ impl Tool for ExtractAndStoreFactsTool {
                 Ok(count)
             })?;
             entities_created += (after_nodes - before_nodes).max(0) as i64;
-            if result.created {
-                relations_created += 1;
+            match result.created {
+                true => relations_created += 1,
+                false => {}
             }
         }
 
@@ -800,8 +839,9 @@ pub(crate) fn extract_facts(text: &str) -> Vec<ExtractedFact> {
 
     for sentence in text.split(['.', '!', '?']) {
         let sentence = sentence.trim();
-        if sentence.is_empty() {
-            continue;
+        match sentence.is_empty() {
+            true => continue,
+            false => {}
         }
 
         let mut carried_subject: Option<String> = None;
@@ -812,16 +852,23 @@ pub(crate) fn extract_facts(text: &str) -> Vec<ExtractedFact> {
                 carried_subject.as_deref(),
                 carried_object.as_deref(),
             );
-            if extracted.is_empty() {
-                continue;
+            match extracted.is_empty() {
+                true => continue,
+                false => {}
             }
 
-            if let Some(first) = extracted.first() {
-                carried_subject = Some(first.from.clone());
-                carried_object = Some(first.to.clone());
+            match extracted.first() {
+                Some(first) => {
+                    carried_subject = Some(first.from.clone());
+                    carried_object = Some(first.to.clone());
+                }
+                None => {}
             }
-            if let Some(created) = extracted.iter().find(|fact| fact.relation == "created") {
-                carried_object = Some(created.to.clone());
+            match extracted.iter().find(|fact| fact.relation == "created") {
+                Some(created) => {
+                    carried_object = Some(created.to.clone());
+                }
+                None => {}
             }
 
             for fact in extracted {
@@ -830,8 +877,9 @@ pub(crate) fn extract_facts(text: &str) -> Vec<ExtractedFact> {
                     fact.relation.clone(),
                     fact.to.to_lowercase(),
                 );
-                if seen.insert(key) {
-                    facts.push(fact);
+                match seen.insert(key) {
+                    true => facts.push(fact),
+                    false => {}
                 }
             }
         }
@@ -840,167 +888,348 @@ pub(crate) fn extract_facts(text: &str) -> Vec<ExtractedFact> {
     facts
 }
 
-static AND_SPLIT_RE: std::sync::LazyLock<regex::Regex> =
-    std::sync::LazyLock::new(|| regex::Regex::new(r"\s+and\s+").expect("valid AND_SPLIT_RE"));
-
-static BUILT_PRODUCT_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    let entity = entity_pattern();
-    regex::Regex::new(&format!(
-        r"^({entity})\s+(?:created?|built?|wrote?|made)\s+({entity})\s+(?:with|in|using)\s+({entity})$"
-    ))
-    .expect("valid BUILT_PRODUCT_RE")
-});
-
-static CARRIED_BUILD_RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-    let entity = entity_pattern();
-    regex::Regex::new(&format!(
-        r"^(?:built?|wrote?|made|implemented)\s+(?:it|that|this)\s+(?:with|in|using)\s+({entity})$"
-    ))
-    .expect("valid CARRIED_BUILD_RE")
-});
-
-static DIRECT_FACT_RES: std::sync::LazyLock<Vec<(regex::Regex, &'static str)>> =
-    std::sync::LazyLock::new(|| {
-        let entity = entity_pattern();
-        let specs = [
-            (
-                format!(r"^({entity})'?s\s+(?:favorite|preferred)\s+.+?\s+(?:is|are)\s+({entity})$"),
-                "prefers",
-            ),
-            (
-                format!(
-                    r"^({entity})\s+(?:is\s+|was\s+)?(?:built|written|implemented|made)\s+(?:with|in|using)\s+({entity})$"
-                ),
-                "built_with",
-            ),
-            (
-                format!(r"^({entity})\s+(?:lives?|resides?)\s+in\s+({entity})$"),
-                "lives_in",
-            ),
-            (
-                format!(r"^({entity})\s+(?:(?:is|are|was|were|am)\s+)?(?:uses?|using)\s+({entity})$"),
-                "uses",
-            ),
-            (
-                format!(r"^({entity})\s+(?:depends\s+on|requires?)\s+({entity})$"),
-                "depends_on",
-            ),
-            (
-                format!(r"^({entity})\s+(?:prefers?|likes?|favou?rs?)\s+({entity})$"),
-                "prefers",
-            ),
-            (
-                format!(r"^({entity})\s+(?:is\s+a|is\s+an|is\s+the)\s+({entity})$"),
-                "is_a",
-            ),
-            (
-                format!(
-                    r"^({entity})\s+(?:(?:is|are|was|were|am)\s+)?(?:works?|working)\s+(?:on|with|at|for)\s+({entity})$"
-                ),
-                "works_with",
-            ),
-            (
-                format!(r"^({entity})\s+(?:created?|built?|wrote?)\s+({entity})$"),
-                "created",
-            ),
-        ];
-        specs
-            .into_iter()
-            .filter_map(|(pat, rel)| regex::Regex::new(&pat).ok().map(|re| (re, rel)))
-            .collect()
-    });
-
-static CARRIED_FACT_RES: std::sync::LazyLock<Vec<(regex::Regex, &'static str)>> =
-    std::sync::LazyLock::new(|| {
-        let entity = entity_pattern();
-        let specs = [
-            (format!(r"^(?:uses?|using)\s+({entity})$"), "uses"),
-            (
-                format!(r"^(?:depends\s+on|requires?)\s+({entity})$"),
-                "depends_on",
-            ),
-            (
-                format!(r"^(?:prefers?|likes?|favou?rs?)\s+({entity})$"),
-                "prefers",
-            ),
-            (
-                format!(r"^(?:works?|working)\s+(?:on|with|at|for)\s+({entity})$"),
-                "works_with",
-            ),
-        ];
-        specs
-            .into_iter()
-            .filter_map(|(pat, rel)| regex::Regex::new(&pat).ok().map(|re| (re, rel)))
-            .collect()
-    });
+fn split_on_whitespace_and(part: &str) -> Vec<String> {
+    let mut segments = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    for word in part.split_whitespace() {
+        match word == "and" {
+            true => {
+                match current.is_empty() {
+                    false => {
+                        segments.push(current.join(" "));
+                        current.clear();
+                    }
+                    true => {}
+                }
+            }
+            false => current.push(word),
+        }
+    }
+    match current.is_empty() {
+        false => segments.push(current.join(" ")),
+        true => {}
+    }
+    segments
+}
 
 fn split_fact_clauses(sentence: &str) -> Vec<String> {
     let normalized = sentence.replace([';', ','], ".");
     normalized
         .split('.')
-        .flat_map(|part| AND_SPLIT_RE.split(part))
-        .map(str::trim)
+        .flat_map(split_on_whitespace_and)
+        .map(|s| s.trim().to_string())
         .filter(|part| !part.is_empty())
-        .map(ToString::to_string)
         .collect()
 }
 
-fn entity_pattern() -> &'static str {
-    r"[A-Z][A-Za-z0-9_+#.-]*(?:\s+[A-Z][A-Za-z0-9_+#.-]*){0,5}"
+fn is_entity_word(word: &str) -> bool {
+    let mut chars = word.chars();
+    let first = match chars.next() {
+        Some(ch) => ch,
+        None => return false,
+    };
+    first.is_ascii_uppercase()
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '+' | '#' | '.' | '-'))
 }
+
+fn is_entity_phrase(text: &str) -> bool {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    !words.is_empty() && words.len() <= 6 && words.iter().copied().all(is_entity_word)
+}
+
+const BUILD_VERBS: &[&str] = &["created", "create", "built", "build", "wrote", "write", "made"];
+const BUILD_PREPS: &[&str] = &["with", "in", "using"];
+const CARRIED_BUILD_VERBS: &[&str] = &[
+    "built",
+    "build",
+    "wrote",
+    "write",
+    "made",
+    "implemented",
+];
+const PRONOUN_TARGETS: &[&str] = &["it", "that", "this"];
+
+fn parse_built_product_clause(words: &[&str]) -> Option<Vec<ExtractedFact>> {
+    let verb_idx = words
+        .iter()
+        .position(|w| BUILD_VERBS.contains(w))
+        .filter(|&idx| idx > 0)?;
+    let prep_rel_idx = words[verb_idx + 1..]
+        .iter()
+        .position(|w| BUILD_PREPS.contains(w))
+        .filter(|&idx| idx > 0)?;
+    let prep_idx = verb_idx + 1 + prep_rel_idx;
+    match prep_idx + 1 < words.len() {
+        false => return None,
+        true => {}
+    }
+    let subject = words[..verb_idx].join(" ");
+    let product = words[verb_idx + 1..prep_idx].join(" ");
+    let tooling = words[prep_idx + 1..].join(" ");
+    match is_entity_phrase(&subject) && is_entity_phrase(&product) && is_entity_phrase(&tooling) {
+        false => None,
+        true => {
+            let mut facts = Vec::new();
+            match build_extracted_fact(&subject, "created", &product) {
+                Some(fact) => facts.push(fact),
+                None => {}
+            }
+            match build_extracted_fact(&product, "built_with", &tooling) {
+                Some(fact) => facts.push(fact),
+                None => {}
+            }
+            Some(facts)
+        }
+    }
+}
+
+fn parse_carried_build_clause(words: &[&str], carried_object: Option<&str>) -> Option<Vec<ExtractedFact>> {
+    let object = carried_object?;
+    match words.len() >= 4
+        && CARRIED_BUILD_VERBS.contains(&words[0])
+        && PRONOUN_TARGETS.contains(&words[1])
+        && BUILD_PREPS.contains(&words[2])
+    {
+        false => None,
+        true => {
+            let tooling = words[3..].join(" ");
+            match is_entity_phrase(&tooling) {
+                true => Some(
+                    build_extracted_fact(object, "built_with", &tooling)
+                        .into_iter()
+                        .collect(),
+                ),
+                false => None,
+            }
+        }
+    }
+}
+
+fn parse_possessive_preference_clause(words: &[&str]) -> Option<ExtractedFact> {
+    let fav_idx = words
+        .iter()
+        .position(|&w| w == "favorite" || w == "preferred")
+        .filter(|&idx| idx > 0)?;
+    let cop_rel_idx = words[fav_idx + 1..]
+        .iter()
+        .position(|&w| w == "is" || w == "are")
+        .filter(|&idx| idx > 0)?;
+    let cop_idx = fav_idx + 1 + cop_rel_idx;
+    match cop_idx + 1 < words.len() {
+        false => return None,
+        true => {}
+    }
+    let raw_subject = words[..fav_idx].join(" ");
+    let subject = raw_subject
+        .trim_end_matches("'s")
+        .trim_end_matches("’s")
+        .trim_end_matches('s')
+        .to_string();
+    let subject_candidate = raw_subject
+        .strip_suffix("'s")
+        .or_else(|| raw_subject.strip_suffix("’s"))
+        .or_else(|| raw_subject.strip_suffix('s'))
+        .unwrap_or(&subject);
+    let target = words[cop_idx + 1..].join(" ");
+    match is_entity_phrase(subject_candidate) && is_entity_phrase(&target) {
+        true => build_extracted_fact(subject_candidate, "prefers", &target),
+        false => None,
+    }
+}
+
+const DIRECT_CONNECTOR_RULES: &[(&str, &str)] = &[
+    (" is built with ", "built_with"),
+    (" was built with ", "built_with"),
+    (" built with ", "built_with"),
+    (" is built in ", "built_with"),
+    (" was built in ", "built_with"),
+    (" built in ", "built_with"),
+    (" is built using ", "built_with"),
+    (" was built using ", "built_with"),
+    (" built using ", "built_with"),
+    (" is written with ", "built_with"),
+    (" was written with ", "built_with"),
+    (" written with ", "built_with"),
+    (" is written in ", "built_with"),
+    (" was written in ", "built_with"),
+    (" written in ", "built_with"),
+    (" is written using ", "built_with"),
+    (" was written using ", "built_with"),
+    (" written using ", "built_with"),
+    (" is implemented with ", "built_with"),
+    (" was implemented with ", "built_with"),
+    (" implemented with ", "built_with"),
+    (" is implemented in ", "built_with"),
+    (" was implemented in ", "built_with"),
+    (" implemented in ", "built_with"),
+    (" is implemented using ", "built_with"),
+    (" was implemented using ", "built_with"),
+    (" implemented using ", "built_with"),
+    (" is made with ", "built_with"),
+    (" was made with ", "built_with"),
+    (" made with ", "built_with"),
+    (" is made in ", "built_with"),
+    (" was made in ", "built_with"),
+    (" made in ", "built_with"),
+    (" is made using ", "built_with"),
+    (" was made using ", "built_with"),
+    (" made using ", "built_with"),
+    (" lives in ", "lives_in"),
+    (" live in ", "lives_in"),
+    (" resides in ", "lives_in"),
+    (" reside in ", "lives_in"),
+    (" is using ", "uses"),
+    (" are using ", "uses"),
+    (" was using ", "uses"),
+    (" were using ", "uses"),
+    (" am using ", "uses"),
+    (" uses ", "uses"),
+    (" use ", "uses"),
+    (" using ", "uses"),
+    (" depends on ", "depends_on"),
+    (" requires ", "depends_on"),
+    (" require ", "depends_on"),
+    (" prefers ", "prefers"),
+    (" prefer ", "prefers"),
+    (" likes ", "prefers"),
+    (" like ", "prefers"),
+    (" favors ", "prefers"),
+    (" favor ", "prefers"),
+    (" favours ", "prefers"),
+    (" favour ", "prefers"),
+    (" is a ", "is_a"),
+    (" is an ", "is_a"),
+    (" is the ", "is_a"),
+    (" is working on ", "works_with"),
+    (" are working on ", "works_with"),
+    (" was working on ", "works_with"),
+    (" were working on ", "works_with"),
+    (" am working on ", "works_with"),
+    (" works on ", "works_with"),
+    (" work on ", "works_with"),
+    (" working on ", "works_with"),
+    (" is working with ", "works_with"),
+    (" are working with ", "works_with"),
+    (" was working with ", "works_with"),
+    (" were working with ", "works_with"),
+    (" am working with ", "works_with"),
+    (" works with ", "works_with"),
+    (" work with ", "works_with"),
+    (" working with ", "works_with"),
+    (" is working at ", "works_with"),
+    (" are working at ", "works_with"),
+    (" was working at ", "works_with"),
+    (" were working at ", "works_with"),
+    (" am working at ", "works_with"),
+    (" works at ", "works_with"),
+    (" work at ", "works_with"),
+    (" working at ", "works_with"),
+    (" is working for ", "works_with"),
+    (" are working for ", "works_with"),
+    (" was working for ", "works_with"),
+    (" were working for ", "works_with"),
+    (" am working for ", "works_with"),
+    (" works for ", "works_with"),
+    (" work for ", "works_with"),
+    (" working for ", "works_with"),
+    (" created ", "created"),
+    (" create ", "created"),
+    (" built ", "created"),
+    (" build ", "created"),
+    (" wrote ", "created"),
+    (" write ", "created"),
+];
+
+const CARRIED_CONNECTOR_RULES: &[(&str, &str)] = &[
+    ("uses ", "uses"),
+    ("use ", "uses"),
+    ("using ", "uses"),
+    ("depends on ", "depends_on"),
+    ("requires ", "depends_on"),
+    ("require ", "depends_on"),
+    ("prefers ", "prefers"),
+    ("prefer ", "prefers"),
+    ("likes ", "prefers"),
+    ("like ", "prefers"),
+    ("favors ", "prefers"),
+    ("favor ", "prefers"),
+    ("favours ", "prefers"),
+    ("favour ", "prefers"),
+    ("works on ", "works_with"),
+    ("work on ", "works_with"),
+    ("working on ", "works_with"),
+    ("works with ", "works_with"),
+    ("work with ", "works_with"),
+    ("working with ", "works_with"),
+    ("works at ", "works_with"),
+    ("work at ", "works_with"),
+    ("working at ", "works_with"),
+    ("works for ", "works_with"),
+    ("work for ", "works_with"),
+    ("working for ", "works_with"),
+];
 
 fn extract_fact_clause_multi(
     clause: &str,
     carried_subject: Option<&str>,
     carried_object: Option<&str>,
 ) -> Vec<ExtractedFact> {
-    if let Some(caps) = BUILT_PRODUCT_RE.captures(clause) {
-        let Some(subject) = caps.get(1).map(|m| m.as_str()) else {
-            return Vec::new();
-        };
-        let Some(product) = caps.get(2).map(|m| m.as_str()) else {
-            return Vec::new();
-        };
-        let Some(tooling) = caps.get(3).map(|m| m.as_str()) else {
-            return Vec::new();
-        };
+    let words: Vec<&str> = clause.split_whitespace().collect();
+    let normalized = words.join(" ");
 
-        let mut facts = Vec::new();
-        if let Some(fact) = build_extracted_fact(subject, "created", product) {
-            facts.push(fact);
-        }
-        if let Some(fact) = build_extracted_fact(product, "built_with", tooling) {
-            facts.push(fact);
-        }
-        return facts;
+    match parse_built_product_clause(&words) {
+        Some(facts) => return facts,
+        None => {}
     }
 
-    if let Some(object) = carried_object {
-        if let Some(caps) = CARRIED_BUILD_RE.captures(clause) {
-            return caps
-                .get(1)
-                .and_then(|m| build_extracted_fact(object, "built_with", m.as_str()))
-                .into_iter()
-                .collect();
-        }
+    match parse_carried_build_clause(&words, carried_object) {
+        Some(facts) => return facts,
+        None => {}
     }
 
-    extract_fact_clause(clause, carried_subject)
+    extract_fact_clause(&normalized, &words, carried_subject)
         .into_iter()
         .collect()
 }
 
-fn extract_fact_clause(clause: &str, carried_subject: Option<&str>) -> Option<ExtractedFact> {
-    for (regex, relation) in DIRECT_FACT_RES.iter() {
-        if let Some(caps) = regex.captures(clause) {
-            return build_extracted_fact(caps.get(1)?.as_str(), relation, caps.get(2)?.as_str());
+fn extract_fact_clause(
+    normalized: &str,
+    words: &[&str],
+    carried_subject: Option<&str>,
+) -> Option<ExtractedFact> {
+    match parse_possessive_preference_clause(words) {
+        Some(fact) => return Some(fact),
+        None => {}
+    }
+
+    for &(connector, relation) in DIRECT_CONNECTOR_RULES {
+        match normalized.find(connector) {
+            Some(idx) => {
+                let left = &normalized[..idx];
+                let right = &normalized[idx + connector.len()..];
+                match is_entity_phrase(left) && is_entity_phrase(right) {
+                    true => match build_extracted_fact(left, relation, right) {
+                        Some(fact) => return Some(fact),
+                        None => {}
+                    },
+                    false => {}
+                }
+            }
+            None => {}
         }
     }
 
     let subject = carried_subject?;
-    for (regex, relation) in CARRIED_FACT_RES.iter() {
-        if let Some(caps) = regex.captures(clause) {
-            return build_extracted_fact(subject, relation, caps.get(1)?.as_str());
+    for &(prefix, relation) in CARRIED_CONNECTOR_RULES {
+        match normalized.strip_prefix(prefix) {
+            Some(right) => match is_entity_phrase(right) {
+                true => match build_extracted_fact(subject, relation, right) {
+                    Some(fact) => return Some(fact),
+                    None => {}
+                },
+                false => {}
+            },
+            None => {}
         }
     }
 
@@ -1010,14 +1239,14 @@ fn extract_fact_clause(clause: &str, carried_subject: Option<&str>) -> Option<Ex
 fn build_extracted_fact(from: &str, relation: &str, to: &str) -> Option<ExtractedFact> {
     let from = clean_entity(from);
     let to = clean_entity(to);
-    if from.is_empty() || to.is_empty() || !is_valid_entity(&from) || !is_valid_entity(&to) {
-        return None;
+    match from.is_empty() || to.is_empty() || !is_valid_entity(&from) || !is_valid_entity(&to) {
+        true => None,
+        false => Some(ExtractedFact {
+            from,
+            relation: relation.to_string(),
+            to,
+        }),
     }
-    Some(ExtractedFact {
-        from,
-        relation: relation.to_string(),
-        to,
-    })
 }
 
 fn clean_entity(value: &str) -> String {
@@ -1032,130 +1261,6 @@ fn clean_entity(value: &str) -> String {
         .collect::<Vec<_>>()
         .join(" ")
 }
-
-const STOP_WORDS: &[&str] = &[
-    "a",
-    "about",
-    "after",
-    "again",
-    "all",
-    "am",
-    "an",
-    "and",
-    "any",
-    "are",
-    "as",
-    "at",
-    "be",
-    "been",
-    "before",
-    "being",
-    "below",
-    "between",
-    "both",
-    "but",
-    "by",
-    "can",
-    "did",
-    "do",
-    "does",
-    "doing",
-    "down",
-    "during",
-    "each",
-    "few",
-    "for",
-    "from",
-    "further",
-    "had",
-    "has",
-    "have",
-    "having",
-    "he",
-    "her",
-    "here",
-    "hers",
-    "herself",
-    "him",
-    "himself",
-    "his",
-    "how",
-    "i",
-    "if",
-    "in",
-    "into",
-    "is",
-    "it",
-    "its",
-    "itself",
-    "just",
-    "me",
-    "more",
-    "most",
-    "my",
-    "myself",
-    "no",
-    "nor",
-    "not",
-    "now",
-    "of",
-    "off",
-    "on",
-    "once",
-    "only",
-    "or",
-    "other",
-    "our",
-    "ours",
-    "ourselves",
-    "out",
-    "over",
-    "own",
-    "same",
-    "she",
-    "should",
-    "so",
-    "some",
-    "someone",
-    "something",
-    "than",
-    "that",
-    "the",
-    "their",
-    "theirs",
-    "them",
-    "themselves",
-    "then",
-    "there",
-    "these",
-    "they",
-    "this",
-    "those",
-    "through",
-    "to",
-    "too",
-    "under",
-    "until",
-    "up",
-    "very",
-    "was",
-    "we",
-    "were",
-    "what",
-    "when",
-    "where",
-    "which",
-    "who",
-    "whom",
-    "why",
-    "will",
-    "with",
-    "you",
-    "your",
-    "yours",
-    "yourself",
-    "yourselves",
-];
 
 const COMMON_NOUNS: &[&str] = &[
     "app",
@@ -1191,16 +1296,9 @@ const COMMON_NOUNS: &[&str] = &[
 
 fn is_valid_entity(word: &str) -> bool {
     let lower = word.to_lowercase();
-    if lower.is_empty() {
-        return false;
-    }
-    if STOP_WORDS.binary_search(&lower.as_str()).is_ok() {
-        return false;
-    }
-    if word == lower && COMMON_NOUNS.binary_search(&lower.as_str()).is_ok() {
-        return false;
-    }
-    true
+    !lower.is_empty()
+        && STOP_WORDS.binary_search(&lower.as_str()).is_err()
+        && !(word == lower && COMMON_NOUNS.binary_search(&lower.as_str()).is_ok())
 }
 
 fn keyword_match_count(keywords: &[String], text: &str) -> usize {
@@ -1251,12 +1349,9 @@ impl Tool for ProactiveRecallTool {
         // Extract keywords
         let keywords: Vec<String> = query
             .chars()
-            .map(|c| {
-                if c.is_alphanumeric() || c.is_whitespace() {
-                    c
-                } else {
-                    ' '
-                }
+            .map(|c| match c.is_alphanumeric() || c.is_whitespace() {
+                true => c,
+                false => ' ',
             })
             .collect::<String>()
             .split_whitespace()
@@ -1269,31 +1364,37 @@ impl Tool for ProactiveRecallTool {
         let mut items: Vec<Value> = Vec::new();
 
         // 1. Semantic memory via FTS5
-        if !query.trim().is_empty() {
-            if let Ok(fts_results) =
-                with_db(|conn| query_fts5(conn, query, max_results, &uid, &sid, &aid))
-            {
-                for fact in fts_results {
-                    let mut item = json!({
-                        "layer": "semantic",
-                        "content": fact["rawText"],
-                        "confidence": 0.85,
-                        "metadata": {
-                            "nodeId": fact["nodeId"],
-                            "timestamp": fact["timestamp"],
-                            "importance": fact["importance"],
+        match query.trim().is_empty() {
+            false => {
+                match with_db(|conn| query_fts5(conn, query, max_results, &uid, &sid, &aid)) {
+                    Ok(fts_results) => {
+                        for fact in fts_results {
+                            let mut item = json!({
+                                "layer": "semantic",
+                                "content": fact["rawText"],
+                                "confidence": 0.85,
+                                "metadata": {
+                                    "nodeId": fact["nodeId"],
+                                    "timestamp": fact["timestamp"],
+                                    "importance": fact["importance"],
+                                }
+                            });
+                            match item["confidence"].as_f64() {
+                                Some(c) => {
+                                    item["confidence"] = json!(c.min(1.0));
+                                }
+                                None => {}
+                            }
+                            items.push(item);
                         }
-                    });
-                    if let Some(c) = item["confidence"].as_f64() {
-                        item["confidence"] = json!(c.min(1.0));
                     }
-                    items.push(item);
+                    Err(_) => {}
                 }
             }
+            true => {}
         }
 
         // 2. Graph memory via scoped keyword ranking over entities and relations.
-        // A full-query LIKE misses natural requests such as "what is OpenZ built with".
         let graph_results = with_db(|conn| -> Result<Vec<Value>> {
             let mut results = Vec::new();
 
@@ -1312,20 +1413,22 @@ impl Tool for ProactiveRecallTool {
                 let searchable =
                     format!("{} {} {}", name, entity_type, observations.join(" ")).to_lowercase();
                 let match_count = keyword_match_count(&keywords, &searchable);
-                if match_count > 0 {
-                    let obs_str = if observations.is_empty() {
-                        String::new()
-                    } else {
-                        format!(" - Observations: {}", observations.join(", "))
-                    };
-                    results.push(json!({
-                        "kind": "entity",
-                        "name": name,
-                        "entityType": entity_type,
-                        "observations": observations,
-                        "content": format!("Entity: {} ({}){}", name, entity_type, obs_str),
-                        "matchCount": match_count,
-                    }));
+                match match_count > 0 {
+                    true => {
+                        let obs_str = match observations.is_empty() {
+                            true => String::new(),
+                            false => format!(" - Observations: {}", observations.join(", ")),
+                        };
+                        results.push(json!({
+                            "kind": "entity",
+                            "name": name,
+                            "entityType": entity_type,
+                            "observations": observations,
+                            "content": format!("Entity: {} ({}){}", name, entity_type, obs_str),
+                            "matchCount": match_count,
+                        }));
+                    }
+                    false => {}
                 }
             }
 
@@ -1348,15 +1451,18 @@ impl Tool for ProactiveRecallTool {
                 )
                 .to_lowercase();
                 let match_count = keyword_match_count(&keywords, &searchable);
-                if match_count > 0 {
-                    results.push(json!({
-                        "kind": "relation",
-                        "from": from_name,
-                        "relationType": relation_type,
-                        "to": to_name,
-                        "content": format!("Relation: {} -[{}]-> {}", from_name, relation_type, to_name),
-                        "matchCount": match_count,
-                    }));
+                match match_count > 0 {
+                    true => {
+                        results.push(json!({
+                            "kind": "relation",
+                            "from": from_name,
+                            "relationType": relation_type,
+                            "to": to_name,
+                            "content": format!("Relation: {} -[{}]-> {}", from_name, relation_type, to_name),
+                            "matchCount": match_count,
+                        }));
+                    }
+                    false => {}
                 }
             }
 
@@ -1366,22 +1472,21 @@ impl Tool for ProactiveRecallTool {
         for graph_item in graph_results {
             let match_count = graph_item["matchCount"].as_u64().unwrap_or(0) as f64;
             let confidence = (0.6 + 0.1 * match_count).min(1.0);
-            let metadata = if graph_item["kind"] == "relation" {
-                json!({
+            let metadata = match graph_item["kind"] == "relation" {
+                true => json!({
                     "kind": "relation",
                     "from": graph_item["from"],
                     "relationType": graph_item["relationType"],
                     "to": graph_item["to"],
                     "matchCount": graph_item["matchCount"],
-                })
-            } else {
-                json!({
+                }),
+                false => json!({
                     "kind": "entity",
                     "name": graph_item["name"],
                     "entityType": graph_item["entityType"],
                     "observations": graph_item["observations"],
                     "matchCount": graph_item["matchCount"],
-                })
+                }),
             };
             items.push(json!({
                 "layer": "graph",
@@ -1392,72 +1497,76 @@ impl Tool for ProactiveRecallTool {
         }
 
         // 3. Episodic reflections
-        if !query.trim().is_empty() {
-            let pattern = format!("%{}%", query);
-            let reflections = with_db(|conn| -> Result<Vec<Value>> {
-                let mut stmt = conn.prepare(
-                    "SELECT id, task_description, status, attempt_number, reflection, root_cause, solution_applied, created_at
-                     FROM reflection_memory
-                     WHERE (task_description LIKE ?1 OR reflection LIKE ?1 OR root_cause LIKE ?1)
-                       AND (?2 IS NULL OR user_id = ?2 OR user_id = '*')
-                       AND (?3 IS NULL OR session_id = ?3 OR session_id = '*')
-                       AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')
-                     ORDER BY created_at DESC"
-                )?;
-                let mut rows = stmt.query(params![pattern, uid, sid, aid])?;
-                let mut results = Vec::new();
-                while let Some(row) = rows.next()? {
-                    results.push(json!({
-                        "id": row.get::<_, String>(0)?,
-                        "taskDescription": row.get::<_, String>(1)?,
-                        "status": row.get::<_, String>(2)?,
-                        "attemptNumber": row.get::<_, i64>(3)?,
-                        "reflection": row.get::<_, String>(4)?,
-                        "rootCause": row.get::<_, Option<String>>(5)?,
-                        "solutionApplied": row.get::<_, Option<String>>(6)?,
-                        "createdAt": row.get::<_, String>(7)?,
+        match query.trim().is_empty() {
+            false => {
+                let pattern = format!("%{}%", query);
+                let reflections = with_db(|conn| -> Result<Vec<Value>> {
+                    let mut stmt = conn.prepare(
+                        "SELECT id, task_description, status, attempt_number, reflection, root_cause, solution_applied, created_at
+                         FROM reflection_memory
+                         WHERE (task_description LIKE ?1 OR reflection LIKE ?1 OR root_cause LIKE ?1)
+                           AND (?2 IS NULL OR user_id = ?2 OR user_id = '*')
+                           AND (?3 IS NULL OR session_id = ?3 OR session_id = '*')
+                           AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')
+                         ORDER BY created_at DESC"
+                    )?;
+                    let mut rows = stmt.query(params![pattern, uid, sid, aid])?;
+                    let mut results = Vec::new();
+                    while let Some(row) = rows.next()? {
+                        results.push(json!({
+                            "id": row.get::<_, String>(0)?,
+                            "taskDescription": row.get::<_, String>(1)?,
+                            "status": row.get::<_, String>(2)?,
+                            "attemptNumber": row.get::<_, i64>(3)?,
+                            "reflection": row.get::<_, String>(4)?,
+                            "rootCause": row.get::<_, Option<String>>(5)?,
+                            "solutionApplied": row.get::<_, Option<String>>(6)?,
+                            "createdAt": row.get::<_, String>(7)?,
+                        }));
+                    }
+                    Ok(results)
+                })?;
+
+                for r in reflections {
+                    let confidence = match keywords.is_empty() {
+                        true => 0.6,
+                        false => {
+                            let text_to_check = format!(
+                                "{} {} {} {}",
+                                r["taskDescription"].as_str().unwrap_or(""),
+                                r["reflection"].as_str().unwrap_or(""),
+                                r["rootCause"].as_str().unwrap_or(""),
+                                r["solutionApplied"].as_str().unwrap_or(""),
+                            )
+                            .to_lowercase();
+                            let match_count = keywords
+                                .iter()
+                                .filter(|kw| text_to_check.contains(kw.as_str()))
+                                .count();
+                            (0.6 + 0.1 * match_count as f64).min(1.0)
+                        }
+                    };
+                    items.push(json!({
+                        "layer": "episodic",
+                        "content": format!(
+                            "Reflection on '{}' (Status: {}) | {} | Root Cause: {} | Solution: {}",
+                            r["taskDescription"],
+                            r["status"],
+                            r["reflection"],
+                            r["rootCause"].as_str().unwrap_or("None"),
+                            r["solutionApplied"].as_str().unwrap_or("None"),
+                        ),
+                        "confidence": confidence,
+                        "metadata": {
+                            "id": r["id"],
+                            "taskDescription": r["taskDescription"],
+                            "status": r["status"],
+                            "createdAt": r["createdAt"],
+                        }
                     }));
                 }
-                Ok(results)
-            })?;
-
-            for r in reflections {
-                let confidence = if keywords.is_empty() {
-                    0.6
-                } else {
-                    let text_to_check = format!(
-                        "{} {} {} {}",
-                        r["taskDescription"].as_str().unwrap_or(""),
-                        r["reflection"].as_str().unwrap_or(""),
-                        r["rootCause"].as_str().unwrap_or(""),
-                        r["solutionApplied"].as_str().unwrap_or(""),
-                    )
-                    .to_lowercase();
-                    let match_count = keywords
-                        .iter()
-                        .filter(|kw| text_to_check.contains(kw.as_str()))
-                        .count();
-                    (0.6 + 0.1 * match_count as f64).min(1.0)
-                };
-                items.push(json!({
-                    "layer": "episodic",
-                    "content": format!(
-                        "Reflection on '{}' (Status: {}) | {} | Root Cause: {} | Solution: {}",
-                        r["taskDescription"],
-                        r["status"],
-                        r["reflection"],
-                        r["rootCause"].as_str().unwrap_or("None"),
-                        r["solutionApplied"].as_str().unwrap_or("None"),
-                    ),
-                    "confidence": confidence,
-                    "metadata": {
-                        "id": r["id"],
-                        "taskDescription": r["taskDescription"],
-                        "status": r["status"],
-                        "createdAt": r["createdAt"],
-                    }
-                }));
             }
+            true => {}
         }
 
         // Sort by confidence descending

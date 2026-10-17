@@ -34,24 +34,17 @@ impl CancellationToken {
     }
 
     pub fn is_cancelled(&self) -> bool {
-        if self.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
-            return true;
-        }
-        if let Some(rx) = crate::shutdown::receiver() {
-            if *rx.borrow() {
-                return true;
-            }
-        }
-        let current_cancel = *self._cli_cancel_rx.borrow();
-        if current_cancel != self.cli_cancel_initial {
-            return true;
-        }
-        false
+        self.cancelled.load(std::sync::atomic::Ordering::SeqCst)
+            || crate::shutdown::receiver()
+                .map(|rx| *rx.borrow())
+                .unwrap_or(false)
+            || (*self._cli_cancel_rx.borrow() != self.cli_cancel_initial)
     }
 
     pub async fn wait_for_cancellation(&self) {
-        if self.is_cancelled() {
-            return;
+        match self.is_cancelled() {
+            true => return,
+            false => {}
         }
 
         let mut shutdown_rx = crate::shutdown::receiver();
@@ -62,25 +55,28 @@ impl CancellationToken {
         let wait_notify = notify.notified();
 
         let wait_shutdown = async {
-            if let Some(ref mut rx) = shutdown_rx {
-                if *rx.borrow() {
-                    return;
-                }
-                while rx.changed().await.is_ok() {
-                    if *rx.borrow() {
-                        return;
+            match shutdown_rx {
+                Some(ref mut rx) => {
+                    while !*rx.borrow() {
+                        match rx.changed().await {
+                            Ok(()) => {}
+                            Err(_) => {
+                                std::future::pending::<()>().await;
+                                return;
+                            }
+                        }
                     }
                 }
+                None => {
+                    std::future::pending::<()>().await;
+                }
             }
-            std::future::pending::<()>().await
         };
 
         let wait_cli_cancel = async {
-            while *cli_cancel_rx.borrow() == cli_cancel_initial {
-                if cli_cancel_rx.changed().await.is_err() {
-                    break;
-                }
-            }
+            while *cli_cancel_rx.borrow() == cli_cancel_initial
+                && cli_cancel_rx.changed().await.is_ok()
+            {}
         };
 
         tokio::select! {

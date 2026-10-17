@@ -46,32 +46,33 @@ fn now_rfc3339() -> String {
 }
 
 fn default_source_stale_after_secs(kind: &str, requested: i64) -> i64 {
-    if requested > 0 {
-        return requested.max(60);
-    }
-    match kind.trim().to_lowercase().as_str() {
-        "news" | "social" | "feed" | "market" | "price" => 21_600,
-        "api" | "status" => 3_600,
-        "repo" | "docs" | "doc" | "website" => 604_800,
-        "path" | "file" | "local" => 86_400,
-        _ => 604_800,
+    match requested > 0 {
+        true => requested.max(60),
+        false => match kind.trim().to_lowercase().as_str() {
+            "news" | "social" | "feed" | "market" | "price" => 21_600,
+            "api" | "status" => 3_600,
+            "repo" | "docs" | "doc" | "website" => 604_800,
+            "path" | "file" | "local" => 86_400,
+            _ => 604_800,
+        },
     }
 }
 
 fn freshness_status(timestamp: Option<&str>, stale_after_secs: i64) -> &'static str {
-    let Some(raw) = timestamp.map(str::trim).filter(|s| !s.is_empty()) else {
-        return "unknown";
+    let raw = match timestamp.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(raw) => raw,
+        None => return "unknown",
     };
-    let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(raw) else {
-        return "unknown";
+    let parsed = match chrono::DateTime::parse_from_rfc3339(raw) {
+        Ok(parsed) => parsed,
+        Err(_) => return "unknown",
     };
     let age = chrono::Utc::now()
         .signed_duration_since(parsed.with_timezone(&chrono::Utc))
         .num_seconds();
-    if age > stale_after_secs.max(60) {
-        "stale"
-    } else {
-        "fresh"
+    match age > stale_after_secs.max(60) {
+        true => "stale",
+        false => "fresh",
     }
 }
 
@@ -96,10 +97,9 @@ fn freshness_bonus(freshness: &str) -> f64 {
 pub fn display_source_label(label: &str, uri: &str) -> String {
     let derived = source_label_from_uri(uri);
     let current = label.trim();
-    if current.is_empty() || is_low_quality_source_label(current, uri) {
-        derived.unwrap_or_else(|| uri.chars().take(80).collect())
-    } else {
-        current.to_string()
+    match current.is_empty() || is_low_quality_source_label(current, uri) {
+        true => derived.unwrap_or_else(|| uri.chars().take(80).collect()),
+        false => current.to_string(),
     }
 }
 
@@ -110,102 +110,98 @@ fn source_label_from_uri(uri: &str) -> Option<String> {
             .path_segments()
             .map(|segments| segments.collect::<Vec<_>>())
             .unwrap_or_default();
-        if host == "github.com" && parts.len() >= 2 {
-            let repo = format!("{}/{}", parts[0], parts[1]);
-            return match parts.get(2).copied() {
-                Some("issues") => parts
-                    .get(3)
-                    .map(|num| format!("{repo} issue #{num}"))
-                    .or_else(|| Some(format!("{repo} issues"))),
-                Some("pull") => parts
-                    .get(3)
-                    .map(|num| format!("{repo} PR #{num}"))
-                    .or_else(|| Some(format!("{repo} pull requests"))),
-                Some("pulls") => Some(format!("{repo} pull requests")),
-                Some("blob" | "tree") => {
-                    if parts.len() > 4 {
-                        Some(format!("{repo} {}", parts[4..].join("/")))
-                    } else {
-                        Some(repo)
-                    }
-                }
-                _ => Some(repo),
-            };
-        }
-        if host == "raw.githubusercontent.com" && parts.len() >= 2 {
-            let repo = format!("{}/{}", parts[0], parts[1]);
-            if parts.len() > 3 {
-                return Some(format!("{repo} {}", parts[3..].join("/")));
+        match (host, parts.len() >= 2) {
+            ("github.com", true) => {
+                let repo = format!("{}/{}", parts[0], parts[1]);
+                return match parts.get(2).copied() {
+                    Some("issues") => parts
+                        .get(3)
+                        .map(|num| format!("{repo} issue #{num}"))
+                        .or_else(|| Some(format!("{repo} issues"))),
+                    Some("pull") => parts
+                        .get(3)
+                        .map(|num| format!("{repo} PR #{num}"))
+                        .or_else(|| Some(format!("{repo} pull requests"))),
+                    Some("pulls") => Some(format!("{repo} pull requests")),
+                    Some("blob" | "tree") => match parts.len() > 4 {
+                        true => Some(format!("{repo} {}", parts[4..].join("/"))),
+                        false => Some(repo),
+                    },
+                    _ => Some(repo),
+                };
             }
-            return Some(repo);
+            ("raw.githubusercontent.com", true) => {
+                let repo = format!("{}/{}", parts[0], parts[1]);
+                return match parts.len() > 3 {
+                    true => Some(format!("{repo} {}", parts[3..].join("/"))),
+                    false => Some(repo),
+                };
+            }
+            ("gitlab.com", true) => return Some(format!("gitlab:{}/{}", parts[0], parts[1])),
+            ("crates.io", true) => match parts[0] == "crates" {
+                true => return Some(format!("crates.io: {}", parts[1])),
+                false => {}
+            },
+            ("npmjs.com", true) => match parts[0] == "package" {
+                true => return Some(format!("npm: {}", parts[1])),
+                false => {}
+            },
+            ("pypi.org", true) => match parts[0] == "project" {
+                true => return Some(format!("pypi: {}", parts[1])),
+                false => {}
+            },
+            ("arxiv.org", true) => return Some(format!("arxiv: {}", parts[1])),
+            _ => {}
         }
-        if host == "gitlab.com" && parts.len() >= 2 {
-            return Some(format!("gitlab:{}/{}", parts[0], parts[1]));
+        match (
+            host == "docs.rs" && !parts.is_empty(),
+            host.ends_with("wikipedia.org") && parts.len() >= 2 && parts[0] == "wiki",
+        ) {
+            (true, _) => Some(format!("docs.rs: {}", parts[0])),
+            (false, true) => Some(format!("wiki: {}", parts[1].replace('_', " "))),
+            (false, false) => None,
         }
-        if host == "crates.io" && parts.len() >= 2 && parts[0] == "crates" {
-            return Some(format!("crates.io: {}", parts[1]));
-        }
-        if host == "docs.rs" && !parts.is_empty() {
-            return Some(format!("docs.rs: {}", parts[0]));
-        }
-        if host == "npmjs.com" && parts.len() >= 2 && parts[0] == "package" {
-            return Some(format!("npm: {}", parts[1]));
-        }
-        if host == "pypi.org" && parts.len() >= 2 && parts[0] == "project" {
-            return Some(format!("pypi: {}", parts[1]));
-        }
-        if host == "arxiv.org" && parts.len() >= 2 {
-            return Some(format!("arxiv: {}", parts[1]));
-        }
-        if host.ends_with("wikipedia.org") && parts.len() >= 2 && parts[0] == "wiki" {
-            return Some(format!("wiki: {}", parts[1].replace('_', " ")));
-        }
-        None
     })
 }
 
 fn is_low_quality_source_label(label: &str, uri: &str) -> bool {
     let lower = label.to_lowercase();
-    if lower.starts_with("github.com - ")
+    let has_generic_host_prefix = lower.starts_with("github.com - ")
         || lower.starts_with("raw.githubusercontent.com - ")
-        || lower.starts_with("gitlab.com - ")
-    {
-        return true;
+        || lower.starts_with("gitlab.com - ");
+    match has_generic_host_prefix {
+        true => true,
+        false => match source_label_from_uri(uri) {
+            Some(derived) => {
+                let derived_lower = derived.to_lowercase();
+                matches!(
+                    lower.as_str(),
+                    "github.com"
+                        | "raw.githubusercontent.com"
+                        | "gitlab.com"
+                        | "crates.io"
+                        | "docs.rs"
+                        | "npmjs.com"
+                        | "pypi.org"
+                        | "github"
+                        | "pulls"
+                        | "issues"
+                ) || lower.parse::<u64>().is_ok()
+                    || (lower.len() < derived_lower.len() && derived_lower.contains(&lower))
+            }
+            None => false,
+        },
     }
-    if let Some(derived) = source_label_from_uri(uri) {
-        let derived_lower = derived.to_lowercase();
-        return lower == "github.com"
-            || lower == "raw.githubusercontent.com"
-            || lower == "gitlab.com"
-            || lower == "crates.io"
-            || lower == "docs.rs"
-            || lower == "npmjs.com"
-            || lower == "pypi.org"
-            || lower == "github"
-            || lower == "pulls"
-            || lower == "issues"
-            || lower.parse::<u64>().is_ok()
-            || (lower.len() < derived_lower.len() && derived_lower.contains(&lower));
-    }
-    false
 }
 
 fn is_ui_chrome_noise_summary(lower: &str) -> bool {
-    if lower.starts_with("assignee:") && lower.contains("sort by") {
-        return true;
-    }
-    if lower.contains("footer navigation")
+    let is_assignee_noise = lower.starts_with("assignee:") && lower.contains("sort by");
+    let is_footer_noise = lower.contains("footer navigation")
         && lower.contains("terms")
         && lower.contains("privacy")
-        && lower.contains("manage cookies")
-    {
-        return true;
-    }
-    if lower.contains("you can’t perform that action")
-        || lower.contains("you can't perform that action")
-    {
-        return true;
-    }
+        && lower.contains("manage cookies");
+    let is_action_error = lower.contains("you can’t perform that action")
+        || lower.contains("you can't perform that action");
     let chrome_terms = [
         "filter by",
         "sort by",
@@ -220,11 +216,12 @@ fn is_ui_chrome_noise_summary(lower: &str) -> bool {
         "protip",
         "manage cookies",
     ];
-    chrome_terms
+    let chrome_hits = chrome_terms
         .iter()
         .filter(|term| lower.contains(**term))
         .count()
-        >= 5
+        >= 5;
+    is_assignee_noise || is_footer_noise || is_action_error || chrome_hits
 }
 
 const STOP_WORDS: &[&str] = &[
@@ -245,12 +242,14 @@ fn tokenize(text: &str) -> Vec<String> {
 }
 
 fn matching_term_count(query: &str, fields: &[&str]) -> (usize, usize) {
-    if query.trim().is_empty() {
-        return (0, 0);
+    match query.trim().is_empty() {
+        true => return (0, 0),
+        false => {}
     }
     let query_tokens = tokenize(query);
-    if query_tokens.is_empty() {
-        return (0, 0);
+    match query_tokens.is_empty() {
+        true => return (0, 0),
+        false => {}
     }
     let total_terms = query_tokens.len();
     let doc_tokens: std::collections::BTreeSet<String> =
@@ -264,42 +263,44 @@ fn matching_term_count(query: &str, fields: &[&str]) -> (usize, usize) {
 
 fn has_anchor_term_match(query: &str, fields: &[&str]) -> bool {
     let query_tokens = tokenize(query);
-    if query_tokens.is_empty() {
-        return false;
+    match query_tokens.is_empty() {
+        true => false,
+        false => {
+            let anchor_tokens: std::collections::BTreeSet<String> =
+                tokenize(&fields.join(" ")).into_iter().collect();
+            query_tokens
+                .iter()
+                .any(|term| anchor_tokens.contains(term.as_str()))
+        }
     }
-    let anchor_tokens: std::collections::BTreeSet<String> =
-        tokenize(&fields.join(" ")).into_iter().collect();
-    query_tokens
-        .iter()
-        .any(|term| anchor_tokens.contains(term.as_str()))
 }
 
 fn source_has_relevant_anchor(query: &str, item: &SourceBookmark) -> bool {
-    if query.trim().is_empty() {
-        return true;
+    match query.trim().is_empty() {
+        true => true,
+        false => {
+            let aliases: Vec<&str> = item.aliases.iter().map(|s| s.as_str()).collect();
+            let anchor_fields: Vec<&str> = [item.label.as_str(), item.uri.as_str()]
+                .into_iter()
+                .chain(aliases.iter().copied())
+                .collect();
+            exact_field_match(query, &[item.label.as_str(), item.uri.as_str()])
+                || item
+                    .aliases
+                    .iter()
+                    .any(|alias| alias.trim().eq_ignore_ascii_case(query.trim()))
+                || item
+                    .uri
+                    .to_lowercase()
+                    .contains(&query.trim().to_lowercase())
+                || has_anchor_term_match(query, &anchor_fields)
+        }
     }
-    let aliases: Vec<&str> = item.aliases.iter().map(|s| s.as_str()).collect();
-    let anchor_fields: Vec<&str> = [item.label.as_str(), item.uri.as_str()]
-        .into_iter()
-        .chain(aliases.iter().copied())
-        .collect();
-    exact_field_match(query, &[item.label.as_str(), item.uri.as_str()])
-        || item
-            .aliases
-            .iter()
-            .any(|alias| alias.trim().eq_ignore_ascii_case(query.trim()))
-        || item
-            .uri
-            .to_lowercase()
-            .contains(&query.trim().to_lowercase())
-        || has_anchor_term_match(query, &anchor_fields)
 }
 
 fn brief_has_relevant_anchor(query: &str, item: &ResearchBrief) -> bool {
-    if query.trim().is_empty() {
-        return true;
-    }
-    item.topic.trim().eq_ignore_ascii_case(query.trim())
+    query.trim().is_empty()
+        || item.topic.trim().eq_ignore_ascii_case(query.trim())
         || item
             .topic
             .to_lowercase()
@@ -309,31 +310,23 @@ fn brief_has_relevant_anchor(query: &str, item: &ResearchBrief) -> bool {
 
 fn exact_field_match(query: &str, fields: &[&str]) -> bool {
     let q = query.trim().to_lowercase();
-    if q.is_empty() {
-        return false;
-    }
-    fields
-        .iter()
-        .any(|field| field.trim().eq_ignore_ascii_case(&q))
+    !q.is_empty()
+        && fields
+            .iter()
+            .any(|field| field.trim().eq_ignore_ascii_case(&q))
 }
 
 /// Term-frequency based scoring: returns ratio of query tokens that appear as
 /// whole words in the document fields, scaled to a 0..10 range.
 fn tf_ratio_score(query: &str, fields: &[&str]) -> f64 {
     let (matching, total) = matching_term_count(query, fields);
-    if total == 0 || matching == 0 {
-        return 0.0;
+    match total == 0 || matching == 0 {
+        true => 0.0,
+        false => {
+            let ratio = matching as f64 / total as f64;
+            ratio * 10.0 * (matching as f64).sqrt() / 3.0f64.sqrt()
+        }
     }
-    let ratio = matching as f64 / total as f64;
-    // Scale by sqrt(matching) so a single common-word match doesn't dominate,
-    // but meaningful partial matches still score well.
-    // Examples:
-    //   1/2 match → 0.50 * 10.0 * sqrt(1) / sqrt(3) = 2.89
-    //   2/2 match → 1.00 * 10.0 * sqrt(2) / sqrt(3) = 8.16
-    //   1/3 match → 0.33 * 10.0 * sqrt(1) / sqrt(3) = 1.92
-    //   2/3 match → 0.67 * 10.0 * sqrt(2) / sqrt(3) = 5.44
-    //   3/3 match → 1.00 * 10.0 * sqrt(3) / sqrt(3) = 10.00
-    ratio * 10.0 * (matching as f64).sqrt() / 3.0f64.sqrt()
 }
 
 fn source_rank_score(query: &str, item: &SourceBookmark) -> f64 {
@@ -345,100 +338,80 @@ fn source_rank_score(query: &str, item: &SourceBookmark) -> f64 {
         .collect();
     let (matching_terms, _) = matching_term_count(query, &fields);
 
-    // If no tokens overlap, check URI substring + exact-field fallback
-    if matching_terms == 0 {
-        // Exact full-query match on label, URI, or alias → high confidence
-        if exact_field_match(query, &[&item.label, &item.uri])
-            || item
-                .aliases
-                .iter()
-                .any(|alias| alias.trim().eq_ignore_ascii_case(query.trim()))
-        {
-            let mut s = 8.0;
-            s += item.trust_score.clamp(0.0, 1.0) * 1.0;
-            s += source_kind_bonus(&item.kind);
-            s += freshness_bonus(&item.freshness);
-            return s;
+    let quality_bonus = item.trust_score.clamp(0.0, 1.0)
+        + source_kind_bonus(&item.kind)
+        + freshness_bonus(&item.freshness);
+
+    match matching_terms {
+        0 => {
+            let is_exact = exact_field_match(query, &[&item.label, &item.uri])
+                || item
+                    .aliases
+                    .iter()
+                    .any(|alias| alias.trim().eq_ignore_ascii_case(query.trim()));
+            let is_uri_sub = !query.trim().is_empty()
+                && item
+                    .uri
+                    .to_lowercase()
+                    .contains(&query.trim().to_lowercase());
+            match (is_exact, is_uri_sub) {
+                (true, _) => 8.0 + quality_bonus,
+                (false, true) => 3.0 + quality_bonus,
+                (false, false) => 0.0,
+            }
         }
-        // URI substring match
-        if !query.trim().is_empty()
-            && item
-                .uri
-                .to_lowercase()
-                .contains(&query.trim().to_lowercase())
-        {
-            let mut s = 3.0;
-            s += item.trust_score.clamp(0.0, 1.0) * 1.0;
-            s += source_kind_bonus(&item.kind);
-            s += freshness_bonus(&item.freshness);
-            return s;
-        }
-        return 0.0;
-    }
-
-    // At least 1 token matched — compute base from token overlap
-    let mut score = tf_ratio_score(query, &fields);
-
-    // Bonus: each query token that exact-matches label, URI, or an alias
-    for term in tokenize(query) {
-        if exact_field_match(&term, &[item.label.as_str(), item.uri.as_str()])
-            || item
-                .aliases
-                .iter()
-                .any(|a| a.trim().eq_ignore_ascii_case(&term))
-        {
-            score += 2.0;
+        _ => {
+            let mut score = tf_ratio_score(query, &fields);
+            for term in tokenize(query) {
+                let term_matched = exact_field_match(&term, &[item.label.as_str(), item.uri.as_str()])
+                    || item
+                        .aliases
+                        .iter()
+                        .any(|a| a.trim().eq_ignore_ascii_case(&term));
+                match term_matched {
+                    true => score += 2.0,
+                    false => {}
+                }
+            }
+            let is_uri_sub = !query.trim().is_empty()
+                && item
+                    .uri
+                    .to_lowercase()
+                    .contains(&query.trim().to_lowercase());
+            match is_uri_sub {
+                true => score += 2.0,
+                false => {}
+            }
+            score + quality_bonus + (item.use_count.max(0) as f64 + 1.0).ln() * 0.25
         }
     }
-
-    // URI substring bonus
-    if !query.trim().is_empty()
-        && item
-            .uri
-            .to_lowercase()
-            .contains(&query.trim().to_lowercase())
-    {
-        score += 2.0;
-    }
-
-    score += item.trust_score.clamp(0.0, 1.0) * 1.0;
-    score += source_kind_bonus(&item.kind);
-    score += (item.use_count.max(0) as f64 + 1.0).ln() * 0.25;
-    score += freshness_bonus(&item.freshness);
-    score
 }
 
 fn is_useful_research_brief_summary(summary: &str) -> bool {
     let normalized = summary.split_whitespace().collect::<Vec<_>>().join(" ");
     let lower = normalized.to_lowercase();
-    if lower.is_empty() {
-        return false;
-    }
-    if matches!(lower.as_str(), "skipped" | "skip" | "none" | "n/a") {
-        return false;
-    }
-    if lower.starts_with("skipped web/search lookup:")
+    let invalid = lower.is_empty()
+        || matches!(lower.as_str(), "skipped" | "skip" | "none" | "n/a")
+        || lower.starts_with("skipped web/search lookup:")
         || lower.contains("fresh saved research brief already matches")
-        || is_ui_chrome_noise_summary(&lower)
-    {
-        return false;
-    }
-    normalized.chars().filter(|c| c.is_alphabetic()).count() >= 24
+        || is_ui_chrome_noise_summary(&lower);
+    !invalid && normalized.chars().filter(|c| c.is_alphabetic()).count() >= 24
 }
 
 fn brief_rank_score(query: &str, item: &ResearchBrief) -> f64 {
     let fields = [item.topic.as_str(), item.summary.as_str()];
     let (matching_terms, _) = matching_term_count(query, &fields);
-    let mut score = if matching_terms >= 1 {
-        tf_ratio_score(query, &fields)
-    } else {
-        0.0
+    let mut score = match matching_terms >= 1 {
+        true => tf_ratio_score(query, &fields),
+        false => 0.0,
     };
-    if score <= 0.0 && !query.trim().is_empty() && matching_terms == 0 {
-        return 0.0;
+    match score <= 0.0 && !query.trim().is_empty() && matching_terms == 0 {
+        true => return 0.0,
+        false => {}
     }
-    if item.topic.trim().eq_ignore_ascii_case(query.trim()) {
-        score += 8.0;
+    match item.topic.trim().eq_ignore_ascii_case(query.trim()) {
+        true => score += 8.0,
+        false => {}
     }
     score += item.confidence.clamp(0.0, 1.0) * 1.0;
     score += (item.use_count.max(0) as f64 + 1.0).ln() * 0.2;
@@ -470,23 +443,21 @@ fn topic_match_key(topic: &str) -> String {
 }
 
 fn source_is_repo_like(source: &SourceBookmark) -> bool {
-    if source.kind.trim().eq_ignore_ascii_case("repo") {
-        return true;
-    }
-    reqwest::Url::parse(&source.uri)
-        .ok()
-        .and_then(|parsed| {
-            parsed
-                .host_str()
-                .map(|host| host.trim_start_matches("www.").to_string())
-        })
-        .map(|host| {
-            matches!(
-                host.as_str(),
-                "github.com" | "raw.githubusercontent.com" | "gitlab.com"
-            )
-        })
-        .unwrap_or(false)
+    source.kind.trim().eq_ignore_ascii_case("repo")
+        || reqwest::Url::parse(&source.uri)
+            .ok()
+            .and_then(|parsed| {
+                parsed
+                    .host_str()
+                    .map(|host| host.trim_start_matches("www.").to_string())
+            })
+            .map(|host| {
+                matches!(
+                    host.as_str(),
+                    "github.com" | "raw.githubusercontent.com" | "gitlab.com"
+                )
+            })
+            .unwrap_or(false)
 }
 
 fn proven_canonical_topic_for_brief(
@@ -496,8 +467,9 @@ fn proven_canonical_topic_for_brief(
 ) -> Option<String> {
     let canonical_topic = canonical_research_topic(topic);
     let topic_key = topic_match_key(&canonical_topic);
-    if topic_key.is_empty() {
-        return None;
+    match topic_key.is_empty() {
+        true => return None,
+        false => {}
     }
 
     let source_id_set: std::collections::BTreeSet<&str> =
@@ -506,17 +478,17 @@ fn proven_canonical_topic_for_brief(
         .iter()
         .filter_map(|source| {
             let source_topic = canonical_research_topic(&source.uri);
-            if source_topic.trim().is_empty() || source_topic == canonical_topic {
-                return None;
-            }
-            let linked_by_id = source_id_set.contains(source.id.as_str());
-            let linked_by_anchor = source_has_relevant_anchor(&canonical_topic, source);
-            let linked_by_topic_key = topic_match_key(&source_topic) == topic_key;
-            if !(linked_by_id || linked_by_anchor || linked_by_topic_key) {
-                return None;
-            }
-            let score = if source_is_repo_like(source) { 2 } else { 1 };
-            Some((score, source.score, source_topic))
+            let linked = source_id_set.contains(source.id.as_str())
+                || source_has_relevant_anchor(&canonical_topic, source)
+                || topic_match_key(&source_topic) == topic_key;
+            let valid = !source_topic.trim().is_empty()
+                && source_topic != canonical_topic
+                && linked;
+            let score = match source_is_repo_like(source) {
+                true => 2,
+                false => 1,
+            };
+            valid.then_some((score, source.score, source_topic))
         })
         .collect::<Vec<_>>();
 
@@ -533,11 +505,8 @@ fn merge_string_arrays(left: &[String], right: &[String]) -> Vec<String> {
         .chain(right.iter())
         .filter_map(|item| {
             let trimmed = item.trim();
-            if trimmed.is_empty() || !seen.insert(trimmed.to_string()) {
-                None
-            } else {
-                Some(trimmed.to_string())
-            }
+            (!trimmed.is_empty() && seen.insert(trimmed.to_string()))
+                .then(|| trimmed.to_string())
         })
         .collect()
 }
@@ -574,8 +543,9 @@ pub async fn add_source_bookmark(
     trust_score: f64,
     stale_after_secs: i64,
 ) -> Result<SourceBookmark> {
-    if label.trim().is_empty() || uri.trim().is_empty() {
-        return Err(anyhow!("label and uri are required"));
+    match label.trim().is_empty() || uri.trim().is_empty() {
+        true => return Err(anyhow!("label and uri are required")),
+        false => {}
     }
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_rfc3339();
@@ -664,18 +634,20 @@ pub async fn mark_source_checked(id_or_uri: &str) -> Result<usize> {
 
 fn resolve_brief_topic_alias(conn: &rusqlite::Connection, topic: &str) -> Result<String> {
     let canonical = canonical_research_topic(topic);
-    if canonical.trim().is_empty() || canonical.contains('/') {
-        return Ok(canonical);
+    match canonical.trim().is_empty() || canonical.contains('/') {
+        true => Ok(canonical),
+        false => {
+            let pattern = format!("%/{canonical}");
+            let existing = conn
+                .query_row(
+                    "SELECT topic FROM research_briefs WHERE topic LIKE ?1 ORDER BY confidence DESC, use_count DESC, updated_at DESC LIMIT 1",
+                    params![pattern],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            Ok(existing.unwrap_or(canonical))
+        }
     }
-    let pattern = format!("%/{canonical}");
-    let existing = conn
-        .query_row(
-            "SELECT topic FROM research_briefs WHERE topic LIKE ?1 ORDER BY confidence DESC, use_count DESC, updated_at DESC LIMIT 1",
-            params![pattern],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()?;
-    Ok(existing.unwrap_or(canonical))
 }
 
 fn resolve_brief_stale_after_secs(
@@ -683,23 +655,26 @@ fn resolve_brief_stale_after_secs(
     source_ids: &[String],
     requested: i64,
 ) -> Result<i64> {
-    if requested > 0 {
-        return Ok(requested.max(60));
-    }
-    let mut ttl_values = Vec::new();
-    for source_id in source_ids {
-        if let Some(ttl) = conn
-            .query_row(
-                "SELECT stale_after_secs FROM source_bookmarks WHERE id = ?1",
-                params![source_id],
-                |row| row.get::<_, i64>(0),
-            )
-            .optional()?
-        {
-            ttl_values.push(ttl.max(60));
+    match requested > 0 {
+        true => Ok(requested.max(60)),
+        false => {
+            let mut ttl_values = Vec::new();
+            for source_id in source_ids {
+                let ttl_opt = conn
+                    .query_row(
+                        "SELECT stale_after_secs FROM source_bookmarks WHERE id = ?1",
+                        params![source_id],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .optional()?;
+                match ttl_opt {
+                    Some(ttl) => ttl_values.push(ttl.max(60)),
+                    None => {}
+                }
+            }
+            Ok(ttl_values.into_iter().min().unwrap_or(604_800))
         }
     }
-    Ok(ttl_values.into_iter().min().unwrap_or(604_800))
 }
 
 fn brief_from_row(row: &rusqlite::Row<'_>, score: f64) -> rusqlite::Result<ResearchBrief> {
@@ -729,11 +704,13 @@ pub async fn save_research_brief(
     confidence: f64,
     stale_after_secs: i64,
 ) -> Result<ResearchBrief> {
-    if topic.trim().is_empty() || summary.trim().is_empty() {
-        return Err(anyhow!("topic and summary are required"));
+    match topic.trim().is_empty() || summary.trim().is_empty() {
+        true => return Err(anyhow!("topic and summary are required")),
+        false => {}
     }
-    if !is_useful_research_brief_summary(summary) {
-        return Err(anyhow!("research brief summary is not useful"));
+    match is_useful_research_brief_summary(summary) {
+        false => return Err(anyhow!("research brief summary is not useful")),
+        true => {}
     }
     let id = uuid::Uuid::new_v4().to_string();
     let now = now_rfc3339();
@@ -786,13 +763,13 @@ pub async fn repair_research_brief_topics() -> Result<usize> {
 
         let mut repaired = 0usize;
         for brief in briefs {
-            let Some(target_topic) =
-                proven_canonical_topic_for_brief(&brief.topic, &brief.source_ids, &sources)
-            else {
-                continue;
+            let target_topic = match proven_canonical_topic_for_brief(&brief.topic, &brief.source_ids, &sources) {
+                Some(t) => t,
+                None => continue,
             };
-            if target_topic == brief.topic {
-                continue;
+            match target_topic == brief.topic {
+                true => continue,
+                false => {}
             }
 
             let existing = conn
@@ -803,38 +780,40 @@ pub async fn repair_research_brief_topics() -> Result<usize> {
                 )
                 .optional()?;
 
-            if let Some(existing) = existing {
-                let merged_source_ids =
-                    merge_string_arrays(&existing.source_ids, &brief.source_ids);
-                let merged_source_ids_json = serde_json::to_string(&merged_source_ids)?;
-                let use_incoming_summary = brief.confidence >= existing.confidence
-                    && brief.updated_at >= existing.updated_at;
-                let summary = if use_incoming_summary {
-                    brief.summary.as_str()
-                } else {
-                    existing.summary.as_str()
-                };
-                conn.execute(
-                    "UPDATE research_briefs SET summary = ?2, source_ids = ?3, confidence = ?4, stale_after_secs = ?5, updated_at = ?6, use_count = ?7 WHERE topic = ?1",
-                    params![
-                        target_topic,
-                        summary,
-                        merged_source_ids_json,
-                        existing.confidence.max(brief.confidence),
-                        existing.stale_after_secs.min(brief.stale_after_secs).max(60),
-                        now,
-                        existing.use_count.max(brief.use_count)
-                    ],
-                )?;
-                conn.execute(
-                    "DELETE FROM research_briefs WHERE id = ?1",
-                    params![brief.id],
-                )?;
-            } else {
-                conn.execute(
-                    "UPDATE research_briefs SET topic = ?2, updated_at = ?3 WHERE id = ?1",
-                    params![brief.id, target_topic, now],
-                )?;
+            match existing {
+                Some(existing) => {
+                    let merged_source_ids =
+                        merge_string_arrays(&existing.source_ids, &brief.source_ids);
+                    let merged_source_ids_json = serde_json::to_string(&merged_source_ids)?;
+                    let use_incoming_summary = brief.confidence >= existing.confidence
+                        && brief.updated_at >= existing.updated_at;
+                    let summary = match use_incoming_summary {
+                        true => brief.summary.as_str(),
+                        false => existing.summary.as_str(),
+                    };
+                    conn.execute(
+                        "UPDATE research_briefs SET summary = ?2, source_ids = ?3, confidence = ?4, stale_after_secs = ?5, updated_at = ?6, use_count = ?7 WHERE topic = ?1",
+                        params![
+                            target_topic,
+                            summary,
+                            merged_source_ids_json,
+                            existing.confidence.max(brief.confidence),
+                            existing.stale_after_secs.min(brief.stale_after_secs).max(60),
+                            now,
+                            existing.use_count.max(brief.use_count)
+                        ],
+                    )?;
+                    conn.execute(
+                        "DELETE FROM research_briefs WHERE id = ?1",
+                        params![brief.id],
+                    )?;
+                }
+                None => {
+                    conn.execute(
+                        "UPDATE research_briefs SET topic = ?2, updated_at = ?3 WHERE id = ?1",
+                        params![brief.id, target_topic, now],
+                    )?;
+                }
             }
             repaired += 1;
         }
@@ -844,10 +823,9 @@ pub async fn repair_research_brief_topics() -> Result<usize> {
 
 pub async fn search_research_briefs(query: &str, limit: usize) -> Result<Vec<ResearchBrief>> {
     let canonical_query = canonical_research_topic(query);
-    let search_query = if canonical_query.trim().is_empty() {
-        query
-    } else {
-        &canonical_query
+    let search_query = match canonical_query.trim().is_empty() {
+        true => query,
+        false => &canonical_query,
     };
     let _lock = get_db_mutex().lock().await;
     let mut rows = with_db(|conn| {
@@ -885,6 +863,13 @@ pub async fn delete_research_brief(id_or_topic: &str) -> Result<usize> {
             params![id_or_topic, canonical],
         )?)
     })
+}
+
+fn extract_source_key(arguments: &Value) -> Result<&str> {
+    ["id", "uri", "url", "link", "path", "target"]
+        .into_iter()
+        .find_map(|k| arguments.get(k).and_then(|v| v.as_str()))
+        .ok_or_else(|| anyhow!("Missing id, uri, or url"))
 }
 
 pub struct KnowledgeSourceTool;
@@ -953,50 +938,67 @@ impl Tool for KnowledgeSourceTool {
     }
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let parsed_args;
-        let arguments = if let Some(raw_str) = arguments.as_str() {
-            let trimmed = raw_str.trim();
-            if let Ok(val) = serde_json::from_str::<Value>(trimmed) {
-                parsed_args = val;
-                &parsed_args
-            } else if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-                parsed_args = json!({"action": "add", "uri": trimmed, "label": display_source_label("", trimmed)});
-                &parsed_args
-            } else if trimmed.starts_with('/') || trimmed.starts_with('~') || trimmed.starts_with("./") {
-                parsed_args = json!({"action": "add", "uri": trimmed, "kind": "path", "label": display_source_label("", trimmed)});
-                &parsed_args
-            } else if trimmed.starts_with("search ") {
-                parsed_args = json!({"action": "search", "query": trimmed.trim_start_matches("search ").trim()});
-                &parsed_args
-            } else {
-                parsed_args = json!({"action": "search", "query": trimmed});
+        let arguments = match arguments.as_str() {
+            Some(raw_str) => {
+                let trimmed = raw_str.trim();
+                parsed_args = match serde_json::from_str::<Value>(trimmed) {
+                    Ok(val) => val,
+                    Err(_) => match (
+                        trimmed.starts_with("http://") || trimmed.starts_with("https://"),
+                        trimmed.starts_with('/')
+                            || trimmed.starts_with('~')
+                            || trimmed.starts_with("./"),
+                        trimmed.strip_prefix("search "),
+                    ) {
+                        (true, _, _) => json!({
+                            "action": "add",
+                            "uri": trimmed,
+                            "label": display_source_label("", trimmed)
+                        }),
+                        (false, true, _) => json!({
+                            "action": "add",
+                            "uri": trimmed,
+                            "kind": "path",
+                            "label": display_source_label("", trimmed)
+                        }),
+                        (false, false, Some(rest)) => json!({
+                            "action": "search",
+                            "query": rest.trim()
+                        }),
+                        (false, false, None) => json!({
+                            "action": "search",
+                            "query": trimmed
+                        }),
+                    },
+                };
                 &parsed_args
             }
-        } else {
-            arguments
+            None => arguments,
         };
 
-        let action_str = arguments
-            .get("action")
-            .or_else(|| arguments.get("act"))
-            .or_else(|| arguments.get("command"))
-            .or_else(|| arguments.get("cmd"))
-            .or_else(|| arguments.get("op"))
-            .and_then(|v| v.as_str());
+        let action_str = ["action", "act", "command", "cmd", "op"]
+            .into_iter()
+            .find_map(|k| arguments.get(k).and_then(|v| v.as_str()));
 
-        let normalized_action = if let Some(a) = action_str {
-            a.trim().to_lowercase()
-        } else if arguments.get("query").is_some() || arguments.get("q").is_some() || arguments.get("search").is_some() {
-            "search".to_string()
-        } else if arguments.get("uri").is_some() || arguments.get("url").is_some() || arguments.get("link").is_some() {
-            if arguments.get("label").is_some() || arguments.get("title").is_some() || arguments.get("name").is_some() || arguments.get("summary").is_some() || arguments.get("description").is_some() {
-                "add".to_string()
-            } else {
-                "get".to_string()
-            }
-        } else if arguments.get("id").is_some() {
-            "get".to_string()
-        } else {
-            "search".to_string()
+        let has_query = ["query", "q", "search"]
+            .into_iter()
+            .any(|k| arguments.get(k).is_some());
+        let has_uri = ["uri", "url", "link"]
+            .into_iter()
+            .any(|k| arguments.get(k).is_some());
+        let has_metadata = ["label", "title", "name", "summary", "description"]
+            .into_iter()
+            .any(|k| arguments.get(k).is_some());
+        let has_id = arguments.get("id").is_some();
+
+        let normalized_action = match action_str {
+            Some(a) => a.trim().to_lowercase(),
+            None => match (has_query, has_uri, has_metadata, has_id) {
+                (true, _, _, _) => "search".to_string(),
+                (false, true, true, _) => "add".to_string(),
+                (false, true, false, _) | (false, false, _, true) => "get".to_string(),
+                _ => "search".to_string(),
+            },
         };
 
         let action = match normalized_action.as_str() {
@@ -1010,26 +1012,17 @@ impl Tool for KnowledgeSourceTool {
 
         match action {
             "add" => {
-                let uri = arguments
-                    .get("uri")
-                    .or_else(|| arguments.get("url"))
-                    .or_else(|| arguments.get("link"))
-                    .or_else(|| arguments.get("href"))
-                    .or_else(|| arguments.get("path"))
-                    .or_else(|| arguments.get("target"))
-                    .and_then(|v| v.as_str())
+                let uri = ["uri", "url", "link", "href", "path", "target"]
+                    .into_iter()
+                    .find_map(|k| arguments.get(k).and_then(|v| v.as_str()))
                     .ok_or_else(|| anyhow!("Missing uri or url for action 'add'"))?;
 
-                let label_opt = arguments
-                    .get("label")
-                    .or_else(|| arguments.get("title"))
-                    .or_else(|| arguments.get("name"))
-                    .or_else(|| arguments.get("header"))
-                    .and_then(|v| v.as_str())
+                let label = ["label", "title", "name", "header"]
+                    .into_iter()
+                    .find_map(|k| arguments.get(k).and_then(|v| v.as_str()))
                     .map(str::trim)
-                    .filter(|s| !s.is_empty());
-                let label = label_opt
-                    .map(|s| s.to_string())
+                    .filter(|s| !s.is_empty())
+                    .map(ToString::to_string)
                     .unwrap_or_else(|| display_source_label("", uri));
 
                 let kind = arguments
@@ -1037,54 +1030,45 @@ impl Tool for KnowledgeSourceTool {
                     .or_else(|| arguments.get("type"))
                     .and_then(|v| v.as_str())
                     .unwrap_or_else(|| {
-                        if uri.starts_with("http") {
-                            if uri.contains("github.com") || uri.contains("gitlab.com") {
-                                "repo"
-                            } else {
-                                "website"
-                            }
-                        } else if uri.starts_with('/') || uri.starts_with('~') || uri.starts_with("./") {
-                            "path"
-                        } else {
-                            "other"
+                        let is_http = uri.starts_with("http");
+                        let is_repo = uri.contains("github.com") || uri.contains("gitlab.com");
+                        let is_path =
+                            uri.starts_with('/') || uri.starts_with('~') || uri.starts_with("./");
+                        match (is_http, is_repo, is_path) {
+                            (true, true, _) => "repo",
+                            (true, false, _) => "website",
+                            (false, _, true) => "path",
+                            (false, _, false) => "other",
                         }
                     });
 
-                let aliases = if let Some(arr) = arguments.get("aliases").or_else(|| arguments.get("tags")).or_else(|| arguments.get("tag")) {
-                    if arr.is_array() {
-                        json_string_array(Some(arr))
-                    } else if let Some(s) = arr.as_str() {
-                        s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect()
-                    } else {
-                        Vec::new()
-                    }
-                } else {
-                    Vec::new()
-                };
+                let aliases = ["aliases", "tags", "tag"]
+                    .into_iter()
+                    .find_map(|k| arguments.get(k))
+                    .map(|arr| match arr {
+                        Value::Array(_) => json_string_array(Some(arr)),
+                        Value::String(s) => s
+                            .split(',')
+                            .map(|p| p.trim().to_string())
+                            .filter(|p| !p.is_empty())
+                            .collect(),
+                        _ => Vec::new(),
+                    })
+                    .unwrap_or_default();
 
-                let summary = arguments
-                    .get("summary")
-                    .or_else(|| arguments.get("description"))
-                    .or_else(|| arguments.get("desc"))
-                    .or_else(|| arguments.get("notes"))
-                    .or_else(|| arguments.get("note"))
-                    .or_else(|| arguments.get("about"))
-                    .and_then(|v| v.as_str())
+                let summary = ["summary", "description", "desc", "notes", "note", "about"]
+                    .into_iter()
+                    .find_map(|k| arguments.get(k).and_then(|v| v.as_str()))
                     .unwrap_or("");
 
-                let trust_score = arguments
-                    .get("trust_score")
-                    .or_else(|| arguments.get("trust"))
-                    .or_else(|| arguments.get("score"))
-                    .or_else(|| arguments.get("confidence"))
-                    .and_then(|v| v.as_f64())
+                let trust_score = ["trust_score", "trust", "score", "confidence"]
+                    .into_iter()
+                    .find_map(|k| arguments.get(k).and_then(|v| v.as_f64()))
                     .unwrap_or(0.5);
 
-                let stale_after_secs = arguments
-                    .get("stale_after_secs")
-                    .or_else(|| arguments.get("staleAfterSecs"))
-                    .or_else(|| arguments.get("ttl"))
-                    .and_then(|v| v.as_i64())
+                let stale_after_secs = ["stale_after_secs", "staleAfterSecs", "ttl"]
+                    .into_iter()
+                    .find_map(|k| arguments.get(k).and_then(|v| v.as_i64()))
                     .unwrap_or(604800);
 
                 Ok(json!({
@@ -1093,20 +1077,13 @@ impl Tool for KnowledgeSourceTool {
                 }))
             }
             "search" => {
-                let query = arguments
-                    .get("query")
-                    .or_else(|| arguments.get("q"))
-                    .or_else(|| arguments.get("search"))
-                    .or_else(|| arguments.get("term"))
-                    .or_else(|| arguments.get("keyword"))
-                    .and_then(|v| v.as_str())
+                let query = ["query", "q", "search", "term", "keyword"]
+                    .into_iter()
+                    .find_map(|k| arguments.get(k).and_then(|v| v.as_str()))
                     .unwrap_or("");
-                let limit = arguments
-                    .get("limit")
-                    .or_else(|| arguments.get("max_results"))
-                    .or_else(|| arguments.get("count"))
-                    .or_else(|| arguments.get("top_k"))
-                    .and_then(|v| v.as_u64())
+                let limit = ["limit", "max_results", "count", "top_k"]
+                    .into_iter()
+                    .find_map(|k| arguments.get(k).and_then(|v| v.as_u64()))
                     .unwrap_or(5) as usize;
                 Ok(json!({
                     "status": "success",
@@ -1114,45 +1091,23 @@ impl Tool for KnowledgeSourceTool {
                 }))
             }
             "get" => {
-                let key = arguments
-                    .get("id")
-                    .or_else(|| arguments.get("uri"))
-                    .or_else(|| arguments.get("url"))
-                    .or_else(|| arguments.get("link"))
-                    .or_else(|| arguments.get("path"))
-                    .or_else(|| arguments.get("target"))
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing id, uri, or url"))?;
-                let item =
-                    if key.starts_with("http") || key.starts_with('/') || key.starts_with('~') || key.starts_with("./") {
-                        get_source_by_uri(key).await?
-                    } else {
-                        get_source_by_id(key).await?
-                    };
+                let key = extract_source_key(arguments)?;
+                let is_uri_like = key.starts_with("http")
+                    || key.starts_with('/')
+                    || key.starts_with('~')
+                    || key.starts_with("./");
+                let item = match is_uri_like {
+                    true => get_source_by_uri(key).await?,
+                    false => get_source_by_id(key).await?,
+                };
                 Ok(json!({"status": "success", "source": item}))
             }
             "delete" => {
-                let key = arguments
-                    .get("id")
-                    .or_else(|| arguments.get("uri"))
-                    .or_else(|| arguments.get("url"))
-                    .or_else(|| arguments.get("link"))
-                    .or_else(|| arguments.get("path"))
-                    .or_else(|| arguments.get("target"))
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing id, uri, or url"))?;
+                let key = extract_source_key(arguments)?;
                 Ok(json!({"status": "success", "deleted": delete_source(key).await?}))
             }
             "mark_checked" => {
-                let key = arguments
-                    .get("id")
-                    .or_else(|| arguments.get("uri"))
-                    .or_else(|| arguments.get("url"))
-                    .or_else(|| arguments.get("link"))
-                    .or_else(|| arguments.get("path"))
-                    .or_else(|| arguments.get("target"))
-                    .and_then(|v| v.as_str())
-                    .ok_or_else(|| anyhow!("Missing id, uri, or url"))?;
+                let key = extract_source_key(arguments)?;
                 Ok(json!({"status": "success", "updated": mark_source_checked(key).await?}))
             }
             _ => Err(anyhow!("Invalid action")),
@@ -1174,17 +1129,16 @@ impl Tool for ResearchBriefTool {
         json!({"type":"object","properties":{"action":{"type":"string","enum":["save","search","delete"]},"topic":{"type":"string"},"goal":{"type":"string","description":"Alias for topic when saving a research brief."},"summary":{"type":"string"},"context":{"type":"string","description":"Alias for summary when saving a research brief."},"content":{"type":"string","description":"Alias for summary when saving a research brief."},"source_ids":{"type":"array","items":{"type":"string"}},"sources":{"type":"array","items":{"type":"string"}},"confidence":{"type":"number"},"stale_after_secs":{"type":"integer"},"query":{"type":"string"},"id":{"type":"string"},"limit":{"type":"integer"}},"required":[]})
     }
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let inferred_action = if let Some(action) = arguments.get("action").and_then(|v| v.as_str())
-        {
-            action
-        } else if arguments.get("summary").is_some()
-            || arguments.get("context").is_some()
-            || arguments.get("content").is_some()
-        {
-            "save"
-        } else {
-            "search"
-        };
+        let has_summary = ["summary", "context", "content"]
+            .into_iter()
+            .any(|k| arguments.get(k).is_some());
+        let inferred_action = arguments
+            .get("action")
+            .and_then(|v| v.as_str())
+            .unwrap_or(match has_summary {
+                true => "save",
+                false => "search",
+            });
         match inferred_action {
             "save" => {
                 let topic = arguments
@@ -1199,11 +1153,11 @@ impl Tool for ResearchBriefTool {
                     .or_else(|| arguments.get("content"))
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing summary/context"))?;
-                let source_ids = if arguments.get("source_ids").is_some() {
-                    json_string_array(arguments.get("source_ids"))
-                } else {
-                    json_string_array(arguments.get("sources"))
-                };
+                let source_ids = json_string_array(
+                    arguments
+                        .get("source_ids")
+                        .or_else(|| arguments.get("sources")),
+                );
                 Ok(
                     json!({"status":"success","brief":save_research_brief(topic, summary, source_ids, arguments.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.5), arguments.get("stale_after_secs").and_then(|v| v.as_i64()).unwrap_or(86400)).await?}),
                 )

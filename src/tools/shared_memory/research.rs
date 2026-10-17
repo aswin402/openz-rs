@@ -7,6 +7,23 @@ use crate::memory::with_shared_db as with_db;
 use super::db::get_db_mutex;
 use super::embeddings::{cosine_similarity, get_cloud_embeddings_batch, get_embedding, with_model};
 
+fn flush_research_chunk(
+    query: &str,
+    current_heading: &str,
+    current_chunk: &mut Vec<&str>,
+    current_len: &mut usize,
+    chunks: &mut Vec<(String, String)>,
+) {
+    let chunk_text = current_chunk.join("\n");
+    let chunk_query = match current_heading.is_empty() {
+        true => query.to_string(),
+        false => format!("{} - {}", query, current_heading),
+    };
+    chunks.push((chunk_query, chunk_text));
+    current_chunk.clear();
+    *current_len = 0;
+}
+
 pub fn chunk_content_by_headings(query: &str, content: &str) -> Vec<(String, String)> {
     let mut chunks = Vec::new();
     let lines: Vec<&str> = content.lines().collect();
@@ -20,50 +37,51 @@ pub fn chunk_content_by_headings(query: &str, content: &str) -> Vec<(String, Str
             || line.trim_start().starts_with("--- Sheet:")
             || line.trim_start().starts_with("Title:");
 
-        if is_heading && !current_chunk.is_empty() {
-            let chunk_text = current_chunk.join("\n");
-            let chunk_query = if current_heading.is_empty() {
-                query.to_string()
-            } else {
-                format!("{} - {}", query, current_heading)
-            };
-            chunks.push((chunk_query, chunk_text));
-            current_chunk.clear();
-            current_len = 0;
+        match is_heading && !current_chunk.is_empty() {
+            true => flush_research_chunk(
+                query,
+                &current_heading,
+                &mut current_chunk,
+                &mut current_len,
+                &mut chunks,
+            ),
+            false => {}
         }
 
-        if is_heading {
-            current_heading = line.trim().to_string();
+        match is_heading {
+            true => current_heading = line.trim().to_string(),
+            false => {}
         }
 
         current_chunk.push(line);
         current_len += line.len();
 
-        if current_len > 2500 {
-            let chunk_text = current_chunk.join("\n");
-            let chunk_query = if current_heading.is_empty() {
-                query.to_string()
-            } else {
-                format!("{} - {}", query, current_heading)
-            };
-            chunks.push((chunk_query, chunk_text));
-            current_chunk.clear();
-            current_len = 0;
+        match current_len > 2500 {
+            true => flush_research_chunk(
+                query,
+                &current_heading,
+                &mut current_chunk,
+                &mut current_len,
+                &mut chunks,
+            ),
+            false => {}
         }
     }
 
-    if !current_chunk.is_empty() {
-        let chunk_text = current_chunk.join("\n");
-        let chunk_query = if current_heading.is_empty() {
-            query.to_string()
-        } else {
-            format!("{} - {}", query, current_heading)
-        };
-        chunks.push((chunk_query, chunk_text));
+    match current_chunk.is_empty() {
+        true => {}
+        false => flush_research_chunk(
+            query,
+            &current_heading,
+            &mut current_chunk,
+            &mut current_len,
+            &mut chunks,
+        ),
     }
 
-    if chunks.is_empty() {
-        chunks.push((query.to_string(), content.to_string()));
+    match chunks.is_empty() {
+        true => chunks.push((query.to_string(), content.to_string())),
+        false => {}
     }
 
     chunks
@@ -82,12 +100,15 @@ pub async fn archive_research_entry(query: &str, content: &str, source: &str) ->
                 Vec::new()
             });
 
-        if embedding.is_empty() {
-            tracing::warn!(
-                "Skipping research archive chunk (empty embedding): {}",
-                chunk_query
-            );
-            continue;
+        match embedding.is_empty() {
+            true => {
+                tracing::warn!(
+                    "Skipping research archive chunk (empty embedding): {}",
+                    chunk_query
+                );
+                continue;
+            }
+            false => {}
         }
 
         let timestamp = chrono::Utc::now().to_rfc3339();
@@ -116,8 +137,9 @@ pub async fn archive_research_entries(entries: Vec<(String, String, String)>) ->
         }
     }
 
-    if all_chunks.is_empty() {
-        return Ok(());
+    match all_chunks.is_empty() {
+        true => return Ok(()),
+        false => {}
     }
 
     let config = crate::config::loader::load_config().ok();
@@ -132,24 +154,27 @@ pub async fn archive_research_entries(entries: Vec<(String, String, String)>) ->
         let queries_to_embed: Vec<String> = chunk_group.iter().map(|(q, _, _)| q.clone()).collect();
 
         let mut embeds = None;
-        if mode != "local" {
-            match get_cloud_embeddings_batch(queries_to_embed.clone(), false).await {
+        match mode != "local" {
+            true => match get_cloud_embeddings_batch(queries_to_embed.clone(), false).await {
                 Ok(res) => {
                     embeds = Some(res);
                 }
-                Err(e) => {
-                    if mode == "cloud_only" {
+                Err(e) => match mode {
+                    "cloud_only" => {
                         return Err(anyhow::anyhow!(
                             "Cloud batch embedding failed and local model fallback is disabled: {:?}",
                             e
                         ));
                     }
-                    tracing::warn!(
-                        "Cloud batch embedding failed: {:?}. Falling back to local fastembed.",
-                        e
-                    );
-                }
-            }
+                    _ => {
+                        tracing::warn!(
+                            "Cloud batch embedding failed: {:?}. Falling back to local fastembed.",
+                            e
+                        );
+                    }
+                },
+            },
+            false => {}
         }
 
         let embeds = match embeds {
@@ -240,10 +265,9 @@ pub async fn search_research_entries(query: &str, top_k: usize) -> Result<Value>
         let entry_embed: Vec<f32> =
             serde_json::from_value(entry["embedding"].clone()).unwrap_or_default();
 
-        let sim = if !query_embed.is_empty() && !entry_embed.is_empty() {
-            cosine_similarity(&query_embed, &entry_embed)
-        } else {
-            0.0
+        let sim = match !query_embed.is_empty() && !entry_embed.is_empty() {
+            true => cosine_similarity(&query_embed, &entry_embed),
+            false => 0.0,
         };
 
         let query_lower_entry = entry_query.to_lowercase();
@@ -252,14 +276,14 @@ pub async fn search_research_entries(query: &str, top_k: usize) -> Result<Value>
             || content_lower_entry.contains(&query_lower)
             || query_lower.contains(&query_lower_entry);
 
-        let final_score = if keyword_match {
-            sim * 0.7 + 0.3
-        } else {
-            sim * 0.7
+        let final_score = match keyword_match {
+            true => sim * 0.7 + 0.3,
+            false => sim * 0.7,
         };
 
-        if final_score > 0.15 || keyword_match {
-            scored_results.push((final_score, entry));
+        match final_score > 0.15 || keyword_match {
+            true => scored_results.push((final_score, entry)),
+            false => {}
         }
     }
 
@@ -269,9 +293,12 @@ pub async fn search_research_entries(query: &str, top_k: usize) -> Result<Value>
         .into_iter()
         .take(top_k)
         .map(|(score, mut entry)| {
-            if let Some(obj) = entry.as_object_mut() {
-                obj.insert("score".to_string(), json!(score));
-                obj.remove("embedding");
+            match entry.as_object_mut() {
+                Some(obj) => {
+                    obj.insert("score".to_string(), json!(score));
+                    obj.remove("embedding");
+                }
+                None => {}
             }
             entry
         })

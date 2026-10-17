@@ -205,10 +205,9 @@ async fn test_create_isolated_workspace_uses_scratch_for_home_like_non_git_root(
         })
         .await?;
 
-    if let Some(old_home) = old_home {
-        std::env::set_var("HOME", old_home);
-    } else {
-        std::env::remove_var("HOME");
+    match old_home {
+        Some(old_home) => std::env::set_var("HOME", old_home),
+        None => std::env::remove_var("HOME"),
     }
 
     assert_ne!(

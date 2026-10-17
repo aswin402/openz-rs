@@ -46,8 +46,9 @@ pub fn prune_decayed_memories(conn: &Connection) -> Result<usize> {
         let decay_factor = (-decay_rate * days_elapsed).exp();
         let decayed_importance = importance * decay_factor;
 
-        if decayed_importance < 0.15 {
-            to_delete.push(id);
+        match decayed_importance < 0.15 {
+            true => to_delete.push(id),
+            false => {}
         }
     }
 
@@ -60,119 +61,69 @@ pub fn prune_decayed_memories(conn: &Connection) -> Result<usize> {
 
 // ─── Extraction Helpers ─────────────────────────────────────────
 
+fn extract_single_string(val: &Value) -> Option<String> {
+    val.as_str()
+        .map(|s| s.trim().to_string())
+        .or_else(|| {
+            (val.is_number() || val.is_boolean()).then(|| val.to_string().trim().to_string())
+        })
+        .filter(|s| !s.is_empty())
+}
+
 fn extract_string_field(val: &Value, keys: &[&str]) -> Option<String> {
-    if let Some(s) = val.as_str() {
-        let trimmed = s.trim();
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
-        }
-    } else if val.is_number() || val.is_boolean() {
-        let s = val.to_string();
-        let trimmed = s.trim();
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
-        }
-    }
-    for key in keys {
-        if let Some(v) = val.get(*key) {
-            if let Some(s) = v.as_str() {
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
-            } else if v.is_number() || v.is_boolean() {
-                let s = v.to_string();
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
-            }
-        }
-    }
-    None
+    extract_single_string(val).or_else(|| {
+        keys.iter()
+            .find_map(|key| val.get(*key).and_then(extract_single_string))
+    })
 }
 
 fn extract_string_list_field(val: &Value, keys: &[&str]) -> Vec<String> {
-    for key in keys {
-        if let Some(v) = val.get(*key) {
-            if let Some(arr) = v.as_array() {
-                let list: Vec<String> = arr
-                    .iter()
-                    .filter_map(|item| {
-                        if let Some(s) = item.as_str() {
-                            let trimmed = s.trim();
-                            if !trimmed.is_empty() {
-                                Some(trimmed.to_string())
-                            } else {
-                                None
-                            }
-                        } else if item.is_number() || item.is_boolean() {
-                            Some(item.to_string())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
-                if !list.is_empty() {
-                    return list;
+    keys.iter()
+        .find_map(|key| {
+            let v = val.get(*key)?;
+            match v {
+                Value::Array(arr) => {
+                    let list: Vec<String> = arr.iter().filter_map(extract_single_string).collect();
+                    (!list.is_empty()).then_some(list)
                 }
-            } else if let Some(s) = v.as_str() {
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    if trimmed.contains(',') {
-                        return trimmed
-                            .split(',')
-                            .map(|part| part.trim().to_string())
-                            .filter(|p| !p.is_empty())
-                            .collect();
-                    } else {
-                        return vec![trimmed.to_string()];
+                Value::String(s) => {
+                    let trimmed = s.trim();
+                    match (trimmed.is_empty(), trimmed.contains(',')) {
+                        (true, _) => None,
+                        (false, true) => Some(
+                            trimmed
+                                .split(',')
+                                .map(|part| part.trim().to_string())
+                                .filter(|p| !p.is_empty())
+                                .collect(),
+                        ),
+                        (false, false) => Some(vec![trimmed.to_string()]),
                     }
                 }
+                _ => None,
             }
-        }
-    }
-    Vec::new()
+        })
+        .unwrap_or_default()
 }
 
 fn extract_f32_arg(val: &Value, keys: &[&str]) -> Option<f32> {
-    for key in keys {
-        if let Some(v) = val.get(*key) {
-            if let Some(f) = v.as_f64() {
-                return Some(f as f32);
-            }
-            if let Some(i) = v.as_i64() {
-                return Some(i as f32);
-            }
-            if let Some(s) = v.as_str() {
-                if let Ok(f) = s.trim().parse::<f32>() {
-                    return Some(f);
-                }
-            }
-        }
-    }
-    None
+    keys.iter().find_map(|key| {
+        let v = val.get(*key)?;
+        v.as_f64()
+            .map(|f| f as f32)
+            .or_else(|| v.as_i64().map(|i| i as f32))
+            .or_else(|| v.as_str().and_then(|s| s.trim().parse::<f32>().ok()))
+    })
 }
 
 fn extract_usize_arg(val: &Value, keys: &[&str]) -> Option<usize> {
-    for key in keys {
-        if let Some(v) = val.get(*key) {
-            if let Some(u) = v.as_u64() {
-                return Some(u as usize);
-            }
-            if let Some(i) = v.as_i64() {
-                if i >= 0 {
-                    return Some(i as usize);
-                }
-            }
-            if let Some(s) = v.as_str() {
-                if let Ok(u) = s.trim().parse::<usize>() {
-                    return Some(u);
-                }
-            }
-        }
-    }
-    None
+    keys.iter().find_map(|key| {
+        let v = val.get(*key)?;
+        v.as_u64()
+            .map(|u| u as usize)
+            .or_else(|| v.as_i64().filter(|i| *i >= 0).map(|i| i as usize))
+            .or_else(|| v.as_str().and_then(|s| s.trim().parse::<usize>().ok()))
+    })
 }
 
 // 1. StoreMemoryTool
@@ -317,10 +268,11 @@ impl Tool for RecallMemoryTool {
             .unwrap_or(5);
         let raw_scope = extract_string_field(arguments, &["scope", "domain", "workspace_scope"])
             .unwrap_or_else(|| "workspace".to_string());
-        let scope = if raw_scope.eq_ignore_ascii_case("global") || raw_scope.eq_ignore_ascii_case("all") {
-            "global"
-        } else {
-            "workspace"
+        let scope = match raw_scope.eq_ignore_ascii_case("global")
+            || raw_scope.eq_ignore_ascii_case("all")
+        {
+            true => "global",
+            false => "workspace",
         };
 
         let filter_tags: Vec<String> = extract_string_list_field(
@@ -332,10 +284,9 @@ impl Tool for RecallMemoryTool {
             || query.eq_ignore_ascii_case("all")
             || query.eq_ignore_ascii_case("recent")
             || query.trim().is_empty();
-        let query_embed = if is_wildcard {
-            Vec::new()
-        } else {
-            get_embedding(&query, true).await?
+        let query_embed = match is_wildcard {
+            true => Vec::new(),
+            false => get_embedding(&query, true).await?,
         };
         let current_ws = get_current_workspace();
 
@@ -374,16 +325,17 @@ impl Tool for RecallMemoryTool {
 
         for entry in entries {
             // Scope filter
-            if scope == "workspace" && entry.workspace != current_ws {
-                continue;
+            match scope == "workspace" && entry.workspace != current_ws {
+                true => continue,
+                false => {}
             }
 
             // Tag filter
-            if !filter_tags.is_empty() {
-                let matches_tag = entry.tags.iter().any(|t| filter_tags.contains(t));
-                if !matches_tag {
-                    continue;
-                }
+            let tag_filtered_out = !filter_tags.is_empty()
+                && !entry.tags.iter().any(|t| filter_tags.contains(t));
+            match tag_filtered_out {
+                true => continue,
+                false => {}
             }
 
             // Calculate temporal decay factor
@@ -396,18 +348,22 @@ impl Tool for RecallMemoryTool {
             let decay_factor = (-entry.decay_rate * days_elapsed).exp();
             let decayed_importance = entry.importance * decay_factor;
 
-            let cognitive_score = if is_wildcard {
-                decayed_importance
-            } else {
-                let sim = cosine_similarity(&query_embed, &entry.embedding);
-                let query_lower = query.to_lowercase();
-                let keyword_match = query_lower.split_whitespace().any(|w| {
-                    w.len() >= 3
-                        && (entry.text.to_lowercase().contains(w)
-                            || entry.tags.iter().any(|t| t.to_lowercase().contains(w)))
-                });
-                let keyword_boost = if keyword_match { 0.2 } else { 0.0 };
-                (sim * 0.7 + decayed_importance * 0.3 + keyword_boost).min(1.0)
+            let cognitive_score = match is_wildcard {
+                true => decayed_importance,
+                false => {
+                    let sim = cosine_similarity(&query_embed, &entry.embedding);
+                    let query_lower = query.to_lowercase();
+                    let keyword_match = query_lower.split_whitespace().any(|w| {
+                        w.len() >= 3
+                            && (entry.text.to_lowercase().contains(w)
+                                || entry.tags.iter().any(|t| t.to_lowercase().contains(w)))
+                    });
+                    let keyword_boost = match keyword_match {
+                        true => 0.2,
+                        false => 0.0,
+                    };
+                    (sim * 0.7 + decayed_importance * 0.3 + keyword_boost).min(1.0)
+                }
             };
 
             scored_results.push((cognitive_score, entry));
@@ -481,29 +437,32 @@ impl Tool for ClearMemoryTool {
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let raw_scope = extract_string_field(arguments, &["scope", "target", "mode", "domain"])
             .unwrap_or_else(|| "workspace".to_string());
-        let scope = if raw_scope.eq_ignore_ascii_case("all") || raw_scope.eq_ignore_ascii_case("global") {
-            "all"
-        } else if raw_scope.eq_ignore_ascii_case("prune") || raw_scope.eq_ignore_ascii_case("decayed") {
-            "prune"
-        } else {
-            "workspace"
+        let scope = match (
+            raw_scope.eq_ignore_ascii_case("all") || raw_scope.eq_ignore_ascii_case("global"),
+            raw_scope.eq_ignore_ascii_case("prune") || raw_scope.eq_ignore_ascii_case("decayed"),
+        ) {
+            (true, _) => "all",
+            (false, true) => "prune",
+            (false, false) => "workspace",
         };
 
         let _lock = get_db_mutex().lock().await;
-        with_db(|conn| {
-            if scope == "all" {
+        with_db(|conn| match scope {
+            "all" => {
                 conn.execute("DELETE FROM cognitive_memory", [])?;
                 Ok(json!({
                     "status": "success",
                     "message": "All memories cleared successfully."
                 }))
-            } else if scope == "prune" {
+            }
+            "prune" => {
                 let count = prune_decayed_memories(conn)?;
                 Ok(json!({
                     "status": "success",
                     "message": format!("Pruned {} deeply decayed memories from the cognitive database.", count)
                 }))
-            } else {
+            }
+            _ => {
                 let current_ws = get_current_workspace();
                 let count = conn.execute(
                     "DELETE FROM cognitive_memory WHERE workspace = ?",
@@ -553,16 +512,15 @@ impl Tool for DeleteMemoryTool {
             let deleted =
                 conn.execute("DELETE FROM cognitive_memory WHERE id = ?1", params![id])?;
 
-            if deleted == 0 {
-                Ok(json!({
+            match deleted {
+                0 => Ok(json!({
                     "status": "not_found",
                     "message": format!("No memory found with ID '{}'", id)
-                }))
-            } else {
-                Ok(json!({
+                })),
+                _ => Ok(json!({
                     "status": "success",
                     "message": "Memory deleted successfully."
-                }))
+                })),
             }
         })
     }
@@ -618,30 +576,25 @@ impl Tool for UpdateMemoryTool {
 
         let _lock = get_db_mutex().lock().await;
         with_db(|conn| {
-            if let Some(imp) = importance {
-                let updated = conn.execute(
+            let updated = match importance {
+                Some(imp) => conn.execute(
                     "UPDATE cognitive_memory SET text = ?1, embedding = ?2, importance = ?3 WHERE id = ?4",
                     params![text, embedding_json, imp, id],
-                )?;
-                if updated == 0 {
-                    Ok(
-                        json!({"status": "not_found", "message": format!("No memory found with ID '{}'", id)}),
-                    )
-                } else {
-                    Ok(json!({"status": "success", "message": "Memory updated successfully."}))
-                }
-            } else {
-                let updated = conn.execute(
+                )?,
+                None => conn.execute(
                     "UPDATE cognitive_memory SET text = ?1, embedding = ?2 WHERE id = ?3",
                     params![text, embedding_json, id],
-                )?;
-                if updated == 0 {
-                    Ok(
-                        json!({"status": "not_found", "message": format!("No memory found with ID '{}'", id)}),
-                    )
-                } else {
-                    Ok(json!({"status": "success", "message": "Memory updated successfully."}))
-                }
+                )?,
+            };
+            match updated {
+                0 => Ok(json!({
+                    "status": "not_found",
+                    "message": format!("No memory found with ID '{}'", id)
+                })),
+                _ => Ok(json!({
+                    "status": "success",
+                    "message": "Memory updated successfully."
+                })),
             }
         })
     }

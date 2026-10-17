@@ -28,22 +28,26 @@ fn working_scoped_key(key: &str, user_id: &str, session_id: &str, agent_id: &str
 }
 
 pub(crate) fn active_working_memory_count(user_id: &str, session_id: &str, agent_id: &str) -> i64 {
-    let Ok(map) = working_memory_static().lock() else {
-        return 0;
+    let map = match working_memory_static().lock() {
+        Ok(map) => map,
+        Err(_) => return 0,
     };
     let now = std::time::Instant::now();
     map.iter()
         .filter(|(key, entry)| {
-            if now.duration_since(entry.created_at).as_secs() >= entry.ttl_seconds {
-                return false;
+            match now.duration_since(entry.created_at).as_secs() >= entry.ttl_seconds {
+                true => return false,
+                false => {}
             }
             let parts: Vec<&str> = key.splitn(4, ':').collect();
-            if parts.len() != 4 {
-                return false;
+            match parts.len() == 4 {
+                true => {
+                    (parts[0] == user_id || parts[0] == "*" || user_id == "*")
+                        && (parts[1] == session_id || parts[1] == "*" || session_id == "*")
+                        && (parts[2] == agent_id || parts[2] == "*" || agent_id == "*")
+                }
+                false => false,
             }
-            (parts[0] == user_id || parts[0] == "*" || user_id == "*")
-                && (parts[1] == session_id || parts[1] == "*" || session_id == "*")
-                && (parts[2] == agent_id || parts[2] == "*" || agent_id == "*")
         })
         .count() as i64
 }
@@ -51,8 +55,9 @@ pub(crate) fn active_working_memory_count(user_id: &str, session_id: &str, agent
 /// Return the currently live working-memory keys for display in the WebUI.
 /// Values remain private; only non-expired key names are exposed.
 pub(crate) fn active_working_memory_keys() -> Vec<String> {
-    let Ok(map) = working_memory_static().lock() else {
-        return Vec::new();
+    let map = match working_memory_static().lock() {
+        Ok(map) => map,
+        Err(_) => return Vec::new(),
     };
     let now = std::time::Instant::now();
     let mut keys = map
@@ -111,14 +116,20 @@ impl Tool for SetWorkingMemoryTool {
             .map_err(|e| anyhow!("Working memory lock error: {}", e))?;
 
         // Eviction limit to prevent unbounded in-memory growth
-        if !map.contains_key(&scoped) && map.len() >= 1000 {
-            let oldest_key = map
-                .iter()
-                .min_by_key(|&(_, entry)| entry.created_at)
-                .map(|(k, _)| k.clone());
-            if let Some(k) = oldest_key {
-                map.remove(&k);
+        match !map.contains_key(&scoped) && map.len() >= 1000 {
+            true => {
+                let oldest_key = map
+                    .iter()
+                    .min_by_key(|&(_, entry)| entry.created_at)
+                    .map(|(k, _)| k.clone());
+                match oldest_key {
+                    Some(k) => {
+                        map.remove(&k);
+                    }
+                    None => {}
+                }
             }
+            false => {}
         }
 
         map.insert(
@@ -174,21 +185,28 @@ impl Tool for GetWorkingMemoryTool {
             .lock()
             .map_err(|e| anyhow!("Working memory lock error: {}", e))?;
 
-        if let Some(entry) = map.get(&scoped) {
-            if entry.created_at.elapsed().as_secs() >= entry.ttl_seconds {
-                map.remove(&scoped);
-                return Ok(json!({ "status": format!("Key '{}' has expired", key) }));
+        match map.get(&scoped) {
+            Some(entry) => {
+                match entry.created_at.elapsed().as_secs() >= entry.ttl_seconds {
+                    true => {
+                        map.remove(&scoped);
+                        return Ok(json!({ "status": format!("Key '{}' has expired", key) }));
+                    }
+                    false => {}
+                }
             }
-        } else {
-            return Ok(json!({ "status": format!("Key '{}' not found", key) }));
+            None => {
+                return Ok(json!({ "status": format!("Key '{}' not found", key) }));
+            }
         }
 
-        if let Some(entry) = map.get_mut(&scoped) {
-            entry.access_count += 1;
-            return Ok(json!({ "key": key, "value": entry.value.clone() }));
+        match map.get_mut(&scoped) {
+            Some(entry) => {
+                entry.access_count += 1;
+                Ok(json!({ "key": key, "value": entry.value.clone() }))
+            }
+            None => Ok(json!({ "status": format!("Key '{}' not found", key) })),
         }
-
-        Ok(json!({ "status": format!("Key '{}' not found", key) }))
     }
 }
 
@@ -232,22 +250,28 @@ impl Tool for EvictExpiredWorkingMemoryTool {
             .collect();
 
         for scoped in &to_remove {
-            if let Some(entry) = map.remove(scoped) {
-                evicted += 1;
-                if entry.access_count >= 3 {
-                    // Promote to semantic memory
-                    let fact_id = format!("working-promoted-{}", uuid::Uuid::new_v4());
-                    let raw_text =
-                        format!("Ephemeral working memory was promoted: {}", entry.value);
-                    let _ = store_semantic_fact(
-                        &fact_id,
-                        &raw_text,
-                        0.8,
-                        &scope.user_id,
-                        &scope.session_id,
-                        &scope.agent_id,
-                    );
+            match map.remove(scoped) {
+                Some(entry) => {
+                    evicted += 1;
+                    match entry.access_count >= 3 {
+                        true => {
+                            // Promote to semantic memory
+                            let fact_id = format!("working-promoted-{}", uuid::Uuid::new_v4());
+                            let raw_text =
+                                format!("Ephemeral working memory was promoted: {}", entry.value);
+                            let _ = store_semantic_fact(
+                                &fact_id,
+                                &raw_text,
+                                0.8,
+                                &scope.user_id,
+                                &scope.session_id,
+                                &scope.agent_id,
+                            );
+                        }
+                        false => {}
+                    }
                 }
+                None => {}
             }
         }
 
@@ -293,23 +317,24 @@ impl Tool for PromoteWorkingMemoryTool {
         let mut map = working_memory_static()
             .lock()
             .map_err(|e| anyhow!("Working memory lock error: {}", e))?;
-        if let Some(entry) = map.remove(&scoped) {
-            let fact_id = format!("working-promoted-{}", uuid::Uuid::new_v4());
-            let raw_text = format!(
-                "Ephemeral working memory under key '{}' was promoted: {}",
-                key, entry.value
-            );
-            store_semantic_fact(
-                &fact_id,
-                &raw_text,
-                0.8,
-                &scope.user_id,
-                &scope.session_id,
-                &scope.agent_id,
-            )?;
-            Ok(json!({ "status": format!("Promoted '{}' to semantic memory", key) }))
-        } else {
-            Ok(json!({ "status": format!("Key '{}' not found", key) }))
+        match map.remove(&scoped) {
+            Some(entry) => {
+                let fact_id = format!("working-promoted-{}", uuid::Uuid::new_v4());
+                let raw_text = format!(
+                    "Ephemeral working memory under key '{}' was promoted: {}",
+                    key, entry.value
+                );
+                store_semantic_fact(
+                    &fact_id,
+                    &raw_text,
+                    0.8,
+                    &scope.user_id,
+                    &scope.session_id,
+                    &scope.agent_id,
+                )?;
+                Ok(json!({ "status": format!("Promoted '{}' to semantic memory", key) }))
+            }
+            None => Ok(json!({ "status": format!("Key '{}' not found", key) })),
         }
     }
 }
@@ -331,10 +356,13 @@ pub(crate) fn semantic_embedding_for_text(text: &str) -> Vec<f32> {
     }
 
     let norm = vector.iter().map(|v| v * v).sum::<f32>().sqrt();
-    if norm > 0.0 {
-        for value in &mut vector {
-            *value /= norm;
+    match norm > 0.0 {
+        true => {
+            for value in &mut vector {
+                *value /= norm;
+            }
         }
+        false => {}
     }
     vector
 }

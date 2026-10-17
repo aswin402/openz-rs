@@ -106,20 +106,26 @@ impl Tool for EvaluatorOptimizerLoopTool {
         let evaluator_profile = profiles.iter().find(|p| p.name == evaluator_name)
             .ok_or_else(|| anyhow!("Evaluator subagent profile '{}' not found", evaluator_name))?;
 
-        if let Some(policy) = &self.capability_policy {
-            for profile in [optimizer_profile, evaluator_profile] {
-                let metadata = super::subagent_tool_metadata(&profile.name);
-                if !crate::tools::orchestrator::tool_allowed_by_policy_with_metadata(
-                    &profile.name,
-                    &metadata,
-                    policy,
-                ) {
-                    return Err(anyhow!(
-                        "Subagent profile '{}' is blocked by orchestrator capability policy",
-                        profile.name
-                    ));
+        match &self.capability_policy {
+            Some(policy) => {
+                for profile in [optimizer_profile, evaluator_profile] {
+                    let metadata = super::subagent_tool_metadata(&profile.name);
+                    match crate::tools::orchestrator::tool_allowed_by_policy_with_metadata(
+                        &profile.name,
+                        &metadata,
+                        policy,
+                    ) {
+                        true => {}
+                        false => {
+                            return Err(anyhow!(
+                                "Subagent profile '{}' is blocked by orchestrator capability policy",
+                                profile.name
+                            ));
+                        }
+                    }
                 }
             }
+            None => {}
         }
 
         let optimizer_tool = DelegateProfileTool {
@@ -160,8 +166,9 @@ impl Tool for EvaluatorOptimizerLoopTool {
         });
 
         for i in 1..=max_iterations {
-            if self.cancellation_token.is_cancelled() {
-                return Err(anyhow!("Evaluator-Optimizer loop cancelled"));
+            match self.cancellation_token.is_cancelled() {
+                true => return Err(anyhow!("Evaluator-Optimizer loop cancelled")),
+                false => {}
             }
             iterations_run = i;
             crate::tui_println!(
@@ -170,26 +177,22 @@ impl Tool for EvaluatorOptimizerLoopTool {
             );
 
             // Invoke Optimizer
-            let opt_goal = if i == 1 {
-                goal.to_string()
-            } else {
-                format!(
-                    "Your previous draft failed evaluation. Please refine it based on this feedback:\n\n\
-                    FEEDBACK:\n{}\n\n\
-                    CRITERIA CHECKLIST:\n{}\n\n\
-                    ORIGINAL GOAL:\n{}",
-                    feedback, checklist, goal
-                )
-            };
-
-            let opt_context = if i == 1 {
-                context.to_string()
-            } else {
-                format!(
-                    "PREVIOUS DRAFT:\n{}\n\n\
-                    {}",
-                    optimizer_output, context
-                )
+            let (opt_goal, opt_context) = match i == 1 {
+                true => (goal.to_string(), context.to_string()),
+                false => (
+                    format!(
+                        "Your previous draft failed evaluation. Please refine it based on this feedback:\n\n\
+                        FEEDBACK:\n{}\n\n\
+                        CRITERIA CHECKLIST:\n{}\n\n\
+                        ORIGINAL GOAL:\n{}",
+                        feedback, checklist, goal
+                    ),
+                    format!(
+                        "PREVIOUS DRAFT:\n{}\n\n\
+                        {}",
+                        optimizer_output, context
+                    ),
+                ),
             };
 
             let opt_res = optimizer_tool.call(&serde_json::json!({
@@ -197,9 +200,12 @@ impl Tool for EvaluatorOptimizerLoopTool {
                 "context": opt_context
             })).await?;
 
-            if opt_res.get("status").and_then(|v| v.as_str()) != Some("success") {
-                let err = opt_res.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown optimizer error");
-                return Err(anyhow!("Optimizer subagent '{}' failed: {}", optimizer_name, err));
+            match opt_res.get("status").and_then(|v| v.as_str()) == Some("success") {
+                true => {}
+                false => {
+                    let err = opt_res.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown optimizer error");
+                    return Err(anyhow!("Optimizer subagent '{}' failed: {}", optimizer_name, err));
+                }
             }
 
             optimizer_output = opt_res.get("summary").and_then(|v| v.as_str())
@@ -224,9 +230,12 @@ impl Tool for EvaluatorOptimizerLoopTool {
                 "json_schema": eval_schema
             })).await?;
 
-            if eval_res.get("status").and_then(|v| v.as_str()) != Some("success") {
-                let err = eval_res.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown evaluator error");
-                return Err(anyhow!("Evaluator subagent '{}' failed: {}", evaluator_name, err));
+            match eval_res.get("status").and_then(|v| v.as_str()) == Some("success") {
+                true => {}
+                false => {
+                    let err = eval_res.get("error").and_then(|v| v.as_str()).unwrap_or("Unknown evaluator error");
+                    return Err(anyhow!("Evaluator subagent '{}' failed: {}", evaluator_name, err));
+                }
             }
 
             let eval_summary = eval_res.get("summary").and_then(|v| v.as_str())
@@ -238,22 +247,29 @@ impl Tool for EvaluatorOptimizerLoopTool {
             passed = eval_json.get("passed").and_then(|v| v.as_bool()).unwrap_or(false);
             feedback = eval_json.get("feedback").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
-            if passed {
-                crate::tui_println!(
-                    "{}✓ [Evaluator-Optimizer] Evaluation PASSED on iteration {}/{}!{}",
-                    EMERALD_GREEN, i, max_iterations, COLOR_RESET
-                );
-                break;
-            } else {
-                crate::tui_println!(
-                    "{}✕ [Evaluator-Optimizer] Evaluation FAILED on iteration {}/{}. Feedback: {}{}",
-                    AURA_GOLD, i, max_iterations, feedback, COLOR_RESET
-                );
+            match passed {
+                true => {
+                    crate::tui_println!(
+                        "{}✓ [Evaluator-Optimizer] Evaluation PASSED on iteration {}/{}!{}",
+                        EMERALD_GREEN, i, max_iterations, COLOR_RESET
+                    );
+                    break;
+                }
+                false => {
+                    crate::tui_println!(
+                        "{}✕ [Evaluator-Optimizer] Evaluation FAILED on iteration {}/{}. Feedback: {}{}",
+                        AURA_GOLD, i, max_iterations, feedback, COLOR_RESET
+                    );
+                }
             }
         }
 
+        let status_label = match passed {
+            true => "success",
+            false => "partial_success",
+        };
         Ok(serde_json::json!({
-            "status": if passed { "success" } else { "partial_success" },
+            "status": status_label,
             "iterations_run": iterations_run,
             "passed": passed,
             "final_output": optimizer_output,
@@ -272,81 +288,94 @@ pub fn validate_schema(value: &Value, schema: &Value) -> Result<(), String> {
 
     match type_str {
         "object" => {
-            let Some(obj) = value.as_object() else {
-                return Err("Value is not an object".to_string());
-            };
+            let obj = value
+                .as_object()
+                .ok_or_else(|| "Value is not an object".to_string())?;
 
             // Check required fields
-            if let Some(req_val) = schema.get("required") {
-                if let Some(req_arr) = req_val.as_array() {
-                    for req_field in req_arr {
-                        if let Some(field_name) = req_field.as_str() {
-                            if !obj.contains_key(field_name) {
-                                return Err(format!("Missing required field: '{}'", field_name));
-                            }
-                        }
-                    }
+            for field_name in schema
+                .get("required")
+                .and_then(|v| v.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|req_field| req_field.as_str())
+            {
+                match obj.contains_key(field_name) {
+                    true => {}
+                    false => return Err(format!("Missing required field: '{}'", field_name)),
                 }
             }
 
             // Recursively validate properties
-            if let Some(properties) = schema.get("properties").and_then(|v| v.as_object()) {
-                for (prop_name, prop_schema) in properties {
-                    if let Some(prop_value) = obj.get(prop_name) {
+            for (prop_name, prop_schema) in schema
+                .get("properties")
+                .and_then(|v| v.as_object())
+                .into_iter()
+                .flatten()
+            {
+                match obj.get(prop_name) {
+                    Some(prop_value) => {
                         validate_schema(prop_value, prop_schema)
                             .map_err(|e| format!("Property '{}' invalid: {}", prop_name, e))?;
                     }
+                    None => {}
                 }
             }
         }
         "array" => {
-            let Some(arr) = value.as_array() else {
-                return Err("Value is not an array".to_string());
-            };
+            let arr = value
+                .as_array()
+                .ok_or_else(|| "Value is not an array".to_string())?;
 
-            if let Some(items_schema) = schema.get("items") {
-                for (idx, item) in arr.iter().enumerate() {
-                    validate_schema(item, items_schema)
-                        .map_err(|e| format!("Array item at index {} invalid: {}", idx, e))?;
+            match schema.get("items") {
+                Some(items_schema) => {
+                    for (idx, item) in arr.iter().enumerate() {
+                        validate_schema(item, items_schema)
+                            .map_err(|e| format!("Array item at index {} invalid: {}", idx, e))?;
+                    }
                 }
+                None => {}
             }
         }
         "string" => {
-            let Some(val_str) = value.as_str() else {
-                return Err("Value is not a string".to_string());
-            };
+            let val_str = value
+                .as_str()
+                .ok_or_else(|| "Value is not a string".to_string())?;
             // Check enum constraint
-            if let Some(enum_val) = schema.get("enum").and_then(|v| v.as_array()) {
-                let matches = enum_val
-                    .iter()
-                    .any(|allowed| allowed.as_str() == Some(val_str));
-                if !matches {
-                    return Err(format!(
-                        "Value '{}' not in allowed enum: {:?}",
-                        val_str,
-                        enum_val
-                            .iter()
-                            .map(|v| v.as_str().unwrap_or(""))
-                            .collect::<Vec<_>>()
-                    ));
+            match schema.get("enum").and_then(|v| v.as_array()) {
+                Some(enum_val) => {
+                    let matches = enum_val
+                        .iter()
+                        .any(|allowed| allowed.as_str() == Some(val_str));
+                    match matches {
+                        true => {}
+                        false => {
+                            return Err(format!(
+                                "Value '{}' not in allowed enum: {:?}",
+                                val_str,
+                                enum_val
+                                    .iter()
+                                    .map(|v| v.as_str().unwrap_or(""))
+                                    .collect::<Vec<_>>()
+                            ));
+                        }
+                    }
                 }
+                None => {}
             }
         }
-        "integer" => {
-            if !value.is_i64() && !value.is_u64() {
-                return Err("Value is not an integer".to_string());
-            }
-        }
-        "number" => {
-            if !value.is_number() {
-                return Err("Value is not a number".to_string());
-            }
-        }
-        "boolean" => {
-            if !value.is_boolean() {
-                return Err("Value is not a boolean".to_string());
-            }
-        }
+        "integer" => match value.is_i64() || value.is_u64() {
+            true => {}
+            false => return Err("Value is not an integer".to_string()),
+        },
+        "number" => match value.is_number() {
+            true => {}
+            false => return Err("Value is not a number".to_string()),
+        },
+        "boolean" => match value.is_boolean() {
+            true => {}
+            false => return Err("Value is not a boolean".to_string()),
+        },
         _ => return Err(format!("Unsupported schema type: '{}'", type_str)),
     }
 

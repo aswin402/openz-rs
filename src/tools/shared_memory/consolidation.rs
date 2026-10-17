@@ -39,29 +39,34 @@ pub async fn consolidate_shared_memory(
         Ok(collected)
     })?;
 
-    if entries.len() > 200 {
-        entries.sort_by(|a, b| {
-            let dt_a = chrono::DateTime::parse_from_rfc3339(&a.timestamp)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now());
-            let dt_b = chrono::DateTime::parse_from_rfc3339(&b.timestamp)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now());
-            dt_b.cmp(&dt_a)
-        });
-        entries.truncate(200);
+    match entries.len() > 200 {
+        true => {
+            entries.sort_by(|a, b| {
+                let dt_a = chrono::DateTime::parse_from_rfc3339(&a.timestamp)
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now());
+                let dt_b = chrono::DateTime::parse_from_rfc3339(&b.timestamp)
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now());
+                dt_b.cmp(&dt_a)
+            });
+            entries.truncate(200);
+        }
+        false => {}
     }
 
-    if entries.len() < 5 {
-        return Ok(());
+    match entries.len() < 5 {
+        true => return Ok(()),
+        false => {}
     }
 
     let mut consolidated_count = 0;
 
     for _ in 0..3 {
         let n = entries.len();
-        if n < 2 {
-            break;
+        match n < 2 {
+            true => break,
+            false => {}
         }
 
         let mut max_sim = 0.0;
@@ -70,111 +75,122 @@ pub async fn consolidate_shared_memory(
         for i in 0..n {
             for j in (i + 1)..n {
                 let sim = cosine_similarity(&entries[i].embedding, &entries[j].embedding);
-                if sim > max_sim {
-                    max_sim = sim;
-                    best_pair = Some((i, j));
+                match sim > max_sim {
+                    true => {
+                        max_sim = sim;
+                        best_pair = Some((i, j));
+                    }
+                    false => {}
                 }
             }
         }
 
-        if let Some((i, j)) = best_pair {
-            if max_sim >= 0.82 {
-                let entry_a = &entries[i];
-                let entry_b = &entries[j];
+        let (i, j) = match best_pair.filter(|_| max_sim >= 0.82) {
+            Some(pair) => pair,
+            None => break,
+        };
 
-                let merge_prompt = format!(
-                    "Fact A: {}\nFact B: {}\n\nPlease consolidate these two facts into a single, concise, and complete statement. Do not lose any technical guidelines, details, or specific values. Return ONLY the consolidated statement, with no conversational filler.",
-                    entry_a.text, entry_b.text
-                );
+        let entry_a = &entries[i];
+        let entry_b = &entries[j];
 
-                let system_prompt = "You are a Shared Memory Curator. Consolidate similar facts and remove redundancy, preserving all technical details.";
-                let messages = vec![crate::session::Message {
-                    role: "user".to_string(),
-                    content: merge_prompt,
-                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
-                    extra: serde_json::Map::new(),
-                }];
+        let merge_prompt = format!(
+            "Fact A: {}\nFact B: {}\n\nPlease consolidate these two facts into a single, concise, and complete statement. Do not lose any technical guidelines, details, or specific values. Return ONLY the consolidated statement, with no conversational filler.",
+            entry_a.text, entry_b.text
+        );
 
-                let settings = crate::providers::GenerationSettings {
-                    temperature: 0.1,
-                    max_tokens: 512,
-                    reasoning_effort: None,
-                };
+        let system_prompt = "You are a Shared Memory Curator. Consolidate similar facts and remove redundancy, preserving all technical details.";
+        let messages = vec![crate::session::Message {
+            role: "user".to_string(),
+            content: merge_prompt,
+            timestamp: Some(chrono::Utc::now().to_rfc3339()),
+            extra: serde_json::Map::new(),
+        }];
 
-                let resp = provider
-                    .chat(system_prompt, &messages, &[], &settings)
-                    .await?;
-                if let Some(merged_text) = resp.content {
-                    let clean_text = merged_text.trim().to_string();
-                    if !clean_text.is_empty() {
-                        let new_embed = get_embedding(&clean_text, false).await?;
+        let settings = crate::providers::GenerationSettings {
+            temperature: 0.1,
+            max_tokens: 512,
+            reasoning_effort: None,
+        };
 
-                        let mut merged_tags = entry_a.tags.clone();
-                        for t in &entry_b.tags {
-                            if !merged_tags.contains(t) {
-                                merged_tags.push(t.clone());
-                            }
-                        }
+        let resp = provider
+            .chat(system_prompt, &messages, &[], &settings)
+            .await?;
+        let clean_text = resp
+            .content
+            .map(|merged_text| merged_text.trim().to_string())
+            .filter(|s| !s.is_empty());
 
-                        let workspace = entry_a.workspace.clone();
-                        let new_id = uuid::Uuid::new_v4().to_string();
-                        let now_str = chrono::Utc::now().to_rfc3339();
+        match clean_text {
+            Some(clean_text) => {
+                let new_embed = get_embedding(&clean_text, false).await?;
 
-                        // Calculate merged importance (average of two, scaled up slightly for consolidation reinforcement)
-                        let new_importance =
-                            ((entry_a.importance + entry_b.importance) / 2.0 + 0.1).min(1.0);
-
-                        let new_entry = CognitiveMemoryEntry {
-                            id: new_id.clone(),
-                            text: clean_text.clone(),
-                            embedding: new_embed,
-                            timestamp: now_str.clone(),
-                            workspace,
-                            tags: merged_tags.clone(),
-                            importance: new_importance,
-                            last_accessed: now_str.clone(),
-                            access_count: entry_a.access_count + entry_b.access_count,
-                            decay_rate: (entry_a.decay_rate + entry_b.decay_rate) / 2.0,
-                        };
-
-                        // Remove from database and insert new merged entry inside a short-lived block
-                        with_db(|conn| {
-                            let tx = conn.transaction()?;
-                            tx.execute(
-                                "DELETE FROM cognitive_memory WHERE id IN (?1, ?2)",
-                                params![entry_a.id, entry_b.id],
-                            )?;
-
-                            let embedding_json = serde_json::to_string(&new_entry.embedding)?;
-                            let tags_json = serde_json::to_string(&new_entry.tags)?;
-                            tx.execute(
-                                "INSERT INTO cognitive_memory (id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate)
-                                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-                                params![new_id, clean_text, embedding_json, now_str, new_entry.workspace, tags_json, new_importance, now_str, new_entry.access_count, new_entry.decay_rate],
-                            )?;
-                            tx.commit()?;
-                            Ok(())
-                        })?;
-
-                        entries.remove(j);
-                        entries.remove(i);
-                        entries.push(new_entry);
-                        consolidated_count += 1;
-                        continue;
+                let mut merged_tags = entry_a.tags.clone();
+                for t in &entry_b.tags {
+                    match merged_tags.contains(t) {
+                        true => {}
+                        false => merged_tags.push(t.clone()),
                     }
                 }
+
+                let workspace = entry_a.workspace.clone();
+                let new_id = uuid::Uuid::new_v4().to_string();
+                let now_str = chrono::Utc::now().to_rfc3339();
+
+                // Calculate merged importance (average of two, scaled up slightly for consolidation reinforcement)
+                let new_importance =
+                    ((entry_a.importance + entry_b.importance) / 2.0 + 0.1).min(1.0);
+
+                let new_entry = CognitiveMemoryEntry {
+                    id: new_id.clone(),
+                    text: clean_text.clone(),
+                    embedding: new_embed,
+                    timestamp: now_str.clone(),
+                    workspace,
+                    tags: merged_tags.clone(),
+                    importance: new_importance,
+                    last_accessed: now_str.clone(),
+                    access_count: entry_a.access_count + entry_b.access_count,
+                    decay_rate: (entry_a.decay_rate + entry_b.decay_rate) / 2.0,
+                };
+
+                // Remove from database and insert new merged entry inside a short-lived block
+                with_db(|conn| {
+                    let tx = conn.transaction()?;
+                    tx.execute(
+                        "DELETE FROM cognitive_memory WHERE id IN (?1, ?2)",
+                        params![entry_a.id, entry_b.id],
+                    )?;
+
+                    let embedding_json = serde_json::to_string(&new_entry.embedding)?;
+                    let tags_json = serde_json::to_string(&new_entry.tags)?;
+                    tx.execute(
+                        "INSERT INTO cognitive_memory (id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                        params![new_id, clean_text, embedding_json, now_str, new_entry.workspace, tags_json, new_importance, now_str, new_entry.access_count, new_entry.decay_rate],
+                    )?;
+                    tx.commit()?;
+                    Ok(())
+                })?;
+
+                entries.remove(j);
+                entries.remove(i);
+                entries.push(new_entry);
+                consolidated_count += 1;
             }
+            None => break,
         }
-        break;
     }
 
-    if consolidated_count > 0 {
-        let aura_blue = "\x1b[38;2;96;165;250m";
-        let color_reset = "\x1b[0m";
-        crate::channels::cli::send_notification(&format!(
-            "{}◇ [Memory-Curator] Consolidated {} duplicate/redundant shared memories.{}",
-            aura_blue, consolidated_count, color_reset
-        ));
+    match consolidated_count > 0 {
+        true => {
+            let aura_blue = "\x1b[38;2;96;165;250m";
+            let color_reset = "\x1b[0m";
+            crate::channels::cli::send_notification(&format!(
+                "{}◇ [Memory-Curator] Consolidated {} duplicate/redundant shared memories.{}",
+                aura_blue, consolidated_count, color_reset
+            ));
+        }
+        false => {}
     }
 
     Ok(())

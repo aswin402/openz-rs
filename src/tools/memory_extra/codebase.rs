@@ -1,13 +1,12 @@
 use crate::memory::{scope_from_args, with_graph_db as with_db};
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
-use regex::Regex;
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-const STOP_WORDS: &[&str] = &[
+pub(crate) const STOP_WORDS: &[&str] = &[
     "a",
     "about",
     "after",
@@ -160,10 +159,9 @@ impl Tool for CompressContextTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let text = if let Some(s) = arguments.as_str() {
-            s
-        } else {
-            arguments
+        let text = match arguments.as_str() {
+            Some(s) => s,
+            None => arguments
                 .get("text")
                 .or_else(|| arguments.get("content"))
                 .or_else(|| arguments.get("context"))
@@ -171,7 +169,7 @@ impl Tool for CompressContextTool {
                 .or_else(|| arguments.get("input"))
                 .or_else(|| arguments.get("body"))
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow!("Missing 'text'"))?
+                .ok_or_else(|| anyhow!("Missing 'text'"))?,
         };
         let ratio = arguments
             .get("ratio")
@@ -189,13 +187,16 @@ impl Tool for CompressContextTool {
             .filter(|s| !s.is_empty())
             .collect();
 
-        if sentences.is_empty() {
-            return Ok(json!({
-                "originalLength": text.len(),
-                "compressedLength": 0,
-                "ratio": ratio,
-                "compressedText": "",
-            }));
+        match sentences.is_empty() {
+            true => {
+                return Ok(json!({
+                    "originalLength": text.len(),
+                    "compressedLength": 0,
+                    "ratio": ratio,
+                    "compressedText": "",
+                }));
+            }
+            false => {}
         }
 
         // TF-IDF scoring (simplified)
@@ -225,8 +226,9 @@ impl Tool for CompressContextTool {
             let mut tfidf = 0.0f64;
             let mut seen = HashSet::new();
             for term in terms {
-                if !seen.insert(term) {
-                    continue;
+                match seen.insert(term) {
+                    false => continue,
+                    true => {}
                 }
                 let tf = terms.iter().filter(|t| *t == term).count() as f64 / terms.len() as f64;
                 let df = *term_dfs.get(term).unwrap_or(&1) as f64;
@@ -250,11 +252,16 @@ impl Tool for CompressContextTool {
             .collect::<Vec<&str>>()
             .join(". ");
 
+        let compressed_text = match compressed.is_empty() {
+            true => sentences[0],
+            false => &compressed,
+        };
+
         Ok(json!({
             "originalLength": text.len(),
             "compressedLength": compressed.len(),
             "ratio": ratio,
-            "compressedText": if compressed.is_empty() { sentences[0] } else { &compressed },
+            "compressedText": compressed_text,
         }))
     }
 }
@@ -363,38 +370,40 @@ impl Tool for CompactMemoriesTool {
         let mut merged = 0i64;
 
         with_db(|conn| {
-            if strategy == "decay" || strategy == "both" {
-                // Archive low-importance semantic facts older than max_age
-                let rows: i64 = if dry_run {
-                    conn.query_row(
-                        "SELECT COUNT(*) FROM semantic_metadata WHERE importance < ?1 AND timestamp < ?2 AND valid_until IS NULL AND (?3 IS NULL OR user_id = ?3 OR user_id = '*') AND (?4 IS NULL OR session_id = ?4 OR session_id = '*') AND (?5 IS NULL OR agent_id = ?5 OR agent_id = '*')",
-                        params![min_importance, cutoff_str, uid, sid, aid],
-                        |r| r.get::<_, i64>(0),
-                    )?
-                } else {
-                    conn.execute(
-                        "UPDATE semantic_metadata SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE importance < ?1 AND timestamp < ?2 AND valid_until IS NULL AND (?3 IS NULL OR user_id = ?3 OR user_id = '*') AND (?4 IS NULL OR session_id = ?4 OR session_id = '*') AND (?5 IS NULL OR agent_id = ?5 OR agent_id = '*')",
-                        params![min_importance, cutoff_str, uid, sid, aid],
-                    )? as i64
-                };
-                archived += rows;
+            match strategy == "decay" || strategy == "both" {
+                true => {
+                    let rows: i64 = match dry_run {
+                        true => conn.query_row(
+                            "SELECT COUNT(*) FROM semantic_metadata WHERE importance < ?1 AND timestamp < ?2 AND valid_until IS NULL AND (?3 IS NULL OR user_id = ?3 OR user_id = '*') AND (?4 IS NULL OR session_id = ?4 OR session_id = '*') AND (?5 IS NULL OR agent_id = ?5 OR agent_id = '*')",
+                            params![min_importance, cutoff_str, uid, sid, aid],
+                            |r| r.get::<_, i64>(0),
+                        )?,
+                        false => conn.execute(
+                            "UPDATE semantic_metadata SET valid_until = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE importance < ?1 AND timestamp < ?2 AND valid_until IS NULL AND (?3 IS NULL OR user_id = ?3 OR user_id = '*') AND (?4 IS NULL OR session_id = ?4 OR session_id = '*') AND (?5 IS NULL OR agent_id = ?5 OR agent_id = '*')",
+                            params![min_importance, cutoff_str, uid, sid, aid],
+                        )? as i64,
+                    };
+                    archived += rows;
+                }
+                false => {}
             }
 
-            if strategy == "cluster" || strategy == "both" {
-                // Simple consolidation: expire very old episodic logs
-                let rows: i64 = if dry_run {
-                    conn.query_row(
-                        "SELECT COUNT(*) FROM episodic_logs WHERE created_at < ?1 AND (?2 IS NULL OR user_id = ?2 OR user_id = '*') AND (?3 IS NULL OR session_id = ?3 OR session_id = '*') AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')",
-                        params![cutoff_str, uid, sid, aid],
-                        |r| r.get::<_, i64>(0),
-                    )?
-                } else {
-                    conn.execute(
-                        "DELETE FROM episodic_logs WHERE created_at < ?1 AND (?2 IS NULL OR user_id = ?2 OR user_id = '*') AND (?3 IS NULL OR session_id = ?3 OR session_id = '*') AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')",
-                        params![cutoff_str, uid, sid, aid],
-                    )? as i64
-                };
-                merged += rows;
+            match strategy == "cluster" || strategy == "both" {
+                true => {
+                    let rows: i64 = match dry_run {
+                        true => conn.query_row(
+                            "SELECT COUNT(*) FROM episodic_logs WHERE created_at < ?1 AND (?2 IS NULL OR user_id = ?2 OR user_id = '*') AND (?3 IS NULL OR session_id = ?3 OR session_id = '*') AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')",
+                            params![cutoff_str, uid, sid, aid],
+                            |r| r.get::<_, i64>(0),
+                        )?,
+                        false => conn.execute(
+                            "DELETE FROM episodic_logs WHERE created_at < ?1 AND (?2 IS NULL OR user_id = ?2 OR user_id = '*') AND (?3 IS NULL OR session_id = ?3 OR session_id = '*') AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')",
+                            params![cutoff_str, uid, sid, aid],
+                        )? as i64,
+                    };
+                    merged += rows;
+                }
+                false => {}
             }
 
             Ok(json!({
@@ -466,6 +475,11 @@ impl Tool for IndexCodebaseTool {
     }
 }
 
+const IGNORED_SCAN_DIRS: &[&str] = &["target", ".git", "external", "node_modules", ".venv"];
+const INDEXABLE_EXTENSIONS: &[&str] = &[
+    "rs", "py", "js", "jsx", "ts", "tsx", "go", "rb", "java", "swift", "kt", "c", "h", "cpp", "hpp",
+];
+
 fn scan_and_index(
     dir: &Path,
     user_id: &str,
@@ -473,141 +487,320 @@ fn scan_and_index(
     agent_id: &str,
     conn: &Connection,
 ) -> Result<i64> {
-    let mut count = 0;
-    if !dir.is_dir() {
-        return Ok(0);
+    match dir.is_dir() {
+        false => return Ok(0),
+        true => {}
     }
+    let mut count = 0;
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_dir() {
-            let name = path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            if name != "target"
-                && name != ".git"
-                && name != "external"
-                && name != "node_modules"
-                && name != ".venv"
-            {
-                count += scan_and_index(&path, user_id, session_id, agent_id, conn)?;
+        match path.is_dir() {
+            true => {
+                let name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                match IGNORED_SCAN_DIRS.contains(&name.as_str()) {
+                    false => {
+                        count += scan_and_index(&path, user_id, session_id, agent_id, conn)?;
+                    }
+                    true => {}
+                }
             }
-        } else {
-            let ext = path
-                .extension()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string();
-            if matches!(
-                ext.as_str(),
-                "rs" | "py"
-                    | "js"
-                    | "jsx"
-                    | "ts"
-                    | "tsx"
-                    | "go"
-                    | "rb"
-                    | "java"
-                    | "swift"
-                    | "kt"
-                    | "c"
-                    | "h"
-                    | "cpp"
-                    | "hpp"
-            ) && index_file(&path, user_id, session_id, agent_id, conn).is_ok()
-            {
-                count += 1;
+            false => {
+                let ext = path
+                    .extension()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_string();
+                let should_index = INDEXABLE_EXTENSIONS.contains(&ext.as_str())
+                    && index_file(&path, user_id, session_id, agent_id, conn).is_ok();
+                match should_index {
+                    true => count += 1,
+                    false => {}
+                }
             }
         }
     }
     Ok(count)
 }
 
-static FN_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(
-        r"^\s*(?:public\s+|pub(?:\s*\([^)]*\))?\s+)?(?:const\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+([a-zA-Z_]\w*)",
-    )
-    .expect("valid fn_re regex")
-});
-static STRUCT_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*(?:public\s+|pub(?:\s*\([^)]*\))?\s+)?struct\s+([a-zA-Z_]\w*)")
-        .expect("valid struct_re regex")
-});
-static ENUM_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*(?:public\s+|pub(?:\s*\([^)]*\))?\s+)?enum\s+([a-zA-Z_]\w*)")
-        .expect("valid enum_re regex")
-});
-static IMPL_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(
-        r"^\s*(?:public\s+|pub(?:\s*\([^)]*\))?\s+)?(?:unsafe\s+)?impl(?:<[^>]*>)?(?:\s+([a-zA-Z_][\w:]*)(?:<[^>]*>)?\s+for)?\s+([a-zA-Z_]\w*)",
-    )
-    .expect("valid impl_re regex")
-});
-static DEF_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*(?:async\s+)?def\s+([a-zA-Z_]\w*)").expect("valid def_re regex")
-});
-static CLASS_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*(?:export\s+)?class\s+([a-zA-Z_]\w*)").expect("valid class_re regex")
-});
-static FUNC_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*(?:export\s+)?(?:async\s+)?func(?:tion)?\s+([a-zA-Z_]\w*)")
-        .expect("valid func_re regex")
-});
-static TYPE_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*(?:public\s+|pub(?:\s*\([^)]*\))?\s+|export\s+)?type\s+([a-zA-Z_]\w*)")
-        .expect("valid type_re regex")
-});
-static TRAIT_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*(?:public\s+|pub(?:\s*\([^)]*\))?\s+)?(?:unsafe\s+)?trait\s+([a-zA-Z_]\w*)")
-        .expect("valid trait_re regex")
-});
-static INTERFACE_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
-    Regex::new(r"^\s*(?:export\s+)?interface\s+([a-zA-Z_]\w*)").expect("valid interface_re regex")
-});
+fn is_ident_start(ch: char) -> bool {
+    ch.is_ascii_alphabetic() || ch == '_'
+}
 
-fn compute_block_end_line(lines: &[&str], start_idx: usize, is_indent_lang: bool) -> i64 {
-    if is_indent_lang {
-        let base_indent = lines[start_idx]
-            .chars()
-            .take_while(|c| c.is_whitespace())
-            .count();
-        let mut last_idx = start_idx;
-        for (offset, line) in lines[start_idx + 1..].iter().enumerate() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
+fn is_ident_continue(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+fn read_identifier_prefix(input: &str) -> Option<&str> {
+    let mut chars = input.char_indices();
+    let (_, first) = chars.next()?;
+    match is_ident_start(first) {
+        false => return None,
+        true => {}
+    }
+    let end = chars
+        .find(|&(_, ch)| !is_ident_continue(ch))
+        .map(|(idx, _)| idx)
+        .unwrap_or(input.len());
+    Some(&input[..end])
+}
+
+fn strip_one_modifier(input: &str) -> Option<&str> {
+    let trimmed = input.trim_start();
+    match trimmed.strip_prefix("pub") {
+        Some(after_pub) => {
+            let after_ws = after_pub.trim_start();
+            match after_ws.strip_prefix('(') {
+                Some(in_parens) => {
+                    let close_idx = in_parens.find(')')?;
+                    let after_close = &in_parens[close_idx + 1..];
+                    return after_close
+                        .chars()
+                        .next()
+                        .filter(|c| c.is_whitespace())
+                        .map(|_| after_close.trim_start());
+                }
+                None => {}
             }
-            let indent = line.chars().take_while(|c| c.is_whitespace()).count();
-            if indent <= base_indent {
-                break;
+            match after_pub.chars().next().is_some_and(char::is_whitespace) {
+                true => return Some(after_pub.trim_start()),
+                false => {}
             }
-            last_idx = start_idx + 1 + offset;
         }
-        return (last_idx + 1) as i64;
+        None => {}
     }
 
+    for kw in ["public", "export", "const", "async", "unsafe"] {
+        match trimmed.strip_prefix(kw) {
+            Some(rest) => match rest.chars().next().is_some_and(char::is_whitespace) {
+                true => return Some(rest.trim_start()),
+                false => {}
+            },
+            None => {}
+        }
+    }
+    None
+}
+
+fn strip_modifiers(mut input: &str) -> &str {
+    input = input.trim_start();
+    while let Some(next) = strip_one_modifier(input) {
+        input = next;
+    }
+    input
+}
+
+fn skip_angle_brackets(input: &str) -> &str {
+    let trimmed = input.trim_start();
+    match trimmed.starts_with('<') {
+        false => input,
+        true => {
+            let mut depth = 0i32;
+            for (idx, ch) in trimmed.char_indices() {
+                match ch {
+                    '<' => depth += 1,
+                    '>' => {
+                        depth -= 1;
+                        match depth == 0 {
+                            true => return &trimmed[idx + 1..],
+                            false => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            input
+        }
+    }
+}
+
+fn read_path_identifier_prefix(input: &str) -> Option<&str> {
+    let mut chars = input.char_indices();
+    let (_, first) = chars.next()?;
+    match is_ident_start(first) {
+        false => return None,
+        true => {}
+    }
+    let end = chars
+        .find(|&(_, ch)| !(is_ident_continue(ch) || ch == ':'))
+        .map(|(idx, _)| idx)
+        .unwrap_or(input.len());
+    Some(&input[..end])
+}
+
+fn parse_impl_declaration(trimmed: &str, after_mods: &str) -> Option<(&'static str, String, String)> {
+    let after_impl = after_mods.strip_prefix("impl")?;
+    let after_generics = skip_angle_brackets(after_impl);
+    match after_generics.chars().next().is_some_and(char::is_whitespace) {
+        false => return None,
+        true => {}
+    }
+    let after_ws = after_generics.trim_start();
+    let first_path = read_path_identifier_prefix(after_ws)?;
+    let after_first = &after_ws[first_path.len()..];
+    let after_first_generics = skip_angle_brackets(after_first);
+
+    let target_ident = match after_first_generics
+        .chars()
+        .next()
+        .is_some_and(char::is_whitespace)
+    {
+        true => {
+            let rest_ws = after_first_generics.trim_start();
+            match rest_ws.strip_prefix("for") {
+                Some(after_for) => match after_for.chars().next().is_some_and(char::is_whitespace) {
+                    true => {
+                        let target_start = after_for.trim_start();
+                        read_identifier_prefix(target_start)?
+                    }
+                    false => read_identifier_prefix(first_path)?,
+                },
+                None => read_identifier_prefix(first_path)?,
+            }
+        }
+        false => read_identifier_prefix(first_path)?,
+    };
+
+    let end_offset = (target_ident.as_ptr() as usize)
+        .saturating_sub(trimmed.as_ptr() as usize)
+        .saturating_add(target_ident.len())
+        .min(trimmed.len());
+    let signature = trimmed[..end_offset].to_string();
+    Some(("ImplBlock", format!("impl_{}", target_ident), signature))
+}
+
+const KEYWORD_DECLARATIONS: &[(&str, &str, bool)] = &[
+    ("fn", "Function", true),
+    ("def", "Function", true),
+    ("function", "Function", true),
+    ("func", "Function", true),
+    ("struct", "Struct", false),
+    ("enum", "Enum", false),
+    ("class", "Class", false),
+    ("trait", "Trait", false),
+    ("interface", "Interface", false),
+    ("type", "TypeAlias", false),
+];
+
+fn parse_element_declaration(trimmed: &str) -> Option<(&'static str, String, String)> {
+    let after_mods = strip_modifiers(trimmed);
+    for &(kw, element_type, append_parens) in KEYWORD_DECLARATIONS {
+        match after_mods.strip_prefix(kw) {
+            Some(rest) => match rest.chars().next().is_some_and(char::is_whitespace) {
+                true => {
+                    let after_kw = rest.trim_start();
+                    let ident = read_identifier_prefix(after_kw)?;
+                    let end_offset = (ident.as_ptr() as usize)
+                        .saturating_sub(trimmed.as_ptr() as usize)
+                        .saturating_add(ident.len())
+                        .min(trimmed.len());
+                    let base_sig = &trimmed[..end_offset];
+                    let signature = match append_parens {
+                        true => format!("{}(...)", base_sig),
+                        false => base_sig.to_string(),
+                    };
+                    return Some((element_type, ident.to_string(), signature));
+                }
+                false => {}
+            },
+            None => {}
+        }
+    }
+    parse_impl_declaration(trimmed, after_mods)
+}
+
+fn extract_called_identifiers(line: &str) -> Vec<String> {
+    let mut results = Vec::new();
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        let ch = bytes[i] as char;
+        match is_ident_start(ch) {
+            true => {
+                let start = i;
+                i += 1;
+                while i < bytes.len() && is_ident_continue(bytes[i] as char) {
+                    i += 1;
+                }
+                let ident = &line[start..i];
+                let after = line[i..].trim_start();
+                match after.starts_with('(') {
+                    true => results.push(ident.to_string()),
+                    false => {}
+                }
+            }
+            false => {
+                i += 1;
+            }
+        }
+    }
+    results
+}
+
+fn compute_indent_end_line(lines: &[&str], start_idx: usize) -> i64 {
+    let base_indent = lines[start_idx]
+        .chars()
+        .take_while(|c| c.is_whitespace())
+        .count();
+    let mut last_idx = start_idx;
+    for (offset, line) in lines[start_idx + 1..].iter().enumerate() {
+        let trimmed = line.trim();
+        match trimmed.is_empty() || trimmed.starts_with('#') {
+            true => continue,
+            false => {}
+        }
+        let indent = line.chars().take_while(|c| c.is_whitespace()).count();
+        match indent <= base_indent {
+            true => break,
+            false => last_idx = start_idx + 1 + offset,
+        }
+    }
+    (last_idx + 1) as i64
+}
+
+fn compute_brace_end_line(lines: &[&str], start_idx: usize) -> i64 {
     let mut depth: i32 = 0;
     let mut seen_open_brace = false;
     for (offset, line) in lines[start_idx..].iter().enumerate() {
         for ch in line.chars() {
-            if ch == '{' {
-                depth += 1;
-                seen_open_brace = true;
-            } else if ch == '}' {
-                depth -= 1;
-                if seen_open_brace && depth <= 0 {
-                    return (start_idx + offset + 1) as i64;
+            match ch {
+                '{' => {
+                    depth += 1;
+                    seen_open_brace = true;
                 }
-            } else if !seen_open_brace && ch == ';' {
-                return (start_idx + offset + 1) as i64;
+                '}' => {
+                    depth -= 1;
+                    match seen_open_brace && depth <= 0 {
+                        true => return (start_idx + offset + 1) as i64,
+                        false => {}
+                    }
+                }
+                ';' => match !seen_open_brace {
+                    true => return (start_idx + offset + 1) as i64,
+                    false => {}
+                },
+                _ => {}
             }
         }
     }
-
     (lines.len() as i64).min((start_idx + 1) as i64 + 10)
 }
+
+fn compute_block_end_line(lines: &[&str], start_idx: usize, is_indent_lang: bool) -> i64 {
+    match is_indent_lang {
+        true => compute_indent_end_line(lines, start_idx),
+        false => compute_brace_end_line(lines, start_idx),
+    }
+}
+
+const IGNORED_CALL_KEYWORDS: &[&str] = &[
+    "if", "for", "while", "match", "return", "let", "mut", "Some", "None", "Ok", "Err", "self",
+    "Self", "super", "crate",
+];
 
 fn index_file(
     path: &Path,
@@ -623,156 +816,63 @@ fn index_file(
         .and_then(|e| e.to_str())
         .is_some_and(|ext| ext == "py" || ext == "rb");
     let lines: Vec<&str> = content.lines().collect();
-    let mut elements: Vec<(String, String, String, String, i64, i64)> = Vec::new(); // id, type, name, signature, start, end
+    let mut elements: Vec<(String, String, String, String, i64, i64)> = Vec::new();
 
     for (idx, line) in lines.iter().enumerate() {
         let line_num = (idx + 1) as i64;
         let trimmed = line.trim();
-        let mut element_type: Option<&str> = None;
-        let mut name: Option<String> = None;
-        let mut signature = String::new();
-
-        if let Some(caps) = FN_RE.captures(trimmed) {
-            element_type = Some("Function");
-            name = caps.get(1).map(|m| m.as_str().to_string());
-            signature = caps
-                .get(0)
-                .map(|m| m.as_str().to_string() + "(...)")
-                .unwrap_or_default();
-        } else if let Some(caps) = DEF_RE.captures(trimmed) {
-            element_type = Some("Function");
-            name = caps.get(1).map(|m| m.as_str().to_string());
-            signature = caps
-                .get(0)
-                .map(|m| m.as_str().to_string() + "(...)")
-                .unwrap_or_default();
-        } else if let Some(caps) = FUNC_RE.captures(trimmed) {
-            element_type = Some("Function");
-            name = caps.get(1).map(|m| m.as_str().to_string());
-            signature = caps
-                .get(0)
-                .map(|m| m.as_str().to_string() + "(...)")
-                .unwrap_or_default();
-        } else if let Some(caps) = STRUCT_RE.captures(trimmed) {
-            element_type = Some("Struct");
-            name = caps.get(1).map(|m| m.as_str().to_string());
-            signature = caps
-                .get(0)
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_default();
-        } else if let Some(caps) = ENUM_RE.captures(trimmed) {
-            element_type = Some("Enum");
-            name = caps.get(1).map(|m| m.as_str().to_string());
-            signature = caps
-                .get(0)
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_default();
-        } else if let Some(caps) = IMPL_RE.captures(trimmed) {
-            element_type = Some("ImplBlock");
-            name = caps.get(2).map(|m| format!("impl_{}", m.as_str()));
-            signature = caps
-                .get(0)
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_default();
-        } else if let Some(caps) = CLASS_RE.captures(trimmed) {
-            element_type = Some("Class");
-            name = caps.get(1).map(|m| m.as_str().to_string());
-            signature = caps
-                .get(0)
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_default();
-        } else if let Some(caps) = TRAIT_RE.captures(trimmed) {
-            element_type = Some("Trait");
-            name = caps.get(1).map(|m| m.as_str().to_string());
-            signature = caps
-                .get(0)
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_default();
-        } else if let Some(caps) = INTERFACE_RE.captures(trimmed) {
-            element_type = Some("Interface");
-            name = caps.get(1).map(|m| m.as_str().to_string());
-            signature = caps
-                .get(0)
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_default();
-        } else if let Some(caps) = TYPE_RE.captures(trimmed) {
-            element_type = Some("TypeAlias");
-            name = caps.get(1).map(|m| m.as_str().to_string());
-            signature = caps
-                .get(0)
-                .map(|m| m.as_str().to_string())
-                .unwrap_or_default();
-        }
-
-        if let (Some(el_type), Some(el_name)) = (element_type, name) {
-            let el_id = format!("{}:{}:{}", relative_path, el_name, line_num);
-            let end_line = compute_block_end_line(&lines, idx, is_indent_lang);
-            conn.execute(
-                "INSERT OR IGNORE INTO code_elements (element_id, file_path, element_type, name, signature, ast_json, parent_id, start_line, end_line, user_id, session_id, agent_id) VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6, ?7, ?8, ?9, ?10)",
-                params![el_id, relative_path, el_type, el_name, signature, line_num, end_line, user_id, session_id, agent_id],
-            )?;
-            elements.push((
-                el_id,
-                el_name,
-                relative_path.clone(),
-                el_type.to_string(),
-                line_num,
-                end_line,
-            ));
+        match parse_element_declaration(trimmed) {
+            Some((el_type, el_name, signature)) => {
+                let el_id = format!("{}:{}:{}", relative_path, el_name, line_num);
+                let end_line = compute_block_end_line(&lines, idx, is_indent_lang);
+                conn.execute(
+                    "INSERT OR IGNORE INTO code_elements (element_id, file_path, element_type, name, signature, ast_json, parent_id, start_line, end_line, user_id, session_id, agent_id) VALUES (?1, ?2, ?3, ?4, ?5, NULL, NULL, ?6, ?7, ?8, ?9, ?10)",
+                    params![el_id, relative_path, el_type, el_name, signature, line_num, end_line, user_id, session_id, agent_id],
+                )?;
+                elements.push((
+                    el_id,
+                    el_name,
+                    relative_path.clone(),
+                    el_type.to_string(),
+                    line_num,
+                    end_line,
+                ));
+            }
+            None => {}
         }
     }
 
-    // Call detection: find `name(` patterns that match known element names
-    let call_re = Regex::new(r"([a-zA-Z_]\w*)\s*\(")?;
     let known_names: HashSet<String> = elements.iter().map(|e| e.1.clone()).collect();
     for (idx, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
-        // Skip definition lines themselves
-        if trimmed.starts_with("fn ")
+        let is_def_line = trimmed.starts_with("fn ")
             || trimmed.starts_with("pub fn ")
             || trimmed.starts_with("def ")
-            || trimmed.starts_with("func ")
-        {
-            continue;
+            || trimmed.starts_with("func ");
+        match is_def_line {
+            true => continue,
+            false => {}
         }
-        for cap in call_re.captures_iter(trimmed) {
-            let Some(callee_name) = cap.get(1).map(|m| m.as_str().to_string()) else {
-                continue;
-            };
-            // Skip keywords
-            if matches!(
-                callee_name.as_str(),
-                "if" | "for"
-                    | "while"
-                    | "match"
-                    | "return"
-                    | "let"
-                    | "mut"
-                    | "Some"
-                    | "None"
-                    | "Ok"
-                    | "Err"
-                    | "self"
-                    | "Self"
-                    | "super"
-                    | "crate"
-            ) {
-                continue;
+        for callee_name in extract_called_identifiers(trimmed) {
+            match IGNORED_CALL_KEYWORDS.contains(&callee_name.as_str())
+                || !known_names.contains(&callee_name)
+            {
+                true => continue,
+                false => {}
             }
-            if known_names.contains(&callee_name) {
-                // Find the callee element_id
-                if let Some(callee) = elements.iter().find(|e| e.1 == callee_name) {
-                    // Find nearest caller (the enclosing function/element on this line)
-                    let line_num = (idx + 1) as i64;
-                    if let Some(caller) = elements
-                        .iter().rfind(|e| e.4 <= line_num && line_num <= e.5)
-                    {
-                        conn.execute(
-                            "INSERT OR IGNORE INTO code_calls (caller_id, callee_id, call_site) VALUES (?1, ?2, ?3)",
-                            params![caller.0.clone(), callee.0.clone(), format!("{}:{}", relative_path, line_num)],
-                        )?;
-                    }
+            let line_num = (idx + 1) as i64;
+            let pair = elements
+                .iter()
+                .find(|e| e.1 == callee_name)
+                .zip(elements.iter().rfind(|e| e.4 <= line_num && line_num <= e.5));
+            match pair {
+                Some((callee, caller)) => {
+                    conn.execute(
+                        "INSERT OR IGNORE INTO code_calls (caller_id, callee_id, call_site) VALUES (?1, ?2, ?3)",
+                        params![caller.0.clone(), callee.0.clone(), format!("{}:{}", relative_path, line_num)],
+                    )?;
                 }
+                None => {}
             }
         }
     }
@@ -831,17 +931,23 @@ impl Tool for QueryCodeGraphTool {
             ];
             let mut param_values: Vec<String> = vec![user_id, session_id, agent_id];
 
-            if !file_path.is_empty() {
-                conditions.push(format!("file_path LIKE ?{}", param_values.len() + 1));
-                param_values.push(format!("%{}%", file_path));
+            match file_path.is_empty() {
+                false => {
+                    conditions.push(format!("file_path LIKE ?{}", param_values.len() + 1));
+                    param_values.push(format!("%{}%", file_path));
+                }
+                true => {}
             }
-            if !query.is_empty() {
-                conditions.push(format!(
-                    "(name LIKE ?{} OR element_type LIKE ?{})",
-                    param_values.len() + 1,
-                    param_values.len() + 1
-                ));
-                param_values.push(format!("%{}%", query));
+            match query.is_empty() {
+                false => {
+                    conditions.push(format!(
+                        "(name LIKE ?{} OR element_type LIKE ?{})",
+                        param_values.len() + 1,
+                        param_values.len() + 1
+                    ));
+                    param_values.push(format!("%{}%", query));
+                }
+                true => {}
             }
 
             let sql = format!(
@@ -904,8 +1010,9 @@ impl Tool for AnalyzeCodeImpactTool {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        if target_symbol.is_empty() {
-            return Ok(json!({"error": "target_symbol is required"}));
+        match target_symbol.is_empty() {
+            true => return Ok(json!({"error": "target_symbol is required"})),
+            false => {}
         }
         let (user_id, session_id, agent_id) = scope_from_args(arguments);
 
@@ -949,19 +1056,26 @@ impl Tool for AnalyzeCodeImpactTool {
             visited.insert(element_id.clone());
 
             while let Some((current, depth)) = queue.pop() {
-                if depth > 0 {
-                    affected.push(current.clone());
-                    if depth > max_depth {
-                        max_depth = depth;
+                match depth > 0 {
+                    true => {
+                        affected.push(current.clone());
+                        max_depth = max_depth.max(depth);
                     }
+                    false => {}
                 }
-                if let Some(callers) = reverse_graph.get(&current) {
-                    for caller in callers {
-                        if !visited.contains(caller) {
-                            visited.insert(caller.clone());
-                            queue.push((caller.clone(), depth + 1));
+                match reverse_graph.get(&current) {
+                    Some(callers) => {
+                        for caller in callers {
+                            match visited.contains(caller) {
+                                false => {
+                                    visited.insert(caller.clone());
+                                    queue.push((caller.clone(), depth + 1));
+                                }
+                                true => {}
+                            }
                         }
                     }
+                    None => {}
                 }
             }
 

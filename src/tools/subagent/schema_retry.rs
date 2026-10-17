@@ -11,13 +11,11 @@ pub enum SchemaRetryDecision {
 
 pub fn strip_json_fences(text_output: &str) -> &str {
     let trimmed = text_output.trim();
-    if let Some(stripped) = trimmed.strip_prefix("```json") {
-        stripped.strip_suffix("```").unwrap_or(stripped).trim()
-    } else if let Some(stripped) = trimmed.strip_prefix("```") {
-        stripped.strip_suffix("```").unwrap_or(stripped).trim()
-    } else {
-        trimmed
-    }
+    trimmed
+        .strip_prefix("```json")
+        .or_else(|| trimmed.strip_prefix("```"))
+        .map(|stripped| stripped.strip_suffix("```").unwrap_or(stripped).trim())
+        .unwrap_or(trimmed)
 }
 
 pub fn evaluate_schema_retry(
@@ -27,16 +25,16 @@ pub fn evaluate_schema_retry(
     max_attempts: usize,
 ) -> Result<SchemaRetryDecision> {
     let clean_json_str = strip_json_fences(text_output);
-    let parsed_val: Value = match serde_json::from_str(clean_json_str) {
-        Ok(value) => value,
-        Err(e) => {
-            if attempts >= max_attempts {
-                return Err(anyhow!(
-                    "Subagent output failed to parse as JSON: {}. Parse Error: {}",
-                    e,
-                    text_output.trim()
-                ));
-            }
+    let parsed_val: Value = match (serde_json::from_str(clean_json_str), attempts >= max_attempts) {
+        (Ok(value), _) => value,
+        (Err(e), true) => {
+            return Err(anyhow!(
+                "Subagent output failed to parse as JSON: {}. Parse Error: {}",
+                e,
+                text_output.trim()
+            ));
+        }
+        (Err(e), false) => {
             return Ok(SchemaRetryDecision::Retry {
                 reason: format!("Parse Error: {e}"),
                 prompt: format!(
@@ -47,20 +45,17 @@ pub fn evaluate_schema_retry(
         }
     };
 
-    if let Err(e) = validate_schema(&parsed_val, schema) {
-        if attempts >= max_attempts {
-            return Err(anyhow!("Subagent output failed schema validation: {}", e));
-        }
-        return Ok(SchemaRetryDecision::Retry {
+    match (validate_schema(&parsed_val, schema), attempts >= max_attempts) {
+        (Ok(()), _) => Ok(SchemaRetryDecision::Accepted(clean_json_str.to_string())),
+        (Err(e), true) => Err(anyhow!("Subagent output failed schema validation: {}", e)),
+        (Err(e), false) => Ok(SchemaRetryDecision::Retry {
             reason: e.clone(),
             prompt: format!(
                 "Your previous response did not conform to the JSON Schema. Validation Error: {e}\n\n\
                  Please correct your response. Return ONLY the raw valid JSON matching the schema."
             ),
-        });
+        }),
     }
-
-    Ok(SchemaRetryDecision::Accepted(clean_json_str.to_string()))
 }
 
 /// Drive the schema-validation retry loop around a completed subagent run.
@@ -89,8 +84,9 @@ where
             2,
         ) {
             Ok(SchemaRetryDecision::Accepted(clean_json)) => {
-                if let Ok(ref mut res) = run_res {
-                    res.content = clean_json;
+                match run_res {
+                    Ok(ref mut res) => res.content = clean_json,
+                    Err(_) => {}
                 }
                 break;
             }

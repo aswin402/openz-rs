@@ -70,9 +70,12 @@ impl Tool for DelegateTaskTool {
     async fn call(&self, arguments: &Value) -> Result<Value> {
         crate::agent::style::spinner::IS_SILENT.scope(crate::agent::style::is_silent(), async {
         let current_depth = DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
-        if current_depth >= 3 {
-            crate::tui_println!("{}⚠️ Delegation depth limit reached ({}). Aborting nested delegate_task.{}", AURA_GOLD, current_depth, COLOR_RESET);
-            return Err(anyhow!("Delegation limit reached. Max nesting depth is 3."));
+        match current_depth >= 3 {
+            true => {
+                crate::tui_println!("{}⚠️ Delegation depth limit reached ({}). Aborting nested delegate_task.{}", AURA_GOLD, current_depth, COLOR_RESET);
+                return Err(anyhow!("Delegation limit reached. Max nesting depth is 3."));
+            }
+            false => {}
         }
 
         let goal = super::extract_string_arg(
@@ -104,30 +107,34 @@ impl Tool for DelegateTaskTool {
         let models_to_try = delegate_task_models_to_try(&self.config, model_override.as_deref(), has_images);
         let mut selected_model = self.config.agents.defaults.model.clone();
         let mut selected_fallback_models: Vec<String> = Vec::new();
-        let provider = if std::env::var("OPENZ_USE_MOCK_PROVIDER").is_ok() {
-            self.parent_provider.clone()
-        } else {
-            let mut selected_provider = None;
-            for (idx, model) in models_to_try.iter().enumerate() {
-                match build_provider_for_model(&self.config, model) {
-                    Ok(provider) => {
-                        selected_model = model.clone();
-                        selected_fallback_models = models_to_try[idx + 1..].to_vec();
-                        if has_images && crate::providers::model_supports_vision(model) {
-                            crate::tui_println!("{}  ✓ Auto-routed vision task to subagent model '{}'{}", EMERALD_GREEN, model, COLOR_RESET);
+        let provider = match std::env::var("OPENZ_USE_MOCK_PROVIDER").is_ok() {
+            true => self.parent_provider.clone(),
+            false => {
+                let mut selected_provider = None;
+                for (idx, model) in models_to_try.iter().enumerate() {
+                    match build_provider_for_model(&self.config, model) {
+                        Ok(provider) => {
+                            selected_model = model.clone();
+                            selected_fallback_models = models_to_try[idx + 1..].to_vec();
+                            match has_images && crate::providers::model_supports_vision(model) {
+                                true => {
+                                    crate::tui_println!("{}  ✓ Auto-routed vision task to subagent model '{}'{}", EMERALD_GREEN, model, COLOR_RESET);
+                                }
+                                false => {}
+                            }
+                            selected_provider = Some(provider);
+                            break;
                         }
-                        selected_provider = Some(provider);
-                        break;
-                    }
-                    Err(e) => {
-                        crate::tui_println!("{}⚠️ Failed to configure subagent model '{}' ({}). Trying next fallback.{}", AURA_GOLD, model, e, COLOR_RESET);
+                        Err(e) => {
+                            crate::tui_println!("{}⚠️ Failed to configure subagent model '{}' ({}). Trying next fallback.{}", AURA_GOLD, model, e, COLOR_RESET);
+                        }
                     }
                 }
+                selected_provider.unwrap_or_else(|| {
+                    selected_fallback_models.clear();
+                    self.parent_provider.clone()
+                })
             }
-            selected_provider.unwrap_or_else(|| {
-                selected_fallback_models.clear();
-                self.parent_provider.clone()
-            })
         };
 
         let mut child_config = self.config.clone();
@@ -185,14 +192,17 @@ impl Tool for DelegateTaskTool {
 
         let _worktree_guard = WorktreeGuard::new(parent_dir.clone(), workspace_dir.clone());
 
-        if !crate::agent::style::is_silent() {
-            let prefix = crate::agent::style::get_tree_prefix(false);
-            crate::tui_println!(
-                "{}{}{}• {}{}Subagent{} {}using {}{}",
-                AURA_SLATE, prefix, COLOR_RESET,
-                RED_ORANGE, COLOR_BOLD, COLOR_RESET,
-                AURA_SLATE, selected_model, COLOR_RESET
-            );
+        match !crate::agent::style::is_silent() {
+            true => {
+                let prefix = crate::agent::style::get_tree_prefix(false);
+                crate::tui_println!(
+                    "{}{}{}• {}{}Subagent{} {}using {}{}",
+                    AURA_SLATE, prefix, COLOR_RESET,
+                    RED_ORANGE, COLOR_BOLD, COLOR_RESET,
+                    AURA_SLATE, selected_model, COLOR_RESET
+                );
+            }
+            false => {}
         }
         let spinner_msg = crate::agent::style::get_tree_spinner_msg("subagent", "");
 
@@ -241,66 +251,66 @@ pub(crate) fn delegate_task_models_to_try(
 ) -> Vec<String> {
     fn add_candidate(models: &mut Vec<String>, model: &str) {
         let trimmed = model.trim();
-        if trimmed.is_empty() {
-            return;
-        }
-        if !models
-            .iter()
-            .any(|existing| existing.eq_ignore_ascii_case(trimmed))
+        match !trimmed.is_empty()
+            && !models
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(trimmed))
         {
-            models.push(trimmed.to_string());
+            true => models.push(trimmed.to_string()),
+            false => {}
         }
     }
 
     let default_model = config.agents.defaults.model.trim();
     let mut models = Vec::new();
 
-    if let Some(model) = model_override
-        .map(str::trim)
-        .filter(|model| !model.is_empty())
-    {
-        add_candidate(&mut models, model);
-    } else if has_images && !crate::providers::model_supports_vision(default_model) {
-        for fallback in config
-            .get_dynamic_fallbacks("vision_agent")
-            .into_iter()
-            .filter(|model| crate::providers::model_supports_vision(model))
-        {
-            add_candidate(&mut models, &fallback);
+    match (
+        model_override
+            .map(str::trim)
+            .filter(|model| !model.is_empty()),
+        has_images && !crate::providers::model_supports_vision(default_model),
+    ) {
+        (Some(model), _) => add_candidate(&mut models, model),
+        (None, true) => {
+            for fallback in config
+                .get_dynamic_fallbacks("vision_agent")
+                .into_iter()
+                .filter(|model| crate::providers::model_supports_vision(model))
+            {
+                add_candidate(&mut models, &fallback);
+            }
         }
-    } else {
-        add_candidate(&mut models, default_model);
+        (None, false) => add_candidate(&mut models, default_model),
     }
 
-    for fallback in &config.agents.defaults.fallback_models {
-        let Some(model) = fallback
-            .as_str()
-            .map(str::trim)
-            .filter(|model| !model.is_empty())
-        else {
-            continue;
-        };
-        if has_images && !crate::providers::model_supports_vision(model) {
-            continue;
-        }
+    for model in config
+        .agents
+        .defaults
+        .fallback_models
+        .iter()
+        .filter_map(|v| v.as_str().map(str::trim).filter(|m| !m.is_empty()))
+        .filter(|model| !has_images || crate::providers::model_supports_vision(model))
+    {
         add_candidate(&mut models, model);
     }
 
     add_candidate(&mut models, default_model);
     super::limit_subagent_models_to_try(&mut models);
 
-    if !default_model.is_empty()
+    match !default_model.is_empty()
         && !models
             .iter()
             .any(|model| model.eq_ignore_ascii_case(default_model))
     {
-        if models.len() >= super::max_subagent_model_attempts() {
-            if let Some(last) = models.last_mut() {
-                *last = default_model.to_string();
-            }
-        } else {
-            models.push(default_model.to_string());
-        }
+        true => match (
+            models.len() >= super::max_subagent_model_attempts(),
+            models.last_mut(),
+        ) {
+            (true, Some(last)) => *last = default_model.to_string(),
+            (true, None) => {}
+            (false, _) => models.push(default_model.to_string()),
+        },
+        false => {}
     }
 
     models

@@ -59,10 +59,9 @@ pub fn can_spawn_nested_subagents(profile_name: &str) -> bool {
 }
 
 pub fn nested_delegation_allowed_for_active_context(profile_name: &str) -> bool {
-    if let Ok(allowed) = ORCHESTRATED_NESTED_DELEGATION_ALLOWED.try_with(|allowed| *allowed) {
-        return allowed;
-    }
-    can_spawn_nested_subagents(profile_name)
+    ORCHESTRATED_NESTED_DELEGATION_ALLOWED
+        .try_with(|allowed| *allowed)
+        .unwrap_or_else(|_| can_spawn_nested_subagents(profile_name))
 }
 
 pub(crate) fn filesystem_write_denied_by_policy(
@@ -75,49 +74,25 @@ pub(crate) fn filesystem_write_denied_by_policy(
 }
 
 pub(crate) fn extract_string_arg(arguments: &serde_json::Value, keys: &[&str]) -> Option<String> {
-    for key in keys {
-        if let Some(val) = arguments.get(*key) {
-            if let Some(s) = val.as_str() {
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
-            } else if val.is_number() || val.is_boolean() {
-                let s = val.to_string();
-                let trimmed = s.trim();
-                if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
-            }
-        }
-    }
-    None
+    keys.iter().find_map(|key| {
+        let val = arguments.get(*key)?;
+        let raw = val
+            .as_str()
+            .map(str::to_string)
+            .or_else(|| (val.is_number() || val.is_boolean()).then(|| val.to_string()))?;
+        let trimmed = raw.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    })
 }
 
 pub(crate) fn extract_u64_arg(arguments: &serde_json::Value, keys: &[&str]) -> Option<u64> {
-    for key in keys {
-        if let Some(val) = arguments.get(*key) {
-            if let Some(n) = val.as_u64() {
-                return Some(n);
-            }
-            if let Some(n) = val.as_i64() {
-                if n >= 0 {
-                    return Some(n as u64);
-                }
-            }
-            if let Some(f) = val.as_f64() {
-                if f >= 0.0 {
-                    return Some(f as u64);
-                }
-            }
-            if let Some(s) = val.as_str() {
-                if let Ok(n) = s.trim().parse::<u64>() {
-                    return Some(n);
-                }
-            }
-        }
-    }
-    None
+    keys.iter().find_map(|key| {
+        let val = arguments.get(*key)?;
+        val.as_u64()
+            .or_else(|| val.as_i64().filter(|&n| n >= 0).map(|n| n as u64))
+            .or_else(|| val.as_f64().filter(|&f| f >= 0.0).map(|f| f as u64))
+            .or_else(|| val.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+    })
 }
 
 pub mod runner;

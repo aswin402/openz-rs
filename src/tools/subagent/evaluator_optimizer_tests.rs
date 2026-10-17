@@ -31,36 +31,23 @@ impl crate::providers::LLMProvider for LoopMockProvider {
                     .contains("Review the draft produced by the optimizer")
             });
 
-        if is_evaluator {
-            // Check if optimizer draft has "Draft version 0" (meaning iteration 1)
-            let has_v0 = system_prompt.contains("Draft version 0")
-                || messages
-                    .iter()
-                    .any(|m| m.content.contains("Draft version 0"));
-            if has_v0 {
-                Ok(crate::providers::LLMResponse {
-                    content: Some(r#"{"passed": false, "feedback": "Draft needs more detail and standard hello function"}"#.to_string()),
-                    tool_calls: Vec::new(),
-                    finish_reason: "stop".to_string(),
-                    reasoning_content: None,
-                })
-            } else {
-                Ok(crate::providers::LLMResponse {
-                    content: Some(r#"{"passed": true, "feedback": ""}"#.to_string()),
-                    tool_calls: Vec::new(),
-                    finish_reason: "stop".to_string(),
-                    reasoning_content: None,
-                })
+        let has_v0 = system_prompt.contains("Draft version 0")
+            || messages
+                .iter()
+                .any(|m| m.content.contains("Draft version 0"));
+        let content = match (is_evaluator, has_v0) {
+            (true, true) => {
+                r#"{"passed": false, "feedback": "Draft needs more detail and standard hello function"}"#.to_string()
             }
-        } else {
-            // Optimizer call
-            Ok(crate::providers::LLMResponse {
-                content: Some(format!("Draft version {}", count)),
-                tool_calls: Vec::new(),
-                finish_reason: "stop".to_string(),
-                reasoning_content: None,
-            })
-        }
+            (true, false) => r#"{"passed": true, "feedback": ""}"#.to_string(),
+            (false, _) => format!("Draft version {}", count),
+        };
+        Ok(crate::providers::LLMResponse {
+            content: Some(content),
+            tool_calls: Vec::new(),
+            finish_reason: "stop".to_string(),
+            reasoning_content: None,
+        })
     }
 }
 

@@ -48,16 +48,21 @@ fn parse_array(raw: &str) -> Vec<String> {
 
 fn score_text(query: &str, fields: &[&str]) -> f64 {
     let query = query.trim().to_lowercase();
-    if query.is_empty() {
-        return 0.0;
+    match query.is_empty() {
+        true => return 0.0,
+        false => {}
     }
     let joined = fields.join(" ").to_lowercase();
-    let mut score = if joined.contains(&query) { 4.0 } else { 0.0 };
+    let mut score = match joined.contains(&query) {
+        true => 4.0,
+        false => 0.0,
+    };
     let query_terms = normalized_terms(&query);
     let field_terms = normalized_terms(&joined);
     let overlap = query_terms.intersection(&field_terms).count();
-    if overlap >= 2 {
-        score += overlap as f64;
+    match overlap >= 2 {
+        true => score += overlap as f64,
+        false => {}
     }
     score
 }
@@ -77,36 +82,47 @@ fn normalized_terms(text: &str) -> std::collections::HashSet<String> {
 fn workflow_rank_score(query: &str, item: &WorkflowCard) -> f64 {
     let triggers = item.triggers.join(" ");
     let mut score = score_text(query, &[&item.name, &triggers, &item.summary]);
-    if score <= 0.0 && !query.trim().is_empty() {
-        return 0.0;
+    match score <= 0.0 && !query.trim().is_empty() {
+        true => return 0.0,
+        false => {}
     }
     let q = query.trim().to_lowercase();
-    if !q.is_empty() {
-        if item.name.trim().eq_ignore_ascii_case(query.trim()) {
-            score += 8.0;
-        }
-        if item
-            .triggers
-            .iter()
-            .any(|trigger| trigger.trim().eq_ignore_ascii_case(query.trim()))
-        {
-            score += 7.0;
-        }
-        let query_terms = normalized_terms(query);
-        let workflow_terms =
-            normalized_terms(&format!("{} {} {}", item.name, triggers, item.summary));
-        if !query_terms.is_empty() {
-            let overlap = query_terms.intersection(&workflow_terms).count();
-            score += overlap as f64 * 0.7;
+    match q.is_empty() {
+        true => {}
+        false => {
+            match item.name.trim().eq_ignore_ascii_case(query.trim()) {
+                true => score += 8.0,
+                false => {}
+            }
+            match item
+                .triggers
+                .iter()
+                .any(|trigger| trigger.trim().eq_ignore_ascii_case(query.trim()))
+            {
+                true => score += 7.0,
+                false => {}
+            }
+            let query_terms = normalized_terms(query);
+            let workflow_terms =
+                normalized_terms(&format!("{} {} {}", item.name, triggers, item.summary));
+            match query_terms.is_empty() {
+                true => {}
+                false => {
+                    let overlap = query_terms.intersection(&workflow_terms).count();
+                    score += overlap as f64 * 0.7;
+                }
+            }
         }
     }
-    if item.status == "active" {
-        score += 1.0;
+    match item.status == "active" {
+        true => score += 1.0,
+        false => {}
     }
     score += (item.success_count.max(0) as f64 + 1.0).ln() * 0.8;
     score -= (item.failure_count.max(0) as f64) * 0.35;
-    if item.risk.eq_ignore_ascii_case("high") {
-        score -= 0.5;
+    match item.risk.eq_ignore_ascii_case("high") {
+        true => score -= 0.5,
+        false => {}
     }
     score
 }
@@ -125,23 +141,23 @@ fn redact_value(value: &mut Value) {
         Value::Object(map) => {
             for (k, v) in map.iter_mut() {
                 let key = k.to_lowercase();
-                if key.contains("token")
+                let should_redact = key.contains("token")
                     || key.contains("secret")
                     || key.contains("password")
                     || key.contains("api_key")
                     || key.contains("authorization")
-                    || v.as_str().is_some_and(string_contains_secret)
-                {
-                    *v = Value::String("********".to_string());
-                } else {
-                    redact_value(v);
+                    || v.as_str().is_some_and(string_contains_secret);
+                match should_redact {
+                    true => *v = Value::String("********".to_string()),
+                    false => redact_value(v),
                 }
             }
         }
         Value::Array(arr) => arr.iter_mut().for_each(redact_value),
-        Value::String(raw) if string_contains_secret(raw) => {
-            *value = Value::String("********".to_string());
-        }
+        Value::String(raw) => match string_contains_secret(raw) {
+            true => *value = Value::String("********".to_string()),
+            false => {}
+        },
         _ => {}
     }
 }
@@ -181,8 +197,9 @@ pub async fn add_workflow_card(
     risk: &str,
     status: &str,
 ) -> Result<WorkflowCard> {
-    if name.trim().is_empty() || summary.trim().is_empty() {
-        return Err(anyhow!("name and summary are required"));
+    match name.trim().is_empty() || summary.trim().is_empty() {
+        true => return Err(anyhow!("name and summary are required")),
+        false => {}
     }
     redact_value(&mut steps);
     let id = uuid::Uuid::new_v4().to_string();
@@ -225,10 +242,9 @@ pub async fn search_workflow_cards(
 ) -> Result<Vec<WorkflowCard>> {
     let _lock = get_db_mutex().lock().await;
     let mut rows = with_db(|conn| {
-        let sql = if active_only {
-            "SELECT id, name, triggers, summary, steps_json, preconditions, verification, risk, status, success_count, failure_count, last_used, created_at, updated_at FROM workflow_cards WHERE status = 'active' ORDER BY success_count DESC, updated_at DESC LIMIT 1000"
-        } else {
-            "SELECT id, name, triggers, summary, steps_json, preconditions, verification, risk, status, success_count, failure_count, last_used, created_at, updated_at FROM workflow_cards ORDER BY success_count DESC, updated_at DESC LIMIT 1000"
+        let sql = match active_only {
+            true => "SELECT id, name, triggers, summary, steps_json, preconditions, verification, risk, status, success_count, failure_count, last_used, created_at, updated_at FROM workflow_cards WHERE status = 'active' ORDER BY success_count DESC, updated_at DESC LIMIT 1000",
+            false => "SELECT id, name, triggers, summary, steps_json, preconditions, verification, risk, status, success_count, failure_count, last_used, created_at, updated_at FROM workflow_cards ORDER BY success_count DESC, updated_at DESC LIMIT 1000",
         };
         let mut stmt = conn.prepare(sql)?;
         let mapped = stmt.query_map([], |row| workflow_from_row(row, 0.0))?;
@@ -265,15 +281,19 @@ pub async fn record_workflow_run(
     {
         let _lock = get_db_mutex().lock().await;
         with_db(|conn| {
+            let success_flag = match success {
+                true => 1,
+                false => 0,
+            };
             conn.execute(
                 "INSERT INTO workflow_runs (id, workflow_id, session_key, task, success, error, timestamp) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params![uuid::Uuid::new_v4().to_string(), workflow.id, session_key, task, if success { 1 } else { 0 }, error, now],
+                params![uuid::Uuid::new_v4().to_string(), workflow.id, session_key, task, success_flag, error, now],
             )?;
-            if success {
-                conn.execute("UPDATE workflow_cards SET success_count = success_count + 1, last_used = ?2, updated_at = ?2 WHERE name = ?1", params![name, now])?;
-            } else {
-                conn.execute("UPDATE workflow_cards SET failure_count = failure_count + 1, last_used = ?2, updated_at = ?2 WHERE name = ?1", params![name, now])?;
-            }
+            let update_sql = match success {
+                true => "UPDATE workflow_cards SET success_count = success_count + 1, last_used = ?2, updated_at = ?2 WHERE name = ?1",
+                false => "UPDATE workflow_cards SET failure_count = failure_count + 1, last_used = ?2, updated_at = ?2 WHERE name = ?1",
+            };
+            conn.execute(update_sql, params![name, now])?;
             Ok(())
         })?;
     }
