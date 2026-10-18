@@ -4,28 +4,29 @@ use super::helpers::*;
 use crate::tools::openmedia::server::*;
 use crate::tools::openmedia::video::{FrameRenderer, SceneElement, VideoScene};
 impl OpenMediaServer {
+    fn resolve_mp4_output_path(&self, output_path: Option<String>, prefix: &str) -> std::path::PathBuf {
+        let _ = std::fs::create_dir_all(&self.config.paths.output_dir);
+        match output_path {
+            Some(out_p) => std::path::PathBuf::from(out_p),
+            None => {
+                let filename = format!("{}{}.mp4", prefix, uuid::Uuid::now_v7());
+                self.config.paths.output_dir.join(filename)
+            }
+        }
+    }
+
     pub async fn video_create(
         &self,
         req: VideoCreateRequest,
     ) -> Result<serde_json::Value, String> {
         let scene = parse_video_scene_value(&req.scene)?;
-
-        let output_path = if let Some(out_p) = req.output_path {
-            std::path::PathBuf::from(out_p)
-        } else {
-            let filename = format!("{}.mp4", uuid::Uuid::now_v7());
-            self.config.paths.output_dir.join(filename)
-        };
-
-        let _ = std::fs::create_dir_all(&self.config.paths.output_dir);
+        let output_path = self.resolve_mp4_output_path(req.output_path, "");
 
         let video_spec = crate::tools::openmedia::video::render_video_scene(&scene, &output_path)
             .await
             .map_err(|e| e.to_string())?;
 
-        serde_json::to_value(video_spec)
-            
-            .map_err(|e| e.to_string())
+        serde_json::to_value(video_spec).map_err(|e| e.to_string())
     }
 
     pub async fn video_preview(
@@ -45,22 +46,26 @@ impl OpenMediaServer {
                 .any(|el| matches!(el, SceneElement::Html { .. } | SceneElement::Code { .. }))
         });
 
-        let frame = if use_browser {
-            let renderer = crate::tools::openmedia::video::BrowserFrameRenderer::launch()
-                .await
-                .map_err(|e| e.to_string())?;
-            let f = renderer
-                .render_frame(&scene, t, w, h)
-                .await
-                .map_err(|e| e.to_string())?;
-            renderer.close().await;
-            f
-        } else {
-            let renderer = crate::tools::openmedia::video::SvgFrameRenderer;
-            renderer
-                .render_frame(&scene, t, w, h)
-                .await
-                .map_err(|e| e.to_string())?
+        let (frame, backend_used) = match use_browser {
+            true => {
+                let renderer = crate::tools::openmedia::video::BrowserFrameRenderer::launch()
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let f = renderer
+                    .render_frame(&scene, t, w, h)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                renderer.close().await;
+                (f, "headless-chrome")
+            }
+            false => {
+                let renderer = crate::tools::openmedia::video::SvgFrameRenderer;
+                let f = renderer
+                    .render_frame(&scene, t, w, h)
+                    .await
+                    .map_err(|e| e.to_string())?;
+                (f, "svg")
+            }
         };
 
         let filename = format!("{}.{}", uuid::Uuid::now_v7(), format);
@@ -93,18 +98,11 @@ impl OpenMediaServer {
             clip_score: None,
             aesthetic_score: None,
             model_used: "none".to_string(),
-            backend_used: if use_browser {
-                "headless-chrome"
-            } else {
-                "svg"
-            }
-            .to_string(),
+            backend_used: backend_used.to_string(),
             generation_time: 0.0,
         };
 
-        serde_json::to_value(output)
-            
-            .map_err(|e| e.to_string())
+        serde_json::to_value(output).map_err(|e| e.to_string())
     }
 
     pub async fn video_create_slideshow(
@@ -125,28 +123,35 @@ impl OpenMediaServer {
         let mut resolved_images = Vec::new();
         for path_str in req.images {
             let path = std::path::Path::new(&path_str);
-            if path.is_dir() {
-                let entries = std::fs::read_dir(path).map_err(|e| e.to_string())?;
-                for entry in entries.flatten() {
-                    let p = entry.path();
-                    if p.is_file() {
-                        if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
-                            match ext.to_lowercase().as_str() {
+            match path.is_dir() {
+                true => {
+                    let entries = std::fs::read_dir(path).map_err(|e| e.to_string())?;
+                    for entry in entries.flatten() {
+                        let p = entry.path();
+                        let ext_opt = p
+                            .is_file()
+                            .then(|| p.extension().and_then(|e| e.to_str()))
+                            .flatten();
+                        match ext_opt.map(|e| e.to_lowercase()) {
+                            Some(ext) => match ext.as_str() {
                                 "png" | "jpg" | "jpeg" | "webp" => {
                                     resolved_images.push(p.to_string_lossy().into_owned());
                                 }
                                 _ => {}
-                            }
+                            },
+                            None => {}
                         }
                     }
                 }
-            } else {
-                resolved_images.push(path_str);
+                false => {
+                    resolved_images.push(path_str);
+                }
             }
         }
 
-        if resolved_images.is_empty() {
-            return Err("No valid images found for slideshow".to_string());
+        match resolved_images.is_empty() {
+            true => return Err("No valid images found for slideshow".to_string()),
+            false => {}
         }
 
         // Construct VideoScene DSL
@@ -166,8 +171,12 @@ impl OpenMediaServer {
                     y: crate::tools::openmedia::video::DimensionValue::Pixels(0.0),
                 },
                 size: crate::tools::openmedia::video::Size {
-                    width: crate::tools::openmedia::video::DimensionValue::Percentage("100%".to_string()),
-                    height: crate::tools::openmedia::video::DimensionValue::Percentage("100%".to_string()),
+                    width: crate::tools::openmedia::video::DimensionValue::Percentage(
+                        "100%".to_string(),
+                    ),
+                    height: crate::tools::openmedia::video::DimensionValue::Percentage(
+                        "100%".to_string(),
+                    ),
                 },
                 fit: crate::tools::openmedia::video::ObjectFit::Contain,
                 timeline: None,
@@ -180,17 +189,20 @@ impl OpenMediaServer {
                 elements: vec![element],
             });
 
-            if i > 0 {
-                let from = format!("slide_{}", i - 1);
-                let to = scene_id;
-                let transition_type = parse_transition_type(&trans_type_str);
-                transitions.push(crate::tools::openmedia::video::SceneTransition {
-                    from,
-                    to,
-                    transition_type,
-                    duration: trans_duration,
-                    easing: None,
-                });
+            match i > 0 {
+                true => {
+                    let from = format!("slide_{}", i - 1);
+                    let to = scene_id;
+                    let transition_type = parse_transition_type(&trans_type_str);
+                    transitions.push(crate::tools::openmedia::video::SceneTransition {
+                        from,
+                        to,
+                        transition_type,
+                        duration: trans_duration,
+                        easing: None,
+                    });
+                }
+                false => {}
             }
 
             current_time = end - trans_duration;
@@ -198,15 +210,17 @@ impl OpenMediaServer {
 
         let total_duration = current_time + trans_duration;
 
-        let audio = req.audio_src.map(|src| crate::tools::openmedia::video::AudioConfig {
-            tracks: vec![crate::tools::openmedia::video::AudioTrack {
-                src,
-                start: 0.0,
-                volume: 1.0,
-                fade_in: Some(1.0),
-                fade_out: Some(1.0),
-            }],
-        });
+        let audio = req
+            .audio_src
+            .map(|src| crate::tools::openmedia::video::AudioConfig {
+                tracks: vec![crate::tools::openmedia::video::AudioTrack {
+                    src,
+                    start: 0.0,
+                    volume: 1.0,
+                    fade_in: Some(1.0),
+                    fade_out: Some(1.0),
+                }],
+            });
 
         let scene = crate::tools::openmedia::video::VideoScene {
             width,
@@ -220,22 +234,13 @@ impl OpenMediaServer {
             custom_fonts: None,
         };
 
-        let output_path = if let Some(out_p) = req.output_path {
-            std::path::PathBuf::from(out_p)
-        } else {
-            let filename = format!("{}.mp4", uuid::Uuid::now_v7());
-            self.config.paths.output_dir.join(filename)
-        };
-
-        let _ = std::fs::create_dir_all(&self.config.paths.output_dir);
+        let output_path = self.resolve_mp4_output_path(req.output_path, "");
 
         let video_spec = crate::tools::openmedia::video::render_video_scene(&scene, &output_path)
             .await
             .map_err(|e| e.to_string())?;
 
-        serde_json::to_value(video_spec)
-            
-            .map_err(|e| e.to_string())
+        serde_json::to_value(video_spec).map_err(|e| e.to_string())
     }
 
     pub async fn video_add_transition(
@@ -243,8 +248,9 @@ impl OpenMediaServer {
         req: VideoAddTransitionRequest,
     ) -> Result<serde_json::Value, String> {
         let path = std::path::Path::new(&req.scene_path);
-        if !path.exists() || !path.is_file() {
-            return Err(format!("Scene file not found: {}", req.scene_path));
+        match path.exists() && path.is_file() {
+            true => {}
+            false => return Err(format!("Scene file not found: {}", req.scene_path)),
         }
 
         let s = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
@@ -257,20 +263,20 @@ impl OpenMediaServer {
             .transitions
             .retain(|t| !(t.from == req.from_scene_id && t.to == req.to_scene_id));
 
-        scene.transitions.push(crate::tools::openmedia::video::SceneTransition {
-            from: req.from_scene_id,
-            to: req.to_scene_id,
-            transition_type,
-            duration,
-            easing: None,
-        });
+        scene
+            .transitions
+            .push(crate::tools::openmedia::video::SceneTransition {
+                from: req.from_scene_id,
+                to: req.to_scene_id,
+                transition_type,
+                duration,
+                easing: None,
+            });
 
         let updated = serde_json::to_string_pretty(&scene).map_err(|e| e.to_string())?;
         std::fs::write(path, updated).map_err(|e| e.to_string())?;
 
-        serde_json::to_value(scene)
-            
-            .map_err(|e| e.to_string())
+        serde_json::to_value(scene).map_err(|e| e.to_string())
     }
 
     pub async fn video_add_audio(
@@ -278,49 +284,45 @@ impl OpenMediaServer {
         req: VideoAddAudioRequest,
     ) -> Result<serde_json::Value, String> {
         let target = std::path::Path::new(&req.target_path);
-        if !target.exists() {
-            return Err(format!("Target path not found: {}", req.target_path));
+        match target.exists() {
+            true => {}
+            false => return Err(format!("Target path not found: {}", req.target_path)),
         }
 
         let start_time = req.start_time.unwrap_or(0.0);
         let volume = req.volume.unwrap_or(1.0);
 
-        if target.is_file() && req.target_path.ends_with(".json") {
-            let s = std::fs::read_to_string(target).map_err(|e| e.to_string())?;
-            let mut scene: VideoScene = serde_json::from_str(&s).map_err(|e| e.to_string())?;
+        match target.is_file() && req.target_path.ends_with(".json") {
+            true => {
+                let s = std::fs::read_to_string(target).map_err(|e| e.to_string())?;
+                let mut scene: VideoScene = serde_json::from_str(&s).map_err(|e| e.to_string())?;
 
-            let track = crate::tools::openmedia::video::AudioTrack {
-                src: req.audio_path,
-                start: start_time,
-                volume,
-                fade_in: req.fade_in,
-                fade_out: req.fade_out,
-            };
+                let track = crate::tools::openmedia::video::AudioTrack {
+                    src: req.audio_path,
+                    start: start_time,
+                    volume,
+                    fade_in: req.fade_in,
+                    fade_out: req.fade_out,
+                };
 
-            if let Some(audio_cfg) = &mut scene.audio {
-                audio_cfg.tracks.push(track);
-            } else {
-                scene.audio = Some(crate::tools::openmedia::video::AudioConfig {
-                    tracks: vec![track],
-                });
+                match &mut scene.audio {
+                    Some(audio_cfg) => audio_cfg.tracks.push(track),
+                    None => {
+                        scene.audio = Some(crate::tools::openmedia::video::AudioConfig {
+                            tracks: vec![track],
+                        });
+                    }
+                }
+
+                let updated = serde_json::to_string_pretty(&scene).map_err(|e| e.to_string())?;
+                std::fs::write(target, updated).map_err(|e| e.to_string())?;
+
+                return serde_json::to_value(scene).map_err(|e| e.to_string());
             }
-
-            let updated = serde_json::to_string_pretty(&scene).map_err(|e| e.to_string())?;
-            std::fs::write(target, updated).map_err(|e| e.to_string())?;
-
-            return serde_json::to_value(scene)
-                
-                .map_err(|e| e.to_string());
+            false => {}
         }
 
-        let output_path = if let Some(out_p) = req.output_path {
-            std::path::PathBuf::from(out_p)
-        } else {
-            let filename = format!("{}.mp4", uuid::Uuid::now_v7());
-            self.config.paths.output_dir.join(filename)
-        };
-
-        let _ = std::fs::create_dir_all(&self.config.paths.output_dir);
+        let output_path = self.resolve_mp4_output_path(req.output_path, "");
 
         let delay_ms = (start_time * 1000.0) as i32;
         let filter_script = format!(
@@ -371,9 +373,7 @@ impl OpenMediaServer {
             generation_time: 0.0,
         };
 
-        serde_json::to_value(output)
-            
-            .map_err(|e| e.to_string())
+        serde_json::to_value(output).map_err(|e| e.to_string())
     }
 
     pub async fn video_from_template(
@@ -381,14 +381,7 @@ impl OpenMediaServer {
         mut req: VideoFromTemplateRequest,
     ) -> Result<serde_json::Value, String> {
         req.parameters = parse_json_value_field(&req.parameters, "parameters")?;
-        let output_path = if let Some(out_p) = req.output_path {
-            std::path::PathBuf::from(out_p)
-        } else {
-            let filename = format!("{}.mp4", uuid::Uuid::now_v7());
-            self.config.paths.output_dir.join(filename)
-        };
-
-        let _ = std::fs::create_dir_all(&self.config.paths.output_dir);
+        let output_path = self.resolve_mp4_output_path(req.output_path, "");
 
         let scene = match req.template_name.to_lowercase().as_str() {
             "slideshow" => {
@@ -429,22 +422,25 @@ impl OpenMediaServer {
                     });
                 }
                 let mut transitions = Vec::new();
-                if images.len() > 1 && req.parameters.get("transition_type").is_some() {
-                    let (custom_trans_type, custom_duration, custom_easing) =
-                        parse_transition_params(
-                            &req.parameters,
-                            crate::tools::openmedia::video::TransitionType::Crossfade,
-                        );
+                match images.len() > 1 && req.parameters.get("transition_type").is_some() {
+                    true => {
+                        let (custom_trans_type, custom_duration, custom_easing) =
+                            parse_transition_params(
+                                &req.parameters,
+                                crate::tools::openmedia::video::TransitionType::Crossfade,
+                            );
 
-                    for i in 0..(images.len() - 1) {
-                        transitions.push(crate::tools::openmedia::video::SceneTransition {
-                            from: format!("slide_{}", i),
-                            to: format!("slide_{}", i + 1),
-                            transition_type: custom_trans_type.clone(),
-                            duration: custom_duration,
-                            easing: custom_easing.clone(),
-                        });
+                        for i in 0..(images.len() - 1) {
+                            transitions.push(crate::tools::openmedia::video::SceneTransition {
+                                from: format!("slide_{}", i),
+                                to: format!("slide_{}", i + 1),
+                                transition_type: custom_trans_type.clone(),
+                                duration: custom_duration,
+                                easing: custom_easing.clone(),
+                            });
+                        }
                     }
+                    false => {}
                 }
 
                 crate::tools::openmedia::video::VideoScene {
@@ -1223,62 +1219,70 @@ impl OpenMediaServer {
             _ => {
                 let template_path =
                     get_templates_dir().join(format!("{}.json", req.template_name.to_lowercase()));
-                if template_path.exists() && template_path.is_file() {
-                    let s = std::fs::read_to_string(&template_path).map_err(|e| {
-                        format!(
-                            "Failed to read custom template '{}': {}",
-                            req.template_name, e
-                        )
-                    })?;
-                    let custom_tmpl: serde_json::Value = serde_json::from_str(&s)
-                        .map_err(|e| format!("Failed to parse custom template JSON: {}", e))?;
+                match template_path.exists() && template_path.is_file() {
+                    true => {
+                        let s = std::fs::read_to_string(&template_path).map_err(|e| {
+                            format!(
+                                "Failed to read custom template '{}': {}",
+                                req.template_name, e
+                            )
+                        })?;
+                        let custom_tmpl: serde_json::Value = serde_json::from_str(&s)
+                            .map_err(|e| format!("Failed to parse custom template JSON: {}", e))?;
 
-                    let scene_template = custom_tmpl.get("scene_template").ok_or_else(|| {
-                        "Custom template missing 'scene_template' field".to_string()
-                    })?;
+                        let scene_template =
+                            custom_tmpl.get("scene_template").ok_or_else(|| {
+                                "Custom template missing 'scene_template' field".to_string()
+                            })?;
 
-                    let interpolated = interpolate_template(scene_template, &req.parameters)?;
-                    let scene: crate::tools::openmedia::video::VideoScene = serde_json::from_value(interpolated)
-                        .map_err(|e| {
-                        format!("Failed to deserialize interpolated video scene: {}", e)
-                    })?;
-                    scene
-                } else {
-                    let width = req.parameters["width"].as_u64().unwrap_or(1920) as u32;
-                    let height = req.parameters["height"].as_u64().unwrap_or(1080) as u32;
-                    let fps = req.parameters["fps"].as_u64().unwrap_or(30) as u32;
-                    crate::tools::openmedia::video::VideoScene {
-                        width,
-                        height,
-                        fps,
-                        duration: 3.0,
-                        background: "#333333".to_string(),
-                        scenes: vec![crate::tools::openmedia::video::Scene {
-                            id: "scene_0".to_string(),
-                            start: 0.0,
-                            end: 3.0,
-                            elements: vec![crate::tools::openmedia::video::SceneElement::Text {
-                                content: format!("Template: {}", req.template_name),
-                                style: crate::tools::openmedia::video::TextStyle {
-                                    font_family: "sans-serif".to_string(),
-                                    font_size: 36.0,
-                                    font_weight: 400,
-                                    color: "#ffffff".to_string(),
-                                    text_align: "center".to_string(),
-                                    line_height: None,
-                                    letter_spacing: None,
-                                },
-                                position: crate::tools::openmedia::video::Position {
-                                    x: crate::tools::openmedia::video::DimensionValue::Pixels((width / 2) as f64),
-                                    y: crate::tools::openmedia::video::DimensionValue::Pixels((height / 2) as f64),
-                                },
-                                anchor: crate::tools::openmedia::video::Anchor::Center,
-                                timeline: None,
+                        let interpolated = interpolate_template(scene_template, &req.parameters)?;
+                        let scene: crate::tools::openmedia::video::VideoScene =
+                            serde_json::from_value(interpolated).map_err(|e| {
+                                format!("Failed to deserialize interpolated video scene: {}", e)
+                            })?;
+                        scene
+                    }
+                    false => {
+                        let width = req.parameters["width"].as_u64().unwrap_or(1920) as u32;
+                        let height = req.parameters["height"].as_u64().unwrap_or(1080) as u32;
+                        let fps = req.parameters["fps"].as_u64().unwrap_or(30) as u32;
+                        crate::tools::openmedia::video::VideoScene {
+                            width,
+                            height,
+                            fps,
+                            duration: 3.0,
+                            background: "#333333".to_string(),
+                            scenes: vec![crate::tools::openmedia::video::Scene {
+                                id: "scene_0".to_string(),
+                                start: 0.0,
+                                end: 3.0,
+                                elements: vec![crate::tools::openmedia::video::SceneElement::Text {
+                                    content: format!("Template: {}", req.template_name),
+                                    style: crate::tools::openmedia::video::TextStyle {
+                                        font_family: "sans-serif".to_string(),
+                                        font_size: 36.0,
+                                        font_weight: 400,
+                                        color: "#ffffff".to_string(),
+                                        text_align: "center".to_string(),
+                                        line_height: None,
+                                        letter_spacing: None,
+                                    },
+                                    position: crate::tools::openmedia::video::Position {
+                                        x: crate::tools::openmedia::video::DimensionValue::Pixels(
+                                            (width / 2) as f64,
+                                        ),
+                                        y: crate::tools::openmedia::video::DimensionValue::Pixels(
+                                            (height / 2) as f64,
+                                        ),
+                                    },
+                                    anchor: crate::tools::openmedia::video::Anchor::Center,
+                                    timeline: None,
+                                }],
                             }],
-                        }],
-                        transitions: vec![],
-                        audio: parse_audio_config(&req.parameters),
-                        custom_fonts: parse_custom_fonts(&req.parameters),
+                            transitions: vec![],
+                            audio: parse_audio_config(&req.parameters),
+                            custom_fonts: parse_custom_fonts(&req.parameters),
+                        }
                     }
                 }
             }
@@ -1288,9 +1292,7 @@ impl OpenMediaServer {
             .await
             .map_err(|e| e.to_string())?;
 
-        serde_json::to_value(video_spec)
-            
-            .map_err(|e| e.to_string())
+        serde_json::to_value(video_spec).map_err(|e| e.to_string())
     }
 
     pub async fn video_extract_frames(
@@ -1298,8 +1300,9 @@ impl OpenMediaServer {
         req: VideoExtractFramesRequest,
     ) -> Result<serde_json::Value, String> {
         let input = std::path::Path::new(&req.video_path);
-        if !input.exists() || !input.is_file() {
-            return Err(format!("Input video file not found: {}", req.video_path));
+        match input.exists() && input.is_file() {
+            true => {}
+            false => return Err(format!("Input video file not found: {}", req.video_path)),
         }
 
         let output_dir = std::path::Path::new(&req.output_dir);
@@ -1330,31 +1333,32 @@ impl OpenMediaServer {
             let mut child = cmd.spawn().map_err(|e| e.to_string())?;
             child.wait().await.map_err(|e| e.to_string())?;
 
-            if output_path.exists() {
-                let (w, h) = image::image_dimensions(&output_path).unwrap_or((0, 0));
-                let file_size = std::fs::metadata(&output_path)
-                    .map(|m| m.len())
-                    .unwrap_or(0);
-                outputs.push(crate::tools::openmedia::core::ImageOutput {
-                    path: output_path,
-                    width: w,
-                    height: h,
-                    seed: 0,
-                    format: format.clone(),
-                    file_size,
-                    generation_id: uuid::Uuid::now_v7().to_string(),
-                    clip_score: None,
-                    aesthetic_score: None,
-                    model_used: "ffmpeg".to_string(),
-                    backend_used: "cpu".to_string(),
-                    generation_time: 0.0,
-                });
+            match output_path.exists() {
+                true => {
+                    let (w, h) = image::image_dimensions(&output_path).unwrap_or((0, 0));
+                    let file_size = std::fs::metadata(&output_path)
+                        .map(|m| m.len())
+                        .unwrap_or(0);
+                    outputs.push(crate::tools::openmedia::core::ImageOutput {
+                        path: output_path,
+                        width: w,
+                        height: h,
+                        seed: 0,
+                        format: format.clone(),
+                        file_size,
+                        generation_id: uuid::Uuid::now_v7().to_string(),
+                        clip_score: None,
+                        aesthetic_score: None,
+                        model_used: "ffmpeg".to_string(),
+                        backend_used: "cpu".to_string(),
+                        generation_time: 0.0,
+                    });
+                }
+                false => {}
             }
         }
 
-        serde_json::to_value(outputs)
-            
-            .map_err(|e| e.to_string())
+        serde_json::to_value(outputs).map_err(|e| e.to_string())
     }
 
     pub async fn video_trim(
@@ -1362,22 +1366,17 @@ impl OpenMediaServer {
         req: VideoTrimRequest,
     ) -> Result<serde_json::Value, String> {
         let input = std::path::Path::new(&req.video_path);
-        if !input.exists() || !input.is_file() {
-            return Err(format!("Input video file not found: {}", req.video_path));
+        match input.exists() && input.is_file() {
+            true => {}
+            false => return Err(format!("Input video file not found: {}", req.video_path)),
         }
 
-        let output_path = if let Some(out_p) = req.output_path {
-            std::path::PathBuf::from(out_p)
-        } else {
-            let filename = format!("trimmed_{}.mp4", uuid::Uuid::now_v7());
-            self.config.paths.output_dir.join(filename)
-        };
-
-        let _ = std::fs::create_dir_all(&self.config.paths.output_dir);
+        let output_path = self.resolve_mp4_output_path(req.output_path, "trimmed_");
 
         let duration = req.end_time - req.start_time;
-        if duration <= 0.0 {
-            return Err("End time must be greater than start time".to_string());
+        match duration <= 0.0 {
+            true => return Err("End time must be greater than start time".to_string()),
+            false => {}
         }
 
         let mut cmd = tokio::process::Command::new("ffmpeg");
@@ -1419,9 +1418,6 @@ impl OpenMediaServer {
             generation_time: 0.0,
         };
 
-        serde_json::to_value(spec)
-            
-            .map_err(|e| e.to_string())
+        serde_json::to_value(spec).map_err(|e| e.to_string())
     }
-
 }

@@ -114,7 +114,10 @@ pub fn apply_cpu_operation(img: &DynamicImage, op: &ProcessOperation) -> Result<
                 let luma = (pixel[0] as f32 * 0.299
                     + pixel[1] as f32 * 0.587
                     + pixel[2] as f32 * 0.114) as u8;
-                let val = if luma >= *value { 255 } else { 0 };
+                let val = match luma >= *value {
+                    true => 255,
+                    false => 0,
+                };
                 pixel[0] = val;
                 pixel[1] = val;
                 pixel[2] = val;

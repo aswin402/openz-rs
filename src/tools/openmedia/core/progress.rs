@@ -117,14 +117,17 @@ impl StderrProgressReporter {
 
 impl ProgressReporter for StderrProgressReporter {
     fn report(&self, progress: u64, total: u64, message: &str) {
-        if total > 0 {
-            let pct = (progress as f64 / total as f64) * 100.0;
-            eprintln!(
-                "[{}] Progress: {:.2}% ({}/{}) - {}",
-                self.token, pct, progress, total, message
-            );
-        } else {
-            eprintln!("[{}] Progress: {} - {}", self.token, progress, message);
+        match total > 0 {
+            true => {
+                let pct = (progress as f64 / total as f64) * 100.0;
+                eprintln!(
+                    "[{}] Progress: {:.2}% ({}/{}) - {}",
+                    self.token, pct, progress, total, message
+                );
+            }
+            false => {
+                eprintln!("[{}] Progress: {} - {}", self.token, progress, message);
+            }
         }
     }
 

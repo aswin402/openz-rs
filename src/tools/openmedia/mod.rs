@@ -15,8 +15,9 @@ pub mod video;
 
 pub async fn get_server() -> Result<&'static OpenMediaServer> {
     static SERVER: std::sync::OnceLock<OpenMediaServer> = std::sync::OnceLock::new();
-    if let Some(server) = SERVER.get() {
-        return Ok(server);
+    match SERVER.get() {
+        Some(server) => return Ok(server),
+        None => {}
     }
 
     let config = Config::load().unwrap_or_default();
@@ -72,223 +73,252 @@ macro_rules! define_openmedia_tool {
 
 fn parse_embedded_json_string(value: &Value) -> Option<Value> {
     let raw = value.as_str()?.trim();
-    if !(raw.starts_with('{') || raw.starts_with('[')) {
-        return None;
+    match raw.starts_with('{') || raw.starts_with('[') {
+        true => serde_json::from_str(raw).ok(),
+        false => None,
     }
-    serde_json::from_str(raw).ok()
 }
 
 fn parse_json_string_fields(arguments: &Value, fields: &[&str]) -> Value {
-    let Some(obj) = arguments.as_object() else {
-        return arguments.clone();
+    let obj = match arguments.as_object() {
+        Some(obj) => obj,
+        None => return arguments.clone(),
     };
 
     let mut normalized = obj.clone();
     let mut changed = false;
     for field in fields {
-        if let Some(parsed) = normalized.get(*field).and_then(parse_embedded_json_string) {
-            normalized.insert((*field).to_string(), parsed);
-            changed = true;
+        match normalized.get(*field).and_then(parse_embedded_json_string) {
+            Some(parsed) => {
+                normalized.insert((*field).to_string(), parsed);
+                changed = true;
+            }
+            None => {}
         }
     }
 
-    if changed {
-        Value::Object(normalized)
-    } else {
-        arguments.clone()
+    match changed {
+        true => Value::Object(normalized),
+        false => arguments.clone(),
     }
 }
 
 fn coerce_number_value(v: &Value) -> Option<Value> {
-    if let Some(s) = v.as_str() {
-        let trimmed = s.trim();
-        if let Ok(i) = trimmed.parse::<i64>() {
-            return Some(json!(i));
-        }
-        if let Ok(f) = trimmed.parse::<f64>() {
-            return Some(json!(f));
-        }
-    }
-    None
+    let trimmed = v.as_str()?.trim();
+    trimmed
+        .parse::<i64>()
+        .ok()
+        .map(|i| json!(i))
+        .or_else(|| trimmed.parse::<f64>().ok().map(|f| json!(f)))
 }
 
 fn coerce_numeric_fields(obj: &mut serde_json::Map<String, Value>, fields: &[&str]) {
     for field in fields {
-        if let Some(val) = obj.get(*field) {
-            if let Some(coerced) = coerce_number_value(val) {
+        match obj.get(*field).and_then(coerce_number_value) {
+            Some(coerced) => {
                 obj.insert((*field).to_string(), coerced);
             }
+            None => {}
         }
     }
 }
 
+fn coerce_object_numeric_fields(arguments: &Value, fields: &[&str]) -> Value {
+    match arguments.as_object().cloned() {
+        Some(mut obj) => {
+            coerce_numeric_fields(&mut obj, fields);
+            Value::Object(obj)
+        }
+        None => arguments.clone(),
+    }
+}
+
+fn rename_map_field(
+    map: &mut serde_json::Map<String, Value>,
+    from_key: &str,
+    to_key: &str,
+    coerce_num: bool,
+) {
+    match map.remove(from_key) {
+        Some(val) => {
+            let final_val = match coerce_num {
+                true => coerce_number_value(&val).unwrap_or(val),
+                false => val,
+            };
+            map.insert(to_key.to_string(), final_val);
+        }
+        None => {}
+    }
+}
+
 fn normalize_create_svg_arguments(arguments: &Value) -> Value {
-    let Some(obj) = arguments.as_object() else {
-        return arguments.clone();
+    let obj = match arguments.as_object() {
+        Some(obj) => obj,
+        None => return arguments.clone(),
     };
 
     let mut normalized = obj.clone();
     coerce_numeric_fields(&mut normalized, &["width", "height"]);
 
-    if !normalized.contains_key("elements") {
-        if let Some(shapes) = normalized.remove("shapes") {
-            normalized.insert("elements".to_string(), shapes);
+    match normalized.contains_key("elements") {
+        false => match normalized.remove("shapes") {
+            Some(shapes) => {
+                normalized.insert("elements".to_string(), shapes);
+            }
+            None => {}
+        },
+        true => {
+            normalized.remove("shapes");
         }
-    } else {
-        normalized.remove("shapes");
     }
 
-    if let Some(parsed) = normalized
+    match normalized
         .get("elements")
         .and_then(parse_embedded_json_string)
     {
-        normalized.insert("elements".to_string(), parsed);
+        Some(parsed) => {
+            normalized.insert("elements".to_string(), parsed);
+        }
+        None => {}
     }
 
-    if let Some(elements) = normalized
+    match normalized
         .get_mut("elements")
         .and_then(|v| v.as_array_mut())
     {
-        for element in elements {
-            if let Some(map) = element.as_object_mut() {
-                coerce_numeric_fields(
-                    map,
-                    &[
-                        "x", "y", "width", "height", "cx", "cy", "r", "rx", "ry", "x1", "y1",
-                        "x2", "y2", "stroke_width", "font_size", "opacity",
-                    ],
-                );
-                if map.get("type").and_then(|v| v.as_str()) == Some("text")
-                    && !map.contains_key("content")
-                {
-                    if let Some(text) = map.remove("text") {
-                        map.insert("content".to_string(), text);
-                    }
-                }
-                if let Some(stroke_width) = map.remove("strokeWidth") {
-                    let val = coerce_number_value(&stroke_width).unwrap_or(stroke_width);
-                    map.insert("stroke_width".to_string(), val);
-                }
-                if let Some(text_anchor) = map.remove("textAnchor") {
-                    map.insert("text_anchor".to_string(), text_anchor);
-                }
-                if let Some(dominant_baseline) = map.remove("dominantBaseline") {
-                    map.insert("dominant_baseline".to_string(), dominant_baseline);
-                }
-                if let Some(alignment_baseline) = map.remove("alignmentBaseline") {
-                    map.insert("dominant_baseline".to_string(), alignment_baseline);
-                }
-                if let Some(font_size) = map.remove("fontSize") {
-                    let val = coerce_number_value(&font_size).unwrap_or(font_size);
-                    map.insert("font_size".to_string(), val);
-                }
-                if let Some(font_family) = map.remove("fontFamily") {
-                    map.insert("font_family".to_string(), font_family);
-                }
-                if let Some(font_weight) = map.remove("fontWeight") {
-                    let val = coerce_number_value(&font_weight).unwrap_or(font_weight);
-                    map.insert("font_weight".to_string(), val);
-                }
-                if let Some(stroke_linecap) = map.remove("strokeLinecap") {
-                    map.insert("stroke_linecap".to_string(), stroke_linecap);
-                }
-                if map.get("type").and_then(|v| v.as_str()) == Some("text") {
-                    if !map.contains_key("text_anchor") {
-                        map.insert(
-                            "text_anchor".to_string(),
-                            serde_json::Value::String("middle".to_string()),
+        Some(elements) => {
+            for element in elements {
+                match element.as_object_mut() {
+                    Some(map) => {
+                        coerce_numeric_fields(
+                            map,
+                            &[
+                                "x",
+                                "y",
+                                "width",
+                                "height",
+                                "cx",
+                                "cy",
+                                "r",
+                                "rx",
+                                "ry",
+                                "x1",
+                                "y1",
+                                "x2",
+                                "y2",
+                                "stroke_width",
+                                "font_size",
+                                "opacity",
+                            ],
                         );
+                        let is_text = map.get("type").and_then(|v| v.as_str()) == Some("text");
+                        match is_text && !map.contains_key("content") {
+                            true => rename_map_field(map, "text", "content", false),
+                            false => {}
+                        }
+                        rename_map_field(map, "strokeWidth", "stroke_width", true);
+                        rename_map_field(map, "textAnchor", "text_anchor", false);
+                        rename_map_field(map, "dominantBaseline", "dominant_baseline", false);
+                        rename_map_field(map, "alignmentBaseline", "dominant_baseline", false);
+                        rename_map_field(map, "fontSize", "font_size", true);
+                        rename_map_field(map, "fontFamily", "font_family", false);
+                        rename_map_field(map, "fontWeight", "font_weight", true);
+                        rename_map_field(map, "strokeLinecap", "stroke_linecap", false);
+                        match is_text {
+                            true => {
+                                match map.contains_key("text_anchor") {
+                                    false => {
+                                        map.insert(
+                                            "text_anchor".to_string(),
+                                            serde_json::Value::String("middle".to_string()),
+                                        );
+                                    }
+                                    true => {}
+                                }
+                                let is_middle_anchor =
+                                    map.get("text_anchor").and_then(|v| v.as_str())
+                                        == Some("middle");
+                                match !map.contains_key("dominant_baseline") && is_middle_anchor {
+                                    true => {
+                                        map.insert(
+                                            "dominant_baseline".to_string(),
+                                            serde_json::Value::String("middle".to_string()),
+                                        );
+                                    }
+                                    false => {}
+                                }
+                            }
+                            false => {}
+                        }
                     }
-                    if !map.contains_key("dominant_baseline")
-                        && map.get("text_anchor").and_then(|v| v.as_str()) == Some("middle")
-                    {
-                        map.insert(
-                            "dominant_baseline".to_string(),
-                            serde_json::Value::String("middle".to_string()),
-                        );
-                    }
+                    None => {}
                 }
             }
         }
+        None => {}
     }
 
     Value::Object(normalized)
 }
 
-fn normalize_animate_svg_arguments(arguments: &Value) -> Value {
-    let Some(mut obj) = arguments.as_object().cloned() else {
-        return arguments.clone();
-    };
-    coerce_numeric_fields(&mut obj, &["width", "height", "fps", "duration"]);
-    Value::Object(obj)
-}
-
-fn normalize_video_create_slideshow_arguments(arguments: &Value) -> Value {
-    let Some(mut obj) = arguments.as_object().cloned() else {
-        return arguments.clone();
-    };
-    coerce_numeric_fields(
-        &mut obj,
-        &["width", "height", "fps", "duration_per_image", "transition_duration"],
-    );
-    Value::Object(obj)
-}
-
-fn normalize_video_trim_arguments(arguments: &Value) -> Value {
-    let Some(mut obj) = arguments.as_object().cloned() else {
-        return arguments.clone();
-    };
-    coerce_numeric_fields(&mut obj, &["start_time", "end_time"]);
-    Value::Object(obj)
-}
-
 fn normalize_video_from_template_arguments(arguments: &Value) -> Value {
     let parsed = parse_json_string_fields(arguments, &["parameters"]);
-    let Some(mut obj) = parsed.as_object().cloned() else {
-        return parsed;
+    let mut obj = match parsed.as_object().cloned() {
+        Some(obj) => obj,
+        None => return parsed,
     };
-    if let Some(params_obj) = obj.get_mut("parameters").and_then(|v| v.as_object_mut()) {
-        coerce_numeric_fields(
-            params_obj,
-            &["width", "height", "fps", "duration_per_image"],
-        );
+    match obj.get_mut("parameters").and_then(|v| v.as_object_mut()) {
+        Some(params_obj) => {
+            coerce_numeric_fields(
+                params_obj,
+                &["width", "height", "fps", "duration_per_image"],
+            );
+        }
+        None => {}
     }
     Value::Object(obj)
 }
 
 fn normalize_improve_feedback_arguments(arguments: &Value) -> Value {
-    let Some(mut obj) = arguments.as_object().cloned() else {
-        return arguments.clone();
+    let mut obj = match arguments.as_object().cloned() {
+        Some(obj) => obj,
+        None => return arguments.clone(),
     };
-    if let Some(r_val) = obj.get("rating") {
-        let r = r_val
-            .as_f64()
-            .or_else(|| r_val.as_str().and_then(|s| s.parse::<f64>().ok()));
-        if let Some(mut rating) = r {
-            if rating > 1.0 {
-                if rating <= 5.0 {
-                    rating /= 5.0;
-                } else if rating <= 10.0 {
-                    rating /= 10.0;
-                } else if rating <= 100.0 {
-                    rating /= 100.0;
-                }
-            }
-            obj.insert("rating".to_string(), json!(rating.clamp(0.0, 1.0)));
+    let r = obj
+        .get("rating")
+        .and_then(|r_val| {
+            r_val
+                .as_f64()
+                .or_else(|| r_val.as_str().and_then(|s| s.parse::<f64>().ok()))
+        });
+    match r {
+        Some(rating) => {
+            let scaled = match (rating > 1.0, rating <= 5.0, rating <= 10.0, rating <= 100.0) {
+                (true, true, _, _) => rating / 5.0,
+                (true, false, true, _) => rating / 10.0,
+                (true, false, false, true) => rating / 100.0,
+                _ => rating,
+            };
+            obj.insert("rating".to_string(), json!(scaled.clamp(0.0, 1.0)));
         }
+        None => {}
     }
     Value::Object(obj)
 }
 
 fn normalize_image_batch_process_arguments(arguments: &Value) -> Value {
     let parsed = parse_json_string_fields(arguments, &["operations"]);
-    let Some(mut obj) = parsed.as_object().cloned() else {
-        return parsed;
+    let mut obj = match parsed.as_object().cloned() {
+        Some(obj) => obj,
+        None => return parsed,
     };
-    if let Some(ops) = obj.get_mut("operations").and_then(|v| v.as_array_mut()) {
-        for op in ops {
-            *op = crate::tools::openmedia::server::normalize_process_operation_value(op);
+    match obj.get_mut("operations").and_then(|v| v.as_array_mut()) {
+        Some(ops) => {
+            for op in ops {
+                *op = crate::tools::openmedia::server::normalize_process_operation_value(op);
+            }
         }
+        None => {}
     }
     Value::Object(obj)
 }
@@ -322,61 +352,43 @@ fn create_svg_parameter_schema() -> Value {
 }
 
 fn normalize_create_chart_arguments(arguments: &Value) -> Value {
-    let parsed = parse_json_string_fields(arguments, &["data", "data_points", "dataPoints", "points", "rows"]);
-    let Some(mut obj) = parsed.as_object().cloned() else {
-        return parsed;
+    let parsed = parse_json_string_fields(
+        arguments,
+        &["data", "data_points", "dataPoints", "points", "rows"],
+    );
+    let mut obj = match parsed.as_object().cloned() {
+        Some(obj) => obj,
+        None => return parsed,
     };
     coerce_numeric_fields(&mut obj, &["width", "height"]);
 
-    let data_key = if obj.contains_key("data") {
-        Some("data")
-    } else if obj.contains_key("data_points") {
-        Some("data_points")
-    } else if obj.contains_key("dataPoints") {
-        Some("dataPoints")
-    } else if obj.contains_key("points") {
-        Some("points")
-    } else if obj.contains_key("rows") {
-        Some("rows")
-    } else {
-        None
-    };
+    let data_key = ["data", "data_points", "dataPoints", "points", "rows"]
+        .into_iter()
+        .find(|k| obj.contains_key(*k));
 
-    if let Some(key) = data_key {
-        if let Some(points) = obj.get_mut(key).and_then(|v| v.as_array_mut()) {
+    match data_key.and_then(|key| obj.get_mut(key).and_then(|v| v.as_array_mut())) {
+        Some(points) => {
             for pt in points {
-                if let Some(pt_obj) = pt.as_object_mut() {
-                    coerce_numeric_fields(pt_obj, &["value", "val", "count", "amount", "y", "number"]);
+                match pt.as_object_mut() {
+                    Some(pt_obj) => {
+                        coerce_numeric_fields(
+                            pt_obj,
+                            &["value", "val", "count", "amount", "y", "number"],
+                        );
+                    }
+                    None => {}
                 }
             }
         }
+        None => {}
     }
-    Value::Object(obj)
-}
-
-fn normalize_create_icon_arguments(arguments: &Value) -> Value {
-    let Some(mut obj) = arguments.as_object().cloned() else {
-        return arguments.clone();
-    };
-    coerce_numeric_fields(&mut obj, &["size", "stroke_width", "strokeWidth", "stroke", "width"]);
-    Value::Object(obj)
-}
-
-fn normalize_rasterize_svg_arguments(arguments: &Value) -> Value {
-    let Some(mut obj) = arguments.as_object().cloned() else {
-        return arguments.clone();
-    };
-    coerce_numeric_fields(&mut obj, &["width", "height"]);
     Value::Object(obj)
 }
 
 fn normalize_diagram_generate_mermaid_arguments(arguments: &Value) -> Value {
     let parsed = parse_json_string_fields(arguments, &["custom_theme"]);
-    let Some(mut obj) = parsed.as_object().cloned() else {
-        return parsed;
-    };
-    coerce_numeric_fields(
-        &mut obj,
+    coerce_object_numeric_fields(
+        &parsed,
         &[
             "width",
             "height",
@@ -384,75 +396,49 @@ fn normalize_diagram_generate_mermaid_arguments(arguments: &Value) -> Value {
             "rank_spacing",
             "preferred_aspect_ratio",
         ],
-    );
-    Value::Object(obj)
-}
-
-fn normalize_animate_generate_spinner_arguments(arguments: &Value) -> Value {
-    let Some(mut obj) = arguments.as_object().cloned() else {
-        return arguments.clone();
-    };
-    coerce_numeric_fields(&mut obj, &["size"]);
-    Value::Object(obj)
-}
-
-fn normalize_image_apply_filter_arguments(arguments: &Value) -> Value {
-    let Some(mut obj) = arguments.as_object().cloned() else {
-        return arguments.clone();
-    };
-    coerce_numeric_fields(&mut obj, &["parameter", "param", "radius", "value", "intensity", "amount"]);
-    Value::Object(obj)
-}
-
-fn normalize_image_resize_arguments(arguments: &Value) -> Value {
-    let Some(mut obj) = arguments.as_object().cloned() else {
-        return arguments.clone();
-    };
-    coerce_numeric_fields(&mut obj, &["width", "height"]);
-    Value::Object(obj)
-}
-
-fn normalize_image_crop_arguments(arguments: &Value) -> Value {
-    let Some(mut obj) = arguments.as_object().cloned() else {
-        return arguments.clone();
-    };
-    coerce_numeric_fields(&mut obj, &["x", "y", "width", "height"]);
-    Value::Object(obj)
-}
-
-fn normalize_image_transform_arguments(arguments: &Value) -> Value {
-    let Some(mut obj) = arguments.as_object().cloned() else {
-        return arguments.clone();
-    };
-    coerce_numeric_fields(&mut obj, &["angle"]);
-    Value::Object(obj)
-}
-
-fn normalize_image_convert_arguments(arguments: &Value) -> Value {
-    let Some(mut obj) = arguments.as_object().cloned() else {
-        return arguments.clone();
-    };
-    coerce_numeric_fields(&mut obj, &["quality"]);
-    Value::Object(obj)
+    )
 }
 
 fn normalize_openmedia_arguments(tool_name: &str, arguments: &Value) -> Value {
     match tool_name {
         "openmedia_create_chart" => normalize_create_chart_arguments(arguments),
-        "openmedia_create_icon" => normalize_create_icon_arguments(arguments),
+        "openmedia_create_icon" => coerce_object_numeric_fields(
+            arguments,
+            &["size", "stroke_width", "strokeWidth", "stroke", "width"],
+        ),
         "openmedia_create_svg" => normalize_create_svg_arguments(arguments),
-        "openmedia_rasterize_svg" => normalize_rasterize_svg_arguments(arguments),
-        "openmedia_diagram_generate_mermaid" => normalize_diagram_generate_mermaid_arguments(arguments),
-        "openmedia_animate_svg" => normalize_animate_svg_arguments(arguments),
-        "openmedia_animate_generate_spinner" => normalize_animate_generate_spinner_arguments(arguments),
-        "openmedia_image_apply_filter" => normalize_image_apply_filter_arguments(arguments),
-        "openmedia_image_resize" => normalize_image_resize_arguments(arguments),
-        "openmedia_image_crop" => normalize_image_crop_arguments(arguments),
-        "openmedia_image_transform" => normalize_image_transform_arguments(arguments),
-        "openmedia_image_convert" => normalize_image_convert_arguments(arguments),
+        "openmedia_rasterize_svg" => coerce_object_numeric_fields(arguments, &["width", "height"]),
+        "openmedia_diagram_generate_mermaid" => {
+            normalize_diagram_generate_mermaid_arguments(arguments)
+        }
+        "openmedia_animate_svg" => {
+            coerce_object_numeric_fields(arguments, &["width", "height", "fps", "duration"])
+        }
+        "openmedia_animate_generate_spinner" => coerce_object_numeric_fields(arguments, &["size"]),
+        "openmedia_image_apply_filter" => coerce_object_numeric_fields(
+            arguments,
+            &["parameter", "param", "radius", "value", "intensity", "amount"],
+        ),
+        "openmedia_image_resize" => coerce_object_numeric_fields(arguments, &["width", "height"]),
+        "openmedia_image_crop" => {
+            coerce_object_numeric_fields(arguments, &["x", "y", "width", "height"])
+        }
+        "openmedia_image_transform" => coerce_object_numeric_fields(arguments, &["angle"]),
+        "openmedia_image_convert" => coerce_object_numeric_fields(arguments, &["quality"]),
         "openmedia_image_batch_process" => normalize_image_batch_process_arguments(arguments),
-        "openmedia_video_create_slideshow" => normalize_video_create_slideshow_arguments(arguments),
-        "openmedia_video_trim" => normalize_video_trim_arguments(arguments),
+        "openmedia_video_create_slideshow" => coerce_object_numeric_fields(
+            arguments,
+            &[
+                "width",
+                "height",
+                "fps",
+                "duration_per_image",
+                "transition_duration",
+            ],
+        ),
+        "openmedia_video_trim" => {
+            coerce_object_numeric_fields(arguments, &["start_time", "end_time"])
+        }
         "openmedia_video_from_template" => normalize_video_from_template_arguments(arguments),
         "openmedia_improve_feedback" => normalize_improve_feedback_arguments(arguments),
         "openmedia_template_create" => {
@@ -480,30 +466,41 @@ fn is_video_scene_object(value: &Value) -> bool {
 }
 
 fn normalize_video_scene_arguments(arguments: &Value) -> Value {
-    let Some(obj) = arguments.as_object() else {
-        return arguments.clone();
+    let obj = match arguments.as_object() {
+        Some(obj) => obj,
+        None => return arguments.clone(),
     };
 
-    if obj.contains_key("scene") {
-        return arguments.clone();
+    match obj.contains_key("scene") {
+        true => return arguments.clone(),
+        false => {}
     }
 
-    if let Some(scene_path) = obj.get("scene_path") {
-        let mut normalized = obj.clone();
-        normalized.insert("scene".to_string(), scene_path.clone());
-        normalized.remove("scene_path");
-        return Value::Object(normalized);
-    }
-
-    if is_video_scene_object(arguments) {
-        let mut scene = obj.clone();
-        let output_path = scene.remove("output_path");
-        let mut normalized = serde_json::Map::new();
-        normalized.insert("scene".to_string(), Value::Object(scene));
-        if let Some(output_path) = output_path {
-            normalized.insert("output_path".to_string(), output_path);
+    match obj.get("scene_path") {
+        Some(scene_path) => {
+            let mut normalized = obj.clone();
+            normalized.insert("scene".to_string(), scene_path.clone());
+            normalized.remove("scene_path");
+            return Value::Object(normalized);
         }
-        return Value::Object(normalized);
+        None => {}
+    }
+
+    match is_video_scene_object(arguments) {
+        true => {
+            let mut scene = obj.clone();
+            let output_path = scene.remove("output_path");
+            let mut normalized = serde_json::Map::new();
+            normalized.insert("scene".to_string(), Value::Object(scene));
+            match output_path {
+                Some(output_path) => {
+                    normalized.insert("output_path".to_string(), output_path);
+                }
+                None => {}
+            }
+            return Value::Object(normalized);
+        }
+        false => {}
     }
 
     arguments.clone()
@@ -595,22 +592,25 @@ fn video_scene_parameter_schema(include_preview_fields: bool) -> Value {
         }),
     );
 
-    if include_preview_fields {
-        properties.insert(
-            "time".to_string(),
-            json!({ "type": "number", "description": "Time offset in seconds. Default 0.0." }),
-        );
-        properties.insert("width".to_string(), json!({ "type": "integer" }));
-        properties.insert("height".to_string(), json!({ "type": "integer" }));
-        properties.insert(
-            "output_format".to_string(),
-            json!({ "type": "string", "enum": ["png", "jpeg", "jpg"] }),
-        );
-    } else {
-        properties.insert(
-            "output_path".to_string(),
-            json!({ "type": "string", "description": "Optional .mp4 output path." }),
-        );
+    match include_preview_fields {
+        true => {
+            properties.insert(
+                "time".to_string(),
+                json!({ "type": "number", "description": "Time offset in seconds. Default 0.0." }),
+            );
+            properties.insert("width".to_string(), json!({ "type": "integer" }));
+            properties.insert("height".to_string(), json!({ "type": "integer" }));
+            properties.insert(
+                "output_format".to_string(),
+                json!({ "type": "string", "enum": ["png", "jpeg", "jpg"] }),
+            );
+        }
+        false => {
+            properties.insert(
+                "output_path".to_string(),
+                json!({ "type": "string", "description": "Optional .mp4 output path." }),
+            );
+        }
     }
 
     json!({
@@ -676,35 +676,41 @@ impl crate::tools::Tool for OpenMediaCreateSvgTool {
             .and_then(|obj| obj.remove("output_path"))
             .and_then(|v| v.as_str().map(|s| s.to_string()));
 
-        let req: crate::tools::openmedia::server::CreateSvgRequest = serde_json::from_value(normalized)?;
+        let req: crate::tools::openmedia::server::CreateSvgRequest =
+            serde_json::from_value(normalized)?;
         let mut res = get_server()
             .await?
             .create_svg(req)
             .await
             .map_err(|e| anyhow!("{e}"))?;
 
-        if let Some(output_path) = output_path {
-            if let Some(src_path) = res
-                .get("path")
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-            {
+        let src_path_opt = res
+            .get("path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        match (output_path, src_path_opt) {
+            (Some(output_path), Some(src_path)) => {
                 let target = crate::config::resolve_path(&output_path);
-                if let Some(parent) = target.parent() {
-                    std::fs::create_dir_all(parent)?;
+                match target.parent() {
+                    Some(parent) => std::fs::create_dir_all(parent)?,
+                    None => {}
                 }
                 std::fs::copy(&src_path, &target)?;
-                if let Some(obj) = res.as_object_mut() {
-                    obj.insert(
-                        "path".to_string(),
-                        serde_json::Value::String(target.to_string_lossy().to_string()),
-                    );
-                    obj.insert(
-                        "copied_from".to_string(),
-                        serde_json::Value::String(src_path.to_string()),
-                    );
+                match res.as_object_mut() {
+                    Some(obj) => {
+                        obj.insert(
+                            "path".to_string(),
+                            serde_json::Value::String(target.to_string_lossy().to_string()),
+                        );
+                        obj.insert(
+                            "copied_from".to_string(),
+                            serde_json::Value::String(src_path),
+                        );
+                    }
+                    None => {}
                 }
             }
+            _ => {}
         }
 
         Ok(res)

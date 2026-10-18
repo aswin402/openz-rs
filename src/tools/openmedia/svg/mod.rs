@@ -331,25 +331,38 @@ impl<'a> GradientBuilder<'a> {
     }
 
     pub fn finish(self) -> &'a mut SvgBuilder {
-        if self.is_radial {
-            self.builder.defs.push(SvgDef::RadialGradient {
+        let def = match self.is_radial {
+            true => SvgDef::RadialGradient {
                 id: self.id,
                 cx: "50%".to_string(),
                 cy: "50%".to_string(),
                 r: "50%".to_string(),
                 stops: self.stops,
-            });
-        } else {
-            self.builder.defs.push(SvgDef::LinearGradient {
+            },
+            false => SvgDef::LinearGradient {
                 id: self.id,
                 x1: "0%".to_string(),
                 y1: "0%".to_string(),
                 x2: "100%".to_string(),
                 y2: "0%".to_string(),
                 stops: self.stops,
-            });
-        }
+            },
+        };
+        self.builder.defs.push(def);
         self.builder
+    }
+}
+
+fn append_gradient_stops(svg: &mut String, stops: &[GradientStop]) {
+    for stop in stops {
+        let opacity_attr = stop
+            .opacity
+            .map(|o| format!(" stop-opacity=\"{}\"", o))
+            .unwrap_or_default();
+        svg.push_str(&format!(
+            "      <stop offset=\"{}\" stop-color=\"{}\"{} />\n",
+            stop.offset, stop.color, opacity_attr
+        ));
     }
 }
 
@@ -458,71 +471,63 @@ impl SvgBuilder {
             "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{}\" height=\"{}\"",
             self.width, self.height
         );
-        if let Some(vb) = &self.viewbox {
-            svg.push_str(&format!(" viewBox=\"{}\"", vb));
+        match &self.viewbox {
+            Some(vb) => svg.push_str(&format!(" viewBox=\"{}\"", vb)),
+            None => {}
         }
         svg.push_str(">\n");
 
-        if !self.styles.is_empty() {
-            svg.push_str("  <style>\n");
-            for style in &self.styles {
-                svg.push_str(&format!("    {}\n", style));
+        match self.styles.is_empty() {
+            false => {
+                svg.push_str("  <style>\n");
+                for style in &self.styles {
+                    svg.push_str(&format!("    {}\n", style));
+                }
+                svg.push_str("  </style>\n");
             }
-            svg.push_str("  </style>\n");
+            true => {}
         }
 
-        if !self.defs.is_empty() {
-            svg.push_str("  <defs>\n");
-            for def in &self.defs {
-                match def {
-                    SvgDef::LinearGradient {
-                        id,
-                        x1,
-                        y1,
-                        x2,
-                        y2,
-                        stops,
-                    } => {
-                        svg.push_str(&format!("    <linearGradient id=\"{}\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\">\n", id, x1, y1, x2, y2));
-                        for stop in stops {
-                            let opacity_attr = stop
-                                .opacity
-                                .map(|o| format!(" stop-opacity=\"{}\"", o))
-                                .unwrap_or_default();
+        match self.defs.is_empty() {
+            false => {
+                svg.push_str("  <defs>\n");
+                for def in &self.defs {
+                    match def {
+                        SvgDef::LinearGradient {
+                            id,
+                            x1,
+                            y1,
+                            x2,
+                            y2,
+                            stops,
+                        } => {
                             svg.push_str(&format!(
-                                "      <stop offset=\"{}\" stop-color=\"{}\"{} />\n",
-                                stop.offset, stop.color, opacity_attr
+                                "    <linearGradient id=\"{}\" x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\">\n",
+                                id, x1, y1, x2, y2
                             ));
+                            append_gradient_stops(&mut svg, stops);
+                            svg.push_str("    </linearGradient>\n");
                         }
-                        svg.push_str("    </linearGradient>\n");
-                    }
-                    SvgDef::RadialGradient {
-                        id,
-                        cx,
-                        cy,
-                        r,
-                        stops,
-                    } => {
-                        svg.push_str(&format!(
-                            "    <radialGradient id=\"{}\" cx=\"{}\" cy=\"{}\" r=\"{}\">\n",
-                            id, cx, cy, r
-                        ));
-                        for stop in stops {
-                            let opacity_attr = stop
-                                .opacity
-                                .map(|o| format!(" stop-opacity=\"{}\"", o))
-                                .unwrap_or_default();
+                        SvgDef::RadialGradient {
+                            id,
+                            cx,
+                            cy,
+                            r,
+                            stops,
+                        } => {
                             svg.push_str(&format!(
-                                "      <stop offset=\"{}\" stop-color=\"{}\"{} />\n",
-                                stop.offset, stop.color, opacity_attr
+                                "    <radialGradient id=\"{}\" cx=\"{}\" cy=\"{}\" r=\"{}\">\n",
+                                id, cx, cy, r
                             ));
+                            append_gradient_stops(&mut svg, stops);
+                            svg.push_str("    </radialGradient>\n");
                         }
-                        svg.push_str("    </radialGradient>\n");
+                        _ => {}
                     }
-                    _ => {}
                 }
+                svg.push_str("  </defs>\n");
             }
-            svg.push_str("  </defs>\n");
+            true => {}
         }
 
         fn serialize_element(elem: &SvgElement, indent: usize) -> String {
@@ -538,11 +543,13 @@ impl SvgBuilder {
                     attrs,
                 } => {
                     let mut extra = String::new();
-                    if let Some(r) = rx {
-                        extra.push_str(&format!(" rx=\"{}\"", r));
+                    match rx {
+                        Some(r) => extra.push_str(&format!(" rx=\"{}\"", r)),
+                        None => {}
                     }
-                    if let Some(r) = ry {
-                        extra.push_str(&format!(" ry=\"{}\"", r));
+                    match ry {
+                        Some(r) => extra.push_str(&format!(" ry=\"{}\"", r)),
+                        None => {}
                     }
                     let attrs_str = serialize_attrs(attrs);
                     format!(
@@ -867,24 +874,32 @@ pub fn build_svg_from_json(
                 opacity,
             } => {
                 let mut rect = builder.rect(x, y, width, height);
-                if let Some(f) = fill {
-                    rect = rect.fill(&f);
+                match fill {
+                    Some(f) => rect = rect.fill(&f),
+                    None => {}
                 }
-                if let Some(s) = stroke {
-                    rect = rect.stroke(&s);
+                match stroke {
+                    Some(s) => rect = rect.stroke(&s),
+                    None => {}
                 }
-                if let Some(sw) = stroke_width {
-                    rect = rect.stroke_width(sw);
+                match stroke_width {
+                    Some(sw) => rect = rect.stroke_width(sw),
+                    None => {}
                 }
-                if let Some(opacity) = opacity {
-                    rect.attrs
-                        .insert("opacity".to_string(), opacity.to_string());
+                match opacity {
+                    Some(opacity) => {
+                        rect.attrs
+                            .insert("opacity".to_string(), opacity.to_string());
+                    }
+                    None => {}
                 }
-                if let Some(rx_val) = rx {
-                    rect = rect.rx(rx_val);
+                match rx {
+                    Some(rx_val) => rect = rect.rx(rx_val),
+                    None => {}
                 }
-                if let Some(ry_val) = ry {
-                    rect = rect.ry(ry_val);
+                match ry {
+                    Some(ry_val) => rect = rect.ry(ry_val),
+                    None => {}
                 }
                 rect.finish();
             }
@@ -898,19 +913,25 @@ pub fn build_svg_from_json(
                 opacity,
             } => {
                 let mut circle = builder.circle(cx, cy, r);
-                if let Some(f) = fill {
-                    circle = circle.fill(&f);
+                match fill {
+                    Some(f) => circle = circle.fill(&f),
+                    None => {}
                 }
-                if let Some(s) = stroke {
-                    circle = circle.stroke(&s);
+                match stroke {
+                    Some(s) => circle = circle.stroke(&s),
+                    None => {}
                 }
-                if let Some(sw) = stroke_width {
-                    circle = circle.stroke_width(sw);
+                match stroke_width {
+                    Some(sw) => circle = circle.stroke_width(sw),
+                    None => {}
                 }
-                if let Some(opacity) = opacity {
-                    circle
-                        .attrs
-                        .insert("opacity".to_string(), opacity.to_string());
+                match opacity {
+                    Some(opacity) => {
+                        circle
+                            .attrs
+                            .insert("opacity".to_string(), opacity.to_string());
+                    }
+                    None => {}
                 }
                 circle.finish();
             }
@@ -933,11 +954,17 @@ pub fn build_svg_from_json(
                     "stroke-width".to_string(),
                     stroke_width.unwrap_or(1.0).to_string(),
                 );
-                if let Some(linecap) = stroke_linecap {
-                    attrs.insert("stroke-linecap".to_string(), linecap);
+                match stroke_linecap {
+                    Some(linecap) => {
+                        attrs.insert("stroke-linecap".to_string(), linecap);
+                    }
+                    None => {}
                 }
-                if let Some(opacity) = opacity {
-                    attrs.insert("opacity".to_string(), opacity.to_string());
+                match opacity {
+                    Some(opacity) => {
+                        attrs.insert("opacity".to_string(), opacity.to_string());
+                    }
+                    None => {}
                 }
                 builder.elements.push(SvgElement::Line {
                     x1,
@@ -963,28 +990,43 @@ pub fn build_svg_from_json(
                 let default_middle_baseline = matches!(text_anchor.as_deref(), Some("middle"));
                 let dominant_baseline = dominant_baseline
                     .or_else(|| default_middle_baseline.then(|| "middle".to_string()));
-                if let Some(f) = fill {
-                    text = text.fill(&f);
+                match fill {
+                    Some(f) => text = text.fill(&f),
+                    None => {}
                 }
-                if let Some(sz) = font_size {
-                    text = text.font_size(sz);
+                match font_size {
+                    Some(sz) => text = text.font_size(sz),
+                    None => {}
                 }
-                if let Some(fam) = font_family {
-                    text = text.font_family(&fam);
+                match font_family {
+                    Some(fam) => text = text.font_family(&fam),
+                    None => {}
                 }
-                if let Some(weight) = font_weight {
-                    text.attrs
-                        .insert("font-weight".to_string(), weight.to_string());
+                match font_weight {
+                    Some(weight) => {
+                        text.attrs
+                            .insert("font-weight".to_string(), weight.to_string());
+                    }
+                    None => {}
                 }
-                if let Some(anchor) = text_anchor {
-                    text.attrs.insert("text-anchor".to_string(), anchor);
+                match text_anchor {
+                    Some(anchor) => {
+                        text.attrs.insert("text-anchor".to_string(), anchor);
+                    }
+                    None => {}
                 }
-                if let Some(baseline) = dominant_baseline {
-                    text.attrs.insert("dominant-baseline".to_string(), baseline);
+                match dominant_baseline {
+                    Some(baseline) => {
+                        text.attrs.insert("dominant-baseline".to_string(), baseline);
+                    }
+                    None => {}
                 }
-                if let Some(opacity) = opacity {
-                    text.attrs
-                        .insert("opacity".to_string(), opacity.to_string());
+                match opacity {
+                    Some(opacity) => {
+                        text.attrs
+                            .insert("opacity".to_string(), opacity.to_string());
+                    }
+                    None => {}
                 }
                 text.finish();
             }
@@ -1059,22 +1101,28 @@ pub fn rasterize(
             reason: "Failed to allocate pixmap".to_string(),
         })?;
 
-    // Fill background if specified
-    if let Some(color_str) = bg_color {
-        let clean_hex = color_str.trim_start_matches('#');
-        if let Ok(val) = u32::from_str_radix(clean_hex, 16) {
-            let r = ((val >> 16) & 0xFF) as f32 / 255.0;
-            let g = ((val >> 8) & 0xFF) as f32 / 255.0;
-            let b = (val & 0xFF) as f32 / 255.0;
-            let a = if clean_hex.len() == 8 {
-                ((val >> 24) & 0xFF) as f32 / 255.0
-            } else {
-                1.0
-            };
-            if let Some(skia_color) = tiny_skia::Color::from_rgba(r, g, b, a) {
-                pixmap.fill(skia_color);
+    // Fill background when specified
+    match bg_color {
+        Some(color_str) => {
+            let clean_hex = color_str.trim_start_matches('#');
+            match u32::from_str_radix(clean_hex, 16) {
+                Ok(val) => {
+                    let r = ((val >> 16) & 0xFF) as f32 / 255.0;
+                    let g = ((val >> 8) & 0xFF) as f32 / 255.0;
+                    let b = (val & 0xFF) as f32 / 255.0;
+                    let a = match clean_hex.len() == 8 {
+                        true => ((val >> 24) & 0xFF) as f32 / 255.0,
+                        false => 1.0,
+                    };
+                    match tiny_skia::Color::from_rgba(r, g, b, a) {
+                        Some(skia_color) => pixmap.fill(skia_color),
+                        None => {}
+                    }
+                }
+                Err(_) => {}
             }
         }
+        None => {}
     }
 
     // Render using resvg
@@ -1085,11 +1133,14 @@ pub fn rasterize(
     let mut pixels = pixmap.data().to_vec();
     for chunk in pixels.chunks_exact_mut(4) {
         let a = chunk[3];
-        if a > 0 && a < 255 {
-            let alpha_factor = 255.0 / a as f32;
-            chunk[0] = (chunk[0] as f32 * alpha_factor).min(255.0) as u8;
-            chunk[1] = (chunk[1] as f32 * alpha_factor).min(255.0) as u8;
-            chunk[2] = (chunk[2] as f32 * alpha_factor).min(255.0) as u8;
+        match a > 0 && a < 255 {
+            true => {
+                let alpha_factor = 255.0 / a as f32;
+                chunk[0] = (chunk[0] as f32 * alpha_factor).min(255.0) as u8;
+                chunk[1] = (chunk[1] as f32 * alpha_factor).min(255.0) as u8;
+                chunk[2] = (chunk[2] as f32 * alpha_factor).min(255.0) as u8;
+            }
+            false => {}
         }
     }
 

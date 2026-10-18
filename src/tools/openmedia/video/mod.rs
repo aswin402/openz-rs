@@ -290,6 +290,33 @@ pub trait FrameRenderer: Send + Sync {
 // === Native SVG Frame Renderer ===
 pub struct SvgFrameRenderer;
 
+fn find_active_transition<'a>(
+    scene: &'a VideoScene,
+    time: f64,
+) -> Option<(&'a Scene, &'a Scene, f64, &'a SceneTransition)> {
+    scene.transitions.iter().find_map(|trans| {
+        let from_s = scene.scenes.iter().find(|s| s.id == trans.from)?;
+        let trans_start = from_s.end - trans.duration;
+        match time >= trans_start && time <= from_s.end {
+            true => {
+                let to_s = scene.scenes.iter().find(|s| s.id == trans.to)?;
+                Some((from_s, to_s, trans_start, trans))
+            }
+            false => None,
+        }
+    })
+}
+
+fn transition_progress_at(time: f64, trans_start: f64, trans: &SceneTransition) -> f64 {
+    match trans.duration <= 0.0 {
+        true => 1.0,
+        false => apply_transition_easing(
+            (time - trans_start) / trans.duration,
+            trans.easing.as_deref(),
+        ),
+    }
+}
+
 #[async_trait::async_trait]
 impl FrameRenderer for SvgFrameRenderer {
     async fn render_frame(
@@ -299,46 +326,28 @@ impl FrameRenderer for SvgFrameRenderer {
         width: u32,
         height: u32,
     ) -> Result<image::RgbaImage> {
-        // Check for active transition
-        let mut active_trans = None;
-        for trans in &scene.transitions {
-            if let Some(from_s) = scene.scenes.iter().find(|s| s.id == trans.from) {
-                let trans_start = from_s.end - trans.duration;
-                if time >= trans_start && time <= from_s.end {
-                    if let Some(to_s) = scene.scenes.iter().find(|s| s.id == trans.to) {
-                        active_trans = Some((from_s, to_s, trans_start, trans));
-                        break;
-                    }
-                }
+        match find_active_transition(scene, time) {
+            Some((from_s, to_s, trans_start, trans)) => {
+                let progress = transition_progress_at(time, trans_start, trans);
+
+                let mut from_scene = scene.clone();
+                from_scene.scenes = vec![from_s.clone()];
+                from_scene.transitions = vec![];
+                let img_from = self.render_frame(&from_scene, time, width, height).await?;
+
+                let mut to_scene = scene.clone();
+                to_scene.scenes = vec![to_s.clone()];
+                to_scene.transitions = vec![];
+                let img_to = self.render_frame(&to_scene, time, width, height).await?;
+
+                return Ok(blend_frames(
+                    &img_from,
+                    &img_to,
+                    progress,
+                    &trans.transition_type,
+                ));
             }
-        }
-
-        if let Some((from_s, to_s, trans_start, trans)) = active_trans {
-            let progress = if trans.duration <= 0.0 {
-                1.0
-            } else {
-                apply_transition_easing(
-                    (time - trans_start) / trans.duration,
-                    trans.easing.as_deref(),
-                )
-            };
-
-            let mut from_scene = scene.clone();
-            from_scene.scenes = vec![from_s.clone()];
-            from_scene.transitions = vec![];
-            let img_from = self.render_frame(&from_scene, time, width, height).await?;
-
-            let mut to_scene = scene.clone();
-            to_scene.scenes = vec![to_s.clone()];
-            to_scene.transitions = vec![];
-            let img_to = self.render_frame(&to_scene, time, width, height).await?;
-
-            return Ok(blend_frames(
-                &img_from,
-                &img_to,
-                progress,
-                &trans.transition_type,
-            ));
+            None => {}
         }
 
         let svg_str = compile_scene_to_svg(scene, time, width, height)?;
@@ -356,27 +365,31 @@ impl FrameRenderer for SvgFrameRenderer {
 
         let custom_fonts = scene.custom_fonts.clone().unwrap_or_default();
 
-        let fontdb_arc = {
-            let mut found = None;
-            if let Ok(guard) = cache.lock() {
-                if let Some(cached_db) = guard.get(&custom_fonts) {
-                    found = Some(cached_db.clone());
-                }
-            }
-            if let Some(db) = found {
-                db
-            } else {
+        let cached_db = cache
+            .lock()
+            .ok()
+            .and_then(|guard| guard.get(&custom_fonts).cloned());
+
+        let fontdb_arc = match cached_db {
+            Some(db) => db,
+            None => {
                 let base_db = crate::tools::openmedia::svg::default_svg_fontdb();
                 let mut fontdb = (*base_db).clone();
-                if let Some(ref fonts) = scene.custom_fonts {
-                    let resolved = resolve_custom_fonts(fonts).await;
-                    for (_, bytes) in resolved {
-                        fontdb.load_font_data(bytes);
+                match scene.custom_fonts {
+                    Some(ref fonts) => {
+                        let resolved = resolve_custom_fonts(fonts).await;
+                        for (_, bytes) in resolved {
+                            fontdb.load_font_data(bytes);
+                        }
                     }
+                    None => {}
                 }
                 let arc_db = std::sync::Arc::new(fontdb);
-                if let Ok(mut guard) = cache.lock() {
-                    guard.insert(custom_fonts, arc_db.clone());
+                match cache.lock() {
+                    Ok(mut guard) => {
+                        guard.insert(custom_fonts, arc_db.clone());
+                    }
+                    Err(_) => {}
                 }
                 arc_db
             }
@@ -403,11 +416,14 @@ impl FrameRenderer for SvgFrameRenderer {
         let mut pixels = pixmap.data().to_vec();
         for chunk in pixels.chunks_exact_mut(4) {
             let a = chunk[3];
-            if a > 0 && a < 255 {
-                let alpha_factor = 255.0 / a as f32;
-                chunk[0] = (chunk[0] as f32 * alpha_factor).min(255.0) as u8;
-                chunk[1] = (chunk[1] as f32 * alpha_factor).min(255.0) as u8;
-                chunk[2] = (chunk[2] as f32 * alpha_factor).min(255.0) as u8;
+            match a > 0 && a < 255 {
+                true => {
+                    let alpha_factor = 255.0 / a as f32;
+                    chunk[0] = (chunk[0] as f32 * alpha_factor).min(255.0) as u8;
+                    chunk[1] = (chunk[1] as f32 * alpha_factor).min(255.0) as u8;
+                    chunk[2] = (chunk[2] as f32 * alpha_factor).min(255.0) as u8;
+                }
+                false => {}
             }
         }
 
@@ -425,14 +441,12 @@ impl FrameRenderer for SvgFrameRenderer {
 fn resolve_dimension(val: &DimensionValue, total: f64) -> f64 {
     match val {
         DimensionValue::Pixels(pixels) => *pixels,
-        DimensionValue::Percentage(pct) => {
-            let clean = pct.trim_end_matches('%');
-            if let Ok(pct_val) = clean.parse::<f64>() {
-                (pct_val / 100.0) * total
-            } else {
-                0.0
-            }
-        }
+        DimensionValue::Percentage(pct) => pct
+            .trim_end_matches('%')
+            .parse::<f64>()
+            .ok()
+            .map(|pct_val| (pct_val / 100.0) * total)
+            .unwrap_or(0.0),
     }
 }
 
@@ -442,49 +456,53 @@ fn interpolate_f64(
     get_val: impl Fn(&Keyframe) -> Option<f64>,
     default: f64,
 ) -> f64 {
-    if keyframes.is_empty() {
-        return default;
+    match keyframes.is_empty() {
+        true => return default,
+        false => {}
     }
 
     let mut sorted = keyframes.to_vec();
     sorted.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
 
-    if t <= sorted[0].time {
-        return get_val(&sorted[0]).unwrap_or(default);
-    }
-    if t >= sorted[sorted.len() - 1].time {
-        return get_val(&sorted[sorted.len() - 1]).unwrap_or(default);
+    match (t <= sorted[0].time, t >= sorted[sorted.len() - 1].time) {
+        (true, _) => return get_val(&sorted[0]).unwrap_or(default),
+        (false, true) => return get_val(&sorted[sorted.len() - 1]).unwrap_or(default),
+        (false, false) => {}
     }
 
     for window in sorted.windows(2) {
         let k1 = &window[0];
         let k2 = &window[1];
-        if t >= k1.time && t <= k2.time {
-            let v1 = get_val(k1).unwrap_or(default);
-            let v2 = get_val(k2).unwrap_or(default);
-            let duration = k2.time - k1.time;
-            if duration == 0.0 {
-                return v2;
-            }
-            let mut progress = (t - k1.time) / duration;
-            if let Some(easing) = &k2.easing {
-                progress = match easing.to_lowercase().as_str() {
-                    "ease_in" | "ease-in" => progress * progress,
-                    "ease_out" | "ease-out" => progress * (2.0 - progress),
-                    "ease_in_out" | "ease-in-out" => {
-                        if progress < 0.5 {
-                            2.0 * progress * progress
-                        } else {
-                            -1.0 + (4.0 - 2.0 * progress) * progress
-                        }
+        match t >= k1.time && t <= k2.time {
+            true => {
+                let v1 = get_val(k1).unwrap_or(default);
+                let v2 = get_val(k2).unwrap_or(default);
+                let duration = k2.time - k1.time;
+                match duration == 0.0 {
+                    true => return v2,
+                    false => {
+                        let raw_progress = (t - k1.time) / duration;
+                        let progress = apply_transition_easing(raw_progress, k2.easing.as_deref());
+                        return v1 + (v2 - v1) * progress;
                     }
-                    _ => progress,
-                };
+                }
             }
-            return v1 + (v2 - v1) * progress;
+            false => {}
         }
     }
     default
+}
+
+fn parse_dim_str(s: &str, total: f64) -> f64 {
+    match s.ends_with('%') {
+        true => s
+            .trim_end_matches('%')
+            .parse::<f64>()
+            .ok()
+            .map(|p| (p / 100.0) * total)
+            .unwrap_or(0.0),
+        false => s.parse::<f64>().unwrap_or(0.0),
+    }
 }
 
 fn interpolate_string_dimension(
@@ -494,80 +512,99 @@ fn interpolate_string_dimension(
     default_str: &str,
     total: f64,
 ) -> f64 {
-    let parse_dim = |s: &str| -> f64 {
-        if s.ends_with('%') {
-            let clean = s.trim_end_matches('%');
-            if let Ok(p) = clean.parse::<f64>() {
-                (p / 100.0) * total
-            } else {
-                0.0
-            }
-        } else {
-            s.parse::<f64>().unwrap_or(0.0)
+    let default_val = parse_dim_str(default_str, total);
+    interpolate_f64(
+        t,
+        keyframes,
+        |k| get_str(k).map(|s| parse_dim_str(s, total)),
+        default_val,
+    )
+}
+
+struct ElementPose {
+    opacity: f64,
+    final_x: f64,
+    final_y: f64,
+    scale_x: f64,
+    scale_y: f64,
+    rotation: f64,
+}
+
+fn resolve_element_pose(
+    position: &Position,
+    timeline: &Option<ElementTimeline>,
+    t: f64,
+    total_w: f64,
+    total_h: f64,
+) -> ElementPose {
+    let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = match timeline {
+        Some(tl) => {
+            let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
+            let x = interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
+            let y = interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
+            let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
+            let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
+            let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
+            let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
+            (op, x, y, sx, sy, rot)
         }
+        None => (1.0, 0.0, 0.0, 1.0, 1.0, 0.0),
+    };
+    let base_x = resolve_dimension(&position.x, total_w);
+    let base_y = resolve_dimension(&position.y, total_h);
+    ElementPose {
+        opacity,
+        final_x: base_x + x_offset,
+        final_y: base_y + y_offset,
+        scale_x,
+        scale_y,
+        rotation,
+    }
+}
+
+fn render_chart_element_xml(
+    chart_type: &str,
+    data: &serde_json::Value,
+    w: f64,
+    h: f64,
+) -> Result<String> {
+    let chart_theme = crate::tools::openmedia::svg::ChartTheme::dark();
+    let chart_cfg = crate::tools::openmedia::svg::ChartConfig {
+        chart_type: match chart_type.to_lowercase().as_str() {
+            "bar" => crate::tools::openmedia::svg::ChartType::Bar,
+            "line" => crate::tools::openmedia::svg::ChartType::Line,
+            "pie" => crate::tools::openmedia::svg::ChartType::Pie,
+            _ => crate::tools::openmedia::svg::ChartType::Bar,
+        },
+        data: data.clone(),
+        title: None,
+        subtitle: None,
+        width: w as u32,
+        height: h as u32,
+        theme: chart_theme,
+        legend: crate::tools::openmedia::svg::LegendConfig {
+            show: false,
+            position: crate::tools::openmedia::svg::LegendPosition::Bottom,
+        },
+        grid: true,
+        animate: false,
+        padding: crate::tools::openmedia::svg::Padding {
+            top: 10.0,
+            right: 10.0,
+            bottom: 10.0,
+            left: 10.0,
+        },
     };
 
-    if keyframes.is_empty() {
-        return parse_dim(default_str);
-    }
-
-    let mut sorted = keyframes.to_vec();
-    sorted.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap());
-
-    if t <= sorted[0].time {
-        let s = get_str(&sorted[0])
-            .map(|x| x.as_str())
-            .unwrap_or(default_str);
-        return parse_dim(s);
-    }
-    if t >= sorted[sorted.len() - 1].time {
-        let s = get_str(&sorted[sorted.len() - 1])
-            .map(|x| x.as_str())
-            .unwrap_or(default_str);
-        return parse_dim(s);
-    }
-
-    for window in sorted.windows(2) {
-        let k1 = &window[0];
-        let k2 = &window[1];
-        if t >= k1.time && t <= k2.time {
-            let s1 = get_str(k1).map(|x| x.as_str()).unwrap_or(default_str);
-            let s2 = get_str(k2).map(|x| x.as_str()).unwrap_or(default_str);
-            let v1 = parse_dim(s1);
-            let v2 = parse_dim(s2);
-            let duration = k2.time - k1.time;
-            if duration == 0.0 {
-                return v2;
-            }
-            let mut progress = (t - k1.time) / duration;
-            if let Some(easing) = &k2.easing {
-                progress = match easing.to_lowercase().as_str() {
-                    "ease_in" | "ease-in" => progress * progress,
-                    "ease_out" | "ease-out" => progress * (2.0 - progress),
-                    "ease_in_out" | "ease-in-out" => {
-                        if progress < 0.5 {
-                            2.0 * progress * progress
-                        } else {
-                            -1.0 + (4.0 - 2.0 * progress) * progress
-                        }
-                    }
-                    _ => progress,
-                };
-            }
-            return v1 + (v2 - v1) * progress;
-        }
-    }
-    parse_dim(default_str)
+    crate::tools::openmedia::svg::generate_chart(&chart_cfg)
+        .map_err(|e| OpenMediaError::Internal(e.to_string()))
 }
 
 fn compile_scene_to_svg(scene: &VideoScene, time: f64, width: u32, height: u32) -> Result<String> {
-    let mut active_scene = None;
-    for s in &scene.scenes {
-        if time >= s.start && time <= s.end {
-            active_scene = Some(s);
-            break;
-        }
-    }
+    let active_scene = scene
+        .scenes
+        .iter()
+        .find(|s| time >= s.start && time <= s.end);
 
     let mut svg = format!(
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{}" height="{}" viewBox="0 0 {} {}">"#,
@@ -578,12 +615,15 @@ fn compile_scene_to_svg(scene: &VideoScene, time: f64, width: u32, height: u32) 
         scene.background
     ));
 
-    if let Some(s) = active_scene {
-        let local_t = time - s.start;
-        for el in &s.elements {
-            let el_svg = render_element_to_svg(el, local_t, width as f64, height as f64)?;
-            svg.push_str(&el_svg);
+    match active_scene {
+        Some(s) => {
+            let local_t = time - s.start;
+            for el in &s.elements {
+                let el_svg = render_element_to_svg(el, local_t, width as f64, height as f64)?;
+                svg.push_str(&el_svg);
+            }
         }
+        None => {}
     }
 
     svg.push_str("</svg>");
@@ -599,28 +639,7 @@ fn render_element_to_svg(el: &SceneElement, t: f64, total_w: f64, total_h: f64) 
             style,
             timeline,
         } => {
-            let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) =
-                timeline
-            {
-                let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                let x =
-                    interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
-                let y =
-                    interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
-                let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
-                let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
-                let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
-                let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
-                (op, x, y, sx, sy, rot)
-            } else {
-                (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
-            };
-
-            let base_x = resolve_dimension(&position.x, total_w);
-            let base_y = resolve_dimension(&position.y, total_h);
-            let final_x = base_x + x_offset;
-            let final_y = base_y + y_offset;
-
+            let pose = resolve_element_pose(position, timeline, t, total_w, total_h);
             let w = resolve_dimension(&size.width, total_w);
             let h = resolve_dimension(&size.height, total_h);
             let fill_str = style.fill.as_deref().unwrap_or("none");
@@ -638,12 +657,12 @@ fn render_element_to_svg(el: &SceneElement, t: f64, total_w: f64, total_h: f64) 
                         fill_str,
                         stroke_str,
                         stroke_w,
-                        opacity,
-                        final_x + w / 2.0,
-                        final_y + h / 2.0,
-                        rotation,
-                        scale_x,
-                        scale_y,
+                        pose.opacity,
+                        pose.final_x + w / 2.0,
+                        pose.final_y + h / 2.0,
+                        pose.rotation,
+                        pose.scale_x,
+                        pose.scale_y,
                         -w / 2.0,
                         -h / 2.0
                     ))
@@ -656,12 +675,12 @@ fn render_element_to_svg(el: &SceneElement, t: f64, total_w: f64, total_h: f64) 
                         fill_str,
                         stroke_str,
                         stroke_w,
-                        opacity,
-                        final_x + r,
-                        final_y + r,
-                        rotation,
-                        scale_x,
-                        scale_y
+                        pose.opacity,
+                        pose.final_x + r,
+                        pose.final_y + r,
+                        pose.rotation,
+                        pose.scale_x,
+                        pose.scale_y
                     ))
                 }
                 _ => Ok(String::new()),
@@ -674,28 +693,7 @@ fn render_element_to_svg(el: &SceneElement, t: f64, total_w: f64, total_h: f64) 
             anchor,
             timeline,
         } => {
-            let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) =
-                timeline
-            {
-                let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                let x =
-                    interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
-                let y =
-                    interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
-                let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
-                let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
-                let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
-                let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
-                (op, x, y, sx, sy, rot)
-            } else {
-                (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
-            };
-
-            let base_x = resolve_dimension(&position.x, total_w);
-            let base_y = resolve_dimension(&position.y, total_h);
-            let final_x = base_x + x_offset;
-            let final_y = base_y + y_offset;
-
+            let pose = resolve_element_pose(position, timeline, t, total_w, total_h);
             let text_anchor = match anchor {
                 Anchor::TopLeft | Anchor::CenterLeft | Anchor::BottomLeft => "start",
                 Anchor::TopCenter | Anchor::Center | Anchor::BottomCenter => "middle",
@@ -714,12 +712,12 @@ fn render_element_to_svg(el: &SceneElement, t: f64, total_w: f64, total_h: f64) 
                 style.font_size,
                 style.font_weight,
                 text_anchor,
-                opacity,
-                final_x,
-                final_y + style.font_size as f64,
-                rotation,
-                scale_x,
-                scale_y,
+                pose.opacity,
+                pose.final_x,
+                pose.final_y + style.font_size as f64,
+                pose.rotation,
+                pose.scale_x,
+                pose.scale_y,
                 escaped
             ))
         }
@@ -730,28 +728,7 @@ fn render_element_to_svg(el: &SceneElement, t: f64, total_w: f64, total_h: f64) 
             timeline,
             ..
         } => {
-            let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) =
-                timeline
-            {
-                let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                let x =
-                    interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
-                let y =
-                    interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
-                let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
-                let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
-                let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
-                let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
-                (op, x, y, sx, sy, rot)
-            } else {
-                (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
-            };
-
-            let base_x = resolve_dimension(&position.x, total_w);
-            let base_y = resolve_dimension(&position.y, total_h);
-            let final_x = base_x + x_offset;
-            let final_y = base_y + y_offset;
-
+            let pose = resolve_element_pose(position, timeline, t, total_w, total_h);
             let w = resolve_dimension(&size.width, total_w);
             let h = resolve_dimension(&size.height, total_h);
 
@@ -760,12 +737,12 @@ fn render_element_to_svg(el: &SceneElement, t: f64, total_w: f64, total_h: f64) 
                 src,
                 w,
                 h,
-                opacity,
-                final_x + w / 2.0,
-                final_y + h / 2.0,
-                rotation,
-                scale_x,
-                scale_y,
+                pose.opacity,
+                pose.final_x + w / 2.0,
+                pose.final_y + h / 2.0,
+                pose.rotation,
+                pose.scale_x,
+                pose.scale_y,
                 -w / 2.0,
                 -h / 2.0
             ))
@@ -776,28 +753,7 @@ fn render_element_to_svg(el: &SceneElement, t: f64, total_w: f64, total_h: f64) 
             size,
             timeline,
         } => {
-            let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) =
-                timeline
-            {
-                let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                let x =
-                    interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
-                let y =
-                    interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
-                let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
-                let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
-                let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
-                let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
-                (op, x, y, sx, sy, rot)
-            } else {
-                (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
-            };
-
-            let base_x = resolve_dimension(&position.x, total_w);
-            let base_y = resolve_dimension(&position.y, total_h);
-            let final_x = base_x + x_offset;
-            let final_y = base_y + y_offset;
-
+            let pose = resolve_element_pose(position, timeline, t, total_w, total_h);
             let w = size
                 .as_ref()
                 .map(|s| resolve_dimension(&s.width, total_w))
@@ -809,12 +765,12 @@ fn render_element_to_svg(el: &SceneElement, t: f64, total_w: f64, total_h: f64) 
 
             Ok(format!(
                 r#"<g opacity="{}" transform="translate({}, {}) rotate({}) scale({}, {}) translate({}, {})">{}</g>"#,
-                opacity,
-                final_x + w / 2.0,
-                final_y + h / 2.0,
-                rotation,
-                scale_x,
-                scale_y,
+                pose.opacity,
+                pose.final_x + w / 2.0,
+                pose.final_y + h / 2.0,
+                pose.rotation,
+                pose.scale_x,
+                pose.scale_y,
                 -w / 2.0,
                 -h / 2.0,
                 content
@@ -828,70 +784,19 @@ fn render_element_to_svg(el: &SceneElement, t: f64, total_w: f64, total_h: f64) 
             theme: _,
             timeline,
         } => {
-            let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) = if let Some(tl) =
-                timeline
-            {
-                let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                let x =
-                    interpolate_string_dimension(t, &tl.keyframes, |k| k.x.as_ref(), "0", total_w);
-                let y =
-                    interpolate_string_dimension(t, &tl.keyframes, |k| k.y.as_ref(), "0", total_h);
-                let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
-                let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
-                let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
-                let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
-                (op, x, y, sx, sy, rot)
-            } else {
-                (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
-            };
-
-            let base_x = resolve_dimension(&position.x, total_w);
-            let base_y = resolve_dimension(&position.y, total_h);
-            let final_x = base_x + x_offset;
-            let final_y = base_y + y_offset;
-
+            let pose = resolve_element_pose(position, timeline, t, total_w, total_h);
             let w = resolve_dimension(&size.width, total_w);
             let h = resolve_dimension(&size.height, total_h);
-
-            let chart_theme = crate::tools::openmedia::svg::ChartTheme::dark();
-            let chart_cfg = crate::tools::openmedia::svg::ChartConfig {
-                chart_type: match chart_type.to_lowercase().as_str() {
-                    "bar" => crate::tools::openmedia::svg::ChartType::Bar,
-                    "line" => crate::tools::openmedia::svg::ChartType::Line,
-                    "pie" => crate::tools::openmedia::svg::ChartType::Pie,
-                    _ => crate::tools::openmedia::svg::ChartType::Bar,
-                },
-                data: data.clone(),
-                title: None,
-                subtitle: None,
-                width: w as u32,
-                height: h as u32,
-                theme: chart_theme,
-                legend: crate::tools::openmedia::svg::LegendConfig {
-                    show: false,
-                    position: crate::tools::openmedia::svg::LegendPosition::Bottom,
-                },
-                grid: true,
-                animate: false,
-                padding: crate::tools::openmedia::svg::Padding {
-                    top: 10.0,
-                    right: 10.0,
-                    bottom: 10.0,
-                    left: 10.0,
-                },
-            };
-
-            let chart_xml = crate::tools::openmedia::svg::generate_chart(&chart_cfg)
-                .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
+            let chart_xml = render_chart_element_xml(chart_type, data, w, h)?;
 
             Ok(format!(
                 r#"<g opacity="{}" transform="translate({}, {}) rotate({}) scale({}, {}) translate({}, {})">{}</g>"#,
-                opacity,
-                final_x + w / 2.0,
-                final_y + h / 2.0,
-                rotation,
-                scale_x,
-                scale_y,
+                pose.opacity,
+                pose.final_x + w / 2.0,
+                pose.final_y + h / 2.0,
+                pose.rotation,
+                pose.scale_x,
+                pose.scale_y,
                 -w / 2.0,
                 -h / 2.0,
                 chart_xml
@@ -922,8 +827,9 @@ impl BrowserFrameRenderer {
 
         tokio::spawn(async move {
             while let Some(h) = handler.next().await {
-                if let Err(err) = h {
-                    tracing::warn!("BrowserFrameRenderer loop error: {:?}", err);
+                match h {
+                    Err(err) => tracing::warn!("BrowserFrameRenderer loop error: {:?}", err),
+                    Ok(_) => {}
                 }
             }
         });
@@ -972,8 +878,6 @@ impl FrameRenderer for BrowserFrameRenderer {
             .await
             .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
 
-        // Give headless Chrome a short delay (50ms) to parse HTML, run scripts, load fonts,
-        // and fully paint the frame before snapshotting it.
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         let params = chromiumoxide::page::ScreenshotParams::builder()
@@ -1003,10 +907,13 @@ pub async fn get_html_font_css(custom_fonts: &[CustomFontSpec]) -> String {
     > = std::sync::OnceLock::new();
     let cache = CSS_CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
-    if let Ok(guard) = cache.lock() {
-        if let Some(cached_css) = guard.get(custom_fonts) {
-            return cached_css.clone();
-        }
+    let cached_css = cache
+        .lock()
+        .ok()
+        .and_then(|guard| guard.get(custom_fonts).cloned());
+    match cached_css {
+        Some(css) => return css,
+        None => {}
     }
 
     let mut font_css = String::new();
@@ -1024,8 +931,11 @@ pub async fn get_html_font_css(custom_fonts: &[CustomFontSpec]) -> String {
         ));
     }
 
-    if let Ok(mut guard) = cache.lock() {
-        guard.insert(custom_fonts.to_vec(), font_css.clone());
+    match cache.lock() {
+        Ok(mut guard) => {
+            guard.insert(custom_fonts.to_vec(), font_css.clone());
+        }
+        Err(_) => {}
     }
 
     font_css
@@ -1037,42 +947,15 @@ async fn compile_scene_to_html(
     width: u32,
     height: u32,
 ) -> Result<String> {
-    let mut active_scene = None;
-    let mut active_scene_to = None;
-    let mut transition_progress = 0.0;
-    let mut active_transition = None;
+    let active_scene = scene
+        .scenes
+        .iter()
+        .find(|s| time >= s.start && time <= s.end);
+    let active_trans = find_active_transition(scene, time);
 
-    for s in &scene.scenes {
-        if time >= s.start && time <= s.end {
-            active_scene = Some(s);
-            break;
-        }
-    }
-
-    for trans in &scene.transitions {
-        if let Some(from_s) = scene.scenes.iter().find(|s| s.id == trans.from) {
-            let trans_start = from_s.end - trans.duration;
-            if time >= trans_start && time <= from_s.end {
-                active_scene = Some(from_s);
-                active_scene_to = scene.scenes.iter().find(|s| s.id == trans.to);
-                transition_progress = if trans.duration <= 0.0 {
-                    1.0
-                } else {
-                    apply_transition_easing(
-                        (time - trans_start) / trans.duration,
-                        trans.easing.as_deref(),
-                    )
-                };
-                active_transition = Some(trans);
-                break;
-            }
-        }
-    }
-
-    let font_css = if let Some(ref fonts) = scene.custom_fonts {
-        get_html_font_css(fonts).await
-    } else {
-        String::new()
+    let font_css = match scene.custom_fonts {
+        Some(ref fonts) => get_html_font_css(fonts).await,
+        None => String::new(),
     };
 
     let bg_color = &scene.background;
@@ -1103,8 +986,9 @@ async fn compile_scene_to_html(
         font_css, width, height, bg_color
     );
 
-    if let Some(trans) = active_transition {
-        if let (Some(s_from), Some(s_to)) = (active_scene, active_scene_to) {
+    match (active_trans, active_scene) {
+        (Some((s_from, s_to, trans_start, trans)), _) => {
+            let transition_progress = transition_progress_at(time, trans_start, trans);
             let from_html =
                 render_scene_elements_to_html(s_from, time - s_from.start, width, height)?;
             let to_html = render_scene_elements_to_html(s_to, time - s_to.start, width, height)?;
@@ -1169,15 +1053,16 @@ async fn compile_scene_to_html(
                 time - s_to.start, to_style, to_html
             ));
         }
-    } else if let Some(s) = active_scene {
-        let content = render_scene_elements_to_html(s, time - s.start, width, height)?;
-        html.push_str(&format!(
-            r#"<div data-scene-time="{}" style="position: absolute; width: 100%; height: 100%;">{}</div>"#,
-            time - s.start, content
-        ));
+        (None, Some(s)) => {
+            let content = render_scene_elements_to_html(s, time - s.start, width, height)?;
+            html.push_str(&format!(
+                r#"<div data-scene-time="{}" style="position: absolute; width: 100%; height: 100%;">{}</div>"#,
+                time - s.start, content
+            ));
+        }
+        (None, None) => {}
     }
 
-    // Inject animation controller script to sync CSS @keyframes animations
     let animation_js = format!(
         r#"<script>
 (function() {{
@@ -1185,26 +1070,22 @@ async fn compile_scene_to_html(
   for (const el of els) {{
     const style = window.getComputedStyle(el);
     const animationName = style.animationName;
-    if (animationName && animationName !== 'none') {{
+    const hasAnim = Boolean(animationName && animationName !== 'none');
+    hasAnim && (() => {{
       const parentWithTime = el.closest('[data-scene-time]');
       const time = parentWithTime ? parseFloat(parentWithTime.getAttribute('data-scene-time')) : {};
       let origDelay = parseFloat(el.getAttribute('data-orig-delay'));
-      if (isNaN(origDelay)) {{
-        const delayStr = style.animationDelay;
-        origDelay = 0.0;
-        if (delayStr) {{
-          if (delayStr.endsWith('ms')) {{
-            origDelay = parseFloat(delayStr) / 1000.0;
-          }} else if (delayStr.endsWith('s')) {{
-            origDelay = parseFloat(delayStr);
-          }}
-        }}
+      isNaN(origDelay) && (() => {{
+        const delayStr = style.animationDelay || '';
+        origDelay = delayStr.endsWith('ms')
+          ? parseFloat(delayStr) / 1000.0
+          : (delayStr.endsWith('s') ? parseFloat(delayStr) : 0.0);
         el.setAttribute('data-orig-delay', origDelay);
-      }}
+      }})();
       const newDelay = origDelay - time;
       el.style.setProperty('animation-delay', newDelay + 's', 'important');
       el.style.setProperty('animation-play-state', 'paused', 'important');
-    }}
+    }})();
   }}
 }})();
 </script>"#,
@@ -1230,37 +1111,7 @@ fn render_scene_elements_to_html(s: &Scene, t: f64, width: u32, height: u32) -> 
                 anchor,
                 timeline,
             } => {
-                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) =
-                    if let Some(tl) = timeline {
-                        let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                        let x = interpolate_string_dimension(
-                            t,
-                            &tl.keyframes,
-                            |k| k.x.as_ref(),
-                            "0",
-                            total_w,
-                        );
-                        let y = interpolate_string_dimension(
-                            t,
-                            &tl.keyframes,
-                            |k| k.y.as_ref(),
-                            "0",
-                            total_h,
-                        );
-                        let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
-                        let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
-                        let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
-                        let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
-                        (op, x, y, sx, sy, rot)
-                    } else {
-                        (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
-                    };
-
-                let base_x = resolve_dimension(&position.x, total_w);
-                let base_y = resolve_dimension(&position.y, total_h);
-                let final_x = base_x + x_offset;
-                let final_y = base_y + y_offset;
-
+                let pose = resolve_element_pose(position, timeline, t, total_w, total_h);
                 let text_align = match anchor {
                     Anchor::TopLeft | Anchor::CenterLeft | Anchor::BottomLeft => "left",
                     Anchor::TopCenter | Anchor::Center | Anchor::BottomCenter => "center",
@@ -1269,7 +1120,7 @@ fn render_scene_elements_to_html(s: &Scene, t: f64, width: u32, height: u32) -> 
 
                 elements_html.push_str(&format!(
                     r#"<div class="element" style="left: {}px; top: {}px; opacity: {}; transform: rotate({}deg) scale({}, {}); font-family: {}; font-size: {}px; color: {}; font-weight: {}; text-align: {};">{}</div>"#,
-                    final_x, final_y, opacity, rotation, scale_x, scale_y, style.font_family, style.font_size, style.color, style.font_weight, text_align, content
+                    pose.final_x, pose.final_y, pose.opacity, pose.rotation, pose.scale_x, pose.scale_y, style.font_family, style.font_size, style.color, style.font_weight, text_align, content
                 ));
             }
             SceneElement::Image {
@@ -1279,43 +1130,13 @@ fn render_scene_elements_to_html(s: &Scene, t: f64, width: u32, height: u32) -> 
                 timeline,
                 ..
             } => {
-                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) =
-                    if let Some(tl) = timeline {
-                        let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                        let x = interpolate_string_dimension(
-                            t,
-                            &tl.keyframes,
-                            |k| k.x.as_ref(),
-                            "0",
-                            total_w,
-                        );
-                        let y = interpolate_string_dimension(
-                            t,
-                            &tl.keyframes,
-                            |k| k.y.as_ref(),
-                            "0",
-                            total_h,
-                        );
-                        let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
-                        let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
-                        let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
-                        let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
-                        (op, x, y, sx, sy, rot)
-                    } else {
-                        (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
-                    };
-
-                let base_x = resolve_dimension(&position.x, total_w);
-                let base_y = resolve_dimension(&position.y, total_h);
-                let final_x = base_x + x_offset;
-                let final_y = base_y + y_offset;
-
+                let pose = resolve_element_pose(position, timeline, t, total_w, total_h);
                 let w = resolve_dimension(&size.width, total_w);
                 let h = resolve_dimension(&size.height, total_h);
 
                 elements_html.push_str(&format!(
                     r#"<img class="element" src="{}" style="left: {}px; top: {}px; width: {}px; height: {}px; opacity: {}; transform: rotate({}deg) scale({}, {}); object-fit: cover;"/>"#,
-                    src, final_x, final_y, w, h, opacity, rotation, scale_x, scale_y
+                    src, pose.final_x, pose.final_y, w, h, pose.opacity, pose.rotation, pose.scale_x, pose.scale_y
                 ));
             }
             SceneElement::Shape {
@@ -1325,37 +1146,7 @@ fn render_scene_elements_to_html(s: &Scene, t: f64, width: u32, height: u32) -> 
                 style,
                 timeline,
             } => {
-                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) =
-                    if let Some(tl) = timeline {
-                        let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                        let x = interpolate_string_dimension(
-                            t,
-                            &tl.keyframes,
-                            |k| k.x.as_ref(),
-                            "0",
-                            total_w,
-                        );
-                        let y = interpolate_string_dimension(
-                            t,
-                            &tl.keyframes,
-                            |k| k.y.as_ref(),
-                            "0",
-                            total_h,
-                        );
-                        let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
-                        let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
-                        let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
-                        let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
-                        (op, x, y, sx, sy, rot)
-                    } else {
-                        (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
-                    };
-
-                let base_x = resolve_dimension(&position.x, total_w);
-                let base_y = resolve_dimension(&position.y, total_h);
-                let final_x = base_x + x_offset;
-                let final_y = base_y + y_offset;
-
+                let pose = resolve_element_pose(position, timeline, t, total_w, total_h);
                 let w = resolve_dimension(&size.width, total_w);
                 let h = resolve_dimension(&size.height, total_h);
                 let fill_str = style.fill.as_deref().unwrap_or("transparent");
@@ -1372,7 +1163,7 @@ fn render_scene_elements_to_html(s: &Scene, t: f64, width: u32, height: u32) -> 
 
                 elements_html.push_str(&format!(
                     r#"<div class="element" style="left: {}px; top: {}px; width: {}px; height: {}px; opacity: {}; transform: rotate({}deg) scale({}, {}); background-color: {}; border: {}px solid {}; {}"></div>"#,
-                    final_x, final_y, w, h, opacity, rotation, scale_x, scale_y, fill_str, stroke_w, stroke_str, radius_str
+                    pose.final_x, pose.final_y, w, h, pose.opacity, pose.rotation, pose.scale_x, pose.scale_y, fill_str, stroke_w, stroke_str, radius_str
                 ));
             }
             SceneElement::Svg {
@@ -1381,37 +1172,7 @@ fn render_scene_elements_to_html(s: &Scene, t: f64, width: u32, height: u32) -> 
                 size,
                 timeline,
             } => {
-                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) =
-                    if let Some(tl) = timeline {
-                        let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                        let x = interpolate_string_dimension(
-                            t,
-                            &tl.keyframes,
-                            |k| k.x.as_ref(),
-                            "0",
-                            total_w,
-                        );
-                        let y = interpolate_string_dimension(
-                            t,
-                            &tl.keyframes,
-                            |k| k.y.as_ref(),
-                            "0",
-                            total_h,
-                        );
-                        let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
-                        let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
-                        let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
-                        let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
-                        (op, x, y, sx, sy, rot)
-                    } else {
-                        (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
-                    };
-
-                let base_x = resolve_dimension(&position.x, total_w);
-                let base_y = resolve_dimension(&position.y, total_h);
-                let final_x = base_x + x_offset;
-                let final_y = base_y + y_offset;
-
+                let pose = resolve_element_pose(position, timeline, t, total_w, total_h);
                 let w_str = size
                     .as_ref()
                     .map(|s| format!("width: {}px;", resolve_dimension(&s.width, total_w)))
@@ -1423,7 +1184,7 @@ fn render_scene_elements_to_html(s: &Scene, t: f64, width: u32, height: u32) -> 
 
                 elements_html.push_str(&format!(
                     r#"<div class="element" style="left: {}px; top: {}px; {} {} opacity: {}; transform: rotate({}deg) scale({}, {});">{}</div>"#,
-                    final_x, final_y, w_str, h_str, opacity, rotation, scale_x, scale_y, content
+                    pose.final_x, pose.final_y, w_str, h_str, pose.opacity, pose.rotation, pose.scale_x, pose.scale_y, content
                 ));
             }
             SceneElement::Html {
@@ -1432,43 +1193,13 @@ fn render_scene_elements_to_html(s: &Scene, t: f64, width: u32, height: u32) -> 
                 size,
                 timeline,
             } => {
-                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) =
-                    if let Some(tl) = timeline {
-                        let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                        let x = interpolate_string_dimension(
-                            t,
-                            &tl.keyframes,
-                            |k| k.x.as_ref(),
-                            "0",
-                            total_w,
-                        );
-                        let y = interpolate_string_dimension(
-                            t,
-                            &tl.keyframes,
-                            |k| k.y.as_ref(),
-                            "0",
-                            total_h,
-                        );
-                        let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
-                        let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
-                        let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
-                        let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
-                        (op, x, y, sx, sy, rot)
-                    } else {
-                        (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
-                    };
-
-                let base_x = resolve_dimension(&position.x, total_w);
-                let base_y = resolve_dimension(&position.y, total_h);
-                let final_x = base_x + x_offset;
-                let final_y = base_y + y_offset;
-
+                let pose = resolve_element_pose(position, timeline, t, total_w, total_h);
                 let w = resolve_dimension(&size.width, total_w);
                 let h = resolve_dimension(&size.height, total_h);
 
                 elements_html.push_str(&format!(
                     r#"<div class="element" style="left: {}px; top: {}px; width: {}px; height: {}px; opacity: {}; transform: rotate({}deg) scale({}, {});">{}</div>"#,
-                    final_x, final_y, w, h, opacity, rotation, scale_x, scale_y, content
+                    pose.final_x, pose.final_y, w, h, pose.opacity, pose.rotation, pose.scale_x, pose.scale_y, content
                 ));
             }
             SceneElement::Code {
@@ -1480,43 +1211,13 @@ fn render_scene_elements_to_html(s: &Scene, t: f64, width: u32, height: u32) -> 
                 font_size,
                 timeline,
             } => {
-                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) =
-                    if let Some(tl) = timeline {
-                        let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                        let x = interpolate_string_dimension(
-                            t,
-                            &tl.keyframes,
-                            |k| k.x.as_ref(),
-                            "0",
-                            total_w,
-                        );
-                        let y = interpolate_string_dimension(
-                            t,
-                            &tl.keyframes,
-                            |k| k.y.as_ref(),
-                            "0",
-                            total_h,
-                        );
-                        let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
-                        let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
-                        let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
-                        let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
-                        (op, x, y, sx, sy, rot)
-                    } else {
-                        (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
-                    };
-
-                let base_x = resolve_dimension(&position.x, total_w);
-                let base_y = resolve_dimension(&position.y, total_h);
-                let final_x = base_x + x_offset;
-                let final_y = base_y + y_offset;
-
+                let pose = resolve_element_pose(position, timeline, t, total_w, total_h);
                 let w = resolve_dimension(&size.width, total_w);
                 let h = resolve_dimension(&size.height, total_h);
 
                 elements_html.push_str(&format!(
                     r#"<pre class="element" style="left: {}px; top: {}px; width: {}px; height: {}px; opacity: {}; transform: rotate({}deg) scale({}, {}); font-size: {}px; overflow: auto; background: #282c34; color: #abb2bf; padding: 10px; border-radius: 4px; margin: 0;"><code>{}</code></pre>"#,
-                    final_x, final_y, w, h, opacity, rotation, scale_x, scale_y, font_size, content
+                    pose.final_x, pose.final_y, w, h, pose.opacity, pose.rotation, pose.scale_x, pose.scale_y, font_size, content
                 ));
             }
             SceneElement::Chart {
@@ -1527,74 +1228,14 @@ fn render_scene_elements_to_html(s: &Scene, t: f64, width: u32, height: u32) -> 
                 theme: _,
                 timeline,
             } => {
-                let (opacity, x_offset, y_offset, scale_x, scale_y, rotation) =
-                    if let Some(tl) = timeline {
-                        let op = interpolate_f64(t, &tl.keyframes, |k| k.opacity, 1.0);
-                        let x = interpolate_string_dimension(
-                            t,
-                            &tl.keyframes,
-                            |k| k.x.as_ref(),
-                            "0",
-                            total_w,
-                        );
-                        let y = interpolate_string_dimension(
-                            t,
-                            &tl.keyframes,
-                            |k| k.y.as_ref(),
-                            "0",
-                            total_h,
-                        );
-                        let scale = interpolate_f64(t, &tl.keyframes, |k| k.scale, 1.0);
-                        let sx = interpolate_f64(t, &tl.keyframes, |k| k.scale_x, scale);
-                        let sy = interpolate_f64(t, &tl.keyframes, |k| k.scale_y, scale);
-                        let rot = interpolate_f64(t, &tl.keyframes, |k| k.rotation, 0.0);
-                        (op, x, y, sx, sy, rot)
-                    } else {
-                        (1.0, 0.0, 0.0, 1.0, 1.0, 0.0)
-                    };
-
-                let base_x = resolve_dimension(&position.x, total_w);
-                let base_y = resolve_dimension(&position.y, total_h);
-                let final_x = base_x + x_offset;
-                let final_y = base_y + y_offset;
-
+                let pose = resolve_element_pose(position, timeline, t, total_w, total_h);
                 let w = resolve_dimension(&size.width, total_w);
                 let h = resolve_dimension(&size.height, total_h);
-
-                let chart_theme = crate::tools::openmedia::svg::ChartTheme::dark();
-                let chart_cfg = crate::tools::openmedia::svg::ChartConfig {
-                    chart_type: match chart_type.to_lowercase().as_str() {
-                        "bar" => crate::tools::openmedia::svg::ChartType::Bar,
-                        "line" => crate::tools::openmedia::svg::ChartType::Line,
-                        "pie" => crate::tools::openmedia::svg::ChartType::Pie,
-                        _ => crate::tools::openmedia::svg::ChartType::Bar,
-                    },
-                    data: data.clone(),
-                    title: None,
-                    subtitle: None,
-                    width: w as u32,
-                    height: h as u32,
-                    theme: chart_theme,
-                    legend: crate::tools::openmedia::svg::LegendConfig {
-                        show: false,
-                        position: crate::tools::openmedia::svg::LegendPosition::Bottom,
-                    },
-                    grid: true,
-                    animate: false,
-                    padding: crate::tools::openmedia::svg::Padding {
-                        top: 10.0,
-                        right: 10.0,
-                        bottom: 10.0,
-                        left: 10.0,
-                    },
-                };
-
-                let chart_xml = crate::tools::openmedia::svg::generate_chart(&chart_cfg)
-                    .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
+                let chart_xml = render_chart_element_xml(chart_type, data, w, h)?;
 
                 elements_html.push_str(&format!(
                     r#"<div class="element" style="left: {}px; top: {}px; width: {}px; height: {}px; opacity: {}; transform: rotate({}deg) scale({}, {});">{}</div>"#,
-                    final_x, final_y, w, h, opacity, rotation, scale_x, scale_y, chart_xml
+                    pose.final_x, pose.final_y, w, h, pose.opacity, pose.rotation, pose.scale_x, pose.scale_y, chart_xml
                 ));
             }
             _ => {}
@@ -1605,24 +1246,17 @@ fn render_scene_elements_to_html(s: &Scene, t: f64, width: u32, height: u32) -> 
 
 pub fn apply_transition_easing(progress: f64, easing: Option<&str>) -> f64 {
     let progress = progress.clamp(0.0, 1.0);
-    if let Some(eas) = easing {
-        let eas = eas.trim();
-        if eas.eq_ignore_ascii_case("ease_in") || eas.eq_ignore_ascii_case("ease-in") {
-            progress * progress
-        } else if eas.eq_ignore_ascii_case("ease_out") || eas.eq_ignore_ascii_case("ease-out") {
-            progress * (2.0 - progress)
-        } else if eas.eq_ignore_ascii_case("ease_in_out") || eas.eq_ignore_ascii_case("ease-in-out")
-        {
-            if progress < 0.5 {
-                2.0 * progress * progress
-            } else {
-                -1.0 + (4.0 - 2.0 * progress) * progress
-            }
-        } else {
-            progress
-        }
-    } else {
-        progress
+    match easing.map(|e| e.trim().to_ascii_lowercase()) {
+        Some(eas) => match eas.as_str() {
+            "ease_in" | "ease-in" => progress * progress,
+            "ease_out" | "ease-out" => progress * (2.0 - progress),
+            "ease_in_out" | "ease-in-out" => match progress < 0.5 {
+                true => 2.0 * progress * progress,
+                false => -1.0 + (4.0 - 2.0 * progress) * progress,
+            },
+            _ => progress,
+        },
+        None => progress,
     }
 }
 
@@ -1700,6 +1334,27 @@ fn box_blur(img: &image::RgbaImage, radius: usize) -> image::RgbaImage {
     out
 }
 
+fn crossfade_into(
+    out: &mut image::RgbaImage,
+    from: &image::RgbaImage,
+    to: &image::RgbaImage,
+    progress: f64,
+) {
+    let w = from.width();
+    let h = from.height();
+    for y in 0..h {
+        for x in 0..w {
+            let p1 = from.get_pixel(x, y);
+            let p2 = to.get_pixel(x, y);
+            let r = (p1[0] as f64 * (1.0 - progress) + p2[0] as f64 * progress) as u8;
+            let g = (p1[1] as f64 * (1.0 - progress) + p2[1] as f64 * progress) as u8;
+            let b = (p1[2] as f64 * (1.0 - progress) + p2[2] as f64 * progress) as u8;
+            let a = (p1[3] as f64 * (1.0 - progress) + p2[3] as f64 * progress) as u8;
+            out.put_pixel(x, y, image::Rgba([r, g, b, a]));
+        }
+    }
+}
+
 // === Unified Video compiler and renderer ===
 pub fn blend_frames(
     from: &image::RgbaImage,
@@ -1712,30 +1367,17 @@ pub fn blend_frames(
     let mut out = image::RgbaImage::new(w, h);
 
     match trans_type {
-        TransitionType::Crossfade => {
-            for y in 0..h {
-                for x in 0..w {
-                    let p1 = from.get_pixel(x, y);
-                    let p2 = to.get_pixel(x, y);
-                    let r = (p1[0] as f64 * (1.0 - progress) + p2[0] as f64 * progress) as u8;
-                    let g = (p1[1] as f64 * (1.0 - progress) + p2[1] as f64 * progress) as u8;
-                    let b = (p1[2] as f64 * (1.0 - progress) + p2[2] as f64 * progress) as u8;
-                    let a = (p1[3] as f64 * (1.0 - progress) + p2[3] as f64 * progress) as u8;
-                    out.put_pixel(x, y, image::Rgba([r, g, b, a]));
-                }
-            }
-        }
+        TransitionType::Crossfade => crossfade_into(&mut out, from, to, progress),
         TransitionType::SlideLeft => {
             let offset = (progress * w as f64) as i32;
             for y in 0..h {
                 for x in 0..w {
                     let target_x = x as i32 + offset;
-                    if target_x < w as i32 {
-                        out.put_pixel(x, y, *from.get_pixel(target_x as u32, y));
-                    } else {
-                        let to_x = target_x - w as i32;
-                        out.put_pixel(x, y, *to.get_pixel(to_x as u32, y));
-                    }
+                    let pixel = match target_x < w as i32 {
+                        true => *from.get_pixel(target_x as u32, y),
+                        false => *to.get_pixel((target_x - w as i32) as u32, y),
+                    };
+                    out.put_pixel(x, y, pixel);
                 }
             }
         }
@@ -1744,12 +1386,11 @@ pub fn blend_frames(
             for y in 0..h {
                 for x in 0..w {
                     let target_x = x as i32 - offset;
-                    if target_x >= 0 {
-                        out.put_pixel(x, y, *from.get_pixel(target_x as u32, y));
-                    } else {
-                        let to_x = target_x + w as i32;
-                        out.put_pixel(x, y, *to.get_pixel(to_x as u32, y));
-                    }
+                    let pixel = match target_x >= 0 {
+                        true => *from.get_pixel(target_x as u32, y),
+                        false => *to.get_pixel((target_x + w as i32) as u32, y),
+                    };
+                    out.put_pixel(x, y, pixel);
                 }
             }
         }
@@ -1758,12 +1399,11 @@ pub fn blend_frames(
             for y in 0..h {
                 for x in 0..w {
                     let target_y = y as i32 + offset;
-                    if target_y < h as i32 {
-                        out.put_pixel(x, y, *from.get_pixel(x, target_y as u32));
-                    } else {
-                        let to_y = target_y - h as i32;
-                        out.put_pixel(x, y, *to.get_pixel(x, to_y as u32));
-                    }
+                    let pixel = match target_y < h as i32 {
+                        true => *from.get_pixel(x, target_y as u32),
+                        false => *to.get_pixel(x, (target_y - h as i32) as u32),
+                    };
+                    out.put_pixel(x, y, pixel);
                 }
             }
         }
@@ -1772,12 +1412,11 @@ pub fn blend_frames(
             for y in 0..h {
                 for x in 0..w {
                     let target_y = y as i32 - offset;
-                    if target_y >= 0 {
-                        out.put_pixel(x, y, *from.get_pixel(x, target_y as u32));
-                    } else {
-                        let to_y = target_y + h as i32;
-                        out.put_pixel(x, y, *to.get_pixel(x, to_y as u32));
-                    }
+                    let pixel = match target_y >= 0 {
+                        true => *from.get_pixel(x, target_y as u32),
+                        false => *to.get_pixel(x, (target_y + h as i32) as u32),
+                    };
+                    out.put_pixel(x, y, pixel);
                 }
             }
         }
@@ -1785,11 +1424,11 @@ pub fn blend_frames(
             let boundary = ((1.0 - progress) * w as f64) as u32;
             for y in 0..h {
                 for x in 0..w {
-                    if x < boundary {
-                        out.put_pixel(x, y, *from.get_pixel(x, y));
-                    } else {
-                        out.put_pixel(x, y, *to.get_pixel(x, y));
-                    }
+                    let pixel = match x < boundary {
+                        true => *from.get_pixel(x, y),
+                        false => *to.get_pixel(x, y),
+                    };
+                    out.put_pixel(x, y, pixel);
                 }
             }
         }
@@ -1797,43 +1436,24 @@ pub fn blend_frames(
             let boundary = (progress * w as f64) as u32;
             for y in 0..h {
                 for x in 0..w {
-                    if x < boundary {
-                        out.put_pixel(x, y, *to.get_pixel(x, y));
-                    } else {
-                        out.put_pixel(x, y, *from.get_pixel(x, y));
-                    }
+                    let pixel = match x < boundary {
+                        true => *to.get_pixel(x, y),
+                        false => *from.get_pixel(x, y),
+                    };
+                    out.put_pixel(x, y, pixel);
                 }
             }
         }
         TransitionType::Blur => {
             let intensity = 1.0 - (progress - 0.5).abs() * 2.0;
             let radius = (intensity * 10.0).round() as usize;
-            if radius > 0 {
-                let blurred_from = box_blur(from, radius);
-                let blurred_to = box_blur(to, radius);
-                for y in 0..h {
-                    for x in 0..w {
-                        let p1 = blurred_from.get_pixel(x, y);
-                        let p2 = blurred_to.get_pixel(x, y);
-                        let r = (p1[0] as f64 * (1.0 - progress) + p2[0] as f64 * progress) as u8;
-                        let g = (p1[1] as f64 * (1.0 - progress) + p2[1] as f64 * progress) as u8;
-                        let b = (p1[2] as f64 * (1.0 - progress) + p2[2] as f64 * progress) as u8;
-                        let a = (p1[3] as f64 * (1.0 - progress) + p2[3] as f64 * progress) as u8;
-                        out.put_pixel(x, y, image::Rgba([r, g, b, a]));
-                    }
+            match radius > 0 {
+                true => {
+                    let blurred_from = box_blur(from, radius);
+                    let blurred_to = box_blur(to, radius);
+                    crossfade_into(&mut out, &blurred_from, &blurred_to, progress);
                 }
-            } else {
-                for y in 0..h {
-                    for x in 0..w {
-                        let p1 = from.get_pixel(x, y);
-                        let p2 = to.get_pixel(x, y);
-                        let r = (p1[0] as f64 * (1.0 - progress) + p2[0] as f64 * progress) as u8;
-                        let g = (p1[1] as f64 * (1.0 - progress) + p2[1] as f64 * progress) as u8;
-                        let b = (p1[2] as f64 * (1.0 - progress) + p2[2] as f64 * progress) as u8;
-                        let a = (p1[3] as f64 * (1.0 - progress) + p2[3] as f64 * progress) as u8;
-                        out.put_pixel(x, y, image::Rgba([r, g, b, a]));
-                    }
-                }
+                false => crossfade_into(&mut out, from, to, progress),
             }
         }
         TransitionType::Glitch => {
@@ -1841,16 +1461,14 @@ pub fn blend_frames(
             let disp_max = (intensity * 15.0) as i32;
 
             for y in 0..h {
-                // scanline row displacement
                 let mut seed = y + (progress * 1000.0) as u32;
                 seed ^= seed << 13;
                 seed ^= seed >> 17;
                 seed ^= seed << 5;
 
-                let offset_x = if seed % 100 < (intensity * 40.0) as u32 {
-                    ((seed % 31) as i32 - 15) * disp_max / 15
-                } else {
-                    0
+                let offset_x = match seed % 100 < (intensity * 40.0) as u32 {
+                    true => ((seed % 31) as i32 - 15) * disp_max / 15,
+                    false => 0,
                 };
 
                 for x in 0..w {
@@ -1860,30 +1478,29 @@ pub fn blend_frames(
                         img.get_pixel(target_x, y)[channel]
                     };
 
-                    // Read split channels from source
                     let r1 = get_chan(from, 0, offset_x - 3);
                     let g1 = get_chan(from, 1, offset_x);
                     let b1 = get_chan(from, 2, offset_x + 3);
                     let a1 = get_chan(from, 3, offset_x);
 
-                    // Read split channels from target
                     let r2 = get_chan(to, 0, offset_x - 3);
                     let g2 = get_chan(to, 1, offset_x);
                     let b2 = get_chan(to, 2, offset_x + 3);
                     let a2 = get_chan(to, 3, offset_x);
 
-                    // Blend channels
                     let mut r = (r1 as f64 * (1.0 - progress) + r2 as f64 * progress) as i32;
                     let mut g = (g1 as f64 * (1.0 - progress) + g2 as f64 * progress) as i32;
                     let mut b = (b1 as f64 * (1.0 - progress) + b2 as f64 * progress) as i32;
                     let a = (a1 as f64 * (1.0 - progress) + a2 as f64 * progress) as u8;
 
-                    // Add a touch of noise/static
-                    if intensity > 0.1 && seed.is_multiple_of(97) {
-                        let noise = ((seed % 51) as i32 - 25) * (intensity * 2.0) as i32;
-                        r = (r + noise).clamp(0, 255);
-                        g = (g + noise).clamp(0, 255);
-                        b = (b + noise).clamp(0, 255);
+                    match intensity > 0.1 && seed.is_multiple_of(97) {
+                        true => {
+                            let noise = ((seed % 51) as i32 - 25) * (intensity * 2.0) as i32;
+                            r = (r + noise).clamp(0, 255);
+                            g = (g + noise).clamp(0, 255);
+                            b = (b + noise).clamp(0, 255);
+                        }
+                        false => {}
                     }
 
                     out.put_pixel(x, y, image::Rgba([r as u8, g as u8, b as u8, a]));
@@ -1897,29 +1514,17 @@ pub fn blend_frames(
                 for x in 0..w {
                     let dx = x as f64 - cx;
                     let dy = y as f64 - cy;
-                    let angle = dy.atan2(dx) + std::f64::consts::PI; // [0, 2*PI]
+                    let angle = dy.atan2(dx) + std::f64::consts::PI;
                     let angle_ratio = angle / (2.0 * std::f64::consts::PI);
-                    if angle_ratio < progress {
-                        out.put_pixel(x, y, *to.get_pixel(x, y));
-                    } else {
-                        out.put_pixel(x, y, *from.get_pixel(x, y));
-                    }
+                    let pixel = match angle_ratio < progress {
+                        true => *to.get_pixel(x, y),
+                        false => *from.get_pixel(x, y),
+                    };
+                    out.put_pixel(x, y, pixel);
                 }
             }
         }
-        _ => {
-            for y in 0..h {
-                for x in 0..w {
-                    let p1 = from.get_pixel(x, y);
-                    let p2 = to.get_pixel(x, y);
-                    let r = (p1[0] as f64 * (1.0 - progress) + p2[0] as f64 * progress) as u8;
-                    let g = (p1[1] as f64 * (1.0 - progress) + p2[1] as f64 * progress) as u8;
-                    let b = (p1[2] as f64 * (1.0 - progress) + p2[2] as f64 * progress) as u8;
-                    let a = (p1[3] as f64 * (1.0 - progress) + p2[3] as f64 * progress) as u8;
-                    out.put_pixel(x, y, image::Rgba([r, g, b, a]));
-                }
-            }
-        }
+        _ => crossfade_into(&mut out, from, to, progress),
     }
     out
 }
@@ -1928,6 +1533,42 @@ pub fn blend_frames(
 enum CacheEntry {
     Success(Vec<u8>),
     Failure(std::time::Instant),
+}
+
+async fn fetch_and_cache_remote_font(
+    client: &reqwest::Client,
+    src: &str,
+    cache_dir: &Path,
+) -> Option<Vec<u8>> {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    let mut hasher = DefaultHasher::new();
+    src.hash(&mut hasher);
+    let hash_val = hasher.finish();
+    let cached_path = cache_dir.join(format!("{}.ttf", hash_val));
+
+    match tokio::fs::metadata(&cached_path).await.is_ok() {
+        true => tokio::fs::read(&cached_path).await.ok(),
+        false => {
+            let resp = client.get(src).send().await.ok()?;
+            let bytes = resp.bytes().await.ok()?;
+            let bytes_vec = bytes.to_vec();
+            let temp_file_name = format!("{}.tmp", uuid::Uuid::new_v4());
+            let temp_path = cache_dir.join(temp_file_name);
+            let write_ok = tokio::fs::write(&temp_path, &bytes_vec).await.is_ok();
+            let rename_err = match write_ok {
+                true => tokio::fs::rename(&temp_path, &cached_path).await.is_err(),
+                false => false,
+            };
+            match rename_err {
+                true => {
+                    let _ = tokio::fs::remove_file(&temp_path).await;
+                }
+                false => {}
+            }
+            Some(bytes_vec)
+        }
+    }
 }
 
 pub async fn resolve_custom_fonts(
@@ -1953,81 +1594,79 @@ pub async fn resolve_custom_fonts(
     let _ = tokio::fs::create_dir_all(&cache_dir).await;
 
     for font in custom_fonts {
-        // Check memory cache first
-        let mut cached_bytes = None;
-        let mut is_cached_failure = false;
+        let cached_entry = cache
+            .lock()
+            .ok()
+            .and_then(|guard| guard.get(&font.src).cloned());
 
-        if let Ok(guard) = cache.lock() {
-            if let Some(entry) = guard.get(&font.src) {
-                match entry {
-                    CacheEntry::Success(bytes) => {
-                        cached_bytes = Some(bytes.clone());
-                    }
-                    CacheEntry::Failure(instant) => {
-                        if instant.elapsed() <= std::time::Duration::from_secs(60) {
-                            is_cached_failure = true;
-                        }
-                    }
+        match cached_entry {
+            Some(CacheEntry::Success(bytes)) => {
+                resolved.insert(font.family.clone(), bytes);
+                continue;
+            }
+            Some(CacheEntry::Failure(instant)) => {
+                match instant.elapsed() <= std::time::Duration::from_secs(60) {
+                    true => continue,
+                    false => {}
                 }
             }
+            None => {}
         }
 
-        if let Some(bytes) = cached_bytes {
-            resolved.insert(font.family.clone(), bytes);
-            continue;
-        }
-        if is_cached_failure {
-            continue;
-        }
-
-        // If not in cache, attempt resolution
-        let font_bytes = if font.src.starts_with("http://") || font.src.starts_with("https://") {
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut hasher = DefaultHasher::new();
-            font.src.hash(&mut hasher);
-            let hash_val = hasher.finish();
-            let cached_path = cache_dir.join(format!("{}.ttf", hash_val));
-
-            if tokio::fs::metadata(&cached_path).await.is_ok() {
-                tokio::fs::read(&cached_path).await.ok()
-            } else {
-                if let Ok(resp) = client.get(&font.src).send().await {
-                    if let Ok(bytes) = resp.bytes().await {
-                        let bytes_vec = bytes.to_vec();
-                        let temp_file_name = format!("{}.tmp", uuid::Uuid::new_v4());
-                        let temp_path = cache_dir.join(temp_file_name);
-                        if tokio::fs::write(&temp_path, &bytes_vec).await.is_ok()
-                            && tokio::fs::rename(&temp_path, &cached_path).await.is_err()
-                        {
-                            let _ = tokio::fs::remove_file(&temp_path).await;
-                        }
-                        Some(bytes_vec)
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-        } else {
-            tokio::fs::read(&font.src).await.ok()
+        let is_remote = font.src.starts_with("http://") || font.src.starts_with("https://");
+        let font_bytes = match is_remote {
+            true => fetch_and_cache_remote_font(client, &font.src, &cache_dir).await,
+            false => tokio::fs::read(&font.src).await.ok(),
         };
 
-        // Cache the result (Some(bytes) if resolution succeeded, Failure if it failed)
-        if let Ok(mut guard) = cache.lock() {
-            let entry = match &font_bytes {
-                Some(bytes) => CacheEntry::Success(bytes.clone()),
-                None => CacheEntry::Failure(std::time::Instant::now()),
-            };
-            guard.insert(font.src.clone(), entry);
+        match cache.lock() {
+            Ok(mut guard) => {
+                let entry = match &font_bytes {
+                    Some(bytes) => CacheEntry::Success(bytes.clone()),
+                    None => CacheEntry::Failure(std::time::Instant::now()),
+                };
+                guard.insert(font.src.clone(), entry);
+            }
+            Err(_) => {}
         }
 
-        if let Some(bytes) = font_bytes {
-            resolved.insert(font.family.clone(), bytes);
+        match font_bytes {
+            Some(bytes) => {
+                resolved.insert(font.family.clone(), bytes);
+            }
+            None => {}
         }
     }
     resolved
+}
+
+async fn write_rendered_frames<R: FrameRenderer>(
+    renderer: &R,
+    scene: &VideoScene,
+    total_frames: u32,
+    fps: u32,
+    width: u32,
+    height: u32,
+    stdin: &mut tokio::process::ChildStdin,
+) -> Result<()> {
+    for f in 0..total_frames {
+        let t = f as f64 / fps as f64;
+        let frame = renderer.render_frame(scene, t, width, height).await?;
+        let rgb_frame = image::DynamicImage::ImageRgba8(frame).into_rgb8();
+        let mut bytes = Vec::new();
+        let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 95);
+        rgb_frame
+            .write_with_encoder(encoder)
+            .map_err(|e| OpenMediaError::ImageEncodeError {
+                format: "jpeg".to_string(),
+                reason: e.to_string(),
+            })?;
+        stdin
+            .write_all(&bytes)
+            .await
+            .map_err(OpenMediaError::IoError)?;
+    }
+    Ok(())
 }
 
 pub async fn render_video_scene(
@@ -2047,7 +1686,10 @@ pub async fn render_video_scene(
             .any(|el| matches!(el, SceneElement::Html { .. } | SceneElement::Code { .. }))
     });
 
-    let renderer_name = if use_browser { "browser" } else { "svg" };
+    let renderer_name = match use_browser {
+        true => "browser",
+        false => "svg",
+    };
     let temp_silent = output_path.with_extension("silent.mp4");
 
     // Spawn FFmpeg pipe
@@ -2083,123 +1725,104 @@ pub async fn render_video_scene(
         .take()
         .ok_or_else(|| OpenMediaError::Internal("Failed to open FFmpeg stdin".into()))?;
 
-    if use_browser {
-        let renderer = BrowserFrameRenderer::launch().await?;
-        for f in 0..total_frames {
-            let t = f as f64 / fps as f64;
-            let frame = renderer.render_frame(scene, t, width, height).await?;
-            let rgb_frame = image::DynamicImage::ImageRgba8(frame).into_rgb8();
-            let mut bytes = Vec::new();
-            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 95);
-            rgb_frame.write_with_encoder(encoder).map_err(|e| {
-                OpenMediaError::ImageEncodeError {
-                    format: "jpeg".to_string(),
-                    reason: e.to_string(),
-                }
-            })?;
-            stdin
-                .write_all(&bytes)
-                .await
-                .map_err(OpenMediaError::IoError)?;
+    match use_browser {
+        true => {
+            let renderer = BrowserFrameRenderer::launch().await?;
+            write_rendered_frames(&renderer, scene, total_frames, fps, width, height, &mut stdin)
+                .await?;
+            renderer.close().await;
         }
-        renderer.close().await;
-    } else {
-        let renderer = SvgFrameRenderer;
-        for f in 0..total_frames {
-            let t = f as f64 / fps as f64;
-            let frame = renderer.render_frame(scene, t, width, height).await?;
-            let rgb_frame = image::DynamicImage::ImageRgba8(frame).into_rgb8();
-            let mut bytes = Vec::new();
-            let encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 95);
-            rgb_frame.write_with_encoder(encoder).map_err(|e| {
-                OpenMediaError::ImageEncodeError {
-                    format: "jpeg".to_string(),
-                    reason: e.to_string(),
-                }
-            })?;
-            stdin
-                .write_all(&bytes)
-                .await
-                .map_err(OpenMediaError::IoError)?;
+        false => {
+            let renderer = SvgFrameRenderer;
+            write_rendered_frames(&renderer, scene, total_frames, fps, width, height, &mut stdin)
+                .await?;
         }
     }
 
     drop(stdin);
     let status = child.wait().await.map_err(OpenMediaError::IoError)?;
-    if !status.success() {
-        return Err(OpenMediaError::Internal(format!(
-            "FFmpeg frame rendering failed with exit status {:?}",
-            status.code()
-        )));
-    }
-
-    // Mix audio if present
-    if let Some(audio_cfg) = &scene.audio {
-        let mut audio_cmd = tokio::process::Command::new("ffmpeg");
-        audio_cmd.arg("-y").arg("-i").arg(&temp_silent);
-
-        for track in &audio_cfg.tracks {
-            audio_cmd.arg("-i").arg(&track.src);
-        }
-
-        // Generate filter_complex script to delay and volume blend
-        let mut filter_complex = String::new();
-        for (i, track) in audio_cfg.tracks.iter().enumerate() {
-            let delay_ms = (track.start * 1000.0) as i32;
-            let idx = i + 1;
-            filter_complex.push_str(&format!(
-                "[{}:a]adelay={}|{},volume={}[a{}];",
-                idx, delay_ms, delay_ms, track.volume, idx
-            ));
-        }
-
-        for i in 0..audio_cfg.tracks.len() {
-            filter_complex.push_str(&format!("[a{}]", i + 1));
-        }
-        filter_complex.push_str(&format!(
-            "amix=inputs={}:duration=first[out_a]",
-            audio_cfg.tracks.len()
-        ));
-
-        audio_cmd
-            .args([
-                "-filter_complex",
-                &filter_complex,
-                "-map",
-                "0:v",
-                "-map",
-                "[out_a]",
-                "-c:v",
-                "copy",
-                "-c:a",
-                "aac",
-            ])
-            .arg(output_path);
-
-        audio_cmd
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped());
-
-        let mix_child = audio_cmd.spawn().map_err(OpenMediaError::IoError)?;
-        let output = mix_child
-            .wait_with_output()
-            .await
-            .map_err(OpenMediaError::IoError)?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            return Err(OpenMediaError::EncodingError(format!(
-                "FFmpeg audio mixing failed with status {:?}.\nStdout: {}\nStderr: {}",
-                output.status.code(),
-                stdout,
-                stderr
+    match status.success() {
+        true => {}
+        false => {
+            return Err(OpenMediaError::Internal(format!(
+                "FFmpeg frame rendering failed with exit status {:?}",
+                status.code()
             )));
         }
+    }
 
-        let _ = std::fs::remove_file(temp_silent);
-    } else {
-        std::fs::rename(temp_silent, output_path).map_err(OpenMediaError::IoError)?;
+    // Mix audio when present
+    match &scene.audio {
+        Some(audio_cfg) => {
+            let mut audio_cmd = tokio::process::Command::new("ffmpeg");
+            audio_cmd.arg("-y").arg("-i").arg(&temp_silent);
+
+            for track in &audio_cfg.tracks {
+                audio_cmd.arg("-i").arg(&track.src);
+            }
+
+            let mut filter_complex = String::new();
+            for (i, track) in audio_cfg.tracks.iter().enumerate() {
+                let delay_ms = (track.start * 1000.0) as i32;
+                let idx = i + 1;
+                filter_complex.push_str(&format!(
+                    "[{}:a]adelay={}|{},volume={}[a{}];",
+                    idx, delay_ms, delay_ms, track.volume, idx
+                ));
+            }
+
+            for i in 0..audio_cfg.tracks.len() {
+                filter_complex.push_str(&format!("[a{}]", i + 1));
+            }
+            filter_complex.push_str(&format!(
+                "amix=inputs={}:duration=first[out_a]",
+                audio_cfg.tracks.len()
+            ));
+
+            audio_cmd
+                .args([
+                    "-filter_complex",
+                    &filter_complex,
+                    "-map",
+                    "0:v",
+                    "-map",
+                    "[out_a]",
+                    "-c:v",
+                    "copy",
+                    "-c:a",
+                    "aac",
+                ])
+                .arg(output_path);
+
+            audio_cmd
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+
+            let mix_child = audio_cmd.spawn().map_err(OpenMediaError::IoError)?;
+            let output = mix_child
+                .wait_with_output()
+                .await
+                .map_err(OpenMediaError::IoError)?;
+
+            match output.status.success() {
+                true => {}
+                false => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    return Err(OpenMediaError::EncodingError(format!(
+                        "FFmpeg audio mixing failed with status {:?}.\nStdout: {}\nStderr: {}",
+                        output.status.code(),
+                        stdout,
+                        stderr
+                    )));
+                }
+            }
+
+            let _ = std::fs::remove_file(temp_silent);
+        }
+        None => {
+            std::fs::rename(temp_silent, output_path).map_err(OpenMediaError::IoError)?;
+        }
     }
 
     let file_size = std::fs::metadata(output_path).map(|m| m.len()).unwrap_or(0);
@@ -2260,8 +1883,9 @@ pub async fn html_to_image(
 
     tokio::spawn(async move {
         while let Some(h) = handler.next().await {
-            if let Err(err) = h {
-                tracing::error!("Legacy browser handler error: {:?}", err);
+            match h {
+                Err(err) => tracing::error!("Legacy browser handler error: {:?}", err),
+                Ok(_) => {}
             }
         }
     });
@@ -2272,19 +1896,21 @@ pub async fn html_to_image(
         .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
 
     let html_path = Path::new(html_content);
-    if html_path.exists() && html_path.is_file() {
-        let abs_path = html_path.canonicalize().map_err(OpenMediaError::IoError)?;
-        let url = format!("file://{}", abs_path.to_string_lossy());
-        page.goto(&url)
-            .await
-            .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
-    } else {
-        page.set_content(html_content)
-            .await
-            .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
+    match html_path.exists() && html_path.is_file() {
+        true => {
+            let abs_path = html_path.canonicalize().map_err(OpenMediaError::IoError)?;
+            let url = format!("file://{}", abs_path.to_string_lossy());
+            page.goto(&url)
+                .await
+                .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
+        }
+        false => {
+            page.set_content(html_content)
+                .await
+                .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
+        }
     }
 
-    // Give headless Chrome a delay (200ms) to ensure resources and layouts are fully loaded/rendered
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let clean_format = format.to_lowercase();

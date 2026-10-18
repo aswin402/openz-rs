@@ -10,37 +10,38 @@ pub(crate) fn parse_json_value_field(
     value: &serde_json::Value,
     field_name: &str,
 ) -> Result<serde_json::Value, String> {
-    if let Some(raw) = value.as_str() {
-        let trimmed = raw.trim();
-        if trimmed.starts_with('{') || trimmed.starts_with('[') {
-            return serde_json::from_str(trimmed)
-                .map_err(|e| format!("failed to parse {field_name} JSON string: {e}"));
-        }
+    match value.as_str().map(str::trim) {
+        Some(trimmed) => match trimmed.starts_with('{') || trimmed.starts_with('[') {
+            true => serde_json::from_str(trimmed)
+                .map_err(|e| format!("failed to parse {field_name} JSON string: {e}")),
+            false => Ok(value.clone()),
+        },
+        None => Ok(value.clone()),
     }
-    Ok(value.clone())
 }
 
 pub(crate) fn parse_video_scene_value(value: &serde_json::Value) -> Result<VideoScene, String> {
-    if let Some(raw) = value.as_str() {
-        let trimmed = raw.trim();
-        if trimmed.starts_with('{') {
-            return serde_json::from_str(trimmed)
-                .map_err(|e| format!("failed to parse scene JSON string: {e}"));
-        }
-
-        let path = std::path::Path::new(trimmed);
-        if path.exists() && path.is_file() {
-            let s = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
-            return serde_json::from_str(&s)
-                .map_err(|e| format!("failed to parse scene file '{}': {e}", path.display()));
-        }
-
-        return Err(format!(
-            "scene string must be a VideoScene JSON object string or an existing file path: {trimmed}"
-        ));
+    match value.as_str().map(str::trim) {
+        Some(trimmed) => match trimmed.starts_with('{') {
+            true => serde_json::from_str(trimmed)
+                .map_err(|e| format!("failed to parse scene JSON string: {e}")),
+            false => {
+                let path = std::path::Path::new(trimmed);
+                match path.exists() && path.is_file() {
+                    true => {
+                        let s = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+                        serde_json::from_str(&s).map_err(|e| {
+                            format!("failed to parse scene file '{}': {e}", path.display())
+                        })
+                    }
+                    false => Err(format!(
+                        "scene string must be a VideoScene JSON object string or an existing file path: {trimmed}"
+                    )),
+                }
+            }
+        },
+        None => serde_json::from_value(value.clone()).map_err(|e| e.to_string()),
     }
-
-    serde_json::from_value(value.clone()).map_err(|e| e.to_string())
 }
 
 pub(crate) fn parse_easing(s: Option<&str>) -> crate::tools::openmedia::animate::Easing {
@@ -67,20 +68,20 @@ pub(crate) fn parse_easing(s: Option<&str>) -> crate::tools::openmedia::animate:
             damping: 10.0,
             mass: 1.0,
         },
-        _ => {
-            if name.starts_with("cubic-bezier(") && name.ends_with(')') {
-                let content = &name["cubic-bezier(".len()..name.len() - 1];
+        _ => name
+            .strip_prefix("cubic-bezier(")
+            .and_then(|rest| rest.strip_suffix(')'))
+            .and_then(|content| {
                 let parts: Vec<&str> = content.split(',').map(|p| p.trim()).collect();
-                if parts.len() == 4 {
+                (parts.len() == 4).then(|| {
                     let x1 = parts[0].parse::<f64>().unwrap_or(0.25);
                     let y1 = parts[1].parse::<f64>().unwrap_or(0.1);
                     let x2 = parts[2].parse::<f64>().unwrap_or(0.25);
                     let y2 = parts[3].parse::<f64>().unwrap_or(1.0);
-                    return crate::tools::openmedia::animate::Easing::CubicBezier(x1, y1, x2, y2);
-                }
-            }
-            crate::tools::openmedia::animate::Easing::Linear
-        }
+                    crate::tools::openmedia::animate::Easing::CubicBezier(x1, y1, x2, y2)
+                })
+            })
+            .unwrap_or(crate::tools::openmedia::animate::Easing::Linear),
     }
 }
 
@@ -113,13 +114,9 @@ pub(crate) fn inject_css_class(svg: &str, element_id: &str, class_name: &str) ->
     let clean_id = element_id.trim_start_matches('#');
     let patterns = [format!("id=\"{}\"", clean_id), format!("id='{}'", clean_id)];
 
-    let mut found_pos = None;
-    for pat in &patterns {
-        if let Some(pos) = svg.find(pat) {
-            found_pos = Some((pos, pat.len()));
-            break;
-        }
-    }
+    let found_pos = patterns
+        .iter()
+        .find_map(|pat| svg.find(pat.as_str()).map(|pos| (pos, pat.len())));
 
     let (pos, _pat_len) = match found_pos {
         Some(p) => p,
@@ -140,21 +137,29 @@ pub(crate) fn inject_css_class(svg: &str, element_id: &str, class_name: &str) ->
     let class_pat_double = "class=\"";
     let class_pat_single = "class='";
 
-    if let Some(c_pos) = tag_content.find(class_pat_double) {
-        let insert_idx = c_pos + class_pat_double.len();
-        tag_content.insert_str(insert_idx, &format!("{} ", class_name));
-    } else if let Some(c_pos) = tag_content.find(class_pat_single) {
-        let insert_idx = c_pos + class_pat_single.len();
-        tag_content.insert_str(insert_idx, &format!("{} ", class_name));
-    } else if let Some(space_pos) = tag_content.find(' ') {
-        tag_content.insert_str(space_pos, &format!(" class=\"{}\"", class_name));
-    } else {
-        let insert_pos = if tag_content.ends_with("/>") {
-            tag_content.len() - 2
-        } else {
-            tag_content.len() - 1
-        };
-        tag_content.insert_str(insert_pos, &format!(" class=\"{}\" ", class_name));
+    match (
+        tag_content.find(class_pat_double),
+        tag_content.find(class_pat_single),
+        tag_content.find(' '),
+    ) {
+        (Some(c_pos), _, _) => {
+            let insert_idx = c_pos + class_pat_double.len();
+            tag_content.insert_str(insert_idx, &format!("{} ", class_name));
+        }
+        (None, Some(c_pos), _) => {
+            let insert_idx = c_pos + class_pat_single.len();
+            tag_content.insert_str(insert_idx, &format!("{} ", class_name));
+        }
+        (None, None, Some(space_pos)) => {
+            tag_content.insert_str(space_pos, &format!(" class=\"{}\"", class_name));
+        }
+        (None, None, None) => {
+            let insert_pos = match tag_content.ends_with("/>") {
+                true => tag_content.len() - 2,
+                false => tag_content.len() - 1,
+            };
+            tag_content.insert_str(insert_pos, &format!(" class=\"{}\" ", class_name));
+        }
     }
 
     let mut result = svg.to_string();
@@ -164,77 +169,71 @@ pub(crate) fn inject_css_class(svg: &str, element_id: &str, class_name: &str) ->
 
 pub(crate) fn inject_style_or_xml(mut svg: String, content_to_inject: &str) -> String {
     let lower = svg.to_lowercase();
-    if let Some(close_idx) = lower.rfind("</svg>") {
-        svg.insert_str(close_idx, content_to_inject);
-    } else {
-        svg.push_str(content_to_inject);
+    match lower.rfind("</svg>") {
+        Some(close_idx) => svg.insert_str(close_idx, content_to_inject),
+        None => svg.push_str(content_to_inject),
     }
     svg
 }
 
+fn parse_svg_attr_u32(svg: &str, attr_prefix: &str, default_val: u32) -> u32 {
+    svg.find(attr_prefix)
+        .and_then(|pos| {
+            let start = pos + attr_prefix.len();
+            let end = svg[start..].find('"')?;
+            svg[start..start + end].parse::<f64>().ok().map(|v| v as u32)
+        })
+        .unwrap_or(default_val)
+}
+
 pub(crate) fn parse_svg_dimensions(svg: &str) -> (u32, u32) {
-    let mut width = 800;
-    let mut height = 600;
-
-    if let Some(pos) = svg.find("width=\"") {
-        let start = pos + "width=\"".len();
-        if let Some(end) = svg[start..].find('"') {
-            if let Ok(val) = svg[start..start + end].parse::<f64>() {
-                width = val as u32;
-            }
-        }
-    }
-
-    if let Some(pos) = svg.find("height=\"") {
-        let start = pos + "height=\"".len();
-        if let Some(end) = svg[start..].find('"') {
-            if let Ok(val) = svg[start..start + end].parse::<f64>() {
-                height = val as u32;
-            }
-        }
-    }
-
-    (width, height)
+    (
+        parse_svg_attr_u32(svg, "width=\"", 800),
+        parse_svg_attr_u32(svg, "height=\"", 600),
+    )
 }
 
 pub(crate) fn override_theme_fields(
     theme: &mut mermaid_rs_renderer::Theme,
     overrides: &serde_json::Value,
 ) {
-    if let Some(map) = overrides.as_object() {
-        for (key, val) in map {
-            if let Some(val_str) = val.as_str() {
-                match key.as_str() {
-                    "font_family" => theme.font_family = val_str.to_string(),
-                    "primary_color" => theme.primary_color = val_str.to_string(),
-                    "primary_text_color" => theme.primary_text_color = val_str.to_string(),
-                    "primary_border_color" => theme.primary_border_color = val_str.to_string(),
-                    "line_color" => theme.line_color = val_str.to_string(),
-                    "secondary_color" => theme.secondary_color = val_str.to_string(),
-                    "tertiary_color" => theme.tertiary_color = val_str.to_string(),
-                    "edge_label_background" => theme.edge_label_background = val_str.to_string(),
-                    "cluster_background" => theme.cluster_background = val_str.to_string(),
-                    "cluster_border" => theme.cluster_border = val_str.to_string(),
-                    "background" => theme.background = val_str.to_string(),
-                    "sequence_actor_fill" => theme.sequence_actor_fill = val_str.to_string(),
-                    "sequence_actor_border" => theme.sequence_actor_border = val_str.to_string(),
-                    "sequence_actor_line" => theme.sequence_actor_line = val_str.to_string(),
-                    "sequence_note_fill" => theme.sequence_note_fill = val_str.to_string(),
-                    "sequence_note_border" => theme.sequence_note_border = val_str.to_string(),
-                    "sequence_activation_fill" => {
-                        theme.sequence_activation_fill = val_str.to_string()
-                    }
-                    "sequence_activation_border" => {
-                        theme.sequence_activation_border = val_str.to_string()
-                    }
-                    "text_color" => theme.text_color = val_str.to_string(),
-                    _ => {}
+    let map = match overrides.as_object() {
+        Some(m) => m,
+        None => return,
+    };
+    for (key, val) in map {
+        match (val.as_str(), val.as_f64()) {
+            (Some(val_str), _) => match key.as_str() {
+                "font_family" => theme.font_family = val_str.to_string(),
+                "primary_color" => theme.primary_color = val_str.to_string(),
+                "primary_text_color" => theme.primary_text_color = val_str.to_string(),
+                "primary_border_color" => theme.primary_border_color = val_str.to_string(),
+                "line_color" => theme.line_color = val_str.to_string(),
+                "secondary_color" => theme.secondary_color = val_str.to_string(),
+                "tertiary_color" => theme.tertiary_color = val_str.to_string(),
+                "edge_label_background" => theme.edge_label_background = val_str.to_string(),
+                "cluster_background" => theme.cluster_background = val_str.to_string(),
+                "cluster_border" => theme.cluster_border = val_str.to_string(),
+                "background" => theme.background = val_str.to_string(),
+                "sequence_actor_fill" => theme.sequence_actor_fill = val_str.to_string(),
+                "sequence_actor_border" => theme.sequence_actor_border = val_str.to_string(),
+                "sequence_actor_line" => theme.sequence_actor_line = val_str.to_string(),
+                "sequence_note_fill" => theme.sequence_note_fill = val_str.to_string(),
+                "sequence_note_border" => theme.sequence_note_border = val_str.to_string(),
+                "sequence_activation_fill" => {
+                    theme.sequence_activation_fill = val_str.to_string()
                 }
-            } else if let Some(val_f64) = val.as_f64() {
-                if key == "font_size" {
-                    theme.font_size = val_f64 as f32;
+                "sequence_activation_border" => {
+                    theme.sequence_activation_border = val_str.to_string()
                 }
-            }
+                "text_color" => theme.text_color = val_str.to_string(),
+                _ => {}
+            },
+            (None, Some(val_f64)) => match key.as_str() {
+                "font_size" => theme.font_size = val_f64 as f32,
+                _ => {}
+            },
+            (None, None) => {}
         }
     }
 }
@@ -315,46 +314,47 @@ pub(crate) fn parse_transition_params(
 pub(crate) fn parse_audio_config(
     parameters: &serde_json::Value,
 ) -> Option<crate::tools::openmedia::video::AudioConfig> {
-    if let Some(tracks_arr) = parameters.get("audio_tracks").and_then(|v| v.as_array()) {
-        let mut tracks = Vec::new();
-        for track_val in tracks_arr {
-            if let Some(src) = track_val.get("src").and_then(|v| v.as_str()) {
-                let start = track_val
-                    .get("start")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0);
-                let volume = track_val
-                    .get("volume")
-                    .and_then(|v| v.as_f64())
-                    .map(|v| v as f32)
-                    .unwrap_or(1.0);
-                let fade_in = track_val.get("fade_in").and_then(|v| v.as_f64());
-                let fade_out = track_val.get("fade_out").and_then(|v| v.as_f64());
-
-                tracks.push(crate::tools::openmedia::video::AudioTrack {
-                    src: src.to_string(),
-                    start,
-                    volume,
-                    fade_in,
-                    fade_out,
-                });
-            }
+    match parameters.get("audio_tracks").and_then(|v| v.as_array()) {
+        Some(tracks_arr) => {
+            let tracks: Vec<crate::tools::openmedia::video::AudioTrack> = tracks_arr
+                .iter()
+                .filter_map(|track_val| {
+                    let src = track_val.get("src").and_then(|v| v.as_str())?;
+                    let start = track_val
+                        .get("start")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
+                    let volume = track_val
+                        .get("volume")
+                        .and_then(|v| v.as_f64())
+                        .map(|v| v as f32)
+                        .unwrap_or(1.0);
+                    let fade_in = track_val.get("fade_in").and_then(|v| v.as_f64());
+                    let fade_out = track_val.get("fade_out").and_then(|v| v.as_f64());
+                    Some(crate::tools::openmedia::video::AudioTrack {
+                        src: src.to_string(),
+                        start,
+                        volume,
+                        fade_in,
+                        fade_out,
+                    })
+                })
+                .collect();
+            (!tracks.is_empty()).then_some(crate::tools::openmedia::video::AudioConfig { tracks })
         }
-        if !tracks.is_empty() {
-            return Some(crate::tools::openmedia::video::AudioConfig { tracks });
-        }
-    } else if let Some(bg_music) = parameters.get("background_music").and_then(|v| v.as_str()) {
-        return Some(crate::tools::openmedia::video::AudioConfig {
-            tracks: vec![crate::tools::openmedia::video::AudioTrack {
-                src: bg_music.to_string(),
-                start: 0.0,
-                volume: 0.5,
-                fade_in: None,
-                fade_out: None,
-            }],
-        });
+        None => parameters
+            .get("background_music")
+            .and_then(|v| v.as_str())
+            .map(|bg_music| crate::tools::openmedia::video::AudioConfig {
+                tracks: vec![crate::tools::openmedia::video::AudioTrack {
+                    src: bg_music.to_string(),
+                    start: 0.0,
+                    volume: 0.5,
+                    fade_in: None,
+                    fade_out: None,
+                }],
+            }),
     }
-    None
 }
 
 pub(crate) fn get_templates_dir() -> std::path::PathBuf {
@@ -371,15 +371,18 @@ pub(crate) fn interpolate_template(
 ) -> Result<serde_json::Value, String> {
     let mut template_str = serde_json::to_string(template_json).map_err(|e| e.to_string())?;
 
-    if let Some(obj) = parameters.as_object() {
-        for (key, val) in obj {
-            let placeholder = format!("{{{{{}}}}}", key);
-            let replacement = match val {
-                serde_json::Value::String(s) => s.clone(),
-                other => other.to_string(),
-            };
-            template_str = template_str.replace(&placeholder, &replacement);
+    match parameters.as_object() {
+        Some(obj) => {
+            for (key, val) in obj {
+                let placeholder = format!("{{{{{}}}}}", key);
+                let replacement = match val {
+                    serde_json::Value::String(s) => s.clone(),
+                    other => other.to_string(),
+                };
+                template_str = template_str.replace(&placeholder, &replacement);
+            }
         }
+        None => {}
     }
 
     serde_json::from_str(&template_str)
@@ -389,24 +392,19 @@ pub(crate) fn interpolate_template(
 pub(crate) fn parse_custom_fonts(
     parameters: &serde_json::Value,
 ) -> Option<Vec<crate::tools::openmedia::video::CustomFontSpec>> {
-    if let Some(fonts_arr) = parameters.get("custom_fonts").and_then(|v| v.as_array()) {
-        let mut specs = Vec::new();
-        for font_val in fonts_arr {
-            if let (Some(family), Some(src)) = (
-                font_val.get("family").and_then(|v| v.as_str()),
-                font_val.get("src").and_then(|v| v.as_str()),
-            ) {
-                specs.push(crate::tools::openmedia::video::CustomFontSpec {
-                    family: family.to_string(),
-                    src: src.to_string(),
-                });
-            }
-        }
-        if !specs.is_empty() {
-            return Some(specs);
-        }
-    }
-    None
+    let fonts_arr = parameters.get("custom_fonts").and_then(|v| v.as_array())?;
+    let specs: Vec<crate::tools::openmedia::video::CustomFontSpec> = fonts_arr
+        .iter()
+        .filter_map(|font_val| {
+            let family = font_val.get("family").and_then(|v| v.as_str())?;
+            let src = font_val.get("src").and_then(|v| v.as_str())?;
+            Some(crate::tools::openmedia::video::CustomFontSpec {
+                family: family.to_string(),
+                src: src.to_string(),
+            })
+        })
+        .collect();
+    (!specs.is_empty()).then_some(specs)
 }
 
 pub fn parse_transition_type(s: &str) -> crate::tools::openmedia::video::TransitionType {
@@ -441,15 +439,15 @@ pub fn parse_transition_type_with_fallback(
 
 pub(crate) fn resolve_content_or_file(input: &str) -> Result<String, String> {
     let trimmed = input.trim();
-    if trimmed.starts_with('<') || trimmed.starts_with('{') {
-        Ok(input.to_string())
-    } else {
-        let path = std::path::Path::new(trimmed);
-        if path.exists() && path.is_file() {
-            std::fs::read_to_string(path)
-                .map_err(|e| format!("Failed to read file '{}': {}", path.display(), e))
-        } else {
-            Ok(input.to_string())
+    match trimmed.starts_with('<') || trimmed.starts_with('{') {
+        true => Ok(input.to_string()),
+        false => {
+            let path = std::path::Path::new(trimmed);
+            match path.exists() && path.is_file() {
+                true => std::fs::read_to_string(path)
+                    .map_err(|e| format!("Failed to read file '{}': {}", path.display(), e)),
+                false => Ok(input.to_string()),
+            }
         }
     }
 }

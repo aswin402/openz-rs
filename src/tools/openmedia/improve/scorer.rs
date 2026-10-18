@@ -12,6 +12,52 @@ pub struct ClipScorer {
     tokenizer: ClipTokenizer,
 }
 
+fn try_load_onnx_session(path: &Path, label: &str) -> Option<Mutex<Session>> {
+    match path.exists() {
+        false => None,
+        true => match Session::builder().and_then(|mut b| b.commit_from_file(path)) {
+            Ok(s) => Some(Mutex::new(s)),
+            Err(e) => {
+                tracing::warn!("Failed to load {} session from {:?}: {}", label, path, e);
+                None
+            }
+        },
+    }
+}
+
+fn preprocess_clip_image_tensor(
+    image_path: &Path,
+    purpose: &str,
+) -> Result<Value<ort::value::TensorValueType<f32>>> {
+    let img = image::open(image_path).map_err(|e| {
+        OpenMediaError::ImageDecodeError(format!("Failed to open image for {}: {}", purpose, e))
+    })?;
+
+    let resized = img.resize_exact(224, 224, image::imageops::FilterType::Lanczos3);
+    let rgb = resized.to_rgb8();
+
+    let mean = [0.48145466, 0.4578275, 0.40821073];
+    #[allow(clippy::excessive_precision)]
+    let std = [0.26862954, 0.26130258, 0.27577711];
+
+    let mut pixel_values = Vec::with_capacity(3 * 224 * 224);
+    for c in 0..3 {
+        for y in 0..224 {
+            for x in 0..224 {
+                let pixel = rgb.get_pixel(x, y);
+                let val = pixel[c] as f32 / 255.0;
+                pixel_values.push((val - mean[c]) / std[c]);
+            }
+        }
+    }
+
+    let image_array = Array::from_shape_vec(ndarray::IxDyn(&[1, 3, 224, 224]), pixel_values)
+        .map_err(|e| OpenMediaError::Internal(format!("Failed to build image array: {}", e)))?;
+
+    Value::from_array(image_array)
+        .map_err(|e| OpenMediaError::Internal(format!("Failed to build image tensor: {}", e)))
+}
+
 impl ClipScorer {
     pub async fn load(model_dir: &Path) -> Result<Self> {
         let tokenizer = ClipTokenizer::load(model_dir);
@@ -28,53 +74,20 @@ impl ClipScorer {
             model_dir.join("clip/vision_model.onnx"),
         ];
 
-        let mut text_session = None;
-        let mut vision_session = None;
+        let text_session = text_paths
+            .iter()
+            .find_map(|p| try_load_onnx_session(p, "CLIP text"));
+        let vision_session = vision_paths
+            .iter()
+            .find_map(|p| try_load_onnx_session(p, "CLIP vision"));
 
-        for path in &text_paths {
-            if path.exists() {
-                match (|| -> std::result::Result<Session, ort::Error> {
-                    let mut builder = Session::builder()?;
-                    let s = builder.commit_from_file(path)?;
-                    Ok(s)
-                })() {
-                    Ok(s) => {
-                        text_session = Some(Mutex::new(s));
-                        break;
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to load CLIP text session from {:?}: {}", path, e);
-                    }
-                }
-            }
-        }
-
-        for path in &vision_paths {
-            if path.exists() {
-                match (|| -> std::result::Result<Session, ort::Error> {
-                    let mut builder = Session::builder()?;
-                    let s = builder.commit_from_file(path)?;
-                    Ok(s)
-                })() {
-                    Ok(s) => {
-                        vision_session = Some(Mutex::new(s));
-                        break;
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to load CLIP vision session from {:?}: {}", path, e);
-                    }
-                }
-            }
-        }
-
-        if text_session.is_none() || vision_session.is_none() {
-            tracing::info!(
+        match text_session.is_some() && vision_session.is_some() {
+            true => tracing::info!("CLIP ONNX sessions loaded successfully."),
+            false => tracing::info!(
                 "CLIP ONNX models not found or failed to load. CLIP scoring will run in fallback/mock mode. \
                  Expected text_model.onnx and vision_model.onnx in {:?}",
                 model_dir
-            );
-        } else {
-            tracing::info!("CLIP ONNX sessions loaded successfully.");
+            ),
         }
 
         Ok(Self {
@@ -95,38 +108,7 @@ impl ClipScorer {
         };
 
         // 1. Preprocess image
-        let img = image::open(image_path).map_err(|e| {
-            OpenMediaError::ImageDecodeError(format!(
-                "Failed to open image for CLIP scoring: {}",
-                e
-            ))
-        })?;
-
-        let resized = img.resize_exact(224, 224, image::imageops::FilterType::Lanczos3);
-        let rgb = resized.to_rgb8();
-
-        let mean = [0.48145466, 0.4578275, 0.40821073];
-        #[allow(clippy::excessive_precision)]
-        let std = [0.26862954, 0.26130258, 0.27577711];
-
-        let mut pixel_values = Vec::with_capacity(3 * 224 * 224);
-
-        for c in 0..3 {
-            for y in 0..224 {
-                for x in 0..224 {
-                    let pixel = rgb.get_pixel(x, y);
-                    let val = pixel[c] as f32 / 255.0;
-                    pixel_values.push((val - mean[c]) / std[c]);
-                }
-            }
-        }
-
-        let image_array = Array::from_shape_vec(ndarray::IxDyn(&[1, 3, 224, 224]), pixel_values)
-            .map_err(|e| OpenMediaError::Internal(format!("Failed to build image array: {}", e)))?;
-
-        let image_tensor = Value::from_array(image_array).map_err(|e| {
-            OpenMediaError::Internal(format!("Failed to build image tensor: {}", e))
-        })?;
+        let image_tensor = preprocess_clip_image_tensor(image_path, "CLIP scoring")?;
 
         // 2. Tokenize prompt
         let tokens = self.tokenizer.encode(prompt, 77);
@@ -135,9 +117,7 @@ impl ClipScorer {
 
         for (i, &tok) in tokens.iter().enumerate() {
             token_ids[i] = tok as i64;
-            if tok != 0 {
-                attention_mask[i] = 1;
-            }
+            attention_mask[i] = i64::from(tok != 0);
         }
 
         let text_array = Array::from_shape_vec(ndarray::IxDyn(&[1, 77]), token_ids)
@@ -207,33 +187,24 @@ pub struct AestheticScorer {
 
 impl AestheticScorer {
     pub async fn load(model_path: &Path) -> Result<Self> {
-        if model_path.exists() {
-            match (|| -> std::result::Result<Session, ort::Error> {
-                let mut builder = Session::builder()?;
-                let s = builder.commit_from_file(model_path)?;
-                Ok(s)
-            })() {
-                Ok(session) => {
-                    tracing::info!("Aesthetic predictor ONNX model loaded successfully.");
-                    return Ok(Self {
-                        session: Some(Mutex::new(session)),
-                    });
+        let session = match model_path.exists() {
+            true => {
+                let loaded = try_load_onnx_session(model_path, "Aesthetic model");
+                match loaded.is_some() {
+                    true => tracing::info!("Aesthetic predictor ONNX model loaded successfully."),
+                    false => {}
                 }
-                Err(e) => {
-                    tracing::warn!(
-                        "Failed to load Aesthetic model from {:?}: {}",
-                        model_path,
-                        e
-                    );
-                }
+                loaded
             }
-        } else {
-            tracing::info!(
-                "Aesthetic predictor ONNX model not found at {:?}",
-                model_path
-            );
-        }
-        Ok(Self { session: None })
+            false => {
+                tracing::info!(
+                    "Aesthetic predictor ONNX model not found at {:?}",
+                    model_path
+                );
+                None
+            }
+        };
+        Ok(Self { session })
     }
 
     pub fn is_loaded(&self) -> bool {
@@ -250,37 +221,7 @@ impl AestheticScorer {
             }
         };
 
-        let img = image::open(image_path).map_err(|e| {
-            OpenMediaError::ImageDecodeError(format!(
-                "Failed to open image for aesthetic scoring: {}",
-                e
-            ))
-        })?;
-
-        let resized = img.resize_exact(224, 224, image::imageops::FilterType::Lanczos3);
-        let rgb = resized.to_rgb8();
-
-        let mean = [0.48145466, 0.4578275, 0.40821073];
-        #[allow(clippy::excessive_precision)]
-        let std = [0.26862954, 0.26130258, 0.27577711];
-
-        let mut pixel_values = Vec::with_capacity(3 * 224 * 224);
-        for c in 0..3 {
-            for y in 0..224 {
-                for x in 0..224 {
-                    let pixel = rgb.get_pixel(x, y);
-                    let val = pixel[c] as f32 / 255.0;
-                    pixel_values.push((val - mean[c]) / std[c]);
-                }
-            }
-        }
-
-        let image_array = Array::from_shape_vec(ndarray::IxDyn(&[1, 3, 224, 224]), pixel_values)
-            .map_err(|e| OpenMediaError::Internal(format!("Failed to build image array: {}", e)))?;
-
-        let image_tensor = Value::from_array(image_array).map_err(|e| {
-            OpenMediaError::Internal(format!("Failed to build image tensor: {}", e))
-        })?;
+        let image_tensor = preprocess_clip_image_tensor(image_path, "aesthetic scoring")?;
 
         let inputs = vec![("pixel_values", image_tensor)];
         let outputs = session_guard
@@ -311,8 +252,8 @@ fn compute_cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
         norm_a += a[i] * a[i];
         norm_b += b[i] * b[i];
     }
-    if norm_a == 0.0 || norm_b == 0.0 {
-        return 0.0;
+    match norm_a == 0.0 || norm_b == 0.0 {
+        true => 0.0,
+        false => dot / (norm_a.sqrt() * norm_b.sqrt()),
     }
-    dot / (norm_a.sqrt() * norm_b.sqrt())
 }

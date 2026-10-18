@@ -70,52 +70,60 @@ impl OpenMediaServer {
         let _ = std::fs::create_dir_all(&self.config.paths.output_dir);
 
         let mut layout_config = mermaid_rs_renderer::LayoutConfig::default();
-        if let Some(spacing) = req.node_spacing {
-            layout_config.node_spacing = spacing;
+        match req.node_spacing {
+            Some(spacing) => layout_config.node_spacing = spacing,
+            None => {}
         }
-        if let Some(spacing) = req.rank_spacing {
-            layout_config.rank_spacing = spacing;
+        match req.rank_spacing {
+            Some(spacing) => layout_config.rank_spacing = spacing,
+            None => {}
         }
-        if let Some(ratio) = req.preferred_aspect_ratio {
-            layout_config.preferred_aspect_ratio = Some(ratio);
-        }
-
-        let mut final_theme = if let Some(ref preset) = req.theme {
-            super::helpers::resolve_theme_preset(preset)
-        } else {
-            mermaid_rs_renderer::Theme::modern()
-        };
-
-        if let Some(ref overrides) = req.custom_theme {
-            super::helpers::override_theme_fields(&mut final_theme, overrides);
+        match req.preferred_aspect_ratio {
+            Some(ratio) => layout_config.preferred_aspect_ratio = Some(ratio),
+            None => {}
         }
 
-        let svg_content =
-            crate::tools::openmedia::svg::render_mermaid(&req.code, Some(final_theme), Some(layout_config))
-                .map_err(|e| format!("Failed to render Mermaid diagram: {}", e))?;
+        let mut final_theme = req
+            .theme
+            .as_deref()
+            .map(super::helpers::resolve_theme_preset)
+            .unwrap_or_else(mermaid_rs_renderer::Theme::modern);
+
+        match req.custom_theme.as_ref() {
+            Some(overrides) => super::helpers::override_theme_fields(&mut final_theme, overrides),
+            None => {}
+        }
+
+        let svg_content = crate::tools::openmedia::svg::render_mermaid(
+            &req.code,
+            Some(final_theme),
+            Some(layout_config),
+        )
+        .map_err(|e| format!("Failed to render Mermaid diagram: {}", e))?;
 
         let start_time = std::time::Instant::now();
 
-        let output = if clean_format == "svg" {
-            super::helpers::save_svg_to_output(
+        let output = match clean_format.as_str() {
+            "svg" => super::helpers::save_svg_to_output(
                 &self.config.paths.output_dir,
                 &svg_content,
                 "mermaid-rs-renderer",
                 "mermaid-rs-renderer",
                 start_time,
-            )?
-        } else {
-            let filename = format!("{}.{}", uuid::Uuid::now_v7(), clean_format);
-            let output_path = self.config.paths.output_dir.join(filename);
-            crate::tools::openmedia::svg::rasterize(
-                &svg_content,
-                req.width,
-                req.height,
-                req.background_color.as_deref(),
-                &clean_format,
-                &output_path,
-            )
-            .map_err(|e| format!("Failed to rasterize Mermaid SVG: {}", e))?
+            )?,
+            _ => {
+                let filename = format!("{}.{}", uuid::Uuid::now_v7(), clean_format);
+                let output_path = self.config.paths.output_dir.join(filename);
+                crate::tools::openmedia::svg::rasterize(
+                    &svg_content,
+                    req.width,
+                    req.height,
+                    req.background_color.as_deref(),
+                    &clean_format,
+                    &output_path,
+                )
+                .map_err(|e| format!("Failed to rasterize Mermaid SVG: {}", e))?
+            }
         };
 
         serde_json::to_value(output).map_err(|e| e.to_string())

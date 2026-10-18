@@ -111,48 +111,34 @@ impl BlendMode {
             Self::Normal => src,
             Self::Multiply => src * dst,
             Self::Screen => 1.0 - (1.0 - src) * (1.0 - dst),
-            Self::Overlay => {
-                if dst < 0.5 {
-                    2.0 * src * dst
-                } else {
-                    1.0 - 2.0 * (1.0 - src) * (1.0 - dst)
-                }
-            }
+            Self::Overlay => match dst < 0.5 {
+                true => 2.0 * src * dst,
+                false => 1.0 - 2.0 * (1.0 - src) * (1.0 - dst),
+            },
             Self::Darken => src.min(dst),
             Self::Lighten => src.max(dst),
-            Self::ColorDodge => {
-                if src >= 1.0 {
-                    1.0
-                } else {
-                    (dst / (1.0 - src)).min(1.0)
-                }
-            }
-            Self::ColorBurn => {
-                if src <= 0.0 {
-                    0.0
-                } else {
-                    1.0 - ((1.0 - dst) / src).min(1.0)
-                }
-            }
-            Self::HardLight => {
-                if src < 0.5 {
-                    2.0 * src * dst
-                } else {
-                    1.0 - 2.0 * (1.0 - src) * (1.0 - dst)
-                }
-            }
-            Self::SoftLight => {
-                if src < 0.5 {
-                    dst - (1.0 - 2.0 * src) * dst * (1.0 - dst)
-                } else {
-                    let d = if dst <= 0.25 {
-                        ((16.0 * dst - 12.0) * dst + 4.0) * dst
-                    } else {
-                        dst.sqrt()
+            Self::ColorDodge => match src >= 1.0 {
+                true => 1.0,
+                false => (dst / (1.0 - src)).min(1.0),
+            },
+            Self::ColorBurn => match src <= 0.0 {
+                true => 0.0,
+                false => 1.0 - ((1.0 - dst) / src).min(1.0),
+            },
+            Self::HardLight => match src < 0.5 {
+                true => 2.0 * src * dst,
+                false => 1.0 - 2.0 * (1.0 - src) * (1.0 - dst),
+            },
+            Self::SoftLight => match src < 0.5 {
+                true => dst - (1.0 - 2.0 * src) * dst * (1.0 - dst),
+                false => {
+                    let d = match dst <= 0.25 {
+                        true => ((16.0 * dst - 12.0) * dst + 4.0) * dst,
+                        false => dst.sqrt(),
                     };
                     dst + (2.0 * src - 1.0) * (d - dst)
                 }
-            }
+            },
             Self::Difference => (src - dst).abs(),
             Self::Exclusion => src + dst - 2.0 * src * dst,
         }
@@ -204,10 +190,9 @@ impl FilterChain {
         let mut current_img = img.clone();
         for op in &self.operations {
             // Prefer GPU, fallback to CPU
-            current_img = if let Ok(gpu_img) = self::gpu::apply_gpu_operation(&current_img, op) {
-                gpu_img
-            } else {
-                self::cpu::apply_cpu_operation(&current_img, op)?
+            current_img = match self::gpu::apply_gpu_operation(&current_img, op) {
+                Ok(gpu_img) => gpu_img,
+                Err(_) => self::cpu::apply_cpu_operation(&current_img, op)?,
             };
         }
         Ok(current_img)

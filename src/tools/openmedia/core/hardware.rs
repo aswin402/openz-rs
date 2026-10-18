@@ -151,22 +151,20 @@ impl HardwareInfo {
             .is_ok();
 
         // Check if Chrome or Chromium is available
-        let chrome_candidates = if cfg!(target_os = "windows") {
-            vec!["chrome.exe", "msedge.exe"]
-        } else if cfg!(target_os = "macos") {
-            vec![
+        let chrome_candidates: &[&str] = match (cfg!(target_os = "windows"), cfg!(target_os = "macos")) {
+            (true, _) => &["chrome.exe", "msedge.exe"],
+            (false, true) => &[
                 "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
                 "google-chrome",
                 "chromium",
-            ]
-        } else {
-            vec![
+            ],
+            (false, false) => &[
                 "google-chrome",
                 "google-chrome-stable",
                 "chromium",
                 "chromium-browser",
                 "brave",
-            ]
+            ],
         };
 
         let chrome_available = chrome_candidates.iter().any(|cmd| {
@@ -177,21 +175,22 @@ impl HardwareInfo {
         });
 
         // Detect discrete or integrated GPU if available via nvidia-smi
-        let gpu = if let Ok(out) = std::process::Command::new("nvidia-smi")
+        let gpu = std::process::Command::new("nvidia-smi")
             .arg("--query-gpu=name,memory.total")
             .arg("--format=csv,noheader,nounits")
             .output()
-        {
-            if out.status.success() {
+            .ok()
+            .filter(|out| out.status.success())
+            .and_then(|out| {
                 let text = String::from_utf8_lossy(&out.stdout);
-                if let Some(line) = text.lines().next() {
+                text.lines().next().map(|line| {
                     let parts: Vec<&str> = line.split(',').collect();
                     let name = parts.first().unwrap_or(&"NVIDIA GPU").trim().to_string();
                     let vram_mb = parts
                         .get(1)
                         .and_then(|s| s.trim().parse::<u64>().ok())
                         .unwrap_or(0);
-                    Some(GpuInfo {
+                    GpuInfo {
                         name,
                         vendor: GpuVendor::Nvidia,
                         vram_total: vram_mb * 1024 * 1024,
@@ -206,16 +205,9 @@ impl HardwareInfo {
                             opencl: true,
                         },
                         cuda_compute: None,
-                    })
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+                    }
+                })
+            });
 
         Self {
             cpu,
@@ -231,10 +223,9 @@ impl HardwareInfo {
 
     /// Select the best compute backend for a given model and operation
     pub fn select_backend(&self, _model_format: &str, preferred: ComputeBackend) -> ComputeBackend {
-        if preferred == ComputeBackend::Auto {
-            ComputeBackend::CpuOnly
-        } else {
-            preferred
+        match preferred {
+            ComputeBackend::Auto => ComputeBackend::CpuOnly,
+            other => other,
         }
     }
 

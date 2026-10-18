@@ -67,22 +67,25 @@ impl PromptRefiner {
 
         let has_suffix = prompt_parts
             .iter()
-            .any(|p| p.to_lowercase() == target_suffix.to_lowercase());
-        if !has_suffix {
-            prompt_parts.push(target_suffix.clone());
-            changes.push(format!("Added quality suffix: '{}'", target_suffix));
+            .any(|p| p.eq_ignore_ascii_case(target_suffix));
+        match has_suffix {
+            false => {
+                prompt_parts.push(target_suffix.clone());
+                changes.push(format!("Added quality suffix: '{}'", target_suffix));
+            }
+            true => {}
         }
 
         // Add masterpiece if clip score is low
-        if let Some(clip) = scores.clip_score {
-            if clip < 0.22
-                && !prompt_parts
-                    .iter()
-                    .any(|p| p.to_lowercase() == "masterpiece")
-            {
+        match scores
+            .clip_score
+            .is_some_and(|clip| clip < 0.22 && !prompt_parts.iter().any(|p| p.eq_ignore_ascii_case("masterpiece")))
+        {
+            true => {
                 prompt_parts.push("masterpiece".to_string());
                 changes.push("Added positive bias keyword: 'masterpiece'".to_string());
             }
+            false => {}
         }
 
         let prompt = prompt_parts.join(", ");
@@ -93,23 +96,23 @@ impl PromptRefiner {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
+        let initial_neg_count = negative_parts.len();
 
         for neg in &self.negative_defaults {
-            if !negative_parts
+            match negative_parts
                 .iter()
-                .any(|p| p.to_lowercase() == neg.to_lowercase())
+                .any(|p| p.eq_ignore_ascii_case(neg))
             {
-                negative_parts.push(neg.clone());
+                false => negative_parts.push(neg.clone()),
+                true => {}
             }
         }
 
-        if negative_parts.len()
-            > original_negative
-                .split(',')
-                .filter(|s| !s.trim().is_empty())
-                .count()
-        {
-            changes.push("Appended defect avoidance keywords to negative prompt".to_string());
+        match negative_parts.len() > initial_neg_count {
+            true => {
+                changes.push("Appended defect avoidance keywords to negative prompt".to_string());
+            }
+            false => {}
         }
 
         let negative_prompt = negative_parts.join(", ");
@@ -118,21 +121,24 @@ impl PromptRefiner {
         // Increase step count by 25% per round
         let base_steps = 20;
         let suggested_steps = base_steps + (round * 5);
-        if round > 0 {
-            changes.push(format!(
-                "Increased step count from {} to {}",
-                base_steps, suggested_steps
-            ));
+        match round > 0 {
+            true => {
+                changes.push(format!(
+                    "Increased step count from {} to {}",
+                    base_steps, suggested_steps
+                ));
+            }
+            false => {}
         }
 
         // Adjust CFG scale slightly
-        let suggested_cfg_scale = if round % 2 == 1 { 8.0 } else { 7.5 };
-        if suggested_cfg_scale != 7.5 {
-            changes.push(format!(
-                "Optimized guidance scale (CFG) to {}",
-                suggested_cfg_scale
-            ));
-        }
+        let suggested_cfg_scale = match round % 2 == 1 {
+            true => {
+                changes.push("Optimized guidance scale (CFG) to 8".to_string());
+                8.0
+            }
+            false => 7.5,
+        };
 
         RefinedPrompt {
             prompt,

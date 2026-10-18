@@ -5,24 +5,29 @@ use crate::tools::openmedia::improve::*;
 use crate::tools::openmedia::server::*;
 
 impl OpenMediaServer {
+    async fn score_image_pair(
+        &self,
+        path: &std::path::Path,
+        prompt: &str,
+    ) -> (Option<f32>, Option<f32>) {
+        let clip = match self.clip_scorer.as_ref() {
+            Some(scorer) => scorer.score(path, prompt).await.ok(),
+            None => None,
+        };
+        let aesthetic = match self.aesthetic_scorer.as_ref() {
+            Some(scorer) => scorer.score(path).await.ok(),
+            None => None,
+        };
+        (clip, aesthetic)
+    }
+
     pub async fn improve_score_image(
         &self,
         req: ImproveScoreImageRequest,
     ) -> Result<serde_json::Value, String> {
         let path = std::path::Path::new(&req.image_path);
-
-        let clip = if let Some(scorer) = self.clip_scorer.as_ref() {
-            let prompt = req.prompt.as_deref().unwrap_or("");
-            scorer.score(path, prompt).await.ok()
-        } else {
-            None
-        };
-
-        let aesthetic = if let Some(scorer) = self.aesthetic_scorer.as_ref() {
-            scorer.score(path).await.ok()
-        } else {
-            None
-        };
+        let prompt = req.prompt.as_deref().unwrap_or("");
+        let (clip, aesthetic) = self.score_image_pair(path, prompt).await;
 
         let clip_thresh = self.config.improve.clip_threshold;
         let aes_thresh = self.config.improve.aesthetic_threshold;
@@ -35,16 +40,15 @@ impl OpenMediaServer {
         };
 
         let models_available = clip.is_some() || aesthetic.is_some();
+        let notice = (!models_available).then_some(
+            "Scoring models (CLIP / Aesthetic predictor) are not loaded in models/clip/. Place ONNX models in the openmedia model directory to enable ML evaluation.",
+        );
         let response = serde_json::json!({
             "clip_score": clip,
             "aesthetic_score": aesthetic,
             "needs_refinement": needs_refinement,
             "models_available": models_available,
-            "notice": if !models_available {
-                Some("Scoring models (CLIP / Aesthetic predictor) are not loaded in models/clip/. Place ONNX models in the openmedia model directory to enable ML evaluation.")
-            } else {
-                None
-            }
+            "notice": notice
         });
 
         Ok(response)
@@ -138,17 +142,7 @@ impl OpenMediaServer {
             )
             .map_err(|e| e.to_string())?;
 
-            let clip = if let Some(scorer) = self.clip_scorer.as_ref() {
-                scorer.score(&output_path, &current_prompt).await.ok()
-            } else {
-                None
-            };
-
-            let aesthetic = if let Some(scorer) = self.aesthetic_scorer.as_ref() {
-                scorer.score(&output_path).await.ok()
-            } else {
-                None
-            };
+            let (clip, aesthetic) = self.score_image_pair(&output_path, &current_prompt).await;
 
             let overall = match (clip, aesthetic) {
                 (Some(c), Some(a)) => (c * 10.0 + a) / 2.0,
@@ -189,9 +183,12 @@ impl OpenMediaServer {
 
             self.history.record(&record).map_err(|e| e.to_string())?;
 
-            if overall > best_score || best_record.is_none() {
-                best_score = overall;
-                best_record = Some(record.clone());
+            match overall > best_score || best_record.is_none() {
+                true => {
+                    best_score = overall;
+                    best_record = Some(record.clone());
+                }
+                false => {}
             }
 
             let score_struct = QualityScore {
@@ -201,8 +198,9 @@ impl OpenMediaServer {
                     || aesthetic.map(|a| a < 4.5).unwrap_or(false),
             };
 
-            if !score_struct.needs_refinement {
-                break;
+            match score_struct.needs_refinement {
+                false => break,
+                true => {}
             }
 
             let refined = self.prompt_refiner.refine(
@@ -224,17 +222,12 @@ impl OpenMediaServer {
         &self,
         req: ImproveFeedbackRequest,
     ) -> Result<serde_json::Value, String> {
-        let mut rating = req.rating;
-        if rating > 1.0 {
-            if rating <= 5.0 {
-                rating /= 5.0;
-            } else if rating <= 10.0 {
-                rating /= 10.0;
-            } else if rating <= 100.0 {
-                rating /= 100.0;
-            }
-        }
-        let rating = rating.clamp(0.0, 1.0);
+        let divisor = [(5.0_f32, 5.0_f32), (10.0, 10.0), (100.0, 100.0)]
+            .into_iter()
+            .find(|(upper, _)| req.rating > 1.0 && req.rating <= *upper)
+            .map(|(_, d)| d)
+            .unwrap_or(1.0);
+        let rating = (req.rating / divisor).clamp(0.0, 1.0);
 
         let feedback = Feedback {
             generation_id: req.generation_id,

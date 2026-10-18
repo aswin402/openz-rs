@@ -245,34 +245,37 @@ impl Config {
         let config_path = openz_dir.join("media/config.toml");
         let legacy_config_path = home.join(".openmedia/config.toml");
 
-        let target_config = if config_path.exists() {
-            Some(config_path)
-        } else if legacy_config_path.exists() {
-            Some(legacy_config_path)
-        } else {
-            None
-        };
+        let target_config = config_path
+            .exists()
+            .then_some(config_path)
+            .or_else(|| legacy_config_path.exists().then_some(legacy_config_path));
 
-        if let Some(path) = target_config {
-            let content = std::fs::read_to_string(&path)?;
-            let file_config: Config = toml::from_str(&content).map_err(|e| {
-                OpenMediaError::ConfigError(format!("Failed to parse config file: {}", e))
-            })?;
-            config = file_config;
+        match target_config {
+            Some(path) => {
+                let content = std::fs::read_to_string(&path)?;
+                let file_config: Config = toml::from_str(&content).map_err(|e| {
+                    OpenMediaError::ConfigError(format!("Failed to parse config file: {}", e))
+                })?;
+                config = file_config;
+            }
+            None => {}
         }
 
         // Apply environment overrides
-        if let Ok(val) = std::env::var("OPENMEDIA_MODEL_DIR") {
-            config.paths.model_dir = PathBuf::from(val);
+        match std::env::var("OPENMEDIA_MODEL_DIR") {
+            Ok(val) => config.paths.model_dir = PathBuf::from(val),
+            Err(_) => {}
         }
-        if let Ok(val) = std::env::var("OPENMEDIA_OUTPUT_DIR") {
-            config.paths.output_dir = PathBuf::from(val);
+        match std::env::var("OPENMEDIA_OUTPUT_DIR") {
+            Ok(val) => config.paths.output_dir = PathBuf::from(val),
+            Err(_) => {}
         }
-        if let Ok(val) = std::env::var("OPENMEDIA_HISTORY_DB") {
-            config.paths.history_db = PathBuf::from(val);
+        match std::env::var("OPENMEDIA_HISTORY_DB") {
+            Ok(val) => config.paths.history_db = PathBuf::from(val),
+            Err(_) => {}
         }
-        if let Ok(val) = std::env::var("OPENMEDIA_GPU_PREFERENCE") {
-            match val.to_lowercase().as_str() {
+        match std::env::var("OPENMEDIA_GPU_PREFERENCE") {
+            Ok(val) => match val.to_lowercase().as_str() {
                 "candle" => config.compute.preferred_backend = ComputeBackend::Candle,
                 "diffusion_rs" | "diffusionrs" => {
                     config.compute.preferred_backend = ComputeBackend::DiffusionRs
@@ -280,7 +283,8 @@ impl Config {
                 "ort" | "onnx" => config.compute.preferred_backend = ComputeBackend::Ort,
                 "cpuonly" | "cpu" => config.compute.preferred_backend = ComputeBackend::CpuOnly,
                 _ => {}
-            }
+            },
+            Err(_) => {}
         }
 
         Ok(config)

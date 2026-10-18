@@ -67,48 +67,27 @@ impl ModelRegistry {
     /// Scan model directory and build registry
     pub async fn scan(model_dir: &Path) -> Result<Self> {
         let mut models = vec![
-            ModelInfo {
-                id: "clip-vit-b32-text".to_string(),
-                name: "CLIP ViT-B/32 Text Encoder".to_string(),
-                category: ModelCategory::Clip,
-                path: model_dir.join("clip/text_model.onnx"),
-                size_bytes: 350_000_000,
-                format: ModelFormat::Onnx,
-                quantization: None,
-                checksum: None,
-                verified: true,
-                min_vram: 0,
-                supported_resolutions: vec![],
-                default_resolution: (0, 0),
-            },
-            ModelInfo {
-                id: "clip-vit-b32-vision".to_string(),
-                name: "CLIP ViT-B/32 Vision Encoder".to_string(),
-                category: ModelCategory::Clip,
-                path: model_dir.join("clip/vision_model.onnx"),
-                size_bytes: 350_000_000,
-                format: ModelFormat::Onnx,
-                quantization: None,
-                checksum: None,
-                verified: true,
-                min_vram: 0,
-                supported_resolutions: vec![],
-                default_resolution: (0, 0),
-            },
-            ModelInfo {
-                id: "aesthetic-predictor".to_string(),
-                name: "LAION Aesthetic Predictor".to_string(),
-                category: ModelCategory::Aesthetic,
-                path: model_dir.join("clip/aesthetic-predictor.onnx"),
-                size_bytes: 25_000_000,
-                format: ModelFormat::Onnx,
-                quantization: None,
-                checksum: None,
-                verified: true,
-                min_vram: 0,
-                supported_resolutions: vec![],
-                default_resolution: (0, 0),
-            },
+            Self::onnx_model_info(
+                "clip-vit-b32-text",
+                "CLIP ViT-B/32 Text Encoder",
+                ModelCategory::Clip,
+                model_dir.join("clip/text_model.onnx"),
+                350_000_000,
+            ),
+            Self::onnx_model_info(
+                "clip-vit-b32-vision",
+                "CLIP ViT-B/32 Vision Encoder",
+                ModelCategory::Clip,
+                model_dir.join("clip/vision_model.onnx"),
+                350_000_000,
+            ),
+            Self::onnx_model_info(
+                "aesthetic-predictor",
+                "LAION Aesthetic Predictor",
+                ModelCategory::Aesthetic,
+                model_dir.join("clip/aesthetic-predictor.onnx"),
+                25_000_000,
+            ),
         ];
 
         // Update verified status based on file existence
@@ -120,6 +99,29 @@ impl ModelRegistry {
             models,
             model_dir: model_dir.to_path_buf(),
         })
+    }
+
+    fn onnx_model_info(
+        id: &str,
+        name: &str,
+        category: ModelCategory,
+        path: PathBuf,
+        size_bytes: u64,
+    ) -> ModelInfo {
+        ModelInfo {
+            id: id.to_string(),
+            name: name.to_string(),
+            category,
+            path,
+            size_bytes,
+            format: ModelFormat::Onnx,
+            quantization: None,
+            checksum: None,
+            verified: true,
+            min_vram: 0,
+            supported_resolutions: vec![],
+            default_resolution: (0, 0),
+        }
     }
 
     /// Get a model by ID
@@ -158,8 +160,9 @@ impl ModelRegistry {
         };
 
         let dest_path = &model.path;
-        if let Some(parent) = dest_path.parent() {
-            std::fs::create_dir_all(parent)?;
+        match dest_path.parent() {
+            Some(parent) => std::fs::create_dir_all(parent)?,
+            None => {}
         }
 
         let tmp_path = dest_path.with_extension("download");
@@ -175,11 +178,14 @@ impl ModelRegistry {
                     reason: e.to_string(),
                 })?;
 
-        if !response.status().is_success() {
-            return Err(OpenMediaError::ModelLoadFailed {
-                model: id.to_string(),
-                reason: format!("Server returned error code: {}", response.status()),
-            });
+        match response.status().is_success() {
+            true => {}
+            false => {
+                return Err(OpenMediaError::ModelLoadFailed {
+                    model: id.to_string(),
+                    reason: format!("Server returned error code: {}", response.status()),
+                });
+            }
         }
 
         let total_size = response.content_length().unwrap_or(0);

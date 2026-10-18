@@ -348,53 +348,36 @@ impl Easing {
             Self::Linear => t,
             Self::EaseInQuad => t * t,
             Self::EaseOutQuad => t * (2.0 - t),
-            Self::EaseInOutQuad => {
-                if t < 0.5 {
-                    2.0 * t * t
-                } else {
-                    -1.0 + (4.0 - 2.0 * t) * t
-                }
-            }
+            Self::EaseInOutQuad => match t < 0.5 {
+                true => 2.0 * t * t,
+                false => -1.0 + (4.0 - 2.0 * t) * t,
+            },
             Self::EaseInCubic => t * t * t,
             Self::EaseOutCubic => {
                 let t = t - 1.0;
                 t * t * t + 1.0
             }
-            Self::EaseInOutCubic => {
-                if t < 0.5 {
-                    4.0 * t * t * t
-                } else {
+            Self::EaseInOutCubic => match t < 0.5 {
+                true => 4.0 * t * t * t,
+                false => {
                     let t = 2.0 * t - 2.0;
                     0.5 * t * t * t + 1.0
                 }
-            }
-            Self::EaseInExpo => {
-                if t == 0.0 {
-                    0.0
-                } else {
-                    (2.0_f64).powf(10.0 * (t - 1.0))
-                }
-            }
-            Self::EaseOutExpo => {
-                if t == 1.0 {
-                    1.0
-                } else {
-                    1.0 - (2.0_f64).powf(-10.0 * t)
-                }
-            }
-            Self::EaseInOutExpo => {
-                if t == 0.0 {
-                    return 0.0;
-                }
-                if t == 1.0 {
-                    return 1.0;
-                }
-                if t < 0.5 {
-                    0.5 * (2.0_f64).powf(20.0 * t - 10.0)
-                } else {
-                    1.0 - 0.5 * (2.0_f64).powf(-20.0 * t + 10.0)
-                }
-            }
+            },
+            Self::EaseInExpo => match t == 0.0 {
+                true => 0.0,
+                false => (2.0_f64).powf(10.0 * (t - 1.0)),
+            },
+            Self::EaseOutExpo => match t == 1.0 {
+                true => 1.0,
+                false => 1.0 - (2.0_f64).powf(-10.0 * t),
+            },
+            Self::EaseInOutExpo => match (t == 0.0, t == 1.0, t < 0.5) {
+                (true, _, _) => 0.0,
+                (_, true, _) => 1.0,
+                (_, _, true) => 0.5 * (2.0_f64).powf(20.0 * t - 10.0),
+                _ => 1.0 - 0.5 * (2.0_f64).powf(-20.0 * t + 10.0),
+            },
             Self::EaseOutBounce => bounce_out(t),
             Self::EaseInBack => {
                 let s = 1.70158;
@@ -405,21 +388,22 @@ impl Easing {
                 let t = t - 1.0;
                 t * t * ((s + 1.0) * t + s) + 1.0
             }
-            Self::EaseInElastic => {
-                if t == 0.0 || t == 1.0 {
-                    return t;
+            Self::EaseInElastic => match t == 0.0 || t == 1.0 {
+                true => t,
+                false => {
+                    let p = 0.3;
+                    -(2.0_f64.powf(10.0 * (t - 1.0))
+                        * ((t - 1.0 - p / 4.0) * std::f64::consts::TAU / p).sin())
                 }
-                let p = 0.3;
-                -(2.0_f64.powf(10.0 * (t - 1.0))
-                    * ((t - 1.0 - p / 4.0) * std::f64::consts::TAU / p).sin())
-            }
-            Self::EaseOutElastic => {
-                if t == 0.0 || t == 1.0 {
-                    return t;
+            },
+            Self::EaseOutElastic => match t == 0.0 || t == 1.0 {
+                true => t,
+                false => {
+                    let p = 0.3;
+                    2.0_f64.powf(-10.0 * t) * ((t - p / 4.0) * std::f64::consts::TAU / p).sin()
+                        + 1.0
                 }
-                let p = 0.3;
-                2.0_f64.powf(-10.0 * t) * ((t - p / 4.0) * std::f64::consts::TAU / p).sin() + 1.0
-            }
+            },
             Self::Spring {
                 stiffness,
                 damping,
@@ -452,85 +436,58 @@ impl Easing {
     }
 
     pub fn to_smil_attributes(&self) -> String {
-        match self {
-            Self::Linear => "".to_string(),
-            Self::CubicBezier(x1, y1, x2, y2) => {
-                format!(
-                    "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"{} {} {} {}\"",
-                    x1, y1, x2, y2
-                )
-            }
-            Self::EaseInQuad => {
-                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.55 0.085 0.68 0.53\""
-                    .to_string()
-            }
-            Self::EaseOutQuad => {
-                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.25 0.46 0.45 0.94\""
-                    .to_string()
-            }
-            Self::EaseInOutQuad => {
-                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.455 0.03 0.515 0.955\""
-                    .to_string()
-            }
-            Self::EaseInCubic => {
-                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.55 0.055 0.675 0.19\""
-                    .to_string()
-            }
-            Self::EaseOutCubic => {
-                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.215 0.61 0.355 1\""
-                    .to_string()
-            }
-            Self::EaseInOutCubic => {
-                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.645 0.045 0.355 1\""
-                    .to_string()
-            }
-            Self::EaseInExpo => {
-                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.95 0.05 0.795 0.035\""
-                    .to_string()
-            }
-            Self::EaseOutExpo => {
-                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.19 1 0.22 1\"".to_string()
-            }
-            Self::EaseInOutExpo => {
-                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"1 0 0 1\"".to_string()
-            }
-            Self::EaseInBack => {
-                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.6 -0.28 0.735 0.045\""
-                    .to_string()
-            }
-            Self::EaseOutBack => {
-                "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.175 0.885 0.32 1.275\""
-                    .to_string()
-            }
-            _ => "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"0.42 0 0.58 1\"".to_string(),
-        }
+        let splines = match self {
+            Self::Linear => return String::new(),
+            Self::CubicBezier(x1, y1, x2, y2) => format!("{} {} {} {}", x1, y1, x2, y2),
+            Self::EaseInQuad => "0.55 0.085 0.68 0.53".to_string(),
+            Self::EaseOutQuad => "0.25 0.46 0.45 0.94".to_string(),
+            Self::EaseInOutQuad => "0.455 0.03 0.515 0.955".to_string(),
+            Self::EaseInCubic => "0.55 0.055 0.675 0.19".to_string(),
+            Self::EaseOutCubic => "0.215 0.61 0.355 1".to_string(),
+            Self::EaseInOutCubic => "0.645 0.045 0.355 1".to_string(),
+            Self::EaseInExpo => "0.95 0.05 0.795 0.035".to_string(),
+            Self::EaseOutExpo => "0.19 1 0.22 1".to_string(),
+            Self::EaseInOutExpo => "1 0 0 1".to_string(),
+            Self::EaseInBack => "0.6 -0.28 0.735 0.045".to_string(),
+            Self::EaseOutBack => "0.175 0.885 0.32 1.275".to_string(),
+            _ => "0.42 0 0.58 1".to_string(),
+        };
+        format!(
+            "calcMode=\"spline\" keyTimes=\"0; 1\" keySplines=\"{}\"",
+            splines
+        )
     }
 }
 
 fn bounce_out(t: f64) -> f64 {
-    if t < 1.0 / 2.75 {
-        7.5625 * t * t
-    } else if t < 2.0 / 2.75 {
-        let t = t - 1.5 / 2.75;
-        7.5625 * t * t + 0.75
-    } else if t < 2.5 / 2.75 {
-        let t = t - 2.25 / 2.75;
-        7.5625 * t * t + 0.9375
-    } else {
-        let t = t - 2.625 / 2.75;
-        7.5625 * t * t + 0.984375
+    match (t < 1.0 / 2.75, t < 2.0 / 2.75, t < 2.5 / 2.75) {
+        (true, _, _) => 7.5625 * t * t,
+        (false, true, _) => {
+            let t = t - 1.5 / 2.75;
+            7.5625 * t * t + 0.75
+        }
+        (false, false, true) => {
+            let t = t - 2.25 / 2.75;
+            7.5625 * t * t + 0.9375
+        }
+        (false, false, false) => {
+            let t = t - 2.625 / 2.75;
+            7.5625 * t * t + 0.984375
+        }
     }
 }
 
 fn spring_evaluate(t: f64, stiffness: f64, damping: f64, mass: f64) -> f64 {
     let omega = (stiffness / mass).sqrt();
     let zeta = damping / (2.0 * (stiffness * mass).sqrt());
-    if zeta < 1.0 {
-        let omega_d = omega * (1.0 - zeta * zeta).sqrt();
-        1.0 - (-zeta * omega * t).exp()
-            * ((zeta * omega * t / omega_d).sin() * zeta * omega / omega_d + (omega_d * t).cos())
-    } else {
-        1.0 - (1.0 + omega * t) * (-omega * t).exp()
+    match zeta < 1.0 {
+        true => {
+            let omega_d = omega * (1.0 - zeta * zeta).sqrt();
+            1.0 - (-zeta * omega * t).exp()
+                * ((zeta * omega * t / omega_d).sin() * zeta * omega / omega_d
+                    + (omega_d * t).cos())
+        }
+        false => 1.0 - (1.0 + omega * t) * (-omega * t).exp(),
     }
 }
 
@@ -539,10 +496,10 @@ fn cubic_bezier_evaluate(t: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
     for _ in 0..8 {
         let x = cubic_bezier_x(guess, x1, x2) - t;
         let dx = cubic_bezier_dx(guess, x1, x2);
-        if dx.abs() < 1e-7 {
-            break;
+        match dx.abs() < 1e-7 {
+            true => break,
+            false => guess -= x / dx,
         }
-        guess -= x / dx;
     }
     cubic_bezier_y(guess, y1, y2)
 }
@@ -602,7 +559,7 @@ impl AnimationTimeline {
 
     fn recalculate_duration(&mut self) {
         let mut current_time = 0.0;
-        let mut max_time = 0.0;
+        let mut max_time: f64 = 0.0;
 
         match self.mode {
             TimelineMode::Parallel => {
@@ -611,9 +568,7 @@ impl AnimationTimeline {
                     let absolute_begin = start + entry.animation.begin();
                     entry.animation.set_begin(absolute_begin);
                     let end = absolute_begin + entry.animation.dur();
-                    if end > max_time {
-                        max_time = end;
-                    }
+                    max_time = max_time.max(end);
                 }
             }
             TimelineMode::Sequential => {
@@ -623,9 +578,7 @@ impl AnimationTimeline {
                     entry.animation.set_begin(absolute_begin);
                     let end = absolute_begin + entry.animation.dur();
                     current_time = end;
-                    if end > max_time {
-                        max_time = end;
-                    }
+                    max_time = max_time.max(end);
                 }
             }
             TimelineMode::Staggered { delay } => {
@@ -635,9 +588,7 @@ impl AnimationTimeline {
                     let absolute_begin = start + entry.animation.begin();
                     entry.animation.set_begin(absolute_begin);
                     let end = absolute_begin + entry.animation.dur();
-                    if end > max_time {
-                        max_time = end;
-                    }
+                    max_time = max_time.max(end);
                 }
             }
         }
@@ -668,45 +619,61 @@ pub fn parse_path_commands(d: &str) -> Vec<PathCommand> {
     let mut current_coords = Vec::new();
 
     fn flush(commands: &mut Vec<PathCommand>, cmd: &mut Option<char>, coords: &mut Vec<f64>) {
-        if let Some(c) = *cmd {
-            commands.push(PathCommand {
-                cmd: c,
-                coords: std::mem::take(coords),
-            });
+        match *cmd {
+            Some(c) => {
+                commands.push(PathCommand {
+                    cmd: c,
+                    coords: std::mem::take(coords),
+                });
+            }
+            None => {}
         }
     }
 
     while let Some(&ch) = chars.peek() {
-        if ch.is_alphabetic() {
-            flush(&mut commands, &mut current_cmd, &mut current_coords);
-            current_cmd = Some(ch);
-            chars.next();
-        } else if ch == '-' || ch == '.' || ch.is_numeric() || ch == ',' || ch.is_whitespace() {
-            if ch == ',' || ch.is_whitespace() {
+        match (
+            ch.is_alphabetic(),
+            ch == ',' || ch.is_whitespace(),
+            ch == '-' || ch == '.' || ch.is_numeric(),
+        ) {
+            (true, _, _) => {
+                flush(&mut commands, &mut current_cmd, &mut current_coords);
+                current_cmd = Some(ch);
                 chars.next();
-                continue;
             }
-            let mut num_str = String::new();
-            let mut dot_seen = false;
-            while let Some(&next_ch) = chars.peek() {
-                if (next_ch == '-' && num_str.is_empty()) || next_ch.is_numeric() {
-                    num_str.push(next_ch);
-                    chars.next();
-                } else if next_ch == '.' && !dot_seen {
-                    num_str.push(next_ch);
-                    dot_seen = true;
-                    chars.next();
-                } else {
-                    break;
+            (false, true, _) => {
+                chars.next();
+            }
+            (false, false, true) => {
+                let mut num_str = String::new();
+                let mut dot_seen = false;
+                while let Some(&next_ch) = chars.peek() {
+                    match (
+                        (next_ch == '-' && num_str.is_empty()) || next_ch.is_numeric(),
+                        next_ch == '.' && !dot_seen,
+                    ) {
+                        (true, _) => {
+                            num_str.push(next_ch);
+                            chars.next();
+                        }
+                        (false, true) => {
+                            num_str.push(next_ch);
+                            dot_seen = true;
+                            chars.next();
+                        }
+                        (false, false) => break,
+                    }
+                }
+                match num_str.parse::<f64>() {
+                    Ok(val) => current_coords.push(val),
+                    Err(_) => {
+                        chars.next();
+                    }
                 }
             }
-            if let Ok(val) = num_str.parse::<f64>() {
-                current_coords.push(val);
-            } else {
+            (false, false, false) => {
                 chars.next();
             }
-        } else {
-            chars.next();
         }
     }
     flush(&mut commands, &mut current_cmd, &mut current_coords);
@@ -726,23 +693,27 @@ pub fn interpolate_commands(from: &[PathCommand], to: &[PathCommand], t: f64) ->
 
         let (cmd_char, from_coords, to_coords) = match (from_cmd, to_cmd) {
             (Some(f), Some(o)) => {
-                if !f.coords.is_empty() {
-                    last_from_coord = f.coords.clone();
+                match f.coords.is_empty() {
+                    false => last_from_coord = f.coords.clone(),
+                    true => {}
                 }
-                if !o.coords.is_empty() {
-                    last_to_coord = o.coords.clone();
+                match o.coords.is_empty() {
+                    false => last_to_coord = o.coords.clone(),
+                    true => {}
                 }
                 (f.cmd, &f.coords, &o.coords)
             }
             (Some(f), None) => {
-                if !f.coords.is_empty() {
-                    last_from_coord = f.coords.clone();
+                match f.coords.is_empty() {
+                    false => last_from_coord = f.coords.clone(),
+                    true => {}
                 }
                 (f.cmd, &f.coords, &last_to_coord)
             }
             (None, Some(o)) => {
-                if !o.coords.is_empty() {
-                    last_to_coord = o.coords.clone();
+                match o.coords.is_empty() {
+                    false => last_to_coord = o.coords.clone(),
+                    true => {}
                 }
                 (o.cmd, &last_from_coord, &o.coords)
             }
@@ -1118,50 +1089,63 @@ pub fn lottie_to_svg(lottie_json: &str) -> Result<String> {
     );
 
     for layer in lottie.layers {
-        if layer.ty == 4 {
-            let mut g_element = format!("  <g id=\"layer_{}\" name=\"{}\">\n", layer.ind, layer.nm);
+        match layer.ty == 4 {
+            true => {
+                let mut g_element =
+                    format!("  <g id=\"layer_{}\" name=\"{}\">\n", layer.ind, layer.nm);
 
-            if let LottieValue::Static { k } = &layer.ks.o {
-                if *k < 100.0 {
-                    g_element =
-                        g_element.replace("<g ", &format!("<g opacity=\"{:.2}\" ", *k / 100.0));
+                match &layer.ks.o {
+                    LottieValue::Static { k } => match *k < 100.0 {
+                        true => {
+                            g_element = g_element.replace(
+                                "<g ",
+                                &format!("<g opacity=\"{:.2}\" ", *k / 100.0),
+                            );
+                        }
+                        false => {}
+                    },
+                    LottieValue::Animated { k } => match k.first() {
+                        Some(first) => {
+                            let from_val = first.s.first().copied().unwrap_or(100.0) / 100.0;
+                            let to_val =
+                                k.last().and_then(|x| x.s.first().copied()).unwrap_or(100.0)
+                                    / 100.0;
+                            let duration = (lottie.op - lottie.ip) / lottie.fr;
+                            let anim = SmilAnimation::Animate {
+                                attribute_name: "opacity".to_string(),
+                                from: from_val.to_string(),
+                                to: to_val.to_string(),
+                                dur: duration,
+                                begin: 0.0,
+                                fill: AnimationFill::Freeze,
+                                repeat_count: RepeatCount::Indefinite,
+                                easing: Easing::Linear,
+                            };
+                            g_element.push_str("    ");
+                            g_element.push_str(&anim.to_xml(None));
+                            g_element.push('\n');
+                        }
+                        None => {}
+                    },
                 }
-            } else if let LottieValue::Animated { k } = &layer.ks.o {
-                if let Some(first) = k.first() {
-                    let from_val = first.s.first().copied().unwrap_or(100.0) / 100.0;
-                    let to_val =
-                        k.last().and_then(|x| x.s.first().copied()).unwrap_or(100.0) / 100.0;
-                    let duration = (lottie.op - lottie.ip) / lottie.fr;
-                    let anim = SmilAnimation::Animate {
-                        attribute_name: "opacity".to_string(),
-                        from: from_val.to_string(),
-                        to: to_val.to_string(),
-                        dur: duration,
-                        begin: 0.0,
-                        fill: AnimationFill::Freeze,
-                        repeat_count: RepeatCount::Indefinite,
-                        easing: Easing::Linear,
-                    };
-                    g_element.push_str("    ");
-                    g_element.push_str(&anim.to_xml(None));
-                    g_element.push('\n');
+
+                for shape in &layer.shapes {
+                    match shape.ty.as_str() {
+                        "rc" => g_element.push_str(
+                            "    <rect width=\"100\" height=\"100\" fill=\"#8b5cf6\" />\n",
+                        ),
+                        "el" => g_element.push_str(
+                            "    <circle cx=\"50\" cy=\"50\" r=\"50\" fill=\"#3b82f6\" />\n",
+                        ),
+                        "gr" => g_element.push_str("    <!-- Group shape items -->\n"),
+                        _ => {}
+                    }
                 }
+
+                g_element.push_str("  </g>\n");
+                svg.push_str(&g_element);
             }
-
-            for shape in &layer.shapes {
-                if shape.ty == "rc" {
-                    g_element
-                        .push_str("    <rect width=\"100\" height=\"100\" fill=\"#8b5cf6\" />\n");
-                } else if shape.ty == "el" {
-                    g_element
-                        .push_str("    <circle cx=\"50\" cy=\"50\" r=\"50\" fill=\"#3b82f6\" />\n");
-                } else if shape.ty == "gr" {
-                    g_element.push_str("    <!-- Group shape items -->\n");
-                }
-            }
-
-            g_element.push_str("  </g>\n");
-            svg.push_str(&g_element);
+            false => {}
         }
     }
 

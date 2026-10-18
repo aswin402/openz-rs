@@ -59,11 +59,24 @@ impl OpenMediaServer {
         })
     }
 
+    async fn run_image_op(
+        &self,
+        image_path: &str,
+        op: ProcessOperation,
+    ) -> Result<serde_json::Value, String> {
+        let img = image::open(image_path).map_err(|e| e.to_string())?;
+        let ext = std::path::Path::new(image_path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("png");
+        let output = self.process_and_save(&img, &op, ext).await?;
+        serde_json::to_value(output).map_err(|e| e.to_string())
+    }
+
     pub async fn image_apply_filter(
         &self,
         req: ImageApplyFilterRequest,
     ) -> Result<serde_json::Value, String> {
-        let img = image::open(&req.image_path).map_err(|e| e.to_string())?;
         let op = match req.filter_type.to_lowercase().as_str() {
             "grayscale" => ProcessOperation::Grayscale,
             "invert" => ProcessOperation::Invert,
@@ -104,19 +117,13 @@ impl OpenMediaServer {
             },
             _ => return Err(format!("Unsupported filter type: {}", req.filter_type)),
         };
-        let ext = std::path::Path::new(&req.image_path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("png");
-        let output = self.process_and_save(&img, &op, ext).await?;
-        serde_json::to_value(output).map_err(|e| e.to_string())
+        self.run_image_op(&req.image_path, op).await
     }
 
     pub async fn image_resize(
         &self,
         req: ImageResizeRequest,
     ) -> Result<serde_json::Value, String> {
-        let img = image::open(&req.image_path).map_err(|e| e.to_string())?;
         let method = match req
             .algorithm
             .as_deref()
@@ -134,38 +141,26 @@ impl OpenMediaServer {
             height: req.height,
             method,
         };
-        let ext = std::path::Path::new(&req.image_path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("png");
-        let output = self.process_and_save(&img, &op, ext).await?;
-        serde_json::to_value(output).map_err(|e| e.to_string())
+        self.run_image_op(&req.image_path, op).await
     }
 
     pub async fn image_crop(
         &self,
         req: ImageCropRequest,
     ) -> Result<serde_json::Value, String> {
-        let img = image::open(&req.image_path).map_err(|e| e.to_string())?;
         let op = ProcessOperation::Crop {
             x: req.x,
             y: req.y,
             width: req.width,
             height: req.height,
         };
-        let ext = std::path::Path::new(&req.image_path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("png");
-        let output = self.process_and_save(&img, &op, ext).await?;
-        serde_json::to_value(output).map_err(|e| e.to_string())
+        self.run_image_op(&req.image_path, op).await
     }
 
     pub async fn image_transform(
         &self,
         req: ImageTransformRequest,
     ) -> Result<serde_json::Value, String> {
-        let img = image::open(&req.image_path).map_err(|e| e.to_string())?;
         let op = match req.transform_type.to_lowercase().as_str() {
             "rotate" => ProcessOperation::Rotate {
                 angle: req.angle.unwrap_or(90.0),
@@ -180,12 +175,7 @@ impl OpenMediaServer {
                 ))
             }
         };
-        let ext = std::path::Path::new(&req.image_path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("png");
-        let output = self.process_and_save(&img, &op, ext).await?;
-        serde_json::to_value(output).map_err(|e| e.to_string())
+        self.run_image_op(&req.image_path, op).await
     }
 
     pub async fn image_convert(
@@ -276,6 +266,28 @@ impl OpenMediaServer {
     }
 }
 
+fn wrap_op_inner(
+    map: &serde_json::Map<String, serde_json::Value>,
+    variant_key: &str,
+    default_method: Option<&str>,
+) -> serde_json::Value {
+    let mut inner = map.clone();
+    inner.remove("operation");
+    inner.remove("type");
+    inner.remove("op");
+    match default_method {
+        Some(method) => {
+            inner
+                .entry("method".to_string())
+                .or_insert_with(|| serde_json::Value::String(method.to_string()));
+        }
+        None => {}
+    }
+    let mut outer = serde_json::Map::new();
+    outer.insert(variant_key.to_string(), serde_json::Value::Object(inner));
+    serde_json::Value::Object(outer)
+}
+
 pub fn normalize_process_operation_value(val: &serde_json::Value) -> serde_json::Value {
     match val {
         serde_json::Value::String(s) => match s.to_lowercase().as_str() {
@@ -296,8 +308,8 @@ pub fn normalize_process_operation_value(val: &serde_json::Value) -> serde_json:
                 .or_else(|| map.get("op"))
                 .and_then(|v| v.as_str());
 
-            if let Some(name) = op_name {
-                match name.to_lowercase().as_str() {
+            match op_name {
+                Some(name) => match name.to_lowercase().as_str() {
                     "invert" => serde_json::Value::String("Invert".to_string()),
                     "grayscale" => serde_json::Value::String("Grayscale".to_string()),
                     "fliph" | "flip_horizontal" | "fliphorizontal" => {
@@ -306,55 +318,17 @@ pub fn normalize_process_operation_value(val: &serde_json::Value) -> serde_json:
                     "flipv" | "flip_vertical" | "flipvertical" => {
                         serde_json::Value::String("FlipVertical".to_string())
                     }
-                    "resize" => {
-                        let mut inner = map.clone();
-                        inner.remove("operation");
-                        inner.remove("type");
-                        inner.remove("op");
-                        if !inner.contains_key("method") {
-                            inner.insert("method".to_string(), serde_json::json!("lanczos3"));
-                        }
-                        serde_json::json!({ "Resize": inner })
-                    }
+                    "resize" => wrap_op_inner(map, "Resize", Some("lanczos3")),
                     "blur" | "gaussian_blur" | "gaussianblur" => {
-                        let mut inner = map.clone();
-                        inner.remove("operation");
-                        inner.remove("type");
-                        inner.remove("op");
-                        serde_json::json!({ "GaussianBlur": inner })
+                        wrap_op_inner(map, "GaussianBlur", None)
                     }
-                    "box_blur" | "boxblur" => {
-                        let mut inner = map.clone();
-                        inner.remove("operation");
-                        inner.remove("type");
-                        inner.remove("op");
-                        serde_json::json!({ "BoxBlur": inner })
-                    }
-                    "sharpen" => {
-                        let mut inner = map.clone();
-                        inner.remove("operation");
-                        inner.remove("type");
-                        inner.remove("op");
-                        serde_json::json!({ "Sharpen": inner })
-                    }
-                    "crop" => {
-                        let mut inner = map.clone();
-                        inner.remove("operation");
-                        inner.remove("type");
-                        inner.remove("op");
-                        serde_json::json!({ "Crop": inner })
-                    }
-                    "rotate" => {
-                        let mut inner = map.clone();
-                        inner.remove("operation");
-                        inner.remove("type");
-                        inner.remove("op");
-                        serde_json::json!({ "Rotate": inner })
-                    }
+                    "box_blur" | "boxblur" => wrap_op_inner(map, "BoxBlur", None),
+                    "sharpen" => wrap_op_inner(map, "Sharpen", None),
+                    "crop" => wrap_op_inner(map, "Crop", None),
+                    "rotate" => wrap_op_inner(map, "Rotate", None),
                     _ => val.clone(),
-                }
-            } else {
-                val.clone()
+                },
+                None => val.clone(),
             }
         }
         _ => val.clone(),

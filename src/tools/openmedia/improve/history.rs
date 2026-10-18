@@ -7,11 +7,46 @@ pub struct GenerationHistory {
     conn: Mutex<Connection>,
 }
 
+fn row_to_generation_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<GenerationRecord> {
+    let request_params_str: String = row.get(3)?;
+    let metadata_str: Option<String> = row.get(17)?;
+
+    let request_params =
+        serde_json::from_str(&request_params_str).unwrap_or(serde_json::Value::Null);
+    let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
+
+    let output_size_i64: i64 = row.get(6)?;
+
+    Ok(GenerationRecord {
+        id: row.get(0)?,
+        created_at: row.get(1)?,
+        tool_name: row.get(2)?,
+        request_params,
+        output_path: row.get(4)?,
+        output_format: row.get(5)?,
+        output_size: output_size_i64 as u64,
+        width: row.get(7)?,
+        height: row.get(8)?,
+        duration: row.get(9)?,
+        model_used: row.get(10)?,
+        backend_used: row.get(11)?,
+        generation_time: row.get(12)?,
+        clip_score: row.get(13)?,
+        aesthetic_score: row.get(14)?,
+        refined_from: row.get(15)?,
+        refinement_round: row.get(16)?,
+        metadata,
+    })
+}
+
 impl GenerationHistory {
     pub fn open(db_path: &std::path::Path) -> Result<Self> {
         // Ensure parent directory exists
-        if let Some(parent) = db_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+        match db_path.parent() {
+            Some(parent) => {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            None => {}
         }
 
         let conn =
@@ -77,37 +112,7 @@ impl GenerationHistory {
             .map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
 
         let record = stmt
-            .query_row(params![id], |row| {
-                let request_params_str: String = row.get(3)?;
-                let metadata_str: Option<String> = row.get(17)?;
-
-                let request_params =
-                    serde_json::from_str(&request_params_str).unwrap_or(serde_json::Value::Null);
-                let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
-
-                let output_size_i64: i64 = row.get(6)?;
-
-                Ok(GenerationRecord {
-                    id: row.get(0)?,
-                    created_at: row.get(1)?,
-                    tool_name: row.get(2)?,
-                    request_params,
-                    output_path: row.get(4)?,
-                    output_format: row.get(5)?,
-                    output_size: output_size_i64 as u64,
-                    width: row.get(7)?,
-                    height: row.get(8)?,
-                    duration: row.get(9)?,
-                    model_used: row.get(10)?,
-                    backend_used: row.get(11)?,
-                    generation_time: row.get(12)?,
-                    clip_score: row.get(13)?,
-                    aesthetic_score: row.get(14)?,
-                    refined_from: row.get(15)?,
-                    refinement_round: row.get(16)?,
-                    metadata,
-                })
-            })
+            .query_row(params![id], row_to_generation_record)
             .optional()
             .map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
 
@@ -127,19 +132,28 @@ impl GenerationHistory {
 
         let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
-        if let Some(tool) = &filter.tool_name {
-            query_str.push_str(" AND tool_name = ?");
-            params_vec.push(Box::new(tool.clone()));
+        match &filter.tool_name {
+            Some(tool) => {
+                query_str.push_str(" AND tool_name = ?");
+                params_vec.push(Box::new(tool.clone()));
+            }
+            None => {}
         }
 
-        if let Some(min_clip) = filter.min_clip_score {
-            query_str.push_str(" AND clip_score >= ?");
-            params_vec.push(Box::new(min_clip));
+        match filter.min_clip_score {
+            Some(min_clip) => {
+                query_str.push_str(" AND clip_score >= ?");
+                params_vec.push(Box::new(min_clip));
+            }
+            None => {}
         }
 
-        if let Some(min_aes) = filter.min_aesthetic {
-            query_str.push_str(" AND aesthetic_score >= ?");
-            params_vec.push(Box::new(min_aes));
+        match filter.min_aesthetic {
+            Some(min_aes) => {
+                query_str.push_str(" AND aesthetic_score >= ?");
+                params_vec.push(Box::new(min_aes));
+            }
+            None => {}
         }
 
         // Validate sorting fields to prevent SQL injection
@@ -170,37 +184,7 @@ impl GenerationHistory {
             params_vec.iter().map(|b| b.as_ref()).collect();
 
         let rows = stmt
-            .query_map(&params_refs[..], |row| {
-                let request_params_str: String = row.get(3)?;
-                let metadata_str: Option<String> = row.get(17)?;
-
-                let request_params =
-                    serde_json::from_str(&request_params_str).unwrap_or(serde_json::Value::Null);
-                let metadata = metadata_str.and_then(|s| serde_json::from_str(&s).ok());
-
-                let output_size_i64: i64 = row.get(6)?;
-
-                Ok(GenerationRecord {
-                    id: row.get(0)?,
-                    created_at: row.get(1)?,
-                    tool_name: row.get(2)?,
-                    request_params,
-                    output_path: row.get(4)?,
-                    output_format: row.get(5)?,
-                    output_size: output_size_i64 as u64,
-                    width: row.get(7)?,
-                    height: row.get(8)?,
-                    duration: row.get(9)?,
-                    model_used: row.get(10)?,
-                    backend_used: row.get(11)?,
-                    generation_time: row.get(12)?,
-                    clip_score: row.get(13)?,
-                    aesthetic_score: row.get(14)?,
-                    refined_from: row.get(15)?,
-                    refinement_round: row.get(16)?,
-                    metadata,
-                })
-            })
+            .query_map(&params_refs[..], row_to_generation_record)
             .map_err(|e| OpenMediaError::DatabaseError(e.to_string()))?;
 
         let mut results = Vec::new();

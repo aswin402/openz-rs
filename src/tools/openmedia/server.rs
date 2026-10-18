@@ -29,27 +29,24 @@ impl OpenMediaServer {
         let model_registry = ModelRegistry::scan(&config.paths.model_dir).await?;
         let history = GenerationHistory::open(&config.paths.history_db)?;
 
-        let clip_scorer = if config.improve.enable_clip_scoring {
-            ClipScorer::load(&config.paths.model_dir.join("clip"))
+        let clip_scorer = match config.improve.enable_clip_scoring {
+            true => ClipScorer::load(&config.paths.model_dir.join("clip"))
                 .await
-                .ok()
-        } else {
-            None
+                .ok(),
+            false => None,
         };
 
-        let aesthetic_scorer = if config.improve.enable_aesthetic_scoring {
-            AestheticScorer::load(&config.paths.model_dir.join("clip/aesthetic-predictor.onnx"))
+        let aesthetic_scorer = match config.improve.enable_aesthetic_scoring {
+            true => AestheticScorer::load(&config.paths.model_dir.join("clip/aesthetic-predictor.onnx"))
                 .await
-                .ok()
-        } else {
-            None
+                .ok(),
+            false => None,
         };
 
-        let gpu_pipeline = if config.compute.gpu_processing {
-            Some(DummyGpuPipeline::new())
-        } else {
-            None
-        };
+        let gpu_pipeline = config
+            .compute
+            .gpu_processing
+            .then(DummyGpuPipeline::new);
 
         Ok(Self {
             config: Arc::new(config),
