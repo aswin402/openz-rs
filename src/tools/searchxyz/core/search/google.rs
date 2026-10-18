@@ -33,164 +33,95 @@ impl GoogleBackend {
         self
     }
 
+    fn parse_google_href(href: &str) -> Option<String> {
+        match (href.starts_with("http"), href.starts_with("/url?q=")) {
+            (true, _) => Some(href.to_string()),
+            (false, true) => {
+                let parsed = url::Url::parse(&format!("https://www.google.com{}", href)).ok();
+                let target = parsed.and_then(|u| {
+                    u.query_pairs()
+                        .find_map(|(k, v)| (k == "q").then(|| v.into_owned()))
+                });
+                Some(target.unwrap_or_else(|| href.to_string()))
+            }
+            (false, false) => None,
+        }
+    }
+
     fn parse_results(html_body: &str, max_results: usize) -> Vec<SearchResult> {
         let document = Html::parse_document(html_body);
 
-        // Google organic result containers
         let container_sel =
             Selector::parse("div.g, div.MjjYud, div[jscontroller][data-hveid][data-ved]").unwrap();
         let containers: Vec<_> = document.select(&container_sel).collect();
+        let title_sel = Selector::parse("h3").unwrap();
 
-        let mut results = Vec::new();
+        match containers.is_empty() {
+            false => {
+                let link_sel = Selector::parse("a[href]").unwrap();
+                let snippet_selectors = vec![
+                    Selector::parse(".VwiC3b").unwrap(),
+                    Selector::parse(".yDAB2e").unwrap(),
+                    Selector::parse(".BNeawe").unwrap(),
+                    Selector::parse("div[style*='-webkit-line-clamp']").unwrap(),
+                ];
 
-        if !containers.is_empty() {
-            let title_sel = Selector::parse("h3").unwrap();
-            let link_sel = Selector::parse("a[href]").unwrap();
-
-            // Google snippet selectors:
-            // .VwiC3b, .yDAB2e, .BNeawe, div[style*="-webkit-line-clamp"]
-            let snippet_selectors = vec![
-                Selector::parse(".VwiC3b").unwrap(),
-                Selector::parse(".yDAB2e").unwrap(),
-                Selector::parse(".BNeawe").unwrap(),
-                Selector::parse("div[style*='-webkit-line-clamp']").unwrap(),
-            ];
-
-            for container in containers {
-                if results.len() >= max_results {
-                    break;
-                }
-
-                // Check if this container has a title
-                let title_el = match container.select(&title_sel).next() {
-                    Some(el) => el,
-                    None => continue,
-                };
-
-                let title = title_el
-                    .text()
-                    .collect::<Vec<_>>()
-                    .join("")
-                    .trim()
-                    .to_string();
-                if title.is_empty() {
-                    continue;
-                }
-
-                // Find the first href anchor in the container (often enclosing h3 or nearby)
-                let url = match container.select(&link_sel).next() {
-                    Some(el) => match el.value().attr("href") {
-                        Some(href) => {
-                            if href.starts_with("http") {
-                                href.to_string()
-                            } else if href.starts_with("/url?q=") {
-                                if let Ok(parsed) =
-                                    url::Url::parse(&format!("https://www.google.com{}", href))
-                                {
-                                    let mut target = None;
-                                    for (k, v) in parsed.query_pairs() {
-                                        if k == "q" {
-                                            target = Some(v.into_owned());
-                                            break;
-                                        }
-                                    }
-                                    if let Some(t) = target {
-                                        t
-                                    } else {
-                                        href.to_string()
-                                    }
-                                } else {
-                                    href.to_string()
-                                }
-                            } else {
-                                continue;
-                            }
-                        }
-                        None => continue,
-                    },
-                    None => continue,
-                };
-
-                // Extract snippet
-                let mut snippet = String::new();
-                for snippet_sel in &snippet_selectors {
-                    if let Some(snippet_el) = container.select(snippet_sel).next() {
-                        snippet = snippet_el
+                containers
+                    .into_iter()
+                    .filter_map(|container| {
+                        let title_el = container.select(&title_sel).next()?;
+                        let title = title_el
                             .text()
                             .collect::<Vec<_>>()
                             .join("")
                             .trim()
                             .to_string();
-                        if !snippet.is_empty() {
-                            break;
+                        match title.is_empty() {
+                            true => return None,
+                            false => {}
+                        }
+
+                        let href = container
+                            .select(&link_sel)
+                            .next()
+                            .and_then(|el| el.value().attr("href"))?;
+                        let url = Self::parse_google_href(href)?;
+                        let snippet = super::extract_container_snippet(
+                            &container,
+                            &snippet_selectors,
+                            &title,
+                        );
+
+                        Some(SearchResult {
+                            title,
+                            url,
+                            snippet,
+                            source: "google".into(),
+                        })
+                    })
+                    .take(max_results)
+                    .collect()
+            }
+            true => document
+                .select(&title_sel)
+                .filter_map(|h3_el| {
+                    let title = h3_el.text().collect::<Vec<_>>().join("").trim().to_string();
+                    match title.is_empty() {
+                        true => None,
+                        false => {
+                            let url = super::find_ancestor_http_href(&h3_el)?;
+                            Some(SearchResult {
+                                title,
+                                url,
+                                snippet: String::new(),
+                                source: "google".into(),
+                            })
                         }
                     }
-                }
-
-                // If snippet is still empty, let's grab text from the container omitting the title.
-                if snippet.is_empty() {
-                    snippet = container.text().collect::<Vec<_>>().join(" ");
-                    snippet = snippet.replace(&title, "").trim().to_string();
-                    if snippet.len() > 200 {
-                        snippet.truncate(200);
-                        snippet.push_str("...");
-                    }
-                }
-
-                results.push(SearchResult {
-                    title,
-                    url,
-                    snippet,
-                    source: "google".into(),
-                });
-            }
-        } else {
-            // Fallback: If no containers found, try finding h3s directly
-            let title_sel = Selector::parse("h3").unwrap();
-            let h3s: Vec<_> = document.select(&title_sel).collect();
-            for h3_el in h3s {
-                if results.len() >= max_results {
-                    break;
-                }
-
-                let title = h3_el.text().collect::<Vec<_>>().join("").trim().to_string();
-                if title.is_empty() {
-                    continue;
-                }
-
-                // Walk up the tree to find an ancestor anchor link
-                let mut current = h3_el.parent();
-                let mut url = None;
-                for _ in 0..5 {
-                    if let Some(node) = current {
-                        if let Some(el) = scraper::ElementRef::wrap(node) {
-                            if el.value().name() == "a" {
-                                if let Some(href) = el.value().attr("href") {
-                                    if href.starts_with("http") {
-                                        url = Some(href.to_string());
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        current = node.parent();
-                    } else {
-                        break;
-                    }
-                }
-
-                if let Some(url) = url {
-                    results.push(SearchResult {
-                        title,
-                        url,
-                        snippet: String::new(),
-                        source: "google".into(),
-                    });
-                }
-            }
+                })
+                .take(max_results)
+                .collect(),
         }
-
-        results
     }
 }
 
@@ -205,17 +136,7 @@ impl SearchBackend for GoogleBackend {
     }
 
     async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>, SearchXyzError> {
-        use rand::seq::SliceRandom;
-
-        let client = if let Some(ref clients) = self.clients {
-            if !clients.is_empty() {
-                clients.choose(&mut rand::thread_rng()).unwrap_or(&self.client)
-            } else {
-                &self.client
-            }
-        } else {
-            &self.client
-        };
+        let client = super::choose_proxy_client(&self.client, &self.clients);
 
         let mut results = Vec::new();
         #[cfg(feature = "js-rendering")]
@@ -228,24 +149,26 @@ impl SearchBackend for GoogleBackend {
             .send()
             .await
         {
-            Ok(resp) => {
-                if resp.status().is_success() {
-                    if let Ok(html_body) = resp.text().await {
+            Ok(resp) => match resp.status().is_success() {
+                true => match resp.text().await {
+                    Ok(html_body) => {
                         results = Self::parse_results(&html_body, query.max_results);
-                    } else {
+                    }
+                    Err(_) => {
                         #[cfg(feature = "js-rendering")]
                         {
                             http_failed = true;
                         }
                     }
-                } else {
+                },
+                false => {
                     #[cfg(feature = "js-rendering")]
                     {
                         http_failed = true;
                     }
                     tracing::warn!("Google HTTP request returned status {}", resp.status());
                 }
-            }
+            },
             Err(e) => {
                 #[cfg(feature = "js-rendering")]
                 {
@@ -257,8 +180,8 @@ impl SearchBackend for GoogleBackend {
 
         // Fallback to headless browser if raw HTTP failed or returned no organic results (bot detection / captcha page)
         #[cfg(feature = "js-rendering")]
-        if (http_failed || results.is_empty()) && self.headless_browser.is_some() {
-            if let Some(ref headless) = self.headless_browser {
+        match (http_failed || results.is_empty(), &self.headless_browser) {
+            (true, Some(headless)) => {
                 let mut url_parsed = url::Url::parse("https://www.google.com/search").unwrap();
                 url_parsed.query_pairs_mut().append_pair("q", &query.query);
                 let search_url = url_parsed.to_string();
@@ -273,10 +196,12 @@ impl SearchBackend for GoogleBackend {
                     }
                 }
             }
+            _ => {}
         }
 
-        if results.is_empty() {
-            tracing::warn!(query = %query.query, "Google returned no parsable results");
+        match results.is_empty() {
+            true => tracing::warn!(query = %query.query, "Google returned no parsable results"),
+            false => {}
         }
 
         Ok(results)

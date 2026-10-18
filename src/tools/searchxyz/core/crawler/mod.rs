@@ -62,6 +62,25 @@ impl FetchCacheMode {
     }
 }
 
+fn build_http_client(
+    config: &CrawlerConfig,
+    proxy: Option<reqwest::Proxy>,
+) -> Result<Client, reqwest::Error> {
+    let builder = Client::builder()
+        .timeout(Duration::from_secs(config.timeout_secs))
+        .connect_timeout(Duration::from_secs(10))
+        .user_agent(&config.user_agent)
+        .redirect(Policy::limited(config.max_redirects))
+        .pool_max_idle_per_host(4)
+        .gzip(true)
+        .brotli(true);
+    let builder = match proxy {
+        Some(p) => builder.proxy(p),
+        None => builder,
+    };
+    builder.build()
+}
+
 impl Crawler {
     pub fn new(
         config: CrawlerConfig,
@@ -70,46 +89,32 @@ impl Crawler {
         cache: Arc<Mutex<Cache>>,
     ) -> Self {
         let mut clients = Vec::new();
-        if proxy_config.enabled && !proxy_config.urls.is_empty() {
-            for proxy_url in &proxy_config.urls {
-                match reqwest::Proxy::all(proxy_url) {
-                    Ok(proxy) => {
-                        match Client::builder()
-                            .timeout(Duration::from_secs(config.timeout_secs))
-                            .connect_timeout(Duration::from_secs(10))
-                            .user_agent(&config.user_agent)
-                            .redirect(Policy::limited(config.max_redirects))
-                            .pool_max_idle_per_host(4)
-                            .gzip(true)
-                            .brotli(true)
-                            .proxy(proxy)
-                            .build()
-                        {
+        match proxy_config.enabled && !proxy_config.urls.is_empty() {
+            true => {
+                for proxy_url in &proxy_config.urls {
+                    match reqwest::Proxy::all(proxy_url) {
+                        Ok(proxy) => match build_http_client(&config, Some(proxy)) {
                             Ok(client) => clients.push(client),
                             Err(e) => {
                                 tracing::error!(proxy_url, error = %e, "Failed to build proxied HTTP client");
                             }
+                        },
+                        Err(e) => {
+                            tracing::error!(proxy_url, error = %e, "Failed to parse proxy URL");
                         }
-                    }
-                    Err(e) => {
-                        tracing::error!(proxy_url, error = %e, "Failed to parse proxy URL");
                     }
                 }
             }
+            false => {}
         }
 
-        if clients.is_empty() {
-            let client = Client::builder()
-                .timeout(Duration::from_secs(config.timeout_secs))
-                .connect_timeout(Duration::from_secs(10))
-                .user_agent(&config.user_agent)
-                .redirect(Policy::limited(config.max_redirects))
-                .pool_max_idle_per_host(4)
-                .gzip(true)
-                .brotli(true)
-                .build()
-                .expect("Failed to build default HTTP client");
-            clients.push(client);
+        match clients.is_empty() {
+            true => {
+                let client = build_http_client(&config, None)
+                    .expect("Failed to build default HTTP client");
+                clients.push(client);
+            }
+            false => {}
         }
 
         // Per-domain rate limiter: N requests/sec per domain.
@@ -159,22 +164,33 @@ impl Crawler {
         // ── 1. Check cache ──
         let cached_entry = {
             let cache = self.cache.lock().await;
-            if cache_mode.may_read_cache() {
-                if let Some(entry) = cache.get(url) {
-                    tracing::debug!(url, "Cache hit");
-                    return Ok(FetchResult {
-                        url: url.to_string(),
-                        final_url: url.to_string(),
-                        body: entry.content.clone(),
-                        content_type: entry
-                            .content_type
-                            .clone()
-                            .unwrap_or_else(|| "text/html".into()),
-                    });
-                }
-                if matches!(cache_mode, FetchCacheMode::PreferCache) {
-                    tracing::debug!(url, "Prefer-cache requested but no fresh entry found");
-                }
+            match cache_mode.may_read_cache() {
+                true => match cache.get(url) {
+                    Some(entry) => {
+                        tracing::debug!(url, "Cache hit");
+                        return Ok(FetchResult {
+                            url: url.to_string(),
+                            final_url: url.to_string(),
+                            body: entry.content.clone(),
+                            content_type: entry
+                                .content_type
+                                .clone()
+                                .unwrap_or_else(|| "text/html".into()),
+                        });
+                    }
+                    None => {
+                        match matches!(cache_mode, FetchCacheMode::PreferCache) {
+                            true => {
+                                tracing::debug!(
+                                    url,
+                                    "Prefer-cache requested but no fresh entry found"
+                                );
+                            }
+                            false => {}
+                        }
+                    }
+                },
+                false => {}
             }
             cache.get_any(url).cloned()
         };
@@ -187,25 +203,30 @@ impl Crawler {
         self.rate_limiter.until_key_ready(&domain).await;
 
         // ── 3. Headless JS execution if requested ──
-        if render_js {
-            tracing::info!(url, "Fetching URL with headless browser");
-            let body = self.headless_browser.fetch_html(url).await?;
+        match render_js {
+            true => {
+                tracing::info!(url, "Fetching URL with headless browser");
+                let body = self.headless_browser.fetch_html(url).await?;
 
-            // Cache the response
-            if cache_mode.may_write_cache() {
-                let mut cache = self.cache.lock().await;
-                cache.put(
-                    url.to_string(),
-                    CacheEntry::new(body.clone(), url.to_string()),
-                );
+                match cache_mode.may_write_cache() {
+                    true => {
+                        let mut cache = self.cache.lock().await;
+                        cache.put(
+                            url.to_string(),
+                            CacheEntry::new(body.clone(), url.to_string()),
+                        );
+                    }
+                    false => {}
+                }
+
+                return Ok(FetchResult {
+                    url: url.to_string(),
+                    final_url: url.to_string(),
+                    body,
+                    content_type: "text/html".into(),
+                });
             }
-
-            return Ok(FetchResult {
-                url: url.to_string(),
-                final_url: url.to_string(),
-                body,
-                content_type: "text/html".into(),
-            });
+            false => {}
         }
 
         // ── 4. Fetch with retries (exponential backoff) ──
@@ -215,19 +236,26 @@ impl Crawler {
             attempt += 1;
 
             let mut headers = fingerprint::HeaderGenerator::random_headers();
-            if matches!(cache_mode, FetchCacheMode::Revalidate) {
-                if let Some(entry) = &cached_entry {
-                    if let Some(etag) = &entry.etag {
-                        if let Ok(value) = etag.parse() {
+            match (matches!(cache_mode, FetchCacheMode::Revalidate), &cached_entry) {
+                (true, Some(entry)) => {
+                    match entry.etag.as_deref().and_then(|etag| etag.parse().ok()) {
+                        Some(value) => {
                             headers.insert(header::IF_NONE_MATCH, value);
                         }
+                        None => {}
                     }
-                    if let Some(last_modified) = &entry.last_modified {
-                        if let Ok(value) = last_modified.parse() {
+                    match entry
+                        .last_modified
+                        .as_deref()
+                        .and_then(|lm| lm.parse().ok())
+                    {
+                        Some(value) => {
                             headers.insert(header::IF_MODIFIED_SINCE, value);
                         }
+                        None => {}
                     }
                 }
+                _ => {}
             }
             use rand::seq::SliceRandom;
             let client = self
@@ -246,14 +274,17 @@ impl Crawler {
                     match status {
                         StatusCode::OK => {}
 
-                        StatusCode::NOT_MODIFIED => {
-                            if let Some(entry) = cached_entry {
+                        StatusCode::NOT_MODIFIED => match cached_entry {
+                            Some(entry) => {
                                 tracing::debug!(url, "Origin returned 304; reusing cached body");
-                                if cache_mode.may_write_cache() {
-                                    let mut refreshed = entry.clone();
-                                    refreshed.fetched_at = chrono::Utc::now();
-                                    let mut cache = self.cache.lock().await;
-                                    cache.put(url.to_string(), refreshed);
+                                match cache_mode.may_write_cache() {
+                                    true => {
+                                        let mut refreshed = entry.clone();
+                                        refreshed.fetched_at = chrono::Utc::now();
+                                        let mut cache = self.cache.lock().await;
+                                        cache.put(url.to_string(), refreshed);
+                                    }
+                                    false => {}
                                 }
                                 return Ok(FetchResult {
                                     url: url.into(),
@@ -264,13 +295,15 @@ impl Crawler {
                                         .unwrap_or_else(|| "text/html".into()),
                                 });
                             }
-                            return Err(SearchXyzError::HttpError {
-                                url: url.into(),
-                                status: 304,
-                                reason: "Origin returned 304 but SearchXyz has no cached body"
-                                    .into(),
-                            });
-                        }
+                            None => {
+                                return Err(SearchXyzError::HttpError {
+                                    url: url.into(),
+                                    status: 304,
+                                    reason: "Origin returned 304 but SearchXyz has no cached body"
+                                        .into(),
+                                });
+                            }
+                        },
 
                         StatusCode::FORBIDDEN => {
                             return Err(SearchXyzError::HttpError {
@@ -288,56 +321,68 @@ impl Crawler {
                             });
                         }
 
-                        StatusCode::TOO_MANY_REQUESTS => {
-                            if attempt <= self.config.max_retries {
+                        StatusCode::TOO_MANY_REQUESTS => match attempt <= self.config.max_retries {
+                            true => {
                                 let delay = Duration::from_millis(1000 * 2u64.pow(attempt - 1));
                                 tracing::warn!(url, attempt, "Rate limited, backing off");
                                 tokio::time::sleep(delay).await;
                                 continue;
                             }
-                            return Err(SearchXyzError::RateLimited {
-                                provider: domain,
-                                retry_after_secs: 60,
-                            });
-                        }
+                            false => {
+                                return Err(SearchXyzError::RateLimited {
+                                    provider: domain,
+                                    retry_after_secs: 60,
+                                });
+                            }
+                        },
 
                         StatusCode::INTERNAL_SERVER_ERROR | StatusCode::SERVICE_UNAVAILABLE => {
-                            if attempt <= self.config.max_retries {
-                                let delay = Duration::from_millis(500 * 2u64.pow(attempt - 1));
-                                tracing::warn!(
-                                    url, status = %status, attempt,
-                                    "Server error, retrying"
-                                );
-                                tokio::time::sleep(delay).await;
-                                continue;
-                            }
-                            let err = SearchXyzError::HttpError {
-                                url: url.into(),
-                                status: status.as_u16(),
-                                reason: format!(
-                                    "Server error after {} attempts",
-                                    self.config.max_retries
-                                ),
-                            };
-                            if allow_stale_fallback {
-                                if let Some(result) =
-                                    stale_fallback(url, cached_entry.clone(), err.to_string())
-                                {
-                                    return Ok(result);
+                            match attempt <= self.config.max_retries {
+                                true => {
+                                    let delay = Duration::from_millis(500 * 2u64.pow(attempt - 1));
+                                    tracing::warn!(
+                                        url, status = %status, attempt,
+                                        "Server error, retrying"
+                                    );
+                                    tokio::time::sleep(delay).await;
+                                    continue;
+                                }
+                                false => {
+                                    let err = SearchXyzError::HttpError {
+                                        url: url.into(),
+                                        status: status.as_u16(),
+                                        reason: format!(
+                                            "Server error after {} attempts",
+                                            self.config.max_retries
+                                        ),
+                                    };
+                                    match allow_stale_fallback
+                                        .then(|| {
+                                            stale_fallback(
+                                                url,
+                                                cached_entry.clone(),
+                                                err.to_string(),
+                                            )
+                                        })
+                                        .flatten()
+                                    {
+                                        Some(result) => return Ok(result),
+                                        None => return Err(err),
+                                    }
                                 }
                             }
-                            return Err(err);
                         }
 
-                        other if !other.is_success() => {
-                            return Err(SearchXyzError::HttpError {
-                                url: url.into(),
-                                status: other.as_u16(),
-                                reason: format!("Unexpected status: {other}"),
-                            });
-                        }
-
-                        _ => {} // other 2xx — proceed
+                        other => match other.is_success() {
+                            true => {}
+                            false => {
+                                return Err(SearchXyzError::HttpError {
+                                    url: url.into(),
+                                    status: other.as_u16(),
+                                    reason: format!("Unexpected status: {other}"),
+                                });
+                            }
+                        },
                     }
 
                     // ── Content-Type guard ──
@@ -358,19 +403,25 @@ impl Crawler {
                         || content_type.contains("text/plain")
                         || content_type.contains("application/xhtml");
 
-                    if !is_supported {
-                        return Err(SearchXyzError::CrawlFailed {
-                            url: url.into(),
-                            reason: format!(
-                                "Unsupported Content-Type: {content_type}. \
-                                 Only HTML pages and PDF documents are supported."
-                            ),
-                        });
+                    match is_supported {
+                        true => {}
+                        false => {
+                            return Err(SearchXyzError::CrawlFailed {
+                                url: url.into(),
+                                reason: format!(
+                                    "Unsupported Content-Type: {content_type}. \
+                                     Only HTML pages and PDF documents are supported."
+                                ),
+                            });
+                        }
                     }
 
                     // ── Size guard ──
-                    if let Some(len) = response.content_length() {
-                        if len as usize > self.config.max_body_bytes {
+                    match response
+                        .content_length()
+                        .filter(|&len| len as usize > self.config.max_body_bytes)
+                    {
+                        Some(len) => {
                             return Err(SearchXyzError::CrawlFailed {
                                 url: url.into(),
                                 reason: format!(
@@ -379,6 +430,7 @@ impl Crawler {
                                 ),
                             });
                         }
+                        None => {}
                     }
 
                     // ── Read response bytes ──
@@ -391,36 +443,43 @@ impl Crawler {
                                 reason: format!("Failed to read response bytes: {e}"),
                             })?;
 
-                    if bytes.len() > self.config.max_body_bytes {
-                        return Err(SearchXyzError::CrawlFailed {
-                            url: url.into(),
-                            reason: format!("Body exceeds limit ({} bytes)", bytes.len()),
-                        });
+                    match bytes.len() > self.config.max_body_bytes {
+                        true => {
+                            return Err(SearchXyzError::CrawlFailed {
+                                url: url.into(),
+                                reason: format!("Body exceeds limit ({} bytes)", bytes.len()),
+                            });
+                        }
+                        false => {}
                     }
 
                     // ── Extract body string (HTML/text vs PDF) ──
-                    let body = if is_pdf {
-                        tracing::info!(url, "Extracting text from PDF document");
-                        pdf_extract::extract_text_from_mem(&bytes).map_err(|e| {
-                            SearchXyzError::ExtractionFailed {
-                                url: url.into(),
-                                reason: format!("Failed to extract PDF text: {e}"),
-                            }
-                        })?
-                    } else {
-                        String::from_utf8_lossy(&bytes).into_owned()
+                    let body = match is_pdf {
+                        true => {
+                            tracing::info!(url, "Extracting text from PDF document");
+                            pdf_extract::extract_text_from_mem(&bytes).map_err(|e| {
+                                SearchXyzError::ExtractionFailed {
+                                    url: url.into(),
+                                    reason: format!("Failed to extract PDF text: {e}"),
+                                }
+                            })?
+                        }
+                        false => String::from_utf8_lossy(&bytes).into_owned(),
                     };
 
                     // ── Cache the response ──
-                    if cache_mode.may_write_cache() {
-                        let mut entry = CacheEntry::new(body.clone(), url.to_string());
-                        entry.etag = etag;
-                        entry.last_modified = last_modified;
-                        entry.cache_control = cache_control;
-                        entry.content_type = Some(content_type.clone());
+                    match cache_mode.may_write_cache() {
+                        true => {
+                            let mut entry = CacheEntry::new(body.clone(), url.to_string());
+                            entry.etag = etag;
+                            entry.last_modified = last_modified;
+                            entry.cache_control = cache_control;
+                            entry.content_type = Some(content_type.clone());
 
-                        let mut cache = self.cache.lock().await;
-                        cache.put(url.to_string(), entry);
+                            let mut cache = self.cache.lock().await;
+                            cache.put(url.to_string(), entry);
+                        }
+                        false => {}
                     }
 
                     return Ok(FetchResult {
@@ -433,24 +492,29 @@ impl Crawler {
 
                 Err(e) => {
                     // Network-level error — retry on transient failures.
-                    if attempt <= self.config.max_retries && (e.is_timeout() || e.is_connect()) {
-                        let delay = Duration::from_millis(500 * 2u64.pow(attempt - 1));
-                        tracing::warn!(
-                            url, error = %e, attempt,
-                            "Transient error, retrying"
-                        );
-                        tokio::time::sleep(delay).await;
-                        continue;
-                    }
-                    let err = SearchXyzError::from(e);
-                    if allow_stale_fallback {
-                        if let Some(result) =
-                            stale_fallback(url, cached_entry.clone(), err.to_string())
-                        {
-                            return Ok(result);
+                    match attempt <= self.config.max_retries && (e.is_timeout() || e.is_connect()) {
+                        true => {
+                            let delay = Duration::from_millis(500 * 2u64.pow(attempt - 1));
+                            tracing::warn!(
+                                url, error = %e, attempt,
+                                "Transient error, retrying"
+                            );
+                            tokio::time::sleep(delay).await;
+                            continue;
+                        }
+                        false => {
+                            let err = SearchXyzError::from(e);
+                            match allow_stale_fallback
+                                .then(|| {
+                                    stale_fallback(url, cached_entry.clone(), err.to_string())
+                                })
+                                .flatten()
+                            {
+                                Some(result) => return Ok(result),
+                                None => return Err(err),
+                            }
                         }
                     }
-                    return Err(err);
                 }
             }
         }
@@ -485,21 +549,28 @@ pub async fn validate_http_url(
         reason: "missing host".to_string(),
     })?;
     let host_lc = host.to_ascii_lowercase();
-    if !allow_private_network
+    match !allow_private_network
         && (matches!(host_lc.as_str(), "localhost" | "localhost.localdomain")
             || host_lc.ends_with(".localhost"))
     {
-        return Err(SearchXyzError::UnsafeUrl {
-            url: url.to_string(),
-            reason: "localhost targets are not allowed".to_string(),
-        });
+        true => {
+            return Err(SearchXyzError::UnsafeUrl {
+                url: url.to_string(),
+                reason: "localhost targets are not allowed".to_string(),
+            });
+        }
+        false => {}
     }
 
-    if let Ok(ip) = host_lc.parse::<IpAddr>() {
-        if !allow_private_network {
-            reject_private_ip(url, ip)?;
+    match host_lc.parse::<IpAddr>() {
+        Ok(ip) => {
+            match allow_private_network {
+                true => {}
+                false => reject_private_ip(url, ip)?,
+            }
+            return Ok(());
         }
-        return Ok(());
+        Err(_) => {}
     }
 
     let port = parsed.port_or_known_default().unwrap_or(443);
@@ -510,9 +581,12 @@ pub async fn validate_http_url(
             reason: format!("DNS lookup failed: {e}"),
         })?;
 
-    if !allow_private_network {
-        for addr in addrs {
-            reject_private_ip(url, addr.ip())?;
+    match allow_private_network {
+        true => {}
+        false => {
+            for addr in addrs {
+                reject_private_ip(url, addr.ip())?;
+            }
         }
     }
 
@@ -564,13 +638,13 @@ fn reject_private_ip(url: &str, ip: IpAddr) -> Result<(), SearchXyzError> {
         }
     };
 
-    if blocked {
-        return Err(SearchXyzError::UnsafeUrl {
+    match blocked {
+        true => Err(SearchXyzError::UnsafeUrl {
             url: url.to_string(),
             reason: format!("host resolves to non-public address {ip}"),
-        });
+        }),
+        false => Ok(()),
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -637,31 +711,34 @@ mod tests {
                 let request = String::from_utf8_lossy(&buf[..n]);
                 let count = request_counter.fetch_add(1, Ordering::SeqCst);
 
-                if count == 0 {
-                    let body = "<html><body>cached body</body></html>";
-                    let response = format!(
-                        r#"HTTP/1.1 200 OK
+                match count == 0 {
+                    true => {
+                        let body = "<html><body>cached body</body></html>";
+                        let response = format!(
+                            r#"HTTP/1.1 200 OK
 content-type: text/html
 etag: "v1"
 content-length: {}
 connection: close
 
 {}"#,
-                        body.len(),
-                        body
-                    );
-                    stream.write_all(response.as_bytes()).await.unwrap();
-                } else {
-                    assert!(
-                        request.contains(r#"if-none-match: "v1""#)
-                            || request.contains(r#"If-None-Match: "v1""#),
-                        "revalidation request should send If-None-Match, got: {request}"
-                    );
-                    let response = "HTTP/1.1 304 Not Modified
+                            body.len(),
+                            body
+                        );
+                        stream.write_all(response.as_bytes()).await.unwrap();
+                    }
+                    false => {
+                        assert!(
+                            request.contains(r#"if-none-match: "v1""#)
+                                || request.contains(r#"If-None-Match: "v1""#),
+                            "revalidation request should send If-None-Match, got: {request}"
+                        );
+                        let response = "HTTP/1.1 304 Not Modified
 connection: close
 
 ";
-                    stream.write_all(response.as_bytes()).await.unwrap();
+                        stream.write_all(response.as_bytes()).await.unwrap();
+                    }
                 }
             }
         });

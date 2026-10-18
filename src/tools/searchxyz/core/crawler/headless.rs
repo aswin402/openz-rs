@@ -29,16 +29,25 @@ impl HeadlessBrowser {
         let mut config_builder = BrowserConfig::builder()
             .window_size(self.config.viewport_width, self.config.viewport_height);
 
-        if let Some(ref path) = self.config.chrome_path {
-            config_builder = config_builder.chrome_executable(path);
+        match &self.config.chrome_path {
+            Some(path) => {
+                config_builder = config_builder.chrome_executable(path);
+            }
+            None => {}
         }
 
-        if self.proxy_config.enabled && !self.proxy_config.urls.is_empty() {
-            use rand::seq::SliceRandom;
-            if let Some(proxy_url) = self.proxy_config.urls.choose(&mut rand::thread_rng()) {
-                tracing::info!(proxy_url, "Using proxy for headless browser");
-                config_builder = config_builder.arg(format!("--proxy-server={}", proxy_url));
+        match self.proxy_config.enabled && !self.proxy_config.urls.is_empty() {
+            true => {
+                use rand::seq::SliceRandom;
+                match self.proxy_config.urls.choose(&mut rand::thread_rng()) {
+                    Some(proxy_url) => {
+                        tracing::info!(proxy_url, "Using proxy for headless browser");
+                        config_builder = config_builder.arg(format!("--proxy-server={}", proxy_url));
+                    }
+                    None => {}
+                }
             }
+            false => {}
         }
 
         // Launch browser
@@ -60,8 +69,11 @@ impl HeadlessBrowser {
         // Spawn background handler
         tokio::spawn(async move {
             while let Some(h) = handler.next().await {
-                if let Err(e) = h {
-                    tracing::debug!(error = %e, "Chrome event handler warning/unhandled event");
+                match h {
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::debug!(error = %e, "Chrome event handler warning/unhandled event");
+                    }
                 }
             }
         });
@@ -78,12 +90,14 @@ impl HeadlessBrowser {
 
         // Generate and set random headers
         let rand_headers = crate::tools::searchxyz::core::crawler::fingerprint::HeaderGenerator::random_headers();
-        let mut headers_map = HashMap::new();
-        for (k, v) in rand_headers.iter() {
-            if let Ok(value_str) = v.to_str() {
-                headers_map.insert(k.as_str().to_string(), value_str.to_string());
-            }
-        }
+        let headers_map: HashMap<String, String> = rand_headers
+            .iter()
+            .filter_map(|(k, v)| {
+                v.to_str()
+                    .ok()
+                    .map(|val_str| (k.as_str().to_string(), val_str.to_string()))
+            })
+            .collect();
 
         let params = SetExtraHttpHeadersParams::builder()
             .headers(Headers::new(serde_json::to_value(headers_map).unwrap()))
@@ -117,8 +131,11 @@ impl HeadlessBrowser {
             })?;
 
         // Extra sleep for SPA JavaScript execution to complete
-        if self.config.wait_after_load_ms > 0 {
-            tokio::time::sleep(Duration::from_millis(self.config.wait_after_load_ms)).await;
+        match self.config.wait_after_load_ms > 0 {
+            true => {
+                tokio::time::sleep(Duration::from_millis(self.config.wait_after_load_ms)).await;
+            }
+            false => {}
         }
 
         // Get fully rendered page source

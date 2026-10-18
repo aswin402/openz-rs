@@ -27,8 +27,9 @@ pub async fn discover_sitemap_urls(
     match crawler.fetch_url(&default_sitemap, false).await {
         Ok(result) => {
             let urls = parse_sitemap_urls(&result.body);
-            if !urls.is_empty() {
-                return Ok(urls);
+            match urls.is_empty() {
+                false => return Ok(urls),
+                true => {}
             }
         }
         Err(e) => {
@@ -40,17 +41,24 @@ pub async fn discover_sitemap_urls(
     let robots_url = format!("{}://{}/robots.txt", scheme, host);
     tracing::info!(robots = %robots_url, "Attempting robots.txt fetch");
 
-    if let Ok(result) = crawler.fetch_url(&robots_url, false).await {
-        let sitemap_urls = parse_sitemaps_from_robots(&result.body);
-        for s_url in sitemap_urls {
-            tracing::info!(sitemap = %s_url, "Attempting sitemap fetch from robots.txt");
-            if let Ok(res) = crawler.fetch_url(&s_url, false).await {
-                let urls = parse_sitemap_urls(&res.body);
-                if !urls.is_empty() {
-                    return Ok(urls);
+    match crawler.fetch_url(&robots_url, false).await {
+        Ok(result) => {
+            let sitemap_urls = parse_sitemaps_from_robots(&result.body);
+            for s_url in sitemap_urls {
+                tracing::info!(sitemap = %s_url, "Attempting sitemap fetch from robots.txt");
+                match crawler.fetch_url(&s_url, false).await {
+                    Ok(res) => {
+                        let urls = parse_sitemap_urls(&res.body);
+                        match urls.is_empty() {
+                            false => return Ok(urls),
+                            true => {}
+                        }
+                    }
+                    Err(_) => {}
                 }
             }
         }
+        Err(_) => {}
     }
 
     Err(SearchXyzError::CrawlFailed {
@@ -65,14 +73,16 @@ pub fn parse_sitemap_urls(xml: &str) -> Vec<String> {
     let mut cursor = xml;
     while let Some(start_idx) = cursor.find("<loc>") {
         let sub = &cursor[start_idx + 5..];
-        if let Some(end_idx) = sub.find("</loc>") {
-            let loc = sub[..end_idx].trim();
-            if !loc.is_empty() {
-                urls.push(loc.to_string());
+        match sub.find("</loc>") {
+            Some(end_idx) => {
+                let loc = sub[..end_idx].trim();
+                match loc.is_empty() {
+                    false => urls.push(loc.to_string()),
+                    true => {}
+                }
+                cursor = &sub[end_idx + 6..];
             }
-            cursor = &sub[end_idx + 6..];
-        } else {
-            break;
+            None => break,
         }
     }
     urls
@@ -80,20 +90,23 @@ pub fn parse_sitemap_urls(xml: &str) -> Vec<String> {
 
 /// Parse all `Sitemap:` lines from robots.txt payload.
 pub fn parse_sitemaps_from_robots(robots_txt: &str) -> Vec<String> {
-    let mut sitemaps = Vec::new();
-    for line in robots_txt.lines() {
-        let trimmed = line.trim();
-        if trimmed.to_lowercase().starts_with("sitemap:") {
-            let parts: Vec<&str> = trimmed.splitn(2, ':').collect();
-            if parts.len() == 2 {
-                let url = parts[1].trim();
-                if !url.is_empty() {
-                    sitemaps.push(url.to_string());
-                }
-            }
-        }
-    }
-    sitemaps
+    robots_txt
+        .lines()
+        .filter_map(|line| {
+            let trimmed = line.trim();
+            trimmed
+                .to_lowercase()
+                .starts_with("sitemap:")
+                .then(|| {
+                    trimmed
+                        .split_once(':')
+                        .map(|(_, url)| url.trim())
+                        .filter(|url| !url.is_empty())
+                        .map(str::to_string)
+                })
+                .flatten()
+        })
+        .collect()
 }
 
 #[cfg(test)]

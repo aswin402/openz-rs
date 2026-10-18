@@ -84,7 +84,7 @@ fn run_command_with_timeout(
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
     loop {
-        if child
+        match child
             .try_wait()
             .map_err(|e| SearchXyzError::CrawlFailed {
                 url: url.to_string(),
@@ -92,24 +92,71 @@ fn run_command_with_timeout(
             })?
             .is_some()
         {
-            return child
-                .wait_with_output()
-                .map_err(|e| SearchXyzError::CrawlFailed {
-                    url: url.to_string(),
-                    reason: format!("Failed to collect {action} output: {e}"),
-                });
+            true => {
+                return child
+                    .wait_with_output()
+                    .map_err(|e| SearchXyzError::CrawlFailed {
+                        url: url.to_string(),
+                        reason: format!("Failed to collect {action} output: {e}"),
+                    });
+            }
+            false => {}
         }
 
-        if std::time::Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(SearchXyzError::CrawlFailed {
-                url: url.to_string(),
-                reason: format!("{action} timed out after {timeout_secs}s"),
-            });
+        match std::time::Instant::now() >= deadline {
+            true => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(SearchXyzError::CrawlFailed {
+                    url: url.to_string(),
+                    reason: format!("{action} timed out after {timeout_secs}s"),
+                });
+            }
+            false => {}
         }
 
         std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
+fn run_git_checked(
+    repo_dir: &Path,
+    args: &[&str],
+    timeout_secs: u64,
+    url: &str,
+    action: &str,
+    failure_label: &str,
+) -> Result<String, SearchXyzError> {
+    let mut cmd = Command::new("git");
+    cmd.args(args).current_dir(repo_dir);
+    let output = run_command_with_timeout(&mut cmd, timeout_secs, url, action)?;
+    match output.status.success() {
+        true => Ok(String::from_utf8_lossy(&output.stdout).trim().to_string()),
+        false => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            Err(SearchXyzError::CrawlFailed {
+                url: url.to_string(),
+                reason: format!("{failure_label} failed: {}", stderr.trim()),
+            })
+        }
+    }
+}
+
+fn run_git_nonempty_rev(
+    repo_dir: &Path,
+    args: &[&str],
+    timeout_secs: u64,
+    url: &str,
+    action: &str,
+    failure_label: &str,
+) -> Result<String, SearchXyzError> {
+    let rev = run_git_checked(repo_dir, args, timeout_secs, url, action, failure_label)?;
+    match rev.is_empty() {
+        true => Err(SearchXyzError::CrawlFailed {
+            url: url.to_string(),
+            reason: format!("{failure_label} returned an empty commit hash"),
+        }),
+        false => Ok(rev),
     }
 }
 
@@ -119,31 +166,40 @@ fn enforce_ingest_limits(
     limits: &GithubIngestLimits,
     url: &str,
 ) -> Result<(), SearchXyzError> {
-    if relative_files.len() > limits.max_files {
-        return Err(SearchXyzError::CrawlFailed {
-            url: url.to_string(),
-            reason: format!(
-                "GitHub ingest file count limit exceeded: files={}, max_files={}",
-                relative_files.len(),
-                limits.max_files
-            ),
-        });
+    match relative_files.len() > limits.max_files {
+        true => {
+            return Err(SearchXyzError::CrawlFailed {
+                url: url.to_string(),
+                reason: format!(
+                    "GitHub ingest file count limit exceeded: files={}, max_files={}",
+                    relative_files.len(),
+                    limits.max_files
+                ),
+            });
+        }
+        false => {}
     }
 
     let mut total_bytes = 0_u64;
     for rel in relative_files {
         let path = repo_dir.join(rel);
-        if let Ok(metadata) = fs::metadata(&path) {
-            total_bytes = total_bytes.saturating_add(metadata.len());
-            if total_bytes > limits.max_total_bytes {
-                return Err(SearchXyzError::CrawlFailed {
-                    url: url.to_string(),
-                    reason: format!(
-                        "GitHub ingest byte limit exceeded: bytes={}, max_total_bytes={}",
-                        total_bytes, limits.max_total_bytes
-                    ),
-                });
+        match fs::metadata(&path) {
+            Ok(metadata) => {
+                total_bytes = total_bytes.saturating_add(metadata.len());
+                match total_bytes > limits.max_total_bytes {
+                    true => {
+                        return Err(SearchXyzError::CrawlFailed {
+                            url: url.to_string(),
+                            reason: format!(
+                                "GitHub ingest byte limit exceeded: bytes={}, max_total_bytes={}",
+                                total_bytes, limits.max_total_bytes
+                            ),
+                        });
+                    }
+                    false => {}
+                }
             }
+            Err(_) => {}
         }
     }
 
@@ -156,31 +212,42 @@ pub fn parse_github_url(url: &str) -> Option<(String, String, Option<String>)> {
 
     // Check hostname
     let host = parsed.host_str()?;
-    if host != "github.com" && host != "www.github.com" {
-        return None;
+    match matches!(host, "github.com" | "www.github.com") {
+        true => {}
+        false => return None,
     }
 
     let mut segments = parsed.path_segments()?;
     let owner = segments.next()?.to_string();
-    let mut repo = segments.next()?.to_string();
-
-    if repo.ends_with(".git") {
-        repo = repo[..repo.len() - 4].to_string();
-    }
+    let repo_raw = segments.next()?;
+    let repo = repo_raw.strip_suffix(".git").unwrap_or(repo_raw).to_string();
 
     // Check if there is a branch specified, e.g. /tree/branch-name or /blob/branch-name
-    let next_segment = segments.next();
-    let branch = if next_segment == Some("tree") || next_segment == Some("blob") {
-        segments.next().map(|b| b.to_string())
-    } else {
-        None
+    let branch = match segments.next() {
+        Some("tree") | Some("blob") => segments.next().map(|b| b.to_string()),
+        _ => None,
     };
 
-    if owner.is_empty() || repo.is_empty() {
-        return None;
+    match owner.is_empty() || repo.is_empty() {
+        true => None,
+        false => Some((owner, repo, branch)),
     }
+}
 
-    Some((owner, repo, branch))
+fn is_excluded_rel_path(rel_path: &Path, exclude_paths: &[String]) -> bool {
+    exclude_paths
+        .iter()
+        .any(|ex| rel_path.components().any(|c| c.as_os_str() == ex.as_str()))
+}
+
+fn has_included_extension(path: &Path, include_exts: &[String]) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|ext| {
+            let ext_lower = ext.to_lowercase();
+            include_exts.iter().any(|ie| ie.to_lowercase() == ext_lower)
+        })
+        .unwrap_or(false)
 }
 
 /// Recursively walk the directory, filtering files by extension and path exclusion
@@ -191,39 +258,37 @@ fn visit_dirs(
     exclude_paths: &[String],
     files: &mut Vec<PathBuf>,
 ) -> Result<(), std::io::Error> {
-    if dir.is_dir() {
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            let path = entry.path();
+    match dir.is_dir() {
+        false => return Ok(()),
+        true => {}
+    }
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
 
-            // Check if path should be excluded
-            if let Ok(rel_path) = path.strip_prefix(base_dir) {
-                if exclude_paths
-                    .iter()
-                    .any(|ex| rel_path.components().any(|c| c.as_os_str() == ex.as_str()))
-                {
-                    continue;
-                }
-            }
+        let excluded = path
+            .strip_prefix(base_dir)
+            .ok()
+            .is_some_and(|rel_path| is_excluded_rel_path(rel_path, exclude_paths));
+        match excluded {
+            true => continue,
+            false => {}
+        }
 
-            if path.is_dir() {
+        match (path.is_dir(), path.is_file()) {
+            (true, _) => {
                 visit_dirs(&path, base_dir, include_exts, exclude_paths, files)?;
-            } else if path.is_file() {
-                // Check file size first
-                if let Ok(metadata) = fs::metadata(&path) {
-                    if metadata.len() > MAX_FILE_SIZE_BYTES {
-                        continue;
-                    }
-                }
-
-                // Filter by extension
-                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    let ext_lower = ext.to_lowercase();
-                    if include_exts.iter().any(|ie| ie.to_lowercase() == ext_lower) {
-                        files.push(path);
-                    }
+            }
+            (false, true) => {
+                let too_large = fs::metadata(&path)
+                    .ok()
+                    .is_some_and(|m| m.len() > MAX_FILE_SIZE_BYTES);
+                match !too_large && has_included_extension(&path, include_exts) {
+                    true => files.push(path),
+                    false => {}
                 }
             }
+            (false, false) => {}
         }
     }
     Ok(())
@@ -280,259 +345,199 @@ pub async fn clone_and_index_repo(
     let mut is_incremental = false;
 
     let repo_git_dir = repo_dir.join(".git");
-    if repo_dir.exists() && repo_git_dir.exists() {
-        is_incremental = true;
-        // 1. Get active branch
-        let mut active_branch_cmd = Command::new("git");
-        active_branch_cmd
-            .args(["rev-parse", "--abbrev-ref", "HEAD"])
-            .current_dir(&repo_dir);
-        let active_branch_output = run_command_with_timeout(
-            &mut active_branch_cmd,
-            limits.git_timeout_secs,
-            url,
-            "git rev-parse --abbrev-ref",
-        )?;
-        if !active_branch_output.status.success() {
-            let stderr = String::from_utf8_lossy(&active_branch_output.stderr);
-            return Err(SearchXyzError::CrawlFailed {
-                url: url.to_string(),
-                reason: format!("git rev-parse --abbrev-ref HEAD failed: {}", stderr.trim()),
-            });
-        }
-        let active_branch = String::from_utf8_lossy(&active_branch_output.stdout)
-            .trim()
-            .to_string();
+    match repo_dir.exists() && repo_git_dir.exists() {
+        true => {
+            is_incremental = true;
+            // 1. Get active branch
+            let active_branch = run_git_checked(
+                &repo_dir,
+                &["rev-parse", "--abbrev-ref", "HEAD"],
+                limits.git_timeout_secs,
+                url,
+                "git rev-parse --abbrev-ref",
+                "git rev-parse --abbrev-ref HEAD",
+            )?;
 
-        // 2. Get old commit hash
-        let mut old_commit_cmd = Command::new("git");
-        old_commit_cmd
-            .args(["rev-parse", "HEAD"])
-            .current_dir(&repo_dir);
-        let old_commit_output = run_command_with_timeout(
-            &mut old_commit_cmd,
-            limits.git_timeout_secs,
-            url,
-            "git rev-parse HEAD",
-        )?;
-        if !old_commit_output.status.success() {
-            let stderr = String::from_utf8_lossy(&old_commit_output.stderr);
-            return Err(SearchXyzError::CrawlFailed {
-                url: url.to_string(),
-                reason: format!("git rev-parse HEAD (old) failed: {}", stderr.trim()),
-            });
-        }
-        let old_commit = String::from_utf8_lossy(&old_commit_output.stdout)
-            .trim()
-            .to_string();
-        if old_commit.is_empty() {
-            return Err(SearchXyzError::CrawlFailed {
-                url: url.to_string(),
-                reason: "git rev-parse HEAD (old) returned an empty commit hash".to_string(),
-            });
-        }
+            // 2. Get old commit hash
+            let old_commit = run_git_nonempty_rev(
+                &repo_dir,
+                &["rev-parse", "HEAD"],
+                limits.git_timeout_secs,
+                url,
+                "git rev-parse HEAD",
+                "git rev-parse HEAD (old)",
+            )?;
 
-        // 3. Fetch from remote
-        tracing::info!(repo = %repo_base_url, branch = %active_branch, "Fetching latest changes");
-        let mut fetch_cmd = Command::new("git");
-        fetch_cmd
-            .args(["fetch", "--depth", "1", "origin", &active_branch])
-            .current_dir(&repo_dir);
-        let fetch_output =
-            run_command_with_timeout(&mut fetch_cmd, limits.git_timeout_secs, url, "git fetch")?;
-        if !fetch_output.status.success() {
-            let stderr = String::from_utf8_lossy(&fetch_output.stderr);
-            return Err(SearchXyzError::CrawlFailed {
-                url: url.to_string(),
-                reason: format!("git fetch failed: {}", stderr.trim()),
-            });
-        }
+            // 3. Fetch from remote
+            tracing::info!(repo = %repo_base_url, branch = %active_branch, "Fetching latest changes");
+            run_git_checked(
+                &repo_dir,
+                &["fetch", "--depth", "1", "origin", &active_branch],
+                limits.git_timeout_secs,
+                url,
+                "git fetch",
+                "git fetch",
+            )?;
 
-        // 4. Reset hard to FETCH_HEAD
-        let mut reset_cmd = Command::new("git");
-        reset_cmd
-            .args(["reset", "--hard", "FETCH_HEAD"])
-            .current_dir(&repo_dir);
-        let reset_output =
-            run_command_with_timeout(&mut reset_cmd, limits.git_timeout_secs, url, "git reset")?;
-        if !reset_output.status.success() {
-            let stderr = String::from_utf8_lossy(&reset_output.stderr);
-            return Err(SearchXyzError::CrawlFailed {
-                url: url.to_string(),
-                reason: format!("git reset failed: {}", stderr.trim()),
-            });
-        }
+            // 4. Reset hard to FETCH_HEAD
+            run_git_checked(
+                &repo_dir,
+                &["reset", "--hard", "FETCH_HEAD"],
+                limits.git_timeout_secs,
+                url,
+                "git reset",
+                "git reset",
+            )?;
 
-        // 5. Get new commit hash
-        let mut rev_parse_cmd = Command::new("git");
-        rev_parse_cmd
-            .args(["rev-parse", "HEAD"])
-            .current_dir(&repo_dir);
-        let new_commit_output = run_command_with_timeout(
-            &mut rev_parse_cmd,
-            limits.git_timeout_secs,
-            url,
-            "git rev-parse",
-        )?;
-        if !new_commit_output.status.success() {
-            let stderr = String::from_utf8_lossy(&new_commit_output.stderr);
-            return Err(SearchXyzError::CrawlFailed {
-                url: url.to_string(),
-                reason: format!("git rev-parse HEAD (new) failed: {}", stderr.trim()),
-            });
-        }
-        let new_commit = String::from_utf8_lossy(&new_commit_output.stdout)
-            .trim()
-            .to_string();
-        if new_commit.is_empty() {
-            return Err(SearchXyzError::CrawlFailed {
-                url: url.to_string(),
-                reason: "git rev-parse HEAD (new) returned an empty commit hash".to_string(),
-            });
-        }
+            // 5. Get new commit hash
+            let new_commit = run_git_nonempty_rev(
+                &repo_dir,
+                &["rev-parse", "HEAD"],
+                limits.git_timeout_secs,
+                url,
+                "git rev-parse",
+                "git rev-parse HEAD (new)",
+            )?;
 
-        // 6. Get diff list of files
-        let mut diff_cmd = Command::new("git");
-        diff_cmd
-            .args([
-                "diff",
-                "--no-renames",
-                "--name-status",
-                &old_commit,
-                &new_commit,
-            ])
-            .current_dir(&repo_dir);
-        let diff_output =
-            run_command_with_timeout(&mut diff_cmd, limits.git_timeout_secs, url, "git diff")?;
-        if !diff_output.status.success() {
-            let stderr = String::from_utf8_lossy(&diff_output.stderr);
-            return Err(SearchXyzError::CrawlFailed {
-                url: url.to_string(),
-                reason: format!("git diff failed: {}", stderr.trim()),
-            });
-        }
+            // 6. Get diff list of files
+            let diff_str = run_git_checked(
+                &repo_dir,
+                &[
+                    "diff",
+                    "--no-renames",
+                    "--name-status",
+                    &old_commit,
+                    &new_commit,
+                ],
+                limits.git_timeout_secs,
+                url,
+                "git diff",
+                "git diff",
+            )?;
 
-        let diff_str = String::from_utf8_lossy(&diff_output.stdout);
-        for line in diff_str.lines() {
-            let parts: Vec<&str> = line.splitn(2, '\t').collect();
-            if parts.len() == 2 {
-                let status = parts[0];
-                let file_path = parts[1];
+            for line in diff_str.lines() {
+                let parts: Vec<&str> = line.splitn(2, '\t').collect();
+                match parts.as_slice() {
+                    [status, file_path] => {
+                        let rel_path = Path::new(file_path);
+                        match is_excluded_rel_path(rel_path, &exclude_paths_vec) {
+                            true => continue,
+                            false => {}
+                        }
 
-                let rel_path = Path::new(file_path);
-                let is_excluded = exclude_paths_vec
-                    .iter()
-                    .any(|ex| rel_path.components().any(|c| c.as_os_str() == ex.as_str()));
+                        let path = repo_dir.join(file_path);
+                        let exceeds_limit = (*status != "D")
+                            && fs::metadata(&path)
+                                .ok()
+                                .is_some_and(|m| m.len() > MAX_FILE_SIZE_BYTES);
 
-                if is_excluded {
-                    continue;
-                }
+                        match exceeds_limit {
+                            true => {
+                                match *status == "M" {
+                                    true => files_to_delete.push((*file_path).to_string()),
+                                    false => {}
+                                }
+                                continue;
+                            }
+                            false => {}
+                        }
 
-                let path = repo_dir.join(file_path);
-                let exceeds_limit = if status != "D" {
-                    if let Ok(metadata) = fs::metadata(&path) {
-                        metadata.len() > MAX_FILE_SIZE_BYTES
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
+                        match has_included_extension(rel_path, &include_exts_vec) {
+                            false => continue,
+                            true => {}
+                        }
 
-                if exceeds_limit {
-                    if status == "M" {
-                        // Purge any stale version from index since the new version exceeds size limit
-                        files_to_delete.push(file_path.to_string());
-                    }
-                    continue;
-                }
-
-                let has_valid_ext = rel_path
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .map(|ext| {
-                        let ext_lower = ext.to_lowercase();
-                        include_exts_vec
-                            .iter()
-                            .any(|ie| ie.to_lowercase() == ext_lower)
-                    })
-                    .unwrap_or(false);
-
-                if !has_valid_ext {
-                    continue;
-                }
-
-                match status {
-                    "D" => {
-                        files_to_delete.push(file_path.to_string());
-                    }
-                    "M" => {
-                        files_to_delete.push(file_path.to_string());
-                        files_to_upsert.push(file_path.to_string());
-                    }
-                    "A" => {
-                        files_to_upsert.push(file_path.to_string());
+                        match *status {
+                            "D" => {
+                                files_to_delete.push((*file_path).to_string());
+                            }
+                            "M" => {
+                                files_to_delete.push((*file_path).to_string());
+                                files_to_upsert.push((*file_path).to_string());
+                            }
+                            "A" => {
+                                files_to_upsert.push((*file_path).to_string());
+                            }
+                            _ => {}
+                        }
                     }
                     _ => {}
                 }
             }
         }
-    } else {
-        // Clean clone
-        if repo_dir.exists() {
-            let _ = fs::remove_dir_all(&repo_dir);
-        }
-        fs::create_dir_all(&repo_dir).map_err(|e| SearchXyzError::CrawlFailed {
-            url: url.to_string(),
-            reason: format!("Failed to create repository directory: {}", e),
-        })?;
-
-        let mut cmd = Command::new("git");
-        cmd.arg("clone").arg("--depth").arg("1");
-
-        if let Some(b) = resolved_branch {
-            if !b
-                .chars()
-                .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '/')
-            {
-                return Err(SearchXyzError::CrawlFailed {
-                    url: url.to_string(),
-                    reason: format!("Invalid/unsafe branch name: {}", b),
-                });
+        false => {
+            // Clean clone
+            match repo_dir.exists() {
+                true => {
+                    let _ = fs::remove_dir_all(&repo_dir);
+                }
+                false => {}
             }
-            cmd.arg("--branch").arg(b);
-        }
-
-        cmd.arg(&repo_base_url).arg(&repo_dir);
-
-        tracing::info!(repo = %repo_base_url, branch = ?resolved_branch, dest = ?repo_dir, "Cloning repository");
-        let output = run_command_with_timeout(&mut cmd, limits.git_timeout_secs, url, "git clone")?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(SearchXyzError::CrawlFailed {
+            fs::create_dir_all(&repo_dir).map_err(|e| SearchXyzError::CrawlFailed {
                 url: url.to_string(),
-                reason: format!("git clone failed: {}", stderr.trim()),
-            });
-        }
+                reason: format!("Failed to create repository directory: {}", e),
+            })?;
 
-        let mut file_paths = Vec::new();
-        if let Err(e) = visit_dirs(
-            &repo_dir,
-            &repo_dir,
-            &include_exts_vec,
-            &exclude_paths_vec,
-            &mut file_paths,
-        ) {
-            return Err(SearchXyzError::CrawlFailed {
+            let mut cmd = Command::new("git");
+            cmd.arg("clone").arg("--depth").arg("1");
+
+            match resolved_branch {
+                Some(b) => {
+                    let safe_branch = b
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '/');
+                    match safe_branch {
+                        false => {
+                            return Err(SearchXyzError::CrawlFailed {
+                                url: url.to_string(),
+                                reason: format!("Invalid/unsafe branch name: {}", b),
+                            });
+                        }
+                        true => {
+                            cmd.arg("--branch").arg(b);
+                        }
+                    }
+                }
+                None => {}
+            }
+
+            cmd.arg(&repo_base_url).arg(&repo_dir);
+
+            tracing::info!(repo = %repo_base_url, branch = ?resolved_branch, dest = ?repo_dir, "Cloning repository");
+            let output =
+                run_command_with_timeout(&mut cmd, limits.git_timeout_secs, url, "git clone")?;
+
+            match output.status.success() {
+                true => {}
+                false => {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    return Err(SearchXyzError::CrawlFailed {
+                        url: url.to_string(),
+                        reason: format!("git clone failed: {}", stderr.trim()),
+                    });
+                }
+            }
+
+            let mut file_paths = Vec::new();
+            visit_dirs(
+                &repo_dir,
+                &repo_dir,
+                &include_exts_vec,
+                &exclude_paths_vec,
+                &mut file_paths,
+            )
+            .map_err(|e| SearchXyzError::CrawlFailed {
                 url: url.to_string(),
                 reason: format!("Directory traversal failed: {}", e),
-            });
-        }
+            })?;
 
-        for path in file_paths {
-            if let Ok(rel_path) = path.strip_prefix(&repo_dir) {
-                files_to_upsert.push(rel_path.to_string_lossy().to_string());
+            for path in file_paths {
+                match path.strip_prefix(&repo_dir) {
+                    Ok(rel_path) => {
+                        files_to_upsert.push(rel_path.to_string_lossy().to_string());
+                    }
+                    Err(_) => {}
+                }
             }
         }
     }
@@ -545,8 +550,11 @@ pub async fn clone_and_index_repo(
 
     for rel_path_str in &files_to_delete {
         let file_url = format!("{}/blob/{}/{}", repo_base_url, branch_for_url, rel_path_str);
-        if let Err(e) = index.delete_document(&file_url).await {
-            tracing::warn!(url = %file_url, error = %e, "Failed to delete file from search index");
+        match index.delete_document(&file_url).await {
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(url = %file_url, error = %e, "Failed to delete file from search index");
+            }
         }
         {
             let mut g = graph.lock().await;
@@ -583,8 +591,11 @@ pub async fn clone_and_index_repo(
             links: Vec::new(),
         };
 
-        if let Err(e) = index.add_document(&extracted, "github").await {
-            tracing::warn!(url = %file_url, error = %e, "Failed to index GitHub file");
+        match index.add_document(&extracted, "github").await {
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(url = %file_url, error = %e, "Failed to index GitHub file");
+            }
         }
 
         {
@@ -597,58 +608,74 @@ pub async fn clone_and_index_repo(
             .and_then(|f| f.to_str())
             .unwrap_or("")
             .to_lowercase();
-        if file_name_lower == "readme.md" && Path::new(rel_path_str).parent() == Some(Path::new(""))
+        match file_name_lower == "readme.md"
+            && Path::new(rel_path_str).parent() == Some(Path::new(""))
         {
-            readme_content = file_content.clone();
+            true => {
+                readme_content = file_content.clone();
+            }
+            false => {}
         }
 
         file_list_summary.push_str(&format!("- [`{}`]({})\n", rel_path_str, file_url));
         indexed_count += 1;
     }
 
-    let summary = if is_incremental {
-        let actual_deleted_count = files_to_delete
-            .iter()
-            .filter(|f| !files_to_upsert.contains(f))
-            .count();
-        let mut summary = format!(
-            "# Codebase Synced (Incremental): {}/{}\n\n\
-            **Source:** {}\n\
-            **Branch:** {}\n\
-            **Files Updated/Added:** {} files modified or added.\n\
-            **Files Deleted:** {} files removed.\n\n",
-            owner, repo_name, repo_base_url, branch_for_url, indexed_count, actual_deleted_count
-        );
+    let summary = match is_incremental {
+        true => {
+            let actual_deleted_count = files_to_delete
+                .iter()
+                .filter(|f| !files_to_upsert.contains(f))
+                .count();
+            let mut summary = format!(
+                "# Codebase Synced (Incremental): {}/{}\n\n\
+                **Source:** {}\n\
+                **Branch:** {}\n\
+                **Files Updated/Added:** {} files modified or added.\n\
+                **Files Deleted:** {} files removed.\n\n",
+                owner, repo_name, repo_base_url, branch_for_url, indexed_count, actual_deleted_count
+            );
 
-        if !readme_content.is_empty() {
-            summary.push_str("## Repository README (Updated)\n\n");
-            summary.push_str(&readme_content);
-            summary.push_str("\n\n---\n\n");
+            match readme_content.is_empty() {
+                true => {}
+                false => {
+                    summary.push_str("## Repository README (Updated)\n\n");
+                    summary.push_str(&readme_content);
+                    summary.push_str("\n\n---\n\n");
+                }
+            }
+
+            match file_list_summary.is_empty() {
+                true => {}
+                false => {
+                    summary.push_str("## Updated/Added Files\n\n");
+                    summary.push_str(&file_list_summary);
+                }
+            }
+            summary
         }
+        false => {
+            let mut summary = format!(
+                "# Codebase Ingested: {}/{}\n\n\
+                **Source:** {}\n\
+                **Branch:** {}\n\
+                **Files Indexed:** {} matching files successfully parsed and added to search index.\n\n",
+                owner, repo_name, repo_base_url, branch_for_url, indexed_count
+            );
 
-        if !file_list_summary.is_empty() {
-            summary.push_str("## Updated/Added Files\n\n");
+            match readme_content.is_empty() {
+                true => {}
+                false => {
+                    summary.push_str("## Repository README\n\n");
+                    summary.push_str(&readme_content);
+                    summary.push_str("\n\n---\n\n");
+                }
+            }
+
+            summary.push_str("## Ingested Codebase Files\n\n");
             summary.push_str(&file_list_summary);
+            summary
         }
-        summary
-    } else {
-        let mut summary = format!(
-            "# Codebase Ingested: {}/{}\n\n\
-            **Source:** {}\n\
-            **Branch:** {}\n\
-            **Files Indexed:** {} matching files successfully parsed and added to search index.\n\n",
-            owner, repo_name, repo_base_url, branch_for_url, indexed_count
-        );
-
-        if !readme_content.is_empty() {
-            summary.push_str("## Repository README\n\n");
-            summary.push_str(&readme_content);
-            summary.push_str("\n\n---\n\n");
-        }
-
-        summary.push_str("## Ingested Codebase Files\n\n");
-        summary.push_str(&file_list_summary);
-        summary
     };
 
     Ok(summary)
@@ -666,28 +693,19 @@ mod tests {
         old_config_value_0: Option<String>,
     }
 
+    fn restore_env(key: &str, old: &Option<String>) {
+        match old {
+            Some(val) => std::env::set_var(key, val),
+            None => std::env::remove_var(key),
+        }
+    }
+
     impl Drop for EnvGuard {
         fn drop(&mut self) {
-            if let Some(ref val) = self.old_home {
-                std::env::set_var("HOME", val);
-            } else {
-                std::env::remove_var("HOME");
-            }
-            if let Some(ref val) = self.old_config_count {
-                std::env::set_var("GIT_CONFIG_COUNT", val);
-            } else {
-                std::env::remove_var("GIT_CONFIG_COUNT");
-            }
-            if let Some(ref val) = self.old_config_key_0 {
-                std::env::set_var("GIT_CONFIG_KEY_0", val);
-            } else {
-                std::env::remove_var("GIT_CONFIG_KEY_0");
-            }
-            if let Some(ref val) = self.old_config_value_0 {
-                std::env::set_var("GIT_CONFIG_VALUE_0", val);
-            } else {
-                std::env::remove_var("GIT_CONFIG_VALUE_0");
-            }
+            restore_env("HOME", &self.old_home);
+            restore_env("GIT_CONFIG_COUNT", &self.old_config_count);
+            restore_env("GIT_CONFIG_KEY_0", &self.old_config_key_0);
+            restore_env("GIT_CONFIG_VALUE_0", &self.old_config_value_0);
         }
     }
 

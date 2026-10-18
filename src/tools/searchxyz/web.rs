@@ -32,29 +32,25 @@ impl SearchFailureKind {
 
 pub fn classify_search_failure(message: &str) -> SearchFailureKind {
     let normalized = message.to_lowercase();
-    if normalized.contains("429")
+    let is_rate_limited = normalized.contains("429")
         || normalized.contains("too many requests")
-        || normalized.contains("rate limit")
-    {
-        return SearchFailureKind::RateLimited;
-    }
-    if normalized.contains("403")
+        || normalized.contains("rate limit");
+    let is_blocked = normalized.contains("403")
         || normalized.contains("forbidden")
         || normalized.contains("captcha")
         || normalized.contains("blocked")
-        || normalized.contains("unusual traffic")
-    {
-        return SearchFailureKind::Blocked;
+        || normalized.contains("unusual traffic");
+    let is_timeout = normalized.contains("timed out") || normalized.contains("timeout");
+    let is_no_usable = normalized.contains("0 usable results")
+        || normalized.contains("all search backends exhausted");
+
+    match (is_rate_limited, is_blocked, is_timeout, is_no_usable) {
+        (true, _, _, _) => SearchFailureKind::RateLimited,
+        (false, true, _, _) => SearchFailureKind::Blocked,
+        (false, false, true, _) => SearchFailureKind::Timeout,
+        (false, false, false, true) => SearchFailureKind::NoUsableResults,
+        (false, false, false, false) => SearchFailureKind::Other,
     }
-    if normalized.contains("timed out") || normalized.contains("timeout") {
-        return SearchFailureKind::Timeout;
-    }
-    if normalized.contains("0 usable results")
-        || normalized.contains("all search backends exhausted")
-    {
-        return SearchFailureKind::NoUsableResults;
-    }
-    SearchFailureKind::Other
 }
 
 pub fn search_failure_cooldown_secs(kind: SearchFailureKind) -> u64 {
@@ -81,18 +77,16 @@ fn search_backend_cooldowns() -> &'static Mutex<HashMap<String, BackendCooldown>
 }
 
 pub fn record_search_backend_failure(backends: &[String], kind: SearchFailureKind) {
-    if backends.is_empty() {
-        return;
+    match backends.is_empty() {
+        true => return,
+        false => {}
     }
 
     let until = Instant::now() + std::time::Duration::from_secs(search_failure_cooldown_secs(kind));
     let mut cooldowns = search_backend_cooldowns()
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    for backend in backends {
-        if backend.trim().is_empty() {
-            continue;
-        }
+    for backend in backends.iter().filter(|b| !b.trim().is_empty()) {
         cooldowns.insert(backend.clone(), BackendCooldown { kind, until });
     }
 }
@@ -156,38 +150,32 @@ fn backend_health_label(
     let preferred = configured_order
         .first()
         .is_some_and(|backend| backend == name);
-    if !enabled {
-        return "disabled".to_string();
+    match enabled {
+        false => return "disabled".to_string(),
+        true => {}
     }
 
     let base = match name {
-        "searxng" => {
-            if config.searxng.instance_url.trim().is_empty() {
-                "missing_config"
-            } else {
-                "configured"
-            }
-        }
-        "brave" => {
-            if config
-                .brave
-                .api_key
-                .as_ref()
-                .is_some_and(|key| !key.trim().is_empty())
-            {
-                "configured"
-            } else {
-                "missing_key"
-            }
-        }
+        "searxng" => match config.searxng.instance_url.trim().is_empty() {
+            true => "missing_config",
+            false => "configured",
+        },
+        "brave" => match config
+            .brave
+            .api_key
+            .as_ref()
+            .is_some_and(|key| !key.trim().is_empty())
+        {
+            true => "configured",
+            false => "missing_key",
+        },
         "duckduckgo" | "google" | "bing" => "keyless",
         _ => "configured",
     };
 
-    if preferred {
-        format!("preferred ({base})")
-    } else {
-        base.to_string()
+    match preferred {
+        true => format!("preferred ({base})"),
+        false => base.to_string(),
     }
 }
 
@@ -214,13 +202,10 @@ pub async fn build_searchxyz_doctor_report(include_paths: bool) -> Result<String
         .unwrap_or_else(|| "native_only".to_string());
 
     let known_backends = ["searxng", "brave", "duckduckgo", "google", "bing"];
-    let headless_status = if config.headless.enabled {
-        match &config.headless.chrome_path {
-            Some(path) => format!("enabled ({path})"),
-            None => "enabled (auto chrome path)".to_string(),
-        }
-    } else {
-        "disabled".to_string()
+    let headless_status = match (config.headless.enabled, &config.headless.chrome_path) {
+        (true, Some(path)) => format!("enabled ({path})"),
+        (true, None) => "enabled (auto chrome path)".to_string(),
+        (false, _) => "disabled".to_string(),
     };
 
     let mut report = String::new();
@@ -269,45 +254,54 @@ pub async fn build_searchxyz_doctor_report(include_paths: bool) -> Result<String
     report.push_str(&format!("- Indexed sources: {}\n", source_count));
     report.push_str(&format!("- Graph nodes: {}\n", graph_nodes));
     report.push_str(&format!("- Graph edges: {}\n", graph_edges));
-    if include_paths {
-        report.push_str(&format!(
-            "- Index path: `{}`\n",
-            config.index.path.display()
-        ));
-        report.push_str(&format!(
-            "- Cache path: `{}`\n",
-            config.cache.path.display()
-        ));
-        report.push_str(&format!(
-            "- Graph path: `{}`\n",
-            config.index.path.join("graph.json").display()
-        ));
+    match include_paths {
+        true => {
+            report.push_str(&format!(
+                "- Index path: `{}`\n",
+                config.index.path.display()
+            ));
+            report.push_str(&format!(
+                "- Cache path: `{}`\n",
+                config.cache.path.display()
+            ));
+            report.push_str(&format!(
+                "- Graph path: `{}`\n",
+                config.index.path.join("graph.json").display()
+            ));
+        }
+        false => {}
     }
 
     let active_cooldowns = active_search_backend_cooldowns();
-    if !active_cooldowns.is_empty() {
-        report.push_str("\n## Backend Cooldowns\n");
-        for cooldown in active_cooldowns {
-            let backend = cooldown["backend"].as_str().unwrap_or("unknown");
-            let error_kind = cooldown["error_kind"].as_str().unwrap_or("unknown");
-            let remaining = cooldown["cooldown_remaining_secs"].as_u64().unwrap_or(0);
-            report.push_str(&format!(
-                "- {}: {} ({}s remaining)\n",
-                backend, error_kind, remaining
-            ));
+    match active_cooldowns.is_empty() {
+        true => {}
+        false => {
+            report.push_str("\n## Backend Cooldowns\n");
+            for cooldown in active_cooldowns {
+                let backend = cooldown["backend"].as_str().unwrap_or("unknown");
+                let error_kind = cooldown["error_kind"].as_str().unwrap_or("unknown");
+                let remaining = cooldown["cooldown_remaining_secs"].as_u64().unwrap_or(0);
+                report.push_str(&format!(
+                    "- {}: {} ({}s remaining)\n",
+                    backend, error_kind, remaining
+                ));
+            }
         }
     }
 
     report.push_str("\n## Hints\n");
-    if !config
+    match config
         .search
         .backends
         .iter()
         .any(|backend| backend == "searxng")
     {
-        report.push_str("- SearXNG is not enabled in backend order. Configure `SEARCHXYZ_SEARXNG_URL` without explicit backend order, or include `searxng` in `SEARCHXYZ_SEARCH_BACKENDS`, for the strongest private/native discovery path.\n");
+        false => {
+            report.push_str("- SearXNG is not enabled in backend order. Configure `SEARCHXYZ_SEARXNG_URL` without explicit backend order, or include `searxng` in `SEARCHXYZ_SEARCH_BACKENDS`, for the strongest private/native discovery path.\n");
+        }
+        true => {}
     }
-    if config
+    match config
         .search
         .backends
         .iter()
@@ -318,13 +312,22 @@ pub async fn build_searchxyz_doctor_report(include_paths: bool) -> Result<String
             .as_ref()
             .is_none_or(|key| key.trim().is_empty())
     {
-        report.push_str("- Brave is enabled but missing `SEARCHXYZ_BRAVE_API_KEY`; it will be skipped at runtime.\n");
+        true => {
+            report.push_str("- Brave is enabled but missing `SEARCHXYZ_BRAVE_API_KEY`; it will be skipped at runtime.\n");
+        }
+        false => {}
     }
-    if only_scraper_backends_enabled(&config.search.backends) {
-        report.push_str("- Only keyless scraper backends are enabled; these can be blocked or return empty results under anti-bot pressure. Prefer SearXNG for native discovery.\n");
+    match only_scraper_backends_enabled(&config.search.backends) {
+        true => {
+            report.push_str("- Only keyless scraper backends are enabled; these can be blocked or return empty results under anti-bot pressure. Prefer SearXNG for native discovery.\n");
+        }
+        false => {}
     }
-    if !config.headless.enabled {
-        report.push_str("- Enable SearchXyz headless mode when scraper backends are blocked by JS or anti-bot pages.\n");
+    match config.headless.enabled {
+        false => {
+            report.push_str("- Enable SearchXyz headless mode when scraper backends are blocked by JS or anti-bot pages.\n");
+        }
+        true => {}
     }
     report.push_str("- Provider-free browser fallback is automatic in default `web_search`; call `searchxyz_browser_search` directly only for explicit engine/debug control.\n");
     report.push_str("- For one-off fallback to external engines, call `web_search` with `search_policy=native_then_external`.\n");
@@ -349,34 +352,39 @@ pub fn browser_search_url(engine: &str, query: &str) -> Result<String> {
     }
 }
 
+fn is_http_or_https(url: &str) -> bool {
+    url.starts_with("http://") || url.starts_with("https://")
+}
+
 fn normalize_browser_result_url(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
-    if trimmed.is_empty()
+    match trimmed.is_empty()
         || trimmed.starts_with('#')
         || trimmed.starts_with("javascript:")
         || trimmed.starts_with("mailto:")
     {
-        return None;
+        true => return None,
+        false => {}
     }
 
-    if let Some(encoded) = trimmed
+    match trimmed
         .strip_prefix("/l/?uddg=")
         .or_else(|| trimmed.strip_prefix("https://duckduckgo.com/l/?uddg="))
     {
-        let raw_target = encoded.split('&').next().unwrap_or(encoded);
-        let decoded = percent_encoding::percent_decode_str(raw_target)
-            .decode_utf8_lossy()
-            .to_string();
-        if decoded.starts_with("http://") || decoded.starts_with("https://") {
-            return Some(decoded);
+        Some(encoded) => {
+            let raw_target = encoded.split('&').next().unwrap_or(encoded);
+            let decoded = percent_encoding::percent_decode_str(raw_target)
+                .decode_utf8_lossy()
+                .to_string();
+            match is_http_or_https(&decoded) {
+                true => return Some(decoded),
+                false => {}
+            }
         }
+        None => {}
     }
 
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
-        return Some(trimmed.to_string());
-    }
-
-    None
+    is_http_or_https(trimmed).then(|| trimmed.to_string())
 }
 
 fn is_likely_search_engine_internal_url(url: &str) -> bool {
@@ -453,8 +461,9 @@ fn browser_result_extraction_script(engine: &str, max_results: usize) -> String 
 
 fn rendered_payload_value(payload: &str) -> Option<Value> {
     let trimmed = payload.trim();
-    if trimmed.is_empty() {
-        return None;
+    match trimmed.is_empty() {
+        true => return None,
+        false => {}
     }
     let parsed: Value = serde_json::from_str(trimmed).ok()?;
     match parsed {
@@ -468,24 +477,27 @@ fn extract_rendered_browser_search_results(
     payload: &str,
     max_results: usize,
 ) -> Vec<Value> {
-    let Some(value) = rendered_payload_value(payload) else {
-        return Vec::new();
-    };
-    let Some(raw_results) = value.get("results").and_then(|value| value.as_array()) else {
-        return Vec::new();
+    let raw_results = match rendered_payload_value(payload)
+        .and_then(|value| value.get("results").and_then(|v| v.as_array()).cloned())
+    {
+        Some(items) => items,
+        None => return Vec::new(),
     };
     let mut seen = std::collections::HashSet::new();
     let mut results = Vec::new();
 
     for result in raw_results {
-        let Some(raw_url) = result.get("url").and_then(|value| value.as_str()) else {
-            continue;
+        let url = match result
+            .get("url")
+            .and_then(|value| value.as_str())
+            .and_then(normalize_browser_result_url)
+        {
+            Some(u) => u,
+            None => continue,
         };
-        let Some(url) = normalize_browser_result_url(raw_url) else {
-            continue;
-        };
-        if is_likely_search_engine_internal_url(&url) || !seen.insert(url.clone()) {
-            continue;
+        match is_likely_search_engine_internal_url(&url) || !seen.insert(url.clone()) {
+            true => continue,
+            false => {}
         }
         let title = result
             .get("title")
@@ -494,8 +506,9 @@ fn extract_rendered_browser_search_results(
             .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ");
-        if title.is_empty() {
-            continue;
+        match title.is_empty() {
+            true => continue,
+            false => {}
         }
         results.push(json!({
             "title": title,
@@ -503,8 +516,9 @@ fn extract_rendered_browser_search_results(
             "engine": engine,
             "source": "browser_search_rendered",
         }));
-        if results.len() >= max_results {
-            break;
+        match results.len() >= max_results {
+            true => break,
+            false => {}
         }
     }
 
@@ -523,15 +537,18 @@ fn append_unique_browser_results(
         .collect::<std::collections::HashSet<_>>();
 
     for candidate in candidates {
-        let Some(url) = candidate.get("url").and_then(|value| value.as_str()) else {
-            continue;
+        let url = match candidate.get("url").and_then(|value| value.as_str()) {
+            Some(u) => u,
+            None => continue,
         };
-        if !seen.insert(url.to_string()) {
-            continue;
+        match seen.insert(url.to_string()) {
+            false => continue,
+            true => {}
         }
         target.push(candidate);
-        if target.len() >= max_results {
-            break;
+        match target.len() >= max_results {
+            true => break,
+            false => {}
         }
     }
 }
@@ -553,14 +570,17 @@ pub fn extract_browser_search_results(engine: &str, html: &str, max_results: usi
     let mut results = Vec::new();
 
     for anchor in doc.select(&selector) {
-        let Some(raw_href) = anchor.value().attr("href") else {
-            continue;
+        let url = match anchor
+            .value()
+            .attr("href")
+            .and_then(normalize_browser_result_url)
+        {
+            Some(u) => u,
+            None => continue,
         };
-        let Some(url) = normalize_browser_result_url(raw_href) else {
-            continue;
-        };
-        if is_likely_search_engine_internal_url(&url) || !seen.insert(url.clone()) {
-            continue;
+        match is_likely_search_engine_internal_url(&url) || !seen.insert(url.clone()) {
+            true => continue,
+            false => {}
         }
         let title = text_for_anchor(anchor);
         results.push(json!({
@@ -569,8 +589,9 @@ pub fn extract_browser_search_results(engine: &str, html: &str, max_results: usi
             "engine": engine,
             "source": "browser_search",
         }));
-        if results.len() >= max_results {
-            break;
+        match results.len() >= max_results {
+            true => break,
+            false => {}
         }
     }
 
@@ -621,8 +642,9 @@ async fn read_browser_search_results(
     let mut reads = Vec::new();
 
     for result in results.iter().take(max_pages) {
-        let Some(url) = result.get("url").and_then(|value| value.as_str()) else {
-            continue;
+        let url = match result.get("url").and_then(|value| value.as_str()) {
+            Some(u) => u,
+            None => continue,
         };
         match reader
             .call(&json!({
@@ -647,6 +669,29 @@ async fn read_browser_search_results(
     }
 
     reads
+}
+
+fn apply_common_crawl_aliases(normalized: &mut Value) {
+    super::map_field_alias(
+        normalized,
+        "max_chars",
+        &["maxChars", "limit_chars", "max_length", "maxLength"],
+    );
+    super::map_field_alias(normalized, "merge_backends", &["mergeBackends", "merge"]);
+    super::map_field_alias(normalized, "render_js", &["renderJs", "js"]);
+    super::map_field_alias(
+        normalized,
+        "include_diagnostics",
+        &["includeDiagnostics", "diagnostics"],
+    );
+    super::map_field_alias(normalized, "cache_mode", &["cacheMode"]);
+    super::map_field_alias(normalized, "save_mode", &["saveMode"]);
+    super::map_field_alias(
+        normalized,
+        "include_domains",
+        &["includeDomains", "domains"],
+    );
+    super::map_field_alias(normalized, "exclude_domains", &["excludeDomains"]);
 }
 
 // ── Browser Search Fallback ───────────────────────────────────
@@ -712,13 +757,24 @@ impl Tool for SearchXyzBrowserSearchTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let mut normalized = super::normalize_query_arg(arguments);
-        super::map_field_alias(&mut normalized, "max_results", &["limit", "count", "maxResults"]);
+        super::map_field_alias(
+            &mut normalized,
+            "max_results",
+            &["limit", "count", "maxResults"],
+        );
         super::map_field_alias(&mut normalized, "timeout_secs", &["timeout", "timeoutSecs"]);
-        super::map_field_alias(&mut normalized, "read_top_results", &["readTopResults", "read_results", "fetch_top_results"]);
+        super::map_field_alias(
+            &mut normalized,
+            "read_top_results",
+            &["readTopResults", "read_results", "fetch_top_results"],
+        );
         super::map_field_alias(&mut normalized, "max_pages", &["maxPages", "pages"]);
         super::map_field_alias(&mut normalized, "save_mode", &["saveMode"]);
         super::coerce_bool_fields(&mut normalized, &["read_top_results"]);
-        super::coerce_numeric_fields(&mut normalized, &["max_results", "timeout_secs", "max_pages"]);
+        super::coerce_numeric_fields(
+            &mut normalized,
+            &["max_results", "timeout_secs", "max_pages"],
+        );
         let query = normalized
             .get("query")
             .and_then(|v| v.as_str())
@@ -777,8 +833,8 @@ impl Tool for SearchXyzBrowserSearchTool {
         };
         let rendered_result_count = results.len();
 
-        let html = if results.is_empty() {
-            match crate::tools::browser_broker::render_with_browser_broker(
+        let html = match results.is_empty() {
+            true => match crate::tools::browser_broker::render_with_browser_broker(
                 &search_url,
                 timeout_secs,
             )
@@ -789,46 +845,51 @@ impl Tool for SearchXyzBrowserSearchTool {
                     tracing::warn!(query = %query, engine = %engine, error = ?err, "browser broker page-source fallback failed");
                     String::new()
                 }
-            }
-        } else {
-            String::new()
+            },
+            false => String::new(),
         };
 
         let static_results = extract_browser_search_results(engine, &html, max_results);
         let static_result_count = static_results.len();
         append_unique_browser_results(&mut results, static_results, max_results);
-        if results.is_empty() && html_has_bot_block(&html) {
-            return Ok(json!({
-                "status": "blocked",
-                "error_kind": "captcha_or_bot_block",
-                "retryable": true,
-                "engine": engine,
-                "query": query,
-                "result_count": 0,
-                "results": [],
-                "backend": backend,
-                "cleanup": cleanup,
-                "fallbacks_tried": fallbacks_tried,
-                "broker_errors": broker_errors,
-                "next_step": "Retry later, try engine=bing, use a known URL, or build the local SearchXyz index from trusted seed sources."
-            }));
+        match results.is_empty() && html_has_bot_block(&html) {
+            true => {
+                return Ok(json!({
+                    "status": "blocked",
+                    "error_kind": "captcha_or_bot_block",
+                    "retryable": true,
+                    "engine": engine,
+                    "query": query,
+                    "result_count": 0,
+                    "results": [],
+                    "backend": backend,
+                    "cleanup": cleanup,
+                    "fallbacks_tried": fallbacks_tried,
+                    "broker_errors": broker_errors,
+                    "next_step": "Retry later, try engine=bing, use a known URL, or build the local SearchXyz index from trusted seed sources."
+                }));
+            }
+            false => {}
         }
 
-        let read_results = if browser_search_read_top_results_enabled(&normalized) {
-            read_browser_search_results(&results, &normalized, max_results).await
-        } else {
-            Vec::new()
+        let read_top_enabled = browser_search_read_top_results_enabled(&normalized);
+        let read_results = match read_top_enabled {
+            true => read_browser_search_results(&results, &normalized, max_results).await,
+            false => Vec::new(),
         };
         let read_errors = read_results
             .iter()
             .filter(|entry| entry["status"] == "error")
             .count();
-        let status = if results.is_empty() {
-            "no_results"
-        } else if browser_search_read_top_results_enabled(&normalized) && read_errors > 0 {
-            "partial_success"
-        } else {
-            "success"
+        let status = match (results.is_empty(), read_top_enabled && read_errors > 0) {
+            (true, _) => "no_results",
+            (false, true) => "partial_success",
+            (false, false) => "success",
+        };
+        let extraction_strategy = match (rendered_result_count > 0, static_result_count > 0) {
+            (true, _) => "rendered_dom",
+            (false, true) => "page_source",
+            (false, false) => "empty",
         };
 
         Ok(json!({
@@ -838,7 +899,7 @@ impl Tool for SearchXyzBrowserSearchTool {
             "result_count": results.len(),
             "rendered_result_count": rendered_result_count,
             "static_result_count": static_result_count,
-            "extraction_strategy": if rendered_result_count > 0 { "rendered_dom" } else if static_result_count > 0 { "page_source" } else { "empty" },
+            "extraction_strategy": extraction_strategy,
             "backend": backend,
             "cleanup": cleanup,
             "fallbacks_tried": fallbacks_tried,
@@ -876,14 +937,12 @@ impl Tool for SearchXyzDoctorTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = if arguments.is_string() {
-            let mut obj = json!({ "include_paths": arguments.clone() });
-            super::coerce_bool_fields(&mut obj, &["include_paths"]);
-            obj
-        } else {
-            arguments.clone()
-        };
-        super::map_field_alias(&mut normalized, "include_paths", &["includePaths", "paths", "include_path"]);
+        let mut normalized = super::wrap_string_arg(arguments, "include_paths");
+        super::map_field_alias(
+            &mut normalized,
+            "include_paths",
+            &["includePaths", "paths", "include_path"],
+        );
         super::coerce_bool_fields(&mut normalized, &["include_paths"]);
         let include_paths = normalized
             .get("include_paths")
@@ -943,11 +1002,12 @@ impl Tool for SearchXyzSearchWebTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let mut normalized = super::normalize_query_arg(arguments);
-        super::map_field_alias(&mut normalized, "max_results", &["limit", "count", "maxResults", "max_pages"]);
-        super::map_field_alias(&mut normalized, "merge_backends", &["mergeBackends", "merge"]);
-        super::map_field_alias(&mut normalized, "include_diagnostics", &["includeDiagnostics", "diagnostics"]);
-        super::map_field_alias(&mut normalized, "include_domains", &["includeDomains", "domains"]);
-        super::map_field_alias(&mut normalized, "exclude_domains", &["excludeDomains"]);
+        super::map_field_alias(
+            &mut normalized,
+            "max_results",
+            &["limit", "count", "maxResults", "max_pages"],
+        );
+        apply_common_crawl_aliases(&mut normalized);
         super::coerce_numeric_fields(&mut normalized, &["max_results"]);
         super::coerce_bool_fields(&mut normalized, &["merge_backends", "include_diagnostics"]);
         let req: SearchWebRequest = serde_json::from_value(normalized)?;
@@ -1022,17 +1082,17 @@ impl Tool for SearchXyzReadUrlTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let mut normalized = super::normalize_url_arg(arguments);
-        super::map_field_alias(&mut normalized, "depth", &["max_depth", "crawl_depth", "maxDepth"]);
-        super::map_field_alias(&mut normalized, "max_chars", &["maxChars", "limit", "max_length", "maxLength"]);
-        super::map_field_alias(&mut normalized, "render_js", &["renderJs", "js"]);
-        super::map_field_alias(&mut normalized, "cache_mode", &["cacheMode"]);
-        super::map_field_alias(&mut normalized, "save_mode", &["saveMode"]);
-        super::map_field_alias(&mut normalized, "include_diagnostics", &["includeDiagnostics", "diagnostics"]);
+        super::map_field_alias(
+            &mut normalized,
+            "depth",
+            &["max_depth", "crawl_depth", "maxDepth"],
+        );
+        super::map_field_alias(&mut normalized, "max_chars", &["limit"]);
+        apply_common_crawl_aliases(&mut normalized);
         super::coerce_numeric_fields(&mut normalized, &["depth", "max_chars"]);
         super::coerce_bool_fields(&mut normalized, &["render_js", "include_diagnostics"]);
         let req: ReadUrlRequest = serde_json::from_value(normalized)?;
-        let res = get_server()
-            .read_url(req).await?;
+        let res = get_server().read_url(req).await?;
         Ok(json!(res))
     }
 }
@@ -1105,20 +1165,19 @@ impl Tool for SearchXyzSearchAndReadTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let mut normalized = super::normalize_query_arg(arguments);
-        super::map_field_alias(&mut normalized, "max_pages", &["limit", "max_results", "maxPages", "pages", "count"]);
-        super::map_field_alias(&mut normalized, "max_chars", &["maxChars", "limit_chars", "maxLength"]);
-        super::map_field_alias(&mut normalized, "merge_backends", &["mergeBackends", "merge"]);
-        super::map_field_alias(&mut normalized, "render_js", &["renderJs", "js"]);
-        super::map_field_alias(&mut normalized, "include_diagnostics", &["includeDiagnostics", "diagnostics"]);
-        super::map_field_alias(&mut normalized, "cache_mode", &["cacheMode"]);
-        super::map_field_alias(&mut normalized, "save_mode", &["saveMode"]);
-        super::map_field_alias(&mut normalized, "include_domains", &["includeDomains", "domains"]);
-        super::map_field_alias(&mut normalized, "exclude_domains", &["excludeDomains"]);
+        super::map_field_alias(
+            &mut normalized,
+            "max_pages",
+            &["limit", "max_results", "maxPages", "pages", "count"],
+        );
+        apply_common_crawl_aliases(&mut normalized);
         super::coerce_numeric_fields(&mut normalized, &["max_pages", "max_chars"]);
-        super::coerce_bool_fields(&mut normalized, &["merge_backends", "render_js", "include_diagnostics"]);
+        super::coerce_bool_fields(
+            &mut normalized,
+            &["merge_backends", "render_js", "include_diagnostics"],
+        );
         let req: SearchAndReadRequest = serde_json::from_value(normalized)?;
-        let res = get_server()
-            .search_and_read(req).await?;
+        let res = get_server().search_and_read(req).await?;
         Ok(json!(res))
     }
 }
@@ -1195,24 +1254,27 @@ impl Tool for SearchXyzDeepResearchTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let mut normalized = super::normalize_query_arg(arguments);
-        super::map_field_alias(&mut normalized, "breadth", &["depth", "max_depth", "max_breadth", "maxBreadth"]);
-        super::map_field_alias(&mut normalized, "max_pages_per_query", &["maxPagesPerQuery", "max_pages", "pages_per_query", "limit"]);
-        super::map_field_alias(&mut normalized, "max_chars", &["maxChars", "limit_chars", "maxLength"]);
-        super::map_field_alias(&mut normalized, "merge_backends", &["mergeBackends", "merge"]);
-        super::map_field_alias(&mut normalized, "render_js", &["renderJs", "js"]);
-        super::map_field_alias(&mut normalized, "include_diagnostics", &["includeDiagnostics", "diagnostics"]);
-        super::map_field_alias(&mut normalized, "cache_mode", &["cacheMode"]);
-        super::map_field_alias(&mut normalized, "save_mode", &["saveMode"]);
-        super::map_field_alias(&mut normalized, "include_domains", &["includeDomains", "domains"]);
-        super::map_field_alias(&mut normalized, "exclude_domains", &["excludeDomains"]);
+        super::map_field_alias(
+            &mut normalized,
+            "breadth",
+            &["depth", "max_depth", "max_breadth", "maxBreadth"],
+        );
+        super::map_field_alias(
+            &mut normalized,
+            "max_pages_per_query",
+            &["maxPagesPerQuery", "max_pages", "pages_per_query", "limit"],
+        );
+        apply_common_crawl_aliases(&mut normalized);
         super::coerce_numeric_fields(
             &mut normalized,
             &["breadth", "max_pages_per_query", "max_chars"],
         );
-        super::coerce_bool_fields(&mut normalized, &["merge_backends", "render_js", "include_diagnostics"]);
+        super::coerce_bool_fields(
+            &mut normalized,
+            &["merge_backends", "render_js", "include_diagnostics"],
+        );
         let req: DeepResearchRequest = serde_json::from_value(normalized)?;
-        let res = get_server()
-            .deep_research(req).await?;
+        let res = get_server().deep_research(req).await?;
         Ok(json!(res))
     }
 }
@@ -1257,14 +1319,17 @@ impl Tool for SearchXyzSiteMapTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let mut normalized = super::normalize_url_arg(arguments);
-        super::map_field_alias(&mut normalized, "max_links", &["limit", "max_results", "maxLinks", "count"]);
+        super::map_field_alias(
+            &mut normalized,
+            "max_links",
+            &["limit", "max_results", "maxLinks", "count"],
+        );
         super::map_field_alias(&mut normalized, "use_sitemap", &["useSitemap", "sitemap"]);
         super::map_field_alias(&mut normalized, "crawl_links", &["crawlLinks", "crawl"]);
         super::coerce_numeric_fields(&mut normalized, &["max_links"]);
         super::coerce_bool_fields(&mut normalized, &["use_sitemap", "crawl_links"]);
         let req: SiteMapRequest = serde_json::from_value(normalized)?;
-        let res = get_server()
-            .site_map(req).await?;
+        let res = get_server().site_map(req).await?;
         Ok(json!(res))
     }
 }

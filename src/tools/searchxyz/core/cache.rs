@@ -43,33 +43,35 @@ impl CacheEntry {
 
     pub fn is_expired(&self) -> bool {
         let elapsed = Utc::now().signed_duration_since(self.fetched_at);
-        if elapsed.is_zero() || elapsed.num_seconds() < 0 {
-            false
-        } else {
-            elapsed.num_seconds() as u64 > self.ttl_secs
+        match elapsed.is_zero() || elapsed.num_seconds() < 0 {
+            true => false,
+            false => elapsed.num_seconds() as u64 > self.ttl_secs,
         }
     }
 
     pub fn apply_cache_control_ttl(&mut self, default_ttl: Duration) {
-        let Some(cache_control) = &self.cache_control else {
-            return;
+        let lower = match &self.cache_control {
+            Some(cc) => cc.to_ascii_lowercase(),
+            None => return,
         };
-        let lower = cache_control.to_ascii_lowercase();
-        if lower
+        let is_no_cache = lower
             .split(',')
             .map(str::trim)
-            .any(|directive| matches!(directive, "no-store" | "no-cache"))
-        {
-            self.ttl_secs = 0;
-            return;
+            .any(|directive| matches!(directive, "no-store" | "no-cache"));
+        match is_no_cache {
+            true => {
+                self.ttl_secs = 0;
+                return;
+            }
+            false => {}
         }
 
-        if let Some(max_age) = parse_cache_control_seconds(&lower, "s-maxage")
-            .or_else(|| parse_cache_control_seconds(&lower, "max-age"))
-        {
-            self.ttl_secs = max_age;
-        } else if self.ttl_secs == 3600 {
-            self.ttl_secs = default_ttl.as_secs();
+        let explicit_max_age = parse_cache_control_seconds(&lower, "s-maxage")
+            .or_else(|| parse_cache_control_seconds(&lower, "max-age"));
+        match (explicit_max_age, self.ttl_secs == 3600) {
+            (Some(max_age), _) => self.ttl_secs = max_age,
+            (None, true) => self.ttl_secs = default_ttl.as_secs(),
+            (None, false) => {}
         }
     }
 }
@@ -77,10 +79,9 @@ impl CacheEntry {
 fn parse_cache_control_seconds(cache_control: &str, key: &str) -> Option<u64> {
     cache_control.split(',').find_map(|directive| {
         let (name, value) = directive.trim().split_once('=')?;
-        if name.trim() != key {
-            return None;
-        }
-        value.trim().trim_matches('"').parse::<u64>().ok()
+        (name.trim() == key)
+            .then(|| value.trim().trim_matches('"').parse::<u64>().ok())
+            .flatten()
     })
 }
 
@@ -103,26 +104,22 @@ impl Cache {
     /// Load cache from a JSON file, or start empty if the file is missing/corrupted.
     pub fn load_from_file(max_entries: usize, ttl_secs: u64, path: &std::path::Path) -> Self {
         let mut cache = Self::new(max_entries, ttl_secs);
-        if !path.exists() {
-            return cache;
+        match path.exists() {
+            false => return cache,
+            true => {}
         }
 
         match std::fs::read_to_string(path) {
-            Ok(contents) => {
-                match serde_json::from_str::<Vec<CacheEntry>>(&contents) {
-                    Ok(entries) => {
-                        // Insert non-expired entries
-                        for entry in entries {
-                            if !entry.is_expired() {
-                                cache.put(entry.url.clone(), entry);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(path = ?path, error = %e, "Failed to parse cache file, starting with empty cache");
+            Ok(contents) => match serde_json::from_str::<Vec<CacheEntry>>(&contents) {
+                Ok(entries) => {
+                    for entry in entries.into_iter().filter(|e| !e.is_expired()) {
+                        cache.put(entry.url.clone(), entry);
                     }
                 }
-            }
+                Err(e) => {
+                    tracing::warn!(path = ?path, error = %e, "Failed to parse cache file, starting with empty cache");
+                }
+            },
             Err(e) => {
                 tracing::warn!(path = ?path, error = %e, "Failed to read cache file, starting with empty cache");
             }
@@ -132,16 +129,15 @@ impl Cache {
 
     /// Save cache entries to a JSON file.
     pub fn save_to_file(&self, path: &std::path::Path) -> Result<(), SearchXyzError> {
-        let mut entries = Vec::new();
-        // LruCache yields entries from oldest to newest.
-        for (_, entry) in self.inner.iter() {
-            if !entry.is_expired() {
-                entries.push(entry.clone());
-            }
-        }
+        let entries: Vec<CacheEntry> = self
+            .inner
+            .iter()
+            .filter_map(|(_, entry)| (!entry.is_expired()).then(|| entry.clone()))
+            .collect();
 
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+        match path.parent() {
+            Some(parent) => std::fs::create_dir_all(parent)?,
+            None => {}
         }
 
         let file = std::fs::File::create(path)?;
@@ -161,19 +157,22 @@ impl Cache {
 
     /// Retrieve and promote a cached entry.
     pub fn get_mut(&mut self, url: &str) -> Option<&CacheEntry> {
-        let entry = self.inner.get(url)?;
-        if entry.is_expired() {
-            self.inner.pop(url);
-            return None;
+        let expired = self.inner.get(url)?.is_expired();
+        match expired {
+            true => {
+                self.inner.pop(url);
+                None
+            }
+            false => self.inner.get(url),
         }
-        self.inner.get(url)
     }
 
     /// Insert or update a cache entry.
     pub fn put(&mut self, url: String, mut entry: CacheEntry) {
         entry.apply_cache_control_ttl(self.default_ttl);
-        if entry.ttl_secs == 3600 {
-            entry.ttl_secs = self.default_ttl.as_secs();
+        match entry.ttl_secs == 3600 {
+            true => entry.ttl_secs = self.default_ttl.as_secs(),
+            false => {}
         }
         self.inner.put(url, entry);
     }

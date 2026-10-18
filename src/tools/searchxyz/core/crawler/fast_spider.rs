@@ -38,15 +38,15 @@ impl LinkSpider {
                 .filter(|url| visited.insert(url.clone()))
                 .collect();
 
-            if current_batch.is_empty() {
-                break;
+            match current_batch.is_empty() {
+                true => break,
+                false => {}
             }
 
             let mut join_set = JoinSet::new();
             for url in current_batch {
                 let crawler = self.crawler.clone();
                 join_set.spawn(async move {
-                    // Fetch the raw HTML body (render_js: false is faster for link mapping)
                     let result = crawler.fetch_url(&url, false).await?;
                     Ok::<String, SearchXyzError>(result.body)
                 });
@@ -57,17 +57,19 @@ impl LinkSpider {
             while let Some(res) = join_set.join_next().await {
                 match res {
                     Ok(Ok(html)) => {
-                        // Fast parse <a> links from HTML
                         let parsed_links = extract_links_from_html(&html, start_url);
                         for link in parsed_links {
-                            if let Ok(parsed_url) = url::Url::parse(&link) {
-                                if let Some(ref host) = allowed_host {
-                                    if parsed_url.host_str() == Some(host)
-                                        && discovered.insert(link.clone())
-                                    {
-                                        next_batch_links.insert(link);
-                                    }
+                            let same_host = url::Url::parse(&link)
+                                .ok()
+                                .zip(allowed_host.as_deref())
+                                .is_some_and(|(parsed_url, host)| {
+                                    parsed_url.host_str() == Some(host)
+                                });
+                            match same_host && discovered.insert(link.clone()) {
+                                true => {
+                                    next_batch_links.insert(link);
                                 }
+                                false => {}
                             }
                         }
                     }
@@ -89,28 +91,23 @@ impl LinkSpider {
 
 /// Helper function to parse <a> href tags from HTML body.
 pub fn extract_links_from_html(html: &str, base_url: &str) -> Vec<String> {
-    let mut links = Vec::new();
     let base = match url::Url::parse(base_url) {
         Ok(u) => u,
-        Err(_) => return links,
+        Err(_) => return Vec::new(),
     };
 
     let fragment = scraper::Html::parse_fragment(html);
     let selector = scraper::Selector::parse("a[href]").unwrap();
 
-    for element in fragment.select(&selector) {
-        if let Some(href) = element.value().attr("href") {
-            // Resolve relative URLs to absolute.
-            if let Ok(abs_url) = base.join(href) {
-                // Strip fragment (e.g. #section) to avoid duplicates of the same page.
-                let mut url = abs_url;
-                url.set_fragment(None);
-                links.push(url.to_string());
-            }
-        }
-    }
-
-    links
+    fragment
+        .select(&selector)
+        .filter_map(|element| {
+            let href = element.value().attr("href")?;
+            let mut url = base.join(href).ok()?;
+            url.set_fragment(None);
+            Some(url.to_string())
+        })
+        .collect()
 }
 
 #[cfg(test)]

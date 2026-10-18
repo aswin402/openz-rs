@@ -62,23 +62,19 @@ pub enum SearchXyzError {
 
 impl From<reqwest::Error> for SearchXyzError {
     fn from(err: reqwest::Error) -> Self {
-        if err.is_timeout() {
-            let url = err
-                .url()
-                .map(|u| u.to_string())
-                .unwrap_or_else(|| "<unknown>".into());
-            return SearchXyzError::Timeout {
-                url,
-                timeout_secs: 30,
-            };
-        }
         let url = err
             .url()
             .map(|u| u.to_string())
             .unwrap_or_else(|| "<unknown>".into());
-        SearchXyzError::CrawlFailed {
-            url,
-            reason: err.to_string(),
+        match err.is_timeout() {
+            true => SearchXyzError::Timeout {
+                url,
+                timeout_secs: 30,
+            },
+            false => SearchXyzError::CrawlFailed {
+                url,
+                reason: err.to_string(),
+            },
         }
     }
 }

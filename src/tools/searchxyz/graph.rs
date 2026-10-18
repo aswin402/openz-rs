@@ -54,14 +54,8 @@ impl Tool for SearchXyzIndexRelationshipTool {
         super::map_field_alias(&mut normalized, "target_type", &["targetType", "to_type", "dst_type"]);
         super::map_field_alias(&mut normalized, "relationship", &["rel", "relation", "type", "predicate", "edge", "label"]);
 
-        if normalized.get("source_type").is_none() {
-            let is_url = normalized.get("source").and_then(|v| v.as_str()).map(|s| s.contains("://")).unwrap_or(false);
-            normalized["source_type"] = json!(if is_url { "Document" } else { "Entity" });
-        }
-        if normalized.get("target_type").is_none() {
-            let is_url = normalized.get("target").and_then(|v| v.as_str()).map(|s| s.contains("://")).unwrap_or(false);
-            normalized["target_type"] = json!(if is_url { "Document" } else { "Entity" });
-        }
+        super::default_entity_type_from_field(&mut normalized, "source_type", "source");
+        super::default_entity_type_from_field(&mut normalized, "target_type", "target");
 
         let req: IndexRelationshipRequest = serde_json::from_value(normalized)?;
         let res = get_server()
@@ -101,11 +95,7 @@ impl Tool for SearchXyzQueryGraphTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = if let Some(s) = arguments.as_str() {
-            json!({ "entity": s.trim() })
-        } else {
-            arguments.clone()
-        };
+        let mut normalized = super::wrap_string_arg(arguments, "entity");
         super::map_field_alias(&mut normalized, "entity", &["name", "node", "query", "target", "url", "source", "link", "id"]);
         super::map_field_alias(&mut normalized, "max_depth", &["depth", "maxDepth"]);
         super::coerce_numeric_fields(&mut normalized, &["max_depth"]);
@@ -117,8 +107,9 @@ impl Tool for SearchXyzQueryGraphTool {
 }
 
 fn parse_github_file_limit_error(message: &str) -> Option<(u64, u64)> {
-    if !message.contains("GitHub ingest file count limit exceeded") {
-        return None;
+    match message.contains("GitHub ingest file count limit exceeded") {
+        false => return None,
+        true => {}
     }
     let files = message
         .split("files=")
@@ -162,10 +153,10 @@ fn github_file_limit_should_auto_retry(arguments: &Value, files: u64, max_files:
 
 fn map_github_repo_err(err: anyhow::Error) -> anyhow::Error {
     let msg = err.to_string();
-    if let Some(payload) = github_file_limit_error_value(&msg) {
-        return anyhow::anyhow!(payload.to_string());
+    match github_file_limit_error_value(&msg) {
+        Some(payload) => anyhow::anyhow!(payload.to_string()),
+        None => err,
     }
-    err
 }
 
 // ── 11. Read GitHub Repo ───────────────────────────────────────
@@ -229,15 +220,9 @@ impl Tool for SearchXyzReadGithubRepoTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = if let Some(s) = arguments.as_str() {
-            json!({ "repo_url": crate::tools::web::normalize_web_url(s) })
-        } else {
-            arguments.clone()
-        };
+        let mut normalized = super::wrap_url_string_arg(arguments, "repo_url");
         super::map_field_alias(&mut normalized, "repo_url", &["repoUrl", "url", "repo", "repository", "target", "link"]);
-        if let Some(u) = normalized.get("repo_url").and_then(|v| v.as_str()) {
-            normalized["repo_url"] = json!(crate::tools::web::normalize_web_url(u));
-        }
+        super::normalize_url_field(&mut normalized, "repo_url");
         super::map_field_alias(&mut normalized, "branch", &["ref", "tag"]);
         super::map_field_alias(&mut normalized, "include_extensions", &["includeExtensions", "extensions"]);
         super::map_field_alias(&mut normalized, "exclude_paths", &["excludePaths", "ignore_paths", "ignore"]);
@@ -256,8 +241,11 @@ impl Tool for SearchXyzReadGithubRepoTool {
             Ok(res) => res,
             Err(err) => {
                 let err_msg = err.to_string();
-                if let Some((files, max_files)) = parse_github_file_limit_error(&err_msg) {
-                    if github_file_limit_should_auto_retry(&normalized, files, max_files) {
+                let auto_retry_pair = parse_github_file_limit_error(&err_msg).filter(|&(files, max_files)| {
+                    github_file_limit_should_auto_retry(&normalized, files, max_files)
+                });
+                match auto_retry_pair {
+                    Some((files, max_files)) => {
                         let mut retry_args = normalized.clone();
                         retry_args["max_files"] = json!(files);
                         tracing::info!(
@@ -280,8 +268,8 @@ impl Tool for SearchXyzReadGithubRepoTool {
                             "result": retry_res
                         }));
                     }
+                    None => return Err(map_github_repo_err(err)),
                 }
-                return Err(map_github_repo_err(err));
             }
         };
         Ok(json!(res))

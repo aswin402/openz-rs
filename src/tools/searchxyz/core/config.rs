@@ -246,12 +246,27 @@ fn toml_has_key_path(contents: &str, path: &[&str]) -> Result<bool, SearchXyzErr
     })?;
     let mut current = &value;
     for key in path {
-        let Some(next) = current.get(*key) else {
-            return Ok(false);
-        };
-        current = next;
+        match current.get(*key) {
+            Some(next) => current = next,
+            None => return Ok(false),
+        }
     }
     Ok(true)
+}
+
+fn parse_toml_config(
+    contents: &str,
+    label: &str,
+) -> Result<(Config, bool, bool), SearchXyzError> {
+    let explicit_backends = toml_has_key_path(contents, &["search", "backends"])?;
+    let explicit_searxng = toml_has_key_path(contents, &["searxng", "instance_url"])?;
+    let config = toml::from_str::<Config>(contents)
+        .map_err(|e| SearchXyzError::ConfigError(format!("Failed to parse {label}: {e}")))?;
+    Ok((config, explicit_backends, explicit_searxng))
+}
+
+fn env_parsed<T: std::str::FromStr>(key: &str) -> Option<T> {
+    std::env::var(key).ok().and_then(|val| val.parse().ok())
 }
 
 impl Config {
@@ -260,37 +275,15 @@ impl Config {
     /// 2. TOML file (searchxyz.toml)
     /// 3. Compiled defaults
     pub fn load(path: Option<&str>) -> Result<Self, SearchXyzError> {
-        let (mut config, file_has_explicit_backends, file_has_explicit_searxng) = if let Some(p) =
-            path
-        {
-            let contents = std::fs::read_to_string(p)?;
-            let explicit_backends = toml_has_key_path(&contents, &["search", "backends"])?;
-            let explicit_searxng = toml_has_key_path(&contents, &["searxng", "instance_url"])?;
-            (
-                toml::from_str::<Config>(&contents).map_err(|e| {
-                    SearchXyzError::ConfigError(format!("Failed to parse {p}: {e}"))
-                })?,
-                explicit_backends,
-                explicit_searxng,
-            )
-        } else {
-            match std::fs::read_to_string("searchxyz.toml") {
-                Ok(contents) => {
-                    let explicit_backends = toml_has_key_path(&contents, &["search", "backends"])?;
-                    let explicit_searxng =
-                        toml_has_key_path(&contents, &["searxng", "instance_url"])?;
-                    (
-                        toml::from_str::<Config>(&contents).map_err(|e| {
-                            SearchXyzError::ConfigError(format!(
-                                "Failed to parse searchxyz.toml: {e}"
-                            ))
-                        })?,
-                        explicit_backends,
-                        explicit_searxng,
-                    )
-                }
-                Err(_) => (Config::default(), false, false),
+        let (mut config, file_has_explicit_backends, file_has_explicit_searxng) = match path {
+            Some(p) => {
+                let contents = std::fs::read_to_string(p)?;
+                parse_toml_config(&contents, p)?
             }
+            None => match std::fs::read_to_string("searchxyz.toml") {
+                Ok(contents) => parse_toml_config(&contents, "searchxyz.toml")?,
+                Err(_) => (Config::default(), false, false),
+            },
         };
 
         let env_has_explicit_backends = std::env::var_os("SEARCHXYZ_SEARCH_BACKENDS").is_some();
@@ -311,89 +304,73 @@ impl Config {
 
     /// Override specific fields from well-known env vars.
     fn apply_env_overrides(&mut self) {
-        if let Ok(key) = std::env::var("SEARCHXYZ_API_KEY") {
+        if_ok_set(std::env::var("SEARCHXYZ_API_KEY"), |key| {
             self.server.auth_token = Some(key);
-        }
-        if let Ok(key) = std::env::var("SEARCHXYZ_BRAVE_API_KEY") {
+        });
+        if_ok_set(std::env::var("SEARCHXYZ_BRAVE_API_KEY"), |key| {
             self.brave.api_key = Some(key);
-        }
-        if let Ok(url) = std::env::var("SEARCHXYZ_SEARXNG_URL") {
+        });
+        if_ok_set(std::env::var("SEARCHXYZ_SEARXNG_URL"), |url| {
             self.searxng.instance_url = url;
-        }
-        if let Ok(backends) = std::env::var("SEARCHXYZ_SEARCH_BACKENDS") {
+        });
+        if_ok_set(std::env::var("SEARCHXYZ_SEARCH_BACKENDS"), |backends| {
             self.search.backends = parse_backend_list(&backends);
-        }
-        if let Ok(level) = std::env::var("SEARCHXYZ_LOG_LEVEL") {
+        });
+        if_ok_set(std::env::var("SEARCHXYZ_LOG_LEVEL"), |level| {
             self.server.log_level = level;
-        }
-        if let Ok(path) = std::env::var("SEARCHXYZ_INDEX_PATH") {
+        });
+        if_ok_set(std::env::var("SEARCHXYZ_INDEX_PATH"), |path| {
             self.index.path = PathBuf::from(path);
-        }
-        if let Ok(prov) = std::env::var("SEARCHXYZ_EMBEDDING_PROVIDER") {
+        });
+        if_ok_set(std::env::var("SEARCHXYZ_EMBEDDING_PROVIDER"), |prov| {
             self.index.embedding.provider = prov;
-        }
-        if let Ok(model) = std::env::var("SEARCHXYZ_EMBEDDING_MODEL") {
+        });
+        if_ok_set(std::env::var("SEARCHXYZ_EMBEDDING_MODEL"), |model| {
             self.index.embedding.model = model;
-        }
-        if let Ok(key) = std::env::var("SEARCHXYZ_EMBEDDING_API_KEY") {
+        });
+        if_ok_set(std::env::var("SEARCHXYZ_EMBEDDING_API_KEY"), |key| {
             self.index.embedding.api_key = Some(key);
-        }
-        if let Ok(url) = std::env::var("SEARCHXYZ_EMBEDDING_URL") {
+        });
+        if_ok_set(std::env::var("SEARCHXYZ_EMBEDDING_URL"), |url| {
             self.index.embedding.api_url = Some(url);
-        }
-        if let Ok(key) = std::env::var("SEARCHXYZ_OPENAI_API_KEY") {
-            if self.index.embedding.provider.to_lowercase() == "openai" {
-                self.index.embedding.api_key = Some(key);
+        });
+
+        let provider_lc = self.index.embedding.provider.to_lowercase();
+        for (env_var, target_provider) in [
+            ("SEARCHXYZ_OPENAI_API_KEY", "openai"),
+            ("SEARCHXYZ_GEMINI_API_KEY", "gemini"),
+            ("SEARCHXYZ_COHERE_API_KEY", "cohere"),
+        ] {
+            match (std::env::var(env_var), provider_lc == target_provider) {
+                (Ok(key), true) => self.index.embedding.api_key = Some(key),
+                _ => {}
             }
         }
-        if let Ok(key) = std::env::var("SEARCHXYZ_GEMINI_API_KEY") {
-            if self.index.embedding.provider.to_lowercase() == "gemini" {
-                self.index.embedding.api_key = Some(key);
-            }
-        }
-        if let Ok(key) = std::env::var("SEARCHXYZ_COHERE_API_KEY") {
-            if self.index.embedding.provider.to_lowercase() == "cohere" {
-                self.index.embedding.api_key = Some(key);
-            }
-        }
-        if let Ok(val) = std::env::var("SEARCHXYZ_CACHE_MAX_ENTRIES") {
-            if let Ok(n) = val.parse() {
-                self.cache.max_entries = n;
-            }
-        }
-        if let Ok(val) = std::env::var("SEARCHXYZ_CACHE_TTL_SECS") {
-            if let Ok(n) = val.parse() {
-                self.cache.ttl_secs = n;
-            }
-        }
-        if let Ok(path) = std::env::var("SEARCHXYZ_CACHE_PATH") {
+
+        if_some_set(env_parsed("SEARCHXYZ_CACHE_MAX_ENTRIES"), |n| {
+            self.cache.max_entries = n;
+        });
+        if_some_set(env_parsed("SEARCHXYZ_CACHE_TTL_SECS"), |n| {
+            self.cache.ttl_secs = n;
+        });
+        if_ok_set(std::env::var("SEARCHXYZ_CACHE_PATH"), |path| {
             self.cache.path = PathBuf::from(path);
-        }
-        if let Ok(enabled) = std::env::var("SEARCHXYZ_HEADLESS_ENABLED") {
-            if let Ok(b) = enabled.parse() {
-                self.headless.enabled = b;
-            }
-        }
-        if let Ok(path) = std::env::var("SEARCHXYZ_CHROME_PATH") {
+        });
+        if_some_set(env_parsed("SEARCHXYZ_HEADLESS_ENABLED"), |b| {
+            self.headless.enabled = b;
+        });
+        if_ok_set(std::env::var("SEARCHXYZ_CHROME_PATH"), |path| {
             self.headless.chrome_path = Some(path);
-        }
-        if let Ok(wait_ms) = std::env::var("SEARCHXYZ_HEADLESS_WAIT_MS") {
-            if let Ok(n) = wait_ms.parse() {
-                self.headless.wait_after_load_ms = n;
-            }
-        }
-        if let Ok(enabled) = std::env::var("SEARCHXYZ_PROXY_ENABLED") {
-            if let Ok(b) = enabled.parse() {
-                self.proxy.enabled = b;
-            }
-        }
-        if let Ok(urls_str) = std::env::var("SEARCHXYZ_PROXY_URLS") {
-            self.proxy.urls = urls_str
-                .split(',')
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-                .collect();
-        }
+        });
+        if_some_set(env_parsed("SEARCHXYZ_HEADLESS_WAIT_MS"), |n| {
+            self.headless.wait_after_load_ms = n;
+        });
+        if_some_set(env_parsed("SEARCHXYZ_PROXY_ENABLED"), |b| {
+            self.proxy.enabled = b;
+        });
+        if_ok_set(std::env::var("SEARCHXYZ_PROXY_URLS"), |urls_str| {
+            self.proxy.urls = parse_backend_list(&urls_str);
+        });
     }
 
     fn apply_native_backend_preferences(
@@ -401,35 +378,57 @@ impl Config {
         explicit_backend_order: bool,
         explicit_searxng: bool,
     ) {
-        if explicit_backend_order
+        match explicit_backend_order
             || !explicit_searxng
             || self.searxng.instance_url.trim().is_empty()
         {
-            return;
+            true => {}
+            false => {
+                self.search.backends.retain(|backend| backend != "searxng");
+                self.search.backends.insert(0, "searxng".to_string());
+            }
         }
-        self.search.backends.retain(|backend| backend != "searxng");
-        self.search.backends.insert(0, "searxng".to_string());
     }
 
     /// Validate invariants.
     fn validate(&self) -> Result<(), SearchXyzError> {
-        if self.search.backends.is_empty() {
-            return Err(SearchXyzError::ConfigError(
-                "At least one search backend must be configured".into(),
-            ));
+        match self.search.backends.is_empty() {
+            true => {
+                return Err(SearchXyzError::ConfigError(
+                    "At least one search backend must be configured".into(),
+                ));
+            }
+            false => {}
         }
-        if self.search.backends.contains(&"brave".to_string()) && self.brave.api_key.is_none() {
-            tracing::warn!(
-                "Brave backend is listed but no API key is set — \
-                 it will be skipped at runtime"
-            );
+        match self.search.backends.contains(&"brave".to_string()) && self.brave.api_key.is_none() {
+            true => {
+                tracing::warn!(
+                    "Brave backend is listed but no API key is set — \
+                     it will be skipped at runtime"
+                );
+            }
+            false => {}
         }
-        if self.crawler.max_body_bytes == 0 {
-            return Err(SearchXyzError::ConfigError(
+        match self.crawler.max_body_bytes == 0 {
+            true => Err(SearchXyzError::ConfigError(
                 "crawler.max_body_bytes must be > 0".into(),
-            ));
+            )),
+            false => Ok(()),
         }
-        Ok(())
+    }
+}
+
+fn if_ok_set<T, E, F: FnOnce(T)>(res: Result<T, E>, f: F) {
+    match res {
+        Ok(val) => f(val),
+        Err(_) => {}
+    }
+}
+
+fn if_some_set<T, F: FnOnce(T)>(opt: Option<T>, f: F) {
+    match opt {
+        Some(val) => f(val),
+        None => {}
     }
 }
 

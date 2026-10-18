@@ -121,11 +121,14 @@ impl SearchBackend for BraveBackend {
                 429 => {
                     // Rate limited — exponential backoff.
                     attempt += 1;
-                    if attempt > max_retries {
-                        return Err(SearchXyzError::RateLimited {
-                            provider: "brave".into(),
-                            retry_after_secs: 60,
-                        });
+                    match attempt > max_retries {
+                        true => {
+                            return Err(SearchXyzError::RateLimited {
+                                provider: "brave".into(),
+                                retry_after_secs: 60,
+                            });
+                        }
+                        false => {}
                     }
                     let delay = std::time::Duration::from_millis(500 * 2u64.pow(attempt - 1));
                     tracing::warn!(

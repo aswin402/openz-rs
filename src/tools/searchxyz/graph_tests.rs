@@ -60,11 +60,7 @@ fn test_searchxyz_index_relationship_args_aliases() {
 #[test]
 fn test_searchxyz_query_graph_args_normalization() {
     let raw = json!("openz");
-    let mut normalized = if let Some(s) = raw.as_str() {
-        json!({ "entity": s.trim() })
-    } else {
-        raw.clone()
-    };
+    let mut normalized = crate::tools::searchxyz::wrap_string_arg(&raw, "entity");
     map_field_alias(&mut normalized, "entity", &["name", "node", "query", "target"]);
     map_field_alias(&mut normalized, "max_depth", &["depth", "maxDepth"]);
     coerce_numeric_fields(&mut normalized, &["max_depth"]);
@@ -75,11 +71,7 @@ fn test_searchxyz_query_graph_args_normalization() {
         "node": "tantivy",
         "depth": "3"
     });
-    let mut norm_obj = if let Some(s) = raw_obj.as_str() {
-        json!({ "entity": s.trim() })
-    } else {
-        raw_obj.clone()
-    };
+    let mut norm_obj = crate::tools::searchxyz::wrap_string_arg(&raw_obj, "entity");
     map_field_alias(&mut norm_obj, "entity", &["name", "node", "query", "target"]);
     map_field_alias(&mut norm_obj, "max_depth", &["depth", "maxDepth"]);
     coerce_numeric_fields(&mut norm_obj, &["max_depth"]);
@@ -91,15 +83,9 @@ fn test_searchxyz_query_graph_args_normalization() {
 #[test]
 fn test_searchxyz_read_github_repo_args_normalization() {
     let raw = json!("github.com/aswin402/openz-rs");
-    let mut normalized = if let Some(s) = raw.as_str() {
-        json!({ "repo_url": crate::tools::web::normalize_web_url(s) })
-    } else {
-        raw.clone()
-    };
+    let mut normalized = crate::tools::searchxyz::wrap_url_string_arg(&raw, "repo_url");
     map_field_alias(&mut normalized, "repo_url", &["repoUrl", "url", "repo", "repository", "target", "link"]);
-    if let Some(u) = normalized.get("repo_url").and_then(|v| v.as_str()) {
-        normalized["repo_url"] = json!(crate::tools::web::normalize_web_url(u));
-    }
+    crate::tools::searchxyz::normalize_url_field(&mut normalized, "repo_url");
     map_field_alias(&mut normalized, "max_files", &["maxFiles", "files_limit", "limit"]);
     map_field_alias(&mut normalized, "auto_expand_max_files", &["autoExpandMaxFiles", "auto_expand"]);
     coerce_numeric_fields(&mut normalized, &["max_files"]);
@@ -112,15 +98,9 @@ fn test_searchxyz_read_github_repo_args_normalization() {
         "maxFiles": "500",
         "autoExpandMaxFiles": "1"
     });
-    let mut norm_obj = if let Some(s) = raw_obj.as_str() {
-        json!({ "repo_url": crate::tools::web::normalize_web_url(s) })
-    } else {
-        raw_obj.clone()
-    };
+    let mut norm_obj = crate::tools::searchxyz::wrap_url_string_arg(&raw_obj, "repo_url");
     map_field_alias(&mut norm_obj, "repo_url", &["repoUrl", "url", "repo", "repository", "target", "link"]);
-    if let Some(u) = norm_obj.get("repo_url").and_then(|v| v.as_str()) {
-        norm_obj["repo_url"] = json!(crate::tools::web::normalize_web_url(u));
-    }
+    crate::tools::searchxyz::normalize_url_field(&mut norm_obj, "repo_url");
     map_field_alias(&mut norm_obj, "max_files", &["maxFiles", "files_limit", "limit"]);
     map_field_alias(&mut norm_obj, "auto_expand_max_files", &["autoExpandMaxFiles", "auto_expand"]);
     coerce_numeric_fields(&mut norm_obj, &["max_files"]);

@@ -320,23 +320,49 @@ pub struct ResearchBundle {
     pub graph: crate::tools::searchxyz::core::graph::KnowledgeGraph,
 }
 
+fn ensure_http_scheme(url: &str) -> Result<()> {
+    match url.starts_with("http://") || url.starts_with("https://") {
+        true => Ok(()),
+        false => bail!("URL must start with http:// or https://"),
+    }
+}
+
+fn require_confirmation(confirm: Option<bool>, tool_name: &str) -> Result<()> {
+    match confirm == Some(true) {
+        true => Ok(()),
+        false => bail!("{tool_name} requires confirm=true"),
+    }
+}
+
+fn format_crawled_pages_markdown(pages: &[ExtractedContent]) -> String {
+    pages
+        .iter()
+        .map(|p| {
+            format!(
+                "---\n## {}\n**Source:** {}\n\n{}\n\n",
+                p.title, p.url, p.content_markdown
+            )
+        })
+        .collect()
+}
+
 fn limit_output(tool_name: &str, output: &str, max_chars: Option<usize>) -> String {
-    let Some(max_chars) = max_chars else {
-        return output.to_string();
+    let max_chars = match max_chars {
+        Some(limit) => limit,
+        None => return output.to_string(),
     };
 
     let original_chars = output.chars().count();
-    if original_chars <= max_chars {
-        return output.to_string();
+    match original_chars <= max_chars {
+        true => return output.to_string(),
+        false => {}
     }
 
-    let mut end_byte = output.len();
-    for (count, (idx, _)) in output.char_indices().enumerate() {
-        if count == max_chars {
-            end_byte = idx;
-            break;
-        }
-    }
+    let end_byte = output
+        .char_indices()
+        .nth(max_chars)
+        .map(|(idx, _)| idx)
+        .unwrap_or(output.len());
 
     let mut limited = output[..end_byte].to_string();
     limited.push_str(&format!(
@@ -389,23 +415,32 @@ impl SearchXyzServer {
     }
 
     fn reload_index_nonfatal(&self, context: &str) {
-        if let Err(e) = self.index.reload() {
-            tracing::warn!(error = %e, context, "Failed to reload search index reader after mutation");
+        match self.index.reload() {
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(error = %e, context, "Failed to reload search index reader after mutation");
+            }
         }
     }
 
     async fn persist_graph_nonfatal(&self, context: &str) {
         let graph_path = self.graph_path();
         let graph = self.graph.lock().await;
-        if let Err(e) = graph.save_to_file(&graph_path) {
-            tracing::warn!(path = ?graph_path, error = %e, context, "Failed to persist SearchXyz graph");
+        match graph.save_to_file(&graph_path) {
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(path = ?graph_path, error = %e, context, "Failed to persist SearchXyz graph");
+            }
         }
     }
 
     async fn persist_cache_nonfatal(&self, context: &str) {
         let cache = self.cache.lock().await;
-        if let Err(e) = cache.save_to_file(&self.config.cache.path) {
-            tracing::warn!(path = ?self.config.cache.path, error = %e, context, "Failed to persist SearchXyz cache");
+        match cache.save_to_file(&self.config.cache.path) {
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(path = ?self.config.cache.path, error = %e, context, "Failed to persist SearchXyz cache");
+            }
         }
     }
 
@@ -413,6 +448,17 @@ impl SearchXyzServer {
         self.reload_index_nonfatal(context);
         self.persist_graph_nonfatal(context).await;
         self.persist_cache_nonfatal(context).await;
+    }
+
+    async fn index_and_extract_nonfatal(&self, page: &ExtractedContent, source: &str) {
+        match self.index.add_document(page, source).await {
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!(url = %page.url, source, error = %e, "Failed to index document (non-fatal)");
+            }
+        }
+        let mut graph = self.graph.lock().await;
+        graph.extract_heuristics(&page.url, &page.title, &page.content_markdown);
     }
 
     pub async fn search_web(&self, req: SearchWebRequest) -> Result<String> {
@@ -440,8 +486,9 @@ impl SearchXyzServer {
                 )
             })
             .collect::<String>();
-        if req.include_diagnostics.unwrap_or(false) {
-            text.push_str(&format_search_diagnostics(&report));
+        match req.include_diagnostics.unwrap_or(false) {
+            true => text.push_str(&format_search_diagnostics(&report)),
+            false => {}
         }
 
         Ok(text)
@@ -449,9 +496,7 @@ impl SearchXyzServer {
 
     pub async fn read_url(&self, req: ReadUrlRequest) -> Result<String> {
         let url = &req.url;
-        if !url.starts_with("http://") && !url.starts_with("https://") {
-            bail!("URL must start with http:// or https://");
-        }
+        ensure_http_scheme(url)?;
 
         let depth = req.depth.unwrap_or(1).min(3);
         let render_js = req.render_js.unwrap_or(false);
@@ -459,137 +504,136 @@ impl SearchXyzServer {
         let save = req.save_mode.unwrap_or(SaveMode::Full).should_save();
 
         // ── Check for YouTube video URLs ──
-        if crate::tools::searchxyz::core::crawler::youtube::extract_video_id(url).is_some() {
-            let transcript =
-                crate::tools::searchxyz::core::crawler::youtube::fetch_youtube_transcript(&self.crawler, url).await?;
-            let title = format!("YouTube Video Transcript - {}", url);
-            let extracted = ExtractedContent {
-                url: url.clone(),
-                title: title.clone(),
-                description: String::new(),
-                content_markdown: transcript.clone(),
-                links: Vec::new(),
-            };
+        match crate::tools::searchxyz::core::crawler::youtube::extract_video_id(url).is_some() {
+            true => {
+                let transcript =
+                    crate::tools::searchxyz::core::crawler::youtube::fetch_youtube_transcript(
+                        &self.crawler,
+                        url,
+                    )
+                    .await?;
+                let title = format!("YouTube Video Transcript - {}", url);
+                let extracted = ExtractedContent {
+                    url: url.clone(),
+                    title: title.clone(),
+                    description: String::new(),
+                    content_markdown: transcript.clone(),
+                    links: Vec::new(),
+                };
 
-            if save {
-                // Index the transcript
-                if let Err(e) = self.index.add_document(&extracted, "youtube").await {
-                    tracing::warn!(url = %url, error = %e, "Failed to index YouTube transcript (non-fatal)");
+                match save {
+                    true => {
+                        self.index_and_extract_nonfatal(&extracted, "youtube").await;
+                        self.persist_research_state_nonfatal("youtube transcript")
+                            .await;
+                    }
+                    false => {}
                 }
 
-                // Run automatic graph heuristics
-                {
-                    let mut graph = self.graph.lock().await;
-                    graph.extract_heuristics(url, &title, &transcript);
-                }
-                self.persist_research_state_nonfatal("youtube transcript")
-                    .await;
+                let text = format!(
+                    "# {}\n\n**Source:** {}\n\n---\n\n{}",
+                    title, url, transcript
+                );
+                return Ok(limit_output("read_url", &text, req.max_chars));
             }
-
-            let text = format!(
-                "# {}\n\n**Source:** {}\n\n---\n\n{}",
-                title, url, transcript
-            );
-            return Ok(limit_output("read_url", &text, req.max_chars));
+            false => {}
         }
 
         // ── Check for GitHub repository URLs ──
-        if crate::tools::searchxyz::core::crawler::github::parse_github_url(url).is_some() {
-            if save {
-                let summary = crate::tools::searchxyz::core::crawler::github::clone_and_index_repo(
-                    &self.index,
-                    &self.graph,
-                    url,
-                    None,
-                    None,
-                    None,
-                    None,
-                )
-                .await?;
-                self.persist_research_state_nonfatal("github repo ingestion")
-                    .await;
-                let mut text = summary;
-                if req.include_diagnostics.unwrap_or(false) {
-                    text.push_str(&format_read_url_diagnostics(
-                        url,
-                        cache_mode,
-                        save,
-                        "github_repo_ingestion",
-                    ));
+        match crate::tools::searchxyz::core::crawler::github::parse_github_url(url).is_some() {
+            true => match save {
+                true => {
+                    let summary =
+                        crate::tools::searchxyz::core::crawler::github::clone_and_index_repo(
+                            &self.index,
+                            &self.graph,
+                            url,
+                            None,
+                            None,
+                            None,
+                            None,
+                        )
+                        .await?;
+                    self.persist_research_state_nonfatal("github repo ingestion")
+                        .await;
+                    let mut text = summary;
+                    match req.include_diagnostics.unwrap_or(false) {
+                        true => {
+                            text.push_str(&format_read_url_diagnostics(
+                                url,
+                                cache_mode,
+                                save,
+                                "github_repo_ingestion",
+                            ));
+                        }
+                        false => {}
+                    }
+                    return Ok(limit_output("read_url", &text, req.max_chars));
                 }
-                return Ok(limit_output("read_url", &text, req.max_chars));
-            }
-            bail!("GitHub repository ingestion requires save_mode=full; use regular GitHub pages for no-save reads.");
+                false => {
+                    bail!("GitHub repository ingestion requires save_mode=full; use regular GitHub pages for no-save reads.");
+                }
+            },
+            false => {}
         }
 
-        if depth > 1 {
-            let spider =
-                crate::tools::searchxyz::core::crawler::spider::Spider::new(self.crawler.clone(), self.extractor.clone());
-            let crawled_pages = spider.crawl(url, depth, render_js).await?;
+        match depth > 1 {
+            true => {
+                let spider = crate::tools::searchxyz::core::crawler::spider::Spider::new(
+                    self.crawler.clone(),
+                    self.extractor.clone(),
+                );
+                let crawled_pages = spider.crawl(url, depth, render_js).await?;
 
-            if save {
-                // Index successful crawled pages
-                for page in &crawled_pages {
-                    if let Err(e) = self.index.add_document(page, "spider").await {
-                        tracing::warn!(url = %page.url, error = %e, "Failed to index page from spider (non-fatal)");
+                match save {
+                    true => {
+                        for page in &crawled_pages {
+                            self.index_and_extract_nonfatal(page, "spider").await;
+                        }
+                        self.persist_research_state_nonfatal("spider crawl").await;
                     }
-                    // Run automatic graph heuristics
-                    {
-                        let mut graph = self.graph.lock().await;
-                        graph.extract_heuristics(&page.url, &page.title, &page.content_markdown);
-                    }
+                    false => {}
                 }
-                self.persist_research_state_nonfatal("spider crawl").await;
-            }
 
-            let mut text = crawled_pages
-                .iter()
-                .map(|p| {
-                    format!(
-                        "---\n## {}\n**Source:** {}\n\n{}\n\n",
-                        p.title, p.url, p.content_markdown
-                    )
-                })
-                .collect::<String>();
-            if req.include_diagnostics.unwrap_or(false) {
-                text.push_str(&format_read_url_diagnostics(
+                let mut text = format_crawled_pages_markdown(&crawled_pages);
+                match req.include_diagnostics.unwrap_or(false) {
+                    true => {
+                        text.push_str(&format_read_url_diagnostics(
+                            url,
+                            cache_mode,
+                            save,
+                            "spider_crawl",
+                        ));
+                    }
+                    false => {}
+                }
+                Ok(limit_output("read_url", &text, req.max_chars))
+            }
+            false => {
+                let fetch_result = self
+                    .crawler
+                    .fetch_url_with_cache_mode(url, render_js, cache_mode)
+                    .await?;
+                let content = self.extractor.extract(
                     url,
-                    cache_mode,
-                    save,
-                    "spider_crawl",
-                ));
-            }
-            Ok(limit_output("read_url", &text, req.max_chars))
-        } else {
-            let fetch_result = self
-                .crawler
-                .fetch_url_with_cache_mode(url, render_js, cache_mode)
-                .await?;
-            let content = self.extractor.extract(
-                url,
-                &fetch_result.body,
-                Some(&fetch_result.content_type),
-            )?;
+                    &fetch_result.body,
+                    Some(&fetch_result.content_type),
+                )?;
 
-            if save {
-                // Index the single crawled page too.
-                if let Err(e) = self.index.add_document(&content, "read_url").await {
-                    tracing::warn!(url = %content.url, error = %e, "Failed to index page from read_url (non-fatal)");
+                match save {
+                    true => {
+                        self.index_and_extract_nonfatal(&content, "read_url").await;
+                        self.persist_research_state_nonfatal("read_url").await;
+                    }
+                    false => {}
                 }
 
-                // Run automatic graph heuristics
-                {
-                    let mut graph = self.graph.lock().await;
-                    graph.extract_heuristics(url, &content.title, &content.content_markdown);
-                }
-                self.persist_research_state_nonfatal("read_url").await;
+                let text = format!(
+                    "# {}\n\n**Source:** {}\n\n---\n\n{}",
+                    content.title, content.url, content.content_markdown
+                );
+                Ok(limit_output("read_url", &text, req.max_chars))
             }
-
-            let text = format!(
-                "# {}\n\n**Source:** {}\n\n---\n\n{}",
-                content.title, content.url, content.content_markdown
-            );
-            Ok(limit_output("read_url", &text, req.max_chars))
         }
     }
 
@@ -613,30 +657,31 @@ impl SearchXyzServer {
         let report = pipeline
             .run_with_options(search_query, max, render_js, cache_mode, save)
             .await?;
-        if save {
-            {
-                let mut graph = self.graph.lock().await;
-                for result in &report.pages {
-                    graph.extract_heuristics(&result.url, &result.title, &result.content_markdown);
+        match save {
+            true => {
+                {
+                    let mut graph = self.graph.lock().await;
+                    for result in &report.pages {
+                        graph.extract_heuristics(
+                            &result.url,
+                            &result.title,
+                            &result.content_markdown,
+                        );
+                    }
                 }
+                self.persist_research_state_nonfatal("search_and_read")
+                    .await;
             }
-            self.persist_research_state_nonfatal("search_and_read")
-                .await;
+            false => {}
         }
-        let mut text = report
-            .pages
-            .iter()
-            .map(|r| {
-                format!(
-                    "---\n## {}\n**Source:** {}\n\n{}\n\n",
-                    r.title, r.url, r.content_markdown
-                )
-            })
-            .collect::<String>();
-        if req.include_diagnostics.unwrap_or(false) {
-            text.push_str(&format_search_and_read_diagnostics(
-                &report, cache_mode, save,
-            ));
+        let mut text = format_crawled_pages_markdown(&report.pages);
+        match req.include_diagnostics.unwrap_or(false) {
+            true => {
+                text.push_str(&format_search_and_read_diagnostics(
+                    &report, cache_mode, save,
+                ));
+            }
+            false => {}
         }
         Ok(limit_output("search_and_read", &text, req.max_chars))
     }
@@ -644,33 +689,36 @@ impl SearchXyzServer {
     pub async fn recall(&self, req: RecallRequest) -> Result<String> {
         let max = req.max_results.unwrap_or(5);
         let use_semantic = req.semantic.unwrap_or(true);
-        let results = if use_semantic {
-            match self.index.search_semantic(&req.query, max).await {
-                Ok(res) if !res.is_empty() => res,
-                Ok(_) => self.index.search(&req.query, max).unwrap_or_default(),
+        let results = match use_semantic {
+            true => match self.index.search_semantic(&req.query, max).await {
+                Ok(res) => match res.is_empty() {
+                    false => res,
+                    true => self.index.search(&req.query, max).unwrap_or_default(),
+                },
                 Err(_) => self.index.search(&req.query, max)?,
-            }
-        } else {
-            self.index.search(&req.query, max)?
+            },
+            false => self.index.search(&req.query, max)?,
         };
-        if results.is_empty() {
-            return Ok("No matching documents found in the local index. Try search_and_read to fetch new content first.".to_string());
+        match results.is_empty() {
+            true => Ok("No matching documents found in the local index. Try search_and_read to fetch new content first.".to_string()),
+            false => {
+                let text = results
+                    .iter()
+                    .enumerate()
+                    .map(|(i, r)| {
+                        format!(
+                            "{}. **{}** (score: {:.2})\n   {}\n   {}\n\n",
+                            i + 1,
+                            r.title,
+                            r.score,
+                            r.url,
+                            r.snippet
+                        )
+                    })
+                    .collect::<String>();
+                Ok(text)
+            }
         }
-        let text = results
-            .iter()
-            .enumerate()
-            .map(|(i, r)| {
-                format!(
-                    "{}. **{}** (score: {:.2})\n   {}\n   {}\n\n",
-                    i + 1,
-                    r.title,
-                    r.score,
-                    r.url,
-                    r.snippet
-                )
-            })
-            .collect::<String>();
-        Ok(text)
     }
 
     pub async fn list_sources(&self, req: ListSourcesRequest) -> Result<String> {
@@ -680,8 +728,13 @@ impl SearchXyzServer {
 
         let (entries, total_count) = self.index.list_documents(source_filter, limit, offset)?;
 
-        if entries.is_empty() {
-            return Ok("No documents found in the local index matching your filters.".to_string());
+        match entries.is_empty() {
+            true => {
+                return Ok(
+                    "No documents found in the local index matching your filters.".to_string(),
+                );
+            }
+            false => {}
         }
 
         let mut output = format!("### Cached Sources (Total indexed: {})\n\n", total_count);
@@ -750,27 +803,32 @@ impl SearchXyzServer {
             match res {
                 Ok(pages) => {
                     output.push_str(&format!("## Sub-Query: `{}`\n", sub_q));
-                    if pages.pages.is_empty() {
-                        output.push_str("   *No new pages crawled successfully.*\n\n");
-                    } else {
-                        output.push_str(&format!(
-                            "   *Successfully retrieved {} pages.*\n\n",
-                            pages.pages.len()
-                        ));
-                        if include_diagnostics {
-                            diagnostics.push_str(&format!(
-                                "
+                    match pages.pages.is_empty() {
+                        true => {
+                            output.push_str("   *No new pages crawled successfully.*\n\n");
+                        }
+                        false => {
+                            output.push_str(&format!(
+                                "   *Successfully retrieved {} pages.*\n\n",
+                                pages.pages.len()
+                            ));
+                            match include_diagnostics {
+                                true => {
+                                    diagnostics.push_str(&format!(
+                                        "
 ### Diagnostics for `{}`
 {}",
-                                sub_q,
-                                format_search_and_read_diagnostics(&pages, cache_mode, save)
-                            ));
+                                        sub_q,
+                                        format_search_and_read_diagnostics(&pages, cache_mode, save)
+                                    ));
+                                }
+                                false => {}
+                            }
+                            for page in pages.pages {
+                                all_pages.insert(page.url.clone(), page);
+                            }
+                            executed_count += 1;
                         }
-                        for page in pages.pages {
-                            // Avoid duplicate display by grouping/storing globally in a map.
-                            all_pages.insert(page.url.clone(), page);
-                        }
-                        executed_count += 1;
                     }
                 }
                 Err(e) => {
@@ -780,31 +838,40 @@ impl SearchXyzServer {
             }
         }
 
-        if all_pages.is_empty() {
-            return Ok(format!(
-                "Deep Research failed to retrieve any results for the topic `{}`.",
-                query
-            ));
+        match all_pages.is_empty() {
+            true => {
+                return Ok(format!(
+                    "Deep Research failed to retrieve any results for the topic `{}`.",
+                    query
+                ));
+            }
+            false => {}
         }
 
         output.push_str(&format!("*Summary: Executed {} sub-queries successfully, retrieving a total of {} unique pages.*\n\n", executed_count, all_pages.len()));
 
-        if save {
-            {
-                let mut graph = self.graph.lock().await;
-                for page in all_pages.values() {
-                    graph.extract_heuristics(&page.url, &page.title, &page.content_markdown);
+        match save {
+            true => {
+                {
+                    let mut graph = self.graph.lock().await;
+                    for page in all_pages.values() {
+                        graph.extract_heuristics(&page.url, &page.title, &page.content_markdown);
+                    }
                 }
+                self.persist_research_state_nonfatal("deep_research").await;
             }
-            self.persist_research_state_nonfatal("deep_research").await;
+            false => {}
         }
 
         let evidence_pages: Vec<_> = all_pages.values().cloned().collect();
         output.push_str(&build_evidence_summary(query, &evidence_pages));
-        if include_diagnostics && !diagnostics.is_empty() {
-            output.push_str("---\n## Diagnostics\n");
-            output.push_str(&diagnostics);
-            output.push('\n');
+        match include_diagnostics && !diagnostics.is_empty() {
+            true => {
+                output.push_str("---\n## Diagnostics\n");
+                output.push_str(&diagnostics);
+                output.push('\n');
+            }
+            false => {}
         }
 
         output.push_str("---\n## Compiled Research Documents\n\n");
@@ -841,9 +908,7 @@ impl SearchXyzServer {
 
     pub async fn site_map(&self, req: SiteMapRequest) -> Result<String> {
         let url = &req.url;
-        if !url.starts_with("http://") && !url.starts_with("https://") {
-            bail!("URL must start with http:// or https://");
-        }
+        ensure_http_scheme(url)?;
 
         let use_sitemap = req.use_sitemap.unwrap_or(true);
         let crawl_links = req.crawl_links.unwrap_or(true);
@@ -851,47 +916,65 @@ impl SearchXyzServer {
 
         let mut discovered_urls = std::collections::HashSet::new();
 
-        if use_sitemap {
-            let allowed_host = url::Url::parse(url)
-                .ok()
-                .and_then(|u| u.host_str().map(|h| h.to_string()));
-            match crate::tools::searchxyz::core::crawler::sitemap::discover_sitemap_urls(&self.crawler, url).await {
-                Ok(urls) => {
-                    for u in urls {
-                        if let Ok(parsed_u) = url::Url::parse(&u) {
-                            if let Some(ref host) = allowed_host {
-                                if parsed_u.host_str() == Some(host) {
+        match use_sitemap {
+            true => {
+                let allowed_host = url::Url::parse(url)
+                    .ok()
+                    .and_then(|u| u.host_str().map(|h| h.to_string()));
+                match crate::tools::searchxyz::core::crawler::sitemap::discover_sitemap_urls(
+                    &self.crawler,
+                    url,
+                )
+                .await
+                {
+                    Ok(urls) => {
+                        for u in urls {
+                            let same_host = url::Url::parse(&u)
+                                .ok()
+                                .zip(allowed_host.as_deref())
+                                .is_some_and(|(parsed_u, host)| parsed_u.host_str() == Some(host));
+                            match same_host {
+                                true => {
                                     discovered_urls.insert(u);
                                 }
+                                false => {}
                             }
                         }
                     }
-                }
-                Err(e) => {
-                    tracing::warn!(url, error = %e, "Sitemap discovery failed");
-                }
-            }
-        }
-
-        if crawl_links && (discovered_urls.is_empty() || discovered_urls.len() < max_links) {
-            let spider = crate::tools::searchxyz::core::crawler::fast_spider::LinkSpider::new(self.crawler.clone());
-            match spider.discover_links(url, max_links).await {
-                Ok(urls) => {
-                    for u in urls {
-                        discovered_urls.insert(u);
+                    Err(e) => {
+                        tracing::warn!(url, error = %e, "Sitemap discovery failed");
                     }
                 }
-                Err(e) => {
-                    tracing::warn!(url, error = %e, "Link spider crawling failed");
+            }
+            false => {}
+        }
+
+        match crawl_links && (discovered_urls.is_empty() || discovered_urls.len() < max_links) {
+            true => {
+                let spider =
+                    crate::tools::searchxyz::core::crawler::fast_spider::LinkSpider::new(
+                        self.crawler.clone(),
+                    );
+                match spider.discover_links(url, max_links).await {
+                    Ok(urls) => {
+                        for u in urls {
+                            discovered_urls.insert(u);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(url, error = %e, "Link spider crawling failed");
+                    }
                 }
             }
+            false => {}
         }
 
         let mut urls: Vec<String> = discovered_urls.into_iter().collect();
         urls.sort();
 
-        if urls.is_empty() {
-            return Ok(format!("No pages could be discovered for URL: {}", url));
+        match urls.is_empty() {
+            true => return Ok(format!("No pages could be discovered for URL: {}", url)),
+            false => {}
         }
 
         let mut output = format!("### Site Map for {}\n\n", url);
@@ -930,11 +1013,14 @@ impl SearchXyzServer {
             graph.query_neighbors(start, depth)
         };
 
-        if nodes.is_empty() {
-            return Ok(format!(
-                "Entity `{}` not found in the knowledge graph.",
-                start
-            ));
+        match nodes.is_empty() {
+            true => {
+                return Ok(format!(
+                    "Entity `{}` not found in the knowledge graph.",
+                    start
+                ));
+            }
+            false => {}
         }
 
         let mut output = format!(
@@ -948,14 +1034,15 @@ impl SearchXyzServer {
         }
 
         output.push_str("\n#### Connections:\n");
-        if edges.is_empty() {
-            output.push_str("No active connections found.\n");
-        } else {
-            for e in &edges {
-                output.push_str(&format!(
-                    "- **{}** -[{}]-> **{}**\n",
-                    e.source, e.relationship_type, e.target
-                ));
+        match edges.is_empty() {
+            true => output.push_str("No active connections found.\n"),
+            false => {
+                for e in &edges {
+                    output.push_str(&format!(
+                        "- **{}** -[{}]-> **{}**\n",
+                        e.source, e.relationship_type, e.target
+                    ));
+                }
             }
         }
 
@@ -999,24 +1086,24 @@ impl SearchXyzServer {
             graph,
         };
 
-        let json = serde_json::to_string_pretty(&bundle).map_err(|e| {
-            anyhow!(format!("Failed to serialize research bundle: {}", e))
-        })?;
+        let json = serde_json::to_string_pretty(&bundle)
+            .map_err(|e| anyhow!(format!("Failed to serialize research bundle: {}", e)))?;
 
         Ok(limit_output("export_research", &json, req.max_chars))
     }
 
     pub async fn import_research(&self, req: ImportResearchRequest) -> Result<String> {
-        let bundle: ResearchBundle = serde_json::from_str(&req.payload).map_err(|e| {
-            anyhow!(format!("Invalid research bundle payload: {}", e))
-        })?;
+        let bundle: ResearchBundle = serde_json::from_str(&req.payload)
+            .map_err(|e| anyhow!(format!("Invalid research bundle payload: {}", e)))?;
 
         let doc_count = bundle.documents.len();
 
         for doc in &bundle.documents {
-            // Index the document locally (this also generates local semantic vector embeddings!)
-            if let Err(e) = self.index.add_document(doc, "imported").await {
-                tracing::warn!(url = %doc.url, error = %e, "Failed to index imported document (non-fatal)");
+            match self.index.add_document(doc, "imported").await {
+                Ok(_) => {}
+                Err(e) => {
+                    tracing::warn!(url = %doc.url, error = %e, "Failed to index imported document (non-fatal)");
+                }
             }
         }
 
@@ -1025,7 +1112,6 @@ impl SearchXyzServer {
         {
             let mut g = self.graph.lock().await;
             for edge in &bundle.graph.edges {
-                // Find node types from bundle node map if available
                 let source_type = bundle
                     .graph
                     .nodes
@@ -1068,9 +1154,7 @@ impl SearchXyzServer {
     }
 
     pub async fn delete_source(&self, req: DeleteSourceRequest) -> Result<String> {
-        if req.confirm != Some(true) {
-            bail!("searchxyz_delete_source requires confirm=true");
-        }
+        require_confirmation(req.confirm, "searchxyz_delete_source")?;
         self.index.delete_document(&req.url).await?;
         {
             let mut g = self.graph.lock().await;
@@ -1082,9 +1166,7 @@ impl SearchXyzServer {
     }
 
     pub async fn clear_index(&self, req: ClearIndexRequest) -> Result<String> {
-        if req.confirm != Some(true) {
-            bail!("searchxyz_clear_index requires confirm=true");
-        }
+        require_confirmation(req.confirm, "searchxyz_clear_index")?;
         let mut writer = self.index.writer.lock().await;
         writer
             .delete_all_documents()
@@ -1111,18 +1193,14 @@ fn expand_query(query: &str, breadth: usize) -> Vec<String> {
         "advanced pattern best practices",
     ];
 
-    let mut expanded = Vec::new();
-    for (i, modif) in modifiers.iter().enumerate() {
-        if i >= breadth {
-            break;
-        }
-        if modif.is_empty() {
-            expanded.push(query.to_string());
-        } else {
-            expanded.push(format!("{} {}", query, modif));
-        }
-    }
-    expanded
+    modifiers
+        .iter()
+        .take(breadth)
+        .map(|modif| match modif.is_empty() {
+            true => query.to_string(),
+            false => format!("{} {}", query, modif),
+        })
+        .collect()
 }
 
 #[cfg(test)]

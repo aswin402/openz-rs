@@ -3,22 +3,18 @@ use crate::tools::searchxyz::core::error::SearchXyzError;
 
 /// Extract the 11-character video ID from various YouTube URL formats.
 pub fn extract_video_id(url: &str) -> Option<String> {
-    if let Ok(parsed) = url::Url::parse(url) {
-        let host = parsed.host_str().unwrap_or("");
-        if host == "www.youtube.com" || host == "youtube.com" || host == "m.youtube.com" {
-            for (k, v) in parsed.query_pairs() {
-                if k == "v" {
-                    return Some(v.into_owned());
-                }
-            }
-        } else if host == "youtu.be" {
+    let parsed = url::Url::parse(url).ok()?;
+    let host = parsed.host_str().unwrap_or("");
+    match host {
+        "www.youtube.com" | "youtube.com" | "m.youtube.com" => parsed
+            .query_pairs()
+            .find_map(|(k, v)| (k == "v").then(|| v.into_owned())),
+        "youtu.be" => {
             let path = parsed.path().trim_start_matches('/');
-            if !path.is_empty() {
-                return Some(path.to_string());
-            }
+            (!path.is_empty()).then(|| path.to_string())
         }
+        _ => None,
     }
-    None
 }
 
 /// Find the transcript XML timedtext track URL from the video HTML source.
@@ -32,10 +28,7 @@ pub fn find_timedtext_url(html: &str, lang: &str) -> Option<String> {
         .find(";var ")
         .or_else(|| sub.find(";</script>"))
         .or_else(|| sub.find("</script>"))?;
-    let mut json_str = sub[..end_idx].trim();
-    if json_str.ends_with(';') {
-        json_str = json_str[..json_str.len() - 1].trim();
-    }
+    let json_str = sub[..end_idx].trim().trim_end_matches(';').trim();
 
     let json: serde_json::Value = serde_json::from_str(json_str).ok()?;
     let caption_tracks = json
@@ -44,27 +37,23 @@ pub fn find_timedtext_url(html: &str, lang: &str) -> Option<String> {
         .get("captionTracks")?
         .as_array()?;
 
-    let mut selected_url = None;
-    for track in caption_tracks {
-        if let Some(code) = track.get("languageCode").and_then(|v| v.as_str()) {
-            if code == lang {
-                selected_url = track
-                    .get("baseUrl")
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-                break;
-            }
-        }
-    }
+    let matching_track = caption_tracks.iter().find_map(|track| {
+        let code = track.get("languageCode")?.as_str()?;
+        (code == lang).then(|| {
+            track
+                .get("baseUrl")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })?
+    });
 
-    if selected_url.is_none() && !caption_tracks.is_empty() {
-        selected_url = caption_tracks[0]
-            .get("baseUrl")
+    matching_track.or_else(|| {
+        caption_tracks
+            .first()
+            .and_then(|t| t.get("baseUrl"))
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-    }
-
-    selected_url
+            .map(str::to_string)
+    })
 }
 
 /// Decode basic HTML entities inside subtitle text.
@@ -84,25 +73,28 @@ pub fn parse_xml_transcript(xml: &str) -> String {
     let mut cursor = xml;
     while let Some(start_idx) = cursor.find("<text") {
         let sub = &cursor[start_idx..];
-        if let Some(end_tag_idx) = sub.find('>') {
-            let body_sub = &sub[end_tag_idx + 1..];
-            if let Some(close_idx) = body_sub.find("</text>") {
-                let raw_text = &body_sub[..close_idx].trim();
-                if !raw_text.is_empty() {
-                    let decoded = decode_html_entities(raw_text);
-                    // Strip nested HTML tags if any (e.g. <b> or <font>)
-                    let cleaned = strip_tags(&decoded);
-                    if !cleaned.is_empty() {
-                        transcript.push(cleaned);
-                    }
+        let end_tag_idx = match sub.find('>') {
+            Some(idx) => idx,
+            None => break,
+        };
+        let body_sub = &sub[end_tag_idx + 1..];
+        let close_idx = match body_sub.find("</text>") {
+            Some(idx) => idx,
+            None => break,
+        };
+        let raw_text = body_sub[..close_idx].trim();
+        match raw_text.is_empty() {
+            false => {
+                let decoded = decode_html_entities(raw_text);
+                let cleaned = strip_tags(&decoded);
+                match cleaned.is_empty() {
+                    false => transcript.push(cleaned),
+                    true => {}
                 }
-                cursor = &body_sub[close_idx + 7..];
-            } else {
-                break;
             }
-        } else {
-            break;
+            true => {}
         }
+        cursor = &body_sub[close_idx + 7..];
     }
     transcript.join(" ")
 }
@@ -111,12 +103,11 @@ fn strip_tags(input: &str) -> String {
     let mut output = String::new();
     let mut in_tag = false;
     for c in input.chars() {
-        if c == '<' {
-            in_tag = true;
-        } else if c == '>' {
-            in_tag = false;
-        } else if !in_tag {
-            output.push(c);
+        match (c, in_tag) {
+            ('<', _) => in_tag = true,
+            ('>', _) => in_tag = false,
+            (_, false) => output.push(c),
+            (_, true) => {}
         }
     }
     output
@@ -144,14 +135,13 @@ pub async fn fetch_youtube_transcript(
     let xml_result = crawler.fetch_url(&timedtext_url, false).await?;
     let transcript = parse_xml_transcript(&xml_result.body);
 
-    if transcript.is_empty() {
-        return Err(SearchXyzError::CrawlFailed {
+    match transcript.is_empty() {
+        true => Err(SearchXyzError::CrawlFailed {
             url: url.to_string(),
             reason: "Transcript download resulted in empty content".to_string(),
-        });
+        }),
+        false => Ok(transcript),
     }
-
-    Ok(transcript)
 }
 
 #[cfg(test)]

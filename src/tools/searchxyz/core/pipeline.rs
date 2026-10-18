@@ -89,11 +89,14 @@ impl SearchAndReadPipeline {
             .await?;
         let search_results = &search_report.results;
 
-        if search_results.is_empty() {
-            return Err(SearchXyzError::SearchFailed {
-                query: search_query.query.clone(),
-                reason: "No search results found".into(),
-            });
+        match search_results.is_empty() {
+            true => {
+                return Err(SearchXyzError::SearchFailed {
+                    query: search_query.query.clone(),
+                    reason: "No search results found".into(),
+                });
+            }
+            false => {}
         }
 
         // ── Step 2: Take top N URLs ──
@@ -170,37 +173,47 @@ impl SearchAndReadPipeline {
         }
 
         // ── Step 5: Index all successful extractions ──
-        if save {
-            for content in &extracted {
-                if let Err(e) = self.index.add_document(content, "search_and_read").await {
-                    // Indexing failure is non-fatal — log and continue.
-                    tracing::warn!(
-                        url = %content.url,
-                        error = %e,
-                        "Failed to index document (non-fatal)"
-                    );
+        match save {
+            true => {
+                for content in &extracted {
+                    match self.index.add_document(content, "search_and_read").await {
+                        Ok(()) => {}
+                        Err(e) => {
+                            tracing::warn!(
+                                url = %content.url,
+                                error = %e,
+                                "Failed to index document (non-fatal)"
+                            );
+                        }
+                    }
                 }
             }
+            false => {}
         }
 
         // ── Step 6: Return results ──
-        if extracted.is_empty() {
-            // All URLs failed — report all errors.
-            return Err(SearchXyzError::SearchFailed {
-                query: search_query.query.clone(),
-                reason: format!(
-                    "All pages failed to load or extract. Errors:\n{}",
-                    errors.join("\n")
-                ),
-            });
+        match extracted.is_empty() {
+            true => {
+                return Err(SearchXyzError::SearchFailed {
+                    query: search_query.query.clone(),
+                    reason: format!(
+                        "All pages failed to load or extract. Errors:\n{}",
+                        errors.join("\n")
+                    ),
+                });
+            }
+            false => {}
         }
 
-        if !errors.is_empty() {
-            tracing::info!(
-                succeeded = extracted.len(),
-                failed = errors.len(),
-                "Pipeline completed with partial failures"
-            );
+        match errors.is_empty() {
+            true => {}
+            false => {
+                tracing::info!(
+                    succeeded = extracted.len(),
+                    failed = errors.len(),
+                    "Pipeline completed with partial failures"
+                );
+            }
         }
 
         Ok(SearchAndReadReport {

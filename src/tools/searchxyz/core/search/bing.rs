@@ -11,34 +11,41 @@ use crate::tools::searchxyz::core::error::SearchXyzError;
 /// Unwraps Bing click-tracking redirect URLs (e.g. `https://www.bing.com/ck/a?!...&u=a1<base64>&...`)
 /// into direct canonical destination URLs.
 pub fn unwrap_bing_redirect(url_str: &str) -> String {
-    if !url_str.contains("bing.com/ck/a") {
-        return url_str.to_string();
+    match url_str.contains("bing.com/ck/a") {
+        false => return url_str.to_string(),
+        true => {}
     }
 
-    let Ok(parsed) = url::Url::parse(url_str) else {
-        return url_str.to_string();
+    let parsed = match url::Url::parse(url_str) {
+        Ok(p) => p,
+        Err(_) => return url_str.to_string(),
     };
 
     for (k, v) in parsed.query_pairs() {
-        if k == "u" {
-            let payload = if v.len() > 2 && (v.starts_with("a1") || v.starts_with("a0")) {
-                &v[2..]
-            } else {
-                &v[..]
-            };
+        match k == "u" {
+            false => continue,
+            true => {
+                let payload = match v.len() > 2 && (v.starts_with("a1") || v.starts_with("a0")) {
+                    true => &v[2..],
+                    false => &v[..],
+                };
 
-            let try_decoders = [
-                STANDARD.decode(payload),
-                URL_SAFE.decode(payload),
-                STANDARD_NO_PAD.decode(payload.trim_end_matches('=')),
-                URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')),
-            ];
+                let try_decoders = [
+                    STANDARD.decode(payload),
+                    URL_SAFE.decode(payload),
+                    STANDARD_NO_PAD.decode(payload.trim_end_matches('=')),
+                    URL_SAFE_NO_PAD.decode(payload.trim_end_matches('=')),
+                ];
 
-            for bytes in try_decoders.into_iter().flatten() {
-                if let Ok(decoded) = String::from_utf8(bytes) {
-                    if decoded.starts_with("http://") || decoded.starts_with("https://") {
-                        return decoded;
-                    }
+                let decoded_url = try_decoders
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|bytes| String::from_utf8(bytes).ok())
+                    .find(|decoded| decoded.starts_with("http://") || decoded.starts_with("https://"));
+
+                match decoded_url {
+                    Some(decoded) => return decoded,
+                    None => {}
                 }
             }
         }
@@ -60,139 +67,79 @@ impl BingBackend {
     fn parse_results(html_body: &str, max_results: usize) -> Vec<SearchResult> {
         let document = Html::parse_document(html_body);
 
-        // Bing organic result containers are typically li.b_algo
         let container_sel = Selector::parse("li.b_algo").unwrap();
         let containers: Vec<_> = document.select(&container_sel).collect();
+        let title_sel = Selector::parse("h2").unwrap();
 
-        let mut results = Vec::new();
+        match containers.is_empty() {
+            false => {
+                let link_sel = Selector::parse("a[href]").unwrap();
+                let snippet_selectors = vec![
+                    Selector::parse(".b_caption p").unwrap(),
+                    Selector::parse(".b_caption").unwrap(),
+                    Selector::parse(".b_snippet").unwrap(),
+                    Selector::parse("p").unwrap(),
+                ];
 
-        if !containers.is_empty() {
-            let title_sel = Selector::parse("h2").unwrap();
-            let link_sel = Selector::parse("a[href]").unwrap();
-
-            // Bing snippet selectors
-            let snippet_selectors = vec![
-                Selector::parse(".b_caption p").unwrap(),
-                Selector::parse(".b_caption").unwrap(),
-                Selector::parse(".b_snippet").unwrap(),
-                Selector::parse("p").unwrap(),
-            ];
-
-            for container in containers {
-                if results.len() >= max_results {
-                    break;
-                }
-
-                // Check if this container has a title
-                let title_el = match container.select(&title_sel).next() {
-                    Some(el) => el,
-                    None => continue,
-                };
-
-                let title = title_el
-                    .text()
-                    .collect::<Vec<_>>()
-                    .join("")
-                    .trim()
-                    .to_string();
-                if title.is_empty() {
-                    continue;
-                }
-
-                // Find the href anchor in title_el or container
-                let raw_url = title_el
-                    .select(&link_sel)
-                    .next()
-                    .or_else(|| container.select(&link_sel).next())
-                    .and_then(|el| el.value().attr("href"))
-                    .filter(|href| href.starts_with("http"))
-                    .map(str::to_string);
-
-                let url = match raw_url {
-                    Some(u) => unwrap_bing_redirect(&u),
-                    None => continue,
-                };
-
-                // Extract snippet
-                let mut snippet = String::new();
-                for snippet_sel in &snippet_selectors {
-                    if let Some(snippet_el) = container.select(snippet_sel).next() {
-                        snippet = snippet_el
+                containers
+                    .into_iter()
+                    .filter_map(|container| {
+                        let title_el = container.select(&title_sel).next()?;
+                        let title = title_el
                             .text()
                             .collect::<Vec<_>>()
                             .join("")
                             .trim()
                             .to_string();
-                        if !snippet.is_empty() {
-                            break;
+                        match title.is_empty() {
+                            true => return None,
+                            false => {}
+                        }
+
+                        let raw_url = title_el
+                            .select(&link_sel)
+                            .next()
+                            .or_else(|| container.select(&link_sel).next())
+                            .and_then(|el| el.value().attr("href"))
+                            .filter(|href| href.starts_with("http"))?;
+
+                        let url = unwrap_bing_redirect(raw_url);
+                        let snippet = super::extract_container_snippet(
+                            &container,
+                            &snippet_selectors,
+                            &title,
+                        );
+
+                        Some(SearchResult {
+                            title,
+                            url,
+                            snippet,
+                            source: "bing".into(),
+                        })
+                    })
+                    .take(max_results)
+                    .collect()
+            }
+            true => document
+                .select(&title_sel)
+                .filter_map(|h2_el| {
+                    let title = h2_el.text().collect::<Vec<_>>().join("").trim().to_string();
+                    match title.is_empty() {
+                        true => None,
+                        false => {
+                            let url = super::find_ancestor_http_href(&h2_el)?;
+                            Some(SearchResult {
+                                title,
+                                url: unwrap_bing_redirect(&url),
+                                snippet: String::new(),
+                                source: "bing".into(),
+                            })
                         }
                     }
-                }
-
-                // Fallback snippet
-                if snippet.is_empty() {
-                    snippet = container.text().collect::<Vec<_>>().join(" ");
-                    snippet = snippet.replace(&title, "").trim().to_string();
-                    if snippet.len() > 200 {
-                        snippet.truncate(200);
-                        snippet.push_str("...");
-                    }
-                }
-
-                results.push(SearchResult {
-                    title,
-                    url,
-                    snippet,
-                    source: "bing".into(),
-                });
-            }
-        } else {
-            // Fallback: search for h2s directly
-            let title_sel = Selector::parse("h2").unwrap();
-            let h2s: Vec<_> = document.select(&title_sel).collect();
-            for h2_el in h2s {
-                if results.len() >= max_results {
-                    break;
-                }
-
-                let title = h2_el.text().collect::<Vec<_>>().join("").trim().to_string();
-                if title.is_empty() {
-                    continue;
-                }
-
-                let mut current = h2_el.parent();
-                let mut url = None;
-                for _ in 0..5 {
-                    if let Some(node) = current {
-                        if let Some(el) = scraper::ElementRef::wrap(node) {
-                            if el.value().name() == "a" {
-                                if let Some(href) = el.value().attr("href") {
-                                    if href.starts_with("http") {
-                                        url = Some(href.to_string());
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        current = node.parent();
-                    } else {
-                        break;
-                    }
-                }
-
-                if let Some(url) = url {
-                    let clean_url = unwrap_bing_redirect(&url);
-                    results.push(SearchResult {
-                        title,
-                        url: clean_url,
-                        snippet: String::new(),
-                        source: "bing".into(),
-                    });
-                }
-            }
+                })
+                .take(max_results)
+                .collect(),
         }
-
-        results
     }
 }
 
@@ -219,11 +166,14 @@ impl SearchBackend for BingBackend {
                 reason: format!("Bing HTTP request failed: {e}"),
             })?;
 
-        if !resp.status().is_success() {
-            return Err(SearchXyzError::SearchFailed {
-                query: query.query.clone(),
-                reason: format!("Bing returned HTTP {}", resp.status()),
-            });
+        match resp.status().is_success() {
+            true => {}
+            false => {
+                return Err(SearchXyzError::SearchFailed {
+                    query: query.query.clone(),
+                    reason: format!("Bing returned HTTP {}", resp.status()),
+                });
+            }
         }
 
         let html_body = resp
@@ -236,8 +186,9 @@ impl SearchBackend for BingBackend {
 
         let results = Self::parse_results(&html_body, query.max_results);
 
-        if results.is_empty() {
-            tracing::warn!(query = %query.query, "Bing returned no parsable results");
+        match results.is_empty() {
+            true => tracing::warn!(query = %query.query, "Bing returned no parsable results"),
+            false => {}
         }
 
         Ok(results)

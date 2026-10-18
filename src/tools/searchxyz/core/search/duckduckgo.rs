@@ -44,43 +44,39 @@ impl DuckDuckGoBackend {
         let links: Vec<_> = document.select(&link_sel).collect();
         let snippets: Vec<_> = document.select(&snippet_sel).collect();
 
-        let mut results = Vec::new();
-
-        for (i, link_el) in links.iter().enumerate() {
-            if results.len() >= max_results {
-                break;
-            }
-
-            let url = match link_el.value().attr("href") {
-                Some(u) if u.starts_with("http") => u.to_string(),
-                _ => continue,
-            };
-
-            let title = link_el
-                .text()
-                .collect::<Vec<_>>()
-                .join("")
-                .trim()
-                .to_string();
-
-            let snippet = snippets
-                .get(i)
-                .map(|el| el.text().collect::<Vec<_>>().join("").trim().to_string())
-                .unwrap_or_default();
-
-            if title.is_empty() {
-                continue;
-            }
-
-            results.push(SearchResult {
-                title,
-                url,
-                snippet,
-                source: "duckduckgo".into(),
-            });
-        }
-
-        results
+        links
+            .iter()
+            .enumerate()
+            .filter_map(|(i, link_el)| {
+                let url = link_el
+                    .value()
+                    .attr("href")
+                    .filter(|u| u.starts_with("http"))?
+                    .to_string();
+                let title = link_el
+                    .text()
+                    .collect::<Vec<_>>()
+                    .join("")
+                    .trim()
+                    .to_string();
+                match title.is_empty() {
+                    true => None,
+                    false => {
+                        let snippet = snippets
+                            .get(i)
+                            .map(|el| el.text().collect::<Vec<_>>().join("").trim().to_string())
+                            .unwrap_or_default();
+                        Some(SearchResult {
+                            title,
+                            url,
+                            snippet,
+                            source: "duckduckgo".into(),
+                        })
+                    }
+                }
+            })
+            .take(max_results)
+            .collect()
     }
 }
 
@@ -95,17 +91,7 @@ impl SearchBackend for DuckDuckGoBackend {
     }
 
     async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>, SearchXyzError> {
-        use rand::seq::SliceRandom;
-
-        let client = if let Some(ref clients) = self.clients {
-            if !clients.is_empty() {
-                clients.choose(&mut rand::thread_rng()).unwrap_or(&self.client)
-            } else {
-                &self.client
-            }
-        } else {
-            &self.client
-        };
+        let client = super::choose_proxy_client(&self.client, &self.clients);
 
         let mut results = Vec::new();
         #[cfg(feature = "js-rendering")]
@@ -118,24 +104,26 @@ impl SearchBackend for DuckDuckGoBackend {
             .send()
             .await
         {
-            Ok(resp) => {
-                if resp.status().is_success() {
-                    if let Ok(html_body) = resp.text().await {
+            Ok(resp) => match resp.status().is_success() {
+                true => match resp.text().await {
+                    Ok(html_body) => {
                         results = Self::parse_results(&html_body, query.max_results);
-                    } else {
+                    }
+                    Err(_) => {
                         #[cfg(feature = "js-rendering")]
                         {
                             http_failed = true;
                         }
                     }
-                } else {
+                },
+                false => {
                     #[cfg(feature = "js-rendering")]
                     {
                         http_failed = true;
                     }
                     tracing::warn!("DuckDuckGo HTTP request returned status {}", resp.status());
                 }
-            }
+            },
             Err(e) => {
                 #[cfg(feature = "js-rendering")]
                 {
@@ -147,8 +135,8 @@ impl SearchBackend for DuckDuckGoBackend {
 
         // Fallback to headless browser if HTTP failed or returned no results (bot detection / captcha page)
         #[cfg(feature = "js-rendering")]
-        if (http_failed || results.is_empty()) && self.headless_browser.is_some() {
-            if let Some(ref headless) = self.headless_browser {
+        match (http_failed || results.is_empty(), &self.headless_browser) {
+            (true, Some(headless)) => {
                 let mut url_parsed = url::Url::parse("https://lite.duckduckgo.com/lite/").unwrap();
                 url_parsed.query_pairs_mut().append_pair("q", &query.query);
                 let search_url = url_parsed.to_string();
@@ -163,10 +151,12 @@ impl SearchBackend for DuckDuckGoBackend {
                     }
                 }
             }
+            _ => {}
         }
 
-        if results.is_empty() {
-            tracing::warn!(query = %query.query, "DuckDuckGo returned no parsable results");
+        match results.is_empty() {
+            true => tracing::warn!(query = %query.query, "DuckDuckGo returned no parsable results"),
+            false => {}
         }
 
         Ok(results)

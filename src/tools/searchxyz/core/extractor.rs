@@ -49,13 +49,13 @@ impl ExtractionPipeline {
         body: &str,
         content_type: Option<&str>,
     ) -> Result<ExtractedContent, SearchXyzError> {
-        if let Some(ct) = content_type {
-            if ct.contains("application/pdf") {
-                let title = url.split('/').next_back().unwrap_or("PDF Document").trim();
-                let title = if title.is_empty() {
-                    "PDF Document"
-                } else {
-                    title
+        let is_pdf = content_type.is_some_and(|ct| ct.contains("application/pdf"));
+        match is_pdf {
+            true => {
+                let raw_title = url.split('/').next_back().unwrap_or("PDF Document").trim();
+                let title = match raw_title.is_empty() {
+                    true => "PDF Document",
+                    false => raw_title,
                 };
 
                 return Ok(ExtractedContent {
@@ -66,6 +66,7 @@ impl ExtractionPipeline {
                     links: Vec::new(),
                 });
             }
+            false => {}
         }
 
         let document = Html::parse_document(body);
@@ -87,11 +88,14 @@ impl ExtractionPipeline {
         let markdown = self.html_to_markdown(&cleaned);
 
         // ── 5. Validate length ──
-        if markdown.trim().len() < self.config.min_content_length {
-            return Err(SearchXyzError::EmptyContent {
-                url: url.into(),
-                min_length: self.config.min_content_length,
-            });
+        match markdown.trim().len() < self.config.min_content_length {
+            true => {
+                return Err(SearchXyzError::EmptyContent {
+                    url: url.into(),
+                    min_length: self.config.min_content_length,
+                });
+            }
+            false => {}
         }
 
         // ── 6. Extract links ──
@@ -127,12 +131,9 @@ impl ExtractionPipeline {
 
     /// Walk priority selectors and return the first match's inner HTML.
     fn find_main_content(&self, doc: &Html) -> Option<String> {
-        for sel in &self.content_selectors {
-            if let Some(el) = doc.select(sel).next() {
-                return Some(el.inner_html());
-            }
-        }
-        None
+        self.content_selectors
+            .iter()
+            .find_map(|sel| doc.select(sel).next().map(|el| el.inner_html()))
     }
 
     /// Fallback: grab all text inside <body>.
@@ -164,19 +165,22 @@ impl ExtractionPipeline {
             skip: &std::collections::HashSet<ego_tree::NodeId>,
             out: &mut String,
         ) {
-            if skip.contains(&node.id()) {
-                return;
+            match skip.contains(&node.id()) {
+                true => return,
+                false => {}
             }
             match node.value() {
                 scraper::Node::Text(t) => {
                     let text = t.text.trim();
-                    if !text.is_empty() {
-                        out.push_str(text);
-                        out.push(' ');
+                    match text.is_empty() {
+                        true => {}
+                        false => {
+                            out.push_str(text);
+                            out.push(' ');
+                        }
                     }
                 }
                 scraper::Node::Element(el) => {
-                    // Add line breaks for block elements.
                     let tag = el.name();
                     let is_block = matches!(
                         tag,
@@ -194,10 +198,10 @@ impl ExtractionPipeline {
                             | "pre"
                             | "hr"
                     );
-                    if is_block {
-                        out.push('\n');
+                    match is_block {
+                        true => out.push('\n'),
+                        false => {}
                     }
-                    // Add markdown heading prefix.
                     match tag {
                         "h1" => out.push_str("# "),
                         "h2" => out.push_str("## "),
@@ -208,8 +212,9 @@ impl ExtractionPipeline {
                     for child in node.children() {
                         collect_text(child, skip, out);
                     }
-                    if is_block {
-                        out.push('\n');
+                    match is_block {
+                        true => out.push('\n'),
+                        false => {}
                     }
                 }
                 _ => {
@@ -220,8 +225,9 @@ impl ExtractionPipeline {
             }
         }
 
-        if let Some(root) = fragment.tree.root().children().next() {
-            collect_text(root, &skip_ids, &mut output);
+        match fragment.tree.root().children().next() {
+            Some(root) => collect_text(root, &skip_ids, &mut output),
+            None => {}
         }
 
         output
@@ -229,21 +235,22 @@ impl ExtractionPipeline {
 
     /// Normalise whitespace for the final markdown output.
     fn html_to_markdown(&self, text: &str) -> String {
-        // Collapse runs of whitespace; normalise line breaks.
         let mut result = String::with_capacity(text.len());
         let mut prev_blank = false;
 
         for line in text.lines() {
             let trimmed = line.trim();
-            if trimmed.is_empty() {
-                if !prev_blank {
+            match (trimmed.is_empty(), prev_blank) {
+                (true, false) => {
                     result.push('\n');
                     prev_blank = true;
                 }
-            } else {
-                result.push_str(trimmed);
-                result.push('\n');
-                prev_blank = false;
+                (true, true) => {}
+                (false, _) => {
+                    result.push_str(trimmed);
+                    result.push('\n');
+                    prev_blank = false;
+                }
             }
         }
 
@@ -257,10 +264,9 @@ impl ExtractionPipeline {
         doc.select(&sel)
             .filter_map(|el| {
                 let href = el.value().attr("href")?;
-                if let Some(ref base_parsed) = base {
-                    base_parsed.join(href).ok().map(|u| u.to_string())
-                } else {
-                    url::Url::parse(href).ok().map(|u| u.to_string())
+                match &base {
+                    Some(base_parsed) => base_parsed.join(href).ok().map(|u| u.to_string()),
+                    None => url::Url::parse(href).ok().map(|u| u.to_string()),
                 }
             })
             .collect()

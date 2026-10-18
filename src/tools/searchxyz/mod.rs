@@ -35,29 +35,30 @@ pub use web::{
 };
 
 fn openz_config_dir() -> std::path::PathBuf {
-    if let Ok(path) = std::env::var("OPENZ_CONFIG_DIR") {
-        return std::path::PathBuf::from(path);
+    match std::env::var("OPENZ_CONFIG_DIR") {
+        Ok(path) => std::path::PathBuf::from(path),
+        Err(_) => dirs::home_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join(".openz"),
     }
-
-    dirs::home_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join(".openz")
 }
 
 fn apply_openz_embedded_paths(config: &mut Config) {
     let defaults = Config::default();
     let base = openz_config_dir().join("searchxyz");
 
-    if std::env::var_os("SEARCHXYZ_INDEX_PATH").is_none()
+    match std::env::var_os("SEARCHXYZ_INDEX_PATH").is_none()
         && config.index.path == defaults.index.path
     {
-        config.index.path = base.join("index");
+        true => config.index.path = base.join("index"),
+        false => {}
     }
 
-    if std::env::var_os("SEARCHXYZ_CACHE_PATH").is_none()
+    match std::env::var_os("SEARCHXYZ_CACHE_PATH").is_none()
         && config.cache.path == defaults.cache.path
     {
-        config.cache.path = base.join("cache.json");
+        true => config.cache.path = base.join("cache.json"),
+        false => {}
     }
 }
 
@@ -66,70 +67,140 @@ pub(crate) fn coerce_number_value(val: &serde_json::Value) -> Option<serde_json:
         serde_json::Value::Number(_) => Some(val.clone()),
         serde_json::Value::String(s) => {
             let trimmed = s.trim();
-            if let Ok(i) = trimmed.parse::<i64>() {
-                Some(serde_json::Value::Number(serde_json::Number::from(i)))
-            } else if let Ok(u) = trimmed.parse::<u64>() {
-                Some(serde_json::Value::Number(serde_json::Number::from(u)))
-            } else if let Ok(f) = trimmed.parse::<f64>() {
-                serde_json::Number::from_f64(f).map(serde_json::Value::Number)
-            } else {
-                None
-            }
+            trimmed
+                .parse::<i64>()
+                .ok()
+                .map(|i| serde_json::Value::Number(serde_json::Number::from(i)))
+                .or_else(|| {
+                    trimmed
+                        .parse::<u64>()
+                        .ok()
+                        .map(|u| serde_json::Value::Number(serde_json::Number::from(u)))
+                })
+                .or_else(|| {
+                    trimmed
+                        .parse::<f64>()
+                        .ok()
+                        .and_then(serde_json::Number::from_f64)
+                        .map(serde_json::Value::Number)
+                })
         }
         _ => None,
     }
 }
 
 pub(crate) fn coerce_numeric_fields(val: &mut serde_json::Value, field_names: &[&str]) {
-    if let serde_json::Value::Object(map) = val {
-        for &name in field_names {
-            if let Some(entry) = map.get(name) {
-                if let Some(coerced) = coerce_number_value(entry) {
-                    map.insert(name.to_string(), coerced);
-                }
+    let map = match val.as_object_mut() {
+        Some(m) => m,
+        None => return,
+    };
+    for &name in field_names {
+        let coerced = map.get(name).and_then(coerce_number_value);
+        match coerced {
+            Some(c) => {
+                map.insert(name.to_string(), c);
             }
+            None => {}
         }
     }
 }
 
+fn coerce_single_bool(entry: &serde_json::Value) -> Option<bool> {
+    match entry {
+        serde_json::Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {
+            "true" | "1" | "yes" | "on" => Some(true),
+            "false" | "0" | "no" | "off" => Some(false),
+            _ => None,
+        },
+        serde_json::Value::Number(n) => match n.as_i64() {
+            Some(1) => Some(true),
+            Some(0) => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 pub(crate) fn coerce_bool_fields(val: &mut serde_json::Value, field_names: &[&str]) {
-    if let serde_json::Value::Object(map) = val {
-        for &name in field_names {
-            if let Some(entry) = map.get(name) {
-                if let serde_json::Value::String(s) = entry {
-                    let lower = s.trim().to_lowercase();
-                    if lower == "true" || lower == "1" || lower == "yes" || lower == "on" {
-                        map.insert(name.to_string(), serde_json::Value::Bool(true));
-                    } else if lower == "false" || lower == "0" || lower == "no" || lower == "off" {
-                        map.insert(name.to_string(), serde_json::Value::Bool(false));
-                    }
-                } else if let serde_json::Value::Number(n) = entry {
-                    if let Some(i) = n.as_i64() {
-                        if i == 1 {
-                            map.insert(name.to_string(), serde_json::Value::Bool(true));
-                        } else if i == 0 {
-                            map.insert(name.to_string(), serde_json::Value::Bool(false));
-                        }
-                    }
-                }
+    let map = match val.as_object_mut() {
+        Some(m) => m,
+        None => return,
+    };
+    for &name in field_names {
+        let coerced = map.get(name).and_then(coerce_single_bool);
+        match coerced {
+            Some(b) => {
+                map.insert(name.to_string(), serde_json::Value::Bool(b));
             }
+            None => {}
         }
     }
 }
 
 pub(crate) fn map_field_alias(val: &mut serde_json::Value, canonical: &str, aliases: &[&str]) {
-    if let serde_json::Value::Object(map) = val {
-        let has_canonical = map.get(canonical).is_some_and(|v| !v.is_null());
-        if !has_canonical {
-            for &alias in aliases {
-                if let Some(v) = map.get(alias) {
-                    if !v.is_null() {
-                        let cloned = v.clone();
-                        map.insert(canonical.to_string(), cloned);
-                        break;
-                    }
+    let map = match val.as_object_mut() {
+        Some(m) => m,
+        None => return,
+    };
+    let has_canonical = map.get(canonical).is_some_and(|v| !v.is_null());
+    match has_canonical {
+        true => {}
+        false => {
+            let found = aliases
+                .iter()
+                .find_map(|&alias| map.get(alias).filter(|v| !v.is_null()).cloned());
+            match found {
+                Some(cloned) => {
+                    map.insert(canonical.to_string(), cloned);
                 }
+                None => {}
             }
+        }
+    }
+}
+
+pub(crate) fn wrap_string_arg(val: &serde_json::Value, key: &str) -> serde_json::Value {
+    match val.as_str() {
+        Some(s) => serde_json::json!({ key: s.trim() }),
+        None => val.clone(),
+    }
+}
+
+pub(crate) fn wrap_url_string_arg(val: &serde_json::Value, key: &str) -> serde_json::Value {
+    match val.as_str() {
+        Some(s) => serde_json::json!({ key: crate::tools::web::normalize_web_url(s) }),
+        None => val.clone(),
+    }
+}
+
+pub(crate) fn normalize_url_field(val: &mut serde_json::Value, key: &str) {
+    let normalized_url = val
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(crate::tools::web::normalize_web_url);
+    match normalized_url {
+        Some(u) => val[key] = serde_json::Value::String(u),
+        None => {}
+    }
+}
+
+pub(crate) fn default_entity_type_from_field(
+    val: &mut serde_json::Value,
+    type_field: &str,
+    name_field: &str,
+) {
+    match val.get(type_field).is_none() {
+        false => {}
+        true => {
+            let is_url = val
+                .get(name_field)
+                .and_then(|v| v.as_str())
+                .is_some_and(|s| s.contains("://"));
+            let label = match is_url {
+                true => "Document",
+                false => "Entity",
+            };
+            val[type_field] = serde_json::json!(label);
         }
     }
 }
@@ -144,17 +215,22 @@ pub(crate) fn normalize_query_arg(val: &serde_json::Value) -> serde_json::Value 
             let has_valid_query = map
                 .get("query")
                 .and_then(|v| v.as_str())
-                .map(|s| !s.trim().is_empty())
-                .unwrap_or(false);
+                .is_some_and(|s| !s.trim().is_empty());
 
-            if !has_valid_query {
-                let aliases = ["q", "search", "prompt", "term", "keywords", "text"];
-                for alias in aliases {
-                    if let Some(v) = map.get(alias).and_then(|v| v.as_str()) {
-                        if !v.trim().is_empty() {
-                            normalized["query"] = serde_json::Value::String(v.trim().to_string());
-                            break;
-                        }
+            match has_valid_query {
+                true => {}
+                false => {
+                    let aliases = ["q", "search", "prompt", "term", "keywords", "text"];
+                    let found = aliases.into_iter().find_map(|alias| {
+                        map.get(alias)
+                            .and_then(|v| v.as_str())
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                            .map(str::to_string)
+                    });
+                    match found {
+                        Some(q) => normalized["query"] = serde_json::Value::String(q),
+                        None => {}
                     }
                 }
             }
@@ -172,41 +248,34 @@ pub(crate) fn normalize_url_arg(val: &serde_json::Value) -> serde_json::Value {
         }
         serde_json::Value::Object(map) => {
             let mut normalized = val.clone();
-            let mut url_val = map
-                .get("url")
-                .and_then(|v| v.as_str())
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string());
+            let aliases = [
+                "url",
+                "target_url",
+                "targetUrl",
+                "uri",
+                "link",
+                "target",
+                "href",
+                "page",
+                "endpoint",
+                "address",
+                "site",
+                "domain",
+            ];
+            let url_val = aliases.into_iter().find_map(|alias| {
+                map.get(alias)
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+            });
 
-            if url_val.is_none() {
-                let aliases = [
-                    "target_url",
-                    "targetUrl",
-                    "uri",
-                    "link",
-                    "target",
-                    "href",
-                    "page",
-                    "endpoint",
-                    "address",
-                    "site",
-                    "domain",
-                ];
-                for alias in aliases {
-                    if let Some(v) = map.get(alias).and_then(|v| v.as_str()) {
-                        let trimmed = v.trim();
-                        if !trimmed.is_empty() {
-                            url_val = Some(trimmed.to_string());
-                            break;
-                        }
-                    }
+            match url_val {
+                Some(u) => {
+                    let norm = crate::tools::web::normalize_web_url(&u);
+                    normalized["url"] = serde_json::Value::String(norm);
                 }
-            }
-
-            if let Some(u) = url_val {
-                let norm = crate::tools::web::normalize_web_url(&u);
-                normalized["url"] = serde_json::Value::String(norm);
+                None => {}
             }
             normalized
         }
@@ -220,11 +289,14 @@ pub fn get_server() -> &'static SearchXyzServer {
     SERVER.get_or_init(|| {
         let mut config = Config::load(None).unwrap_or_default();
         apply_openz_embedded_paths(&mut config);
-        if cfg!(test) {
-            let temp_dir =
-                std::env::temp_dir().join(format!("searchxyz_test_index_{}", uuid::Uuid::new_v4()));
-            config.index.path = temp_dir.clone();
-            config.cache.path = temp_dir.join("cache.json");
+        match cfg!(test) {
+            true => {
+                let temp_dir = std::env::temp_dir()
+                    .join(format!("searchxyz_test_index_{}", uuid::Uuid::new_v4()));
+                config.index.path = temp_dir.clone();
+                config.cache.path = temp_dir.join("cache.json");
+            }
+            false => {}
         }
         let cache = Arc::new(tokio::sync::Mutex::new(Cache::load_from_file(
             config.cache.max_entries,

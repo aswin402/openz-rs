@@ -97,10 +97,9 @@ impl SearchDispatcher {
         &self,
         query: &SearchQuery,
     ) -> Result<SearchReport, SearchXyzError> {
-        if query.merge_backends {
-            self.search_merged(query).await
-        } else {
-            self.search_first_success(query).await
+        match query.merge_backends {
+            true => self.search_merged(query).await,
+            false => self.search_first_success(query).await,
         }
     }
 
@@ -112,15 +111,12 @@ impl SearchDispatcher {
         let mut attempts = Vec::new();
 
         for backend in &self.backends {
-            if !backend.is_available() {
-                tracing::debug!(backend = backend.name(), "Skipping unavailable backend");
-                attempts.push(BackendAttempt {
-                    backend: backend.name().to_string(),
-                    status: "skipped".to_string(),
-                    usable_results: 0,
-                    detail: Some("backend unavailable or missing configuration".to_string()),
-                });
-                continue;
+            match backend.is_available() {
+                false => {
+                    attempts.push(skipped_backend_attempt(backend.name()));
+                    continue;
+                }
+                true => {}
             }
 
             tracing::info!(backend = backend.name(), query = %query.query, "Trying search backend");
@@ -128,24 +124,28 @@ impl SearchDispatcher {
             match backend.search(query).await {
                 Ok(results) => {
                     let results = rank_results(query, filter_results(query, results));
-                    if !results.is_empty() {
-                        tracing::info!(
-                            backend = backend.name(),
-                            count = results.len(),
-                            "Search succeeded"
-                        );
-                        let results: Vec<_> = results.into_iter().take(query.max_results).collect();
-                        attempts.push(BackendAttempt {
-                            backend: backend.name().to_string(),
-                            status: "success".to_string(),
-                            usable_results: results.len(),
-                            detail: None,
-                        });
-                        return Ok(SearchReport {
-                            results,
-                            attempts,
-                            mode: "first_success".to_string(),
-                        });
+                    match results.is_empty() {
+                        false => {
+                            tracing::info!(
+                                backend = backend.name(),
+                                count = results.len(),
+                                "Search succeeded"
+                            );
+                            let results: Vec<_> =
+                                results.into_iter().take(query.max_results).collect();
+                            attempts.push(BackendAttempt {
+                                backend: backend.name().to_string(),
+                                status: "success".to_string(),
+                                usable_results: results.len(),
+                                detail: None,
+                            });
+                            return Ok(SearchReport {
+                                results,
+                                attempts,
+                                mode: "first_success".to_string(),
+                            });
+                        }
+                        true => {}
                     }
                     tracing::warn!(
                         backend = backend.name(),
@@ -187,15 +187,12 @@ impl SearchDispatcher {
         let mut seen = std::collections::HashSet::new();
 
         for backend in &self.backends {
-            if !backend.is_available() {
-                tracing::debug!(backend = backend.name(), "Skipping unavailable backend");
-                attempts.push(BackendAttempt {
-                    backend: backend.name().to_string(),
-                    status: "skipped".to_string(),
-                    usable_results: 0,
-                    detail: Some("backend unavailable or missing configuration".to_string()),
-                });
-                continue;
+            match backend.is_available() {
+                false => {
+                    attempts.push(skipped_backend_attempt(backend.name()));
+                    continue;
+                }
+                true => {}
             }
 
             tracing::info!(backend = backend.name(), query = %query.query, "Trying search backend for merge");
@@ -204,19 +201,19 @@ impl SearchDispatcher {
                     let before = merged.len();
                     for result in filter_results(query, results) {
                         let key = normalize_url_key(&result.url);
-                        if seen.insert(key) {
-                            merged.push(result);
+                        match seen.insert(key) {
+                            true => merged.push(result),
+                            false => {}
                         }
                     }
                     let usable_results = merged.len() - before;
+                    let status = match usable_results == 0 {
+                        true => "empty",
+                        false => "success",
+                    };
                     attempts.push(BackendAttempt {
                         backend: backend.name().to_string(),
-                        status: if usable_results == 0 {
-                            "empty"
-                        } else {
-                            "success"
-                        }
-                        .to_string(),
+                        status: status.to_string(),
                         usable_results,
                         detail: None,
                     });
@@ -233,20 +230,93 @@ impl SearchDispatcher {
             }
         }
 
-        if merged.is_empty() {
-            return Err(SearchXyzError::AllBackendsExhausted {
+        match merged.is_empty() {
+            true => Err(SearchXyzError::AllBackendsExhausted {
                 query: query.query.clone(),
                 backends_tried: tried.join(", "),
-            });
+            }),
+            false => {
+                let merged = rank_results(query, merged);
+                Ok(SearchReport {
+                    results: merged.into_iter().take(query.max_results).collect(),
+                    attempts,
+                    mode: "merge".to_string(),
+                })
+            }
         }
-
-        let merged = rank_results(query, merged);
-        Ok(SearchReport {
-            results: merged.into_iter().take(query.max_results).collect(),
-            attempts,
-            mode: "merge".to_string(),
-        })
     }
+}
+
+fn skipped_backend_attempt(name: &str) -> BackendAttempt {
+    tracing::debug!(backend = name, "Skipping unavailable backend");
+    BackendAttempt {
+        backend: name.to_string(),
+        status: "skipped".to_string(),
+        usable_results: 0,
+        detail: Some("backend unavailable or missing configuration".to_string()),
+    }
+}
+
+pub(crate) fn choose_proxy_client<'a>(
+    default_client: &'a reqwest::Client,
+    clients: &'a Option<Vec<reqwest::Client>>,
+) -> &'a reqwest::Client {
+    use rand::seq::SliceRandom;
+    clients
+        .as_deref()
+        .filter(|list| !list.is_empty())
+        .and_then(|list| list.choose(&mut rand::thread_rng()))
+        .unwrap_or(default_client)
+}
+
+pub(crate) fn extract_container_snippet(
+    container: &scraper::ElementRef<'_>,
+    snippet_selectors: &[scraper::Selector],
+    title: &str,
+) -> String {
+    let selected = snippet_selectors.iter().find_map(|sel| {
+        let el = container.select(sel).next()?;
+        let text = el.text().collect::<Vec<_>>().join("").trim().to_string();
+        (!text.is_empty()).then_some(text)
+    });
+
+    match selected {
+        Some(text) => text,
+        None => {
+            let mut snippet = container
+                .text()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .replace(title, "")
+                .trim()
+                .to_string();
+            match snippet.len() > 200 {
+                true => {
+                    snippet.truncate(200);
+                    snippet.push_str("...");
+                }
+                false => {}
+            }
+            snippet
+        }
+    }
+}
+
+pub(crate) fn find_ancestor_http_href(element: &scraper::ElementRef<'_>) -> Option<String> {
+    let mut current = element.parent();
+    for _ in 0..5 {
+        let node = current?;
+        let found = scraper::ElementRef::wrap(node)
+            .filter(|el| el.value().name() == "a")
+            .and_then(|el| el.value().attr("href"))
+            .filter(|href| href.starts_with("http"))
+            .map(str::to_string);
+        match found {
+            Some(url) => return Some(url),
+            None => current = node.parent(),
+        }
+    }
+    None
 }
 
 fn rank_results(query: &SearchQuery, mut results: Vec<SearchResult>) -> Vec<SearchResult> {
@@ -313,8 +383,9 @@ impl RankingModel {
 }
 
 fn score_result(model: &RankingModel, result: &SearchResult) -> i32 {
-    if model.terms.is_empty() {
-        return 0;
+    match model.terms.is_empty() {
+        true => return 0,
+        false => {}
     }
 
     let title = result.title.to_ascii_lowercase();
@@ -325,34 +396,26 @@ fn score_result(model: &RankingModel, result: &SearchResult) -> i32 {
     let mut matched_weight = 0;
 
     for term in &model.terms {
-        let mut matched = false;
-        if title.contains(&term.text) {
-            score += 10 * term.weight;
-            matched = true;
-        }
-        if snippet.contains(&term.text) {
-            score += 4 * term.weight;
-            matched = true;
-        }
-        if url.contains(&term.text) {
-            score += 3 * term.weight;
-            matched = true;
-        }
-        if matched {
-            matched_terms += 1;
-            matched_weight += term.weight;
+        let in_title = title.contains(&term.text);
+        let in_snippet = snippet.contains(&term.text);
+        let in_url = url.contains(&term.text);
+
+        score += (in_title as i32) * 10 * term.weight
+            + (in_snippet as i32) * 4 * term.weight
+            + (in_url as i32) * 3 * term.weight;
+
+        match in_title || in_snippet || in_url {
+            true => {
+                matched_terms += 1;
+                matched_weight += term.weight;
+            }
+            false => {}
         }
     }
 
-    if phrase_contains(&title, &model.phrase) {
-        score += 40;
-    }
-    if phrase_contains(&url, &model.phrase.replace(' ', "-")) {
-        score += 28;
-    }
-    if phrase_contains(&snippet, &model.phrase) {
-        score += 18;
-    }
+    score += (phrase_contains(&title, &model.phrase) as i32) * 40
+        + (phrase_contains(&url, &model.phrase.replace(' ', "-")) as i32) * 28
+        + (phrase_contains(&snippet, &model.phrase) as i32) * 18;
 
     score += coverage_bonus(matched_terms, model.terms.len(), matched_weight);
     score += distinctive_target_bonus(model, &title, &url);
@@ -369,52 +432,53 @@ fn result_contains_term(result: &SearchResult, term: &str) -> bool {
 }
 
 fn dynamic_term_weight(document_frequency: i32, total_results: i32) -> i32 {
-    if document_frequency <= 1 {
-        8
-    } else if document_frequency * 3 <= total_results {
-        6
-    } else if document_frequency * 3 <= total_results * 2 {
-        4
-    } else {
-        2
+    match (
+        document_frequency <= 1,
+        document_frequency * 3 <= total_results,
+        document_frequency * 3 <= total_results * 2,
+    ) {
+        (true, _, _) => 8,
+        (false, true, _) => 6,
+        (false, false, true) => 4,
+        (false, false, false) => 2,
     }
 }
 
 fn coverage_bonus(matched_terms: usize, total_terms: usize, matched_weight: i32) -> i32 {
-    if total_terms == 0 {
-        return 0;
-    }
-    let coverage = matched_terms as i32 * 100 / total_terms as i32;
-    match coverage {
-        100 => 36 + matched_weight,
-        67..=99 => 18 + matched_weight / 2,
-        34..=66 => 6,
-        _ => 0,
+    match total_terms == 0 {
+        true => 0,
+        false => {
+            let coverage = matched_terms as i32 * 100 / total_terms as i32;
+            match coverage {
+                100 => 36 + matched_weight,
+                67..=99 => 18 + matched_weight / 2,
+                34..=66 => 6,
+                _ => 0,
+            }
+        }
     }
 }
 
 fn distinctive_target_bonus(model: &RankingModel, title: &str, url: &str) -> i32 {
-    let Some(term) = model.distinctive_term.as_deref() else {
-        return 0;
-    };
-    let mut score = 0;
-    if title.starts_with(term) {
-        score += 24;
+    match model.distinctive_term.as_deref() {
+        None => 0,
+        Some(term) => {
+            (title.starts_with(term) as i32) * 24
+                + (url_domain_or_path_contains(url, term) as i32) * 22
+        }
     }
-    if url_domain_or_path_contains(url, term) {
-        score += 22;
-    }
-    score
 }
 
 fn url_domain_or_path_contains(url: &str, term: &str) -> bool {
-    let Ok(parsed) = url::Url::parse(url) else {
-        return url.contains(term);
-    };
-    parsed
-        .host_str()
-        .is_some_and(|host| host.to_ascii_lowercase().contains(term))
-        || parsed.path().to_ascii_lowercase().contains(term)
+    match url::Url::parse(url) {
+        Err(_) => url.contains(term),
+        Ok(parsed) => {
+            parsed
+                .host_str()
+                .is_some_and(|host| host.to_ascii_lowercase().contains(term))
+                || parsed.path().to_ascii_lowercase().contains(term)
+        }
+    }
 }
 
 fn generic_low_coverage_penalty(
@@ -422,17 +486,18 @@ fn generic_low_coverage_penalty(
     result: &SearchResult,
     matched_terms: usize,
 ) -> i32 {
-    if model.terms.len() < 3 || matched_terms > 1 {
-        return 0;
-    }
-    let Ok(parsed) = url::Url::parse(&result.url) else {
-        return 0;
-    };
-    let path = parsed.path().trim_matches('/');
-    if path.is_empty() || matches!(path, "learn" | "docs" | "blog" | "articles") {
-        28
-    } else {
-        0
+    match model.terms.len() < 3 || matched_terms > 1 {
+        true => 0,
+        false => match url::Url::parse(&result.url) {
+            Err(_) => 0,
+            Ok(parsed) => {
+                let path = parsed.path().trim_matches('/');
+                match path.is_empty() || matches!(path, "learn" | "docs" | "blog" | "articles") {
+                    true => 28,
+                    false => 0,
+                }
+            }
+        },
     }
 }
 
@@ -452,21 +517,26 @@ fn phrase_contains(text: &str, phrase: &str) -> bool {
 }
 
 fn trusted_domain_bonus(url: &str) -> i32 {
-    let Ok(parsed) = url::Url::parse(url) else {
-        return 0;
+    let parsed = match url::Url::parse(url) {
+        Ok(p) => p,
+        Err(_) => return 0,
     };
     let host = parsed.host_str().unwrap_or_default();
-    match host {
-        host if host.ends_with(".edu") => 8,
-        host if host.ends_with(".gov") => 8,
-        "docs.rs" | "crates.io" | "github.com" | "arxiv.org" | "developer.mozilla.org" => 6,
-        _ => 0,
+    match (
+        host.ends_with(".edu") || host.ends_with(".gov"),
+        matches!(
+            host,
+            "docs.rs" | "crates.io" | "github.com" | "arxiv.org" | "developer.mozilla.org"
+        ),
+    ) {
+        (true, _) => 8,
+        (false, true) => 6,
+        (false, false) => 0,
     }
 }
 
 fn low_quality_url_penalty(url: &str) -> i32 {
     let lower = url.to_ascii_lowercase();
-    let mut penalty = 0;
     let bad_path_markers = [
         "/search",
         "/tag/",
@@ -478,23 +548,19 @@ fn low_quality_url_penalty(url: &str) -> i32 {
         "/category/",
         "/author/",
     ];
-    for marker in bad_path_markers {
-        if lower.contains(marker) {
-            penalty += 18;
-        }
-    }
+    let bad_count = bad_path_markers
+        .into_iter()
+        .filter(|marker| lower.contains(marker))
+        .count() as i32;
 
     let tracking_markers = ["utm_", "fbclid=", "gclid=", "mc_cid=", "ref="];
-    for marker in tracking_markers {
-        if lower.contains(marker) {
-            penalty += 6;
-        }
-    }
+    let tracking_count = tracking_markers
+        .into_iter()
+        .filter(|marker| lower.contains(marker))
+        .count() as i32;
 
-    if lower.ends_with("/search") || lower.ends_with("/login") {
-        penalty += 10;
-    }
-    penalty
+    let tail_penalty = ((lower.ends_with("/search") || lower.ends_with("/login")) as i32) * 10;
+    bad_count * 18 + tracking_count * 6 + tail_penalty
 }
 
 fn filter_results(query: &SearchQuery, results: Vec<SearchResult>) -> Vec<SearchResult> {
@@ -507,17 +573,23 @@ fn filter_results(query: &SearchQuery, results: Vec<SearchResult>) -> Vec<Search
 }
 
 fn domain_allowed(url: &str, include_domains: &[String], exclude_domains: &[String]) -> bool {
-    let Ok(parsed) = url::Url::parse(url) else {
-        return false;
+    let parsed = match url::Url::parse(url) {
+        Ok(p) => p,
+        Err(_) => return false,
     };
-    let Some(host) = parsed.host_str().map(|h| h.to_ascii_lowercase()) else {
-        return false;
+    let host = match parsed.host_str().map(|h| h.to_ascii_lowercase()) {
+        Some(h) => h,
+        None => return false,
     };
 
-    if !exclude_domains.is_empty() && exclude_domains.iter().any(|d| domain_matches(&host, d)) {
-        return false;
+    let excluded = !exclude_domains.is_empty()
+        && exclude_domains.iter().any(|d| domain_matches(&host, d));
+    match excluded {
+        true => false,
+        false => {
+            include_domains.is_empty() || include_domains.iter().any(|d| domain_matches(&host, d))
+        }
     }
-    include_domains.is_empty() || include_domains.iter().any(|d| domain_matches(&host, d))
 }
 
 fn domain_matches(host: &str, domain: &str) -> bool {
@@ -526,15 +598,17 @@ fn domain_matches(host: &str, domain: &str) -> bool {
 }
 
 fn normalize_url_key(url: &str) -> String {
-    let Ok(mut parsed) = url::Url::parse(url) else {
-        return url.trim().to_ascii_lowercase();
-    };
-    parsed.set_fragment(None);
-    parsed.set_query(None);
-    parsed
-        .to_string()
-        .trim_end_matches('/')
-        .to_ascii_lowercase()
+    match url::Url::parse(url) {
+        Err(_) => url.trim().to_ascii_lowercase(),
+        Ok(mut parsed) => {
+            parsed.set_fragment(None);
+            parsed.set_query(None);
+            parsed
+                .to_string()
+                .trim_end_matches('/')
+                .to_ascii_lowercase()
+        }
+    }
 }
 
 #[cfg(test)]

@@ -34,16 +34,18 @@ impl Spider {
         };
 
         for depth in 0..max_depth {
-            if to_visit.is_empty() {
-                break;
+            match to_visit.is_empty() {
+                true => break,
+                false => {}
             }
 
             let current_batch: Vec<String> = to_visit
                 .into_iter()
                 .filter(|url| visited.insert(url.clone()))
                 .collect();
-            if current_batch.is_empty() {
-                break;
+            match current_batch.is_empty() {
+                true => break,
+                false => {}
             }
 
             let mut join_set = JoinSet::new();
@@ -68,17 +70,24 @@ impl Spider {
             while let Some(res) = join_set.join_next().await {
                 match res {
                     Ok(Ok(content)) => {
-                        // Gather links for the next depth tier if we aren't at the limit.
-                        if depth + 1 < max_depth {
-                            for link in &content.links {
-                                if let Ok(parsed_url) = url::Url::parse(link) {
-                                    if let Some(ref host) = allowed_host {
-                                        if parsed_url.host_str() == Some(host) {
+                        match depth + 1 < max_depth {
+                            true => {
+                                for link in &content.links {
+                                    let same_host = url::Url::parse(link)
+                                        .ok()
+                                        .zip(allowed_host.as_deref())
+                                        .is_some_and(|(parsed_url, host)| {
+                                            parsed_url.host_str() == Some(host)
+                                        });
+                                    match same_host {
+                                        true => {
                                             next_batch_links.insert(link.clone());
                                         }
+                                        false => {}
                                     }
                                 }
                             }
+                            false => {}
                         }
                         results.push(content);
                     }
@@ -94,13 +103,12 @@ impl Spider {
             to_visit = next_batch_links.into_iter().collect();
         }
 
-        if results.is_empty() {
-            return Err(SearchXyzError::CrawlFailed {
+        match results.is_empty() {
+            true => Err(SearchXyzError::CrawlFailed {
                 url: start_url.to_string(),
                 reason: "Failed to crawl any pages within scope".into(),
-            });
+            }),
+            false => Ok(results),
         }
-
-        Ok(results)
     }
 }

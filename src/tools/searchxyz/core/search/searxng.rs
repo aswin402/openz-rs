@@ -58,8 +58,11 @@ impl SearchBackend for SearXngBackend {
                 ("safesearch", "0"),
             ]);
 
-        if let Some(ref engines) = self.config.engines {
-            request = request.query(&[("engines", engines)]);
+        match &self.config.engines {
+            Some(engines) => {
+                request = request.query(&[("engines", engines)]);
+            }
+            None => {}
         }
 
         let response = request
@@ -70,11 +73,14 @@ impl SearchBackend for SearXngBackend {
                 reason: format!("Failed to reach SearXNG instance: {e}"),
             })?;
 
-        if !response.status().is_success() {
-            return Err(SearchXyzError::SearchFailed {
-                query: query.query.clone(),
-                reason: format!("SearXNG returned HTTP Status {}", response.status()),
-            });
+        match response.status().is_success() {
+            true => {}
+            false => {
+                return Err(SearchXyzError::SearchFailed {
+                    query: query.query.clone(),
+                    reason: format!("SearXNG returned HTTP Status {}", response.status()),
+                });
+            }
         }
 
         let body: SearXngApiResponse =

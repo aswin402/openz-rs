@@ -55,23 +55,24 @@ impl KnowledgeGraph {
             relationship_type,
         };
 
-        if !self.edges.contains(&new_edge) {
-            self.edges.push(new_edge);
+        match self.edges.contains(&new_edge) {
+            true => {}
+            false => self.edges.push(new_edge),
         }
     }
 
     /// Find a node case-insensitively.
     pub fn find_canonical_node_name(&self, name: &str) -> Option<String> {
-        if self.nodes.contains_key(name) {
-            return Some(name.to_string());
-        }
-        let lower = name.to_lowercase();
-        for k in self.nodes.keys() {
-            if k.to_lowercase() == lower {
-                return Some(k.clone());
+        match self.nodes.contains_key(name) {
+            true => Some(name.to_string()),
+            false => {
+                let lower = name.to_lowercase();
+                self.nodes
+                    .keys()
+                    .find(|k| k.to_lowercase() == lower)
+                    .cloned()
             }
         }
-        None
     }
 
     /// Query neighbors of a node using BFS up to a maximum depth.
@@ -91,23 +92,27 @@ impl KnowledgeGraph {
             let mut next_level = Vec::new();
             for node in &current_level {
                 for edge in &self.edges {
-                    if edge.source == *node {
-                        if visited_nodes.insert(edge.target.clone()) {
-                            next_level.push(edge.target.clone());
+                    let neighbor_opt = match (edge.source == *node, edge.target == *node) {
+                        (true, _) => Some(&edge.target),
+                        (false, true) => Some(&edge.source),
+                        (false, false) => None,
+                    };
+                    match neighbor_opt {
+                        Some(neighbor) => {
+                            match visited_nodes.insert(neighbor.clone()) {
+                                true => next_level.push(neighbor.clone()),
+                                false => {}
+                            }
+                            visited_edges.insert(edge.clone());
                         }
-                        visited_edges.insert(edge.clone());
-                    } else if edge.target == *node {
-                        if visited_nodes.insert(edge.source.clone()) {
-                            next_level.push(edge.source.clone());
-                        }
-                        visited_edges.insert(edge.clone());
+                        None => {}
                     }
                 }
             }
-            if next_level.is_empty() {
-                break;
+            match next_level.is_empty() {
+                true => break,
+                false => current_level = next_level,
             }
-            current_level = next_level;
         }
 
         let nodes = visited_nodes
@@ -173,34 +178,34 @@ impl KnowledgeGraph {
         ];
 
         let content_lower = content.to_lowercase();
-        let mut matched = Vec::new();
+        let matched: Vec<&str> = keywords
+            .iter()
+            .copied()
+            .filter(|kw| {
+                let kw_pattern = format!(" {}", kw);
+                let kw_pattern_start = format!("{}:", kw);
+                content_lower.contains(&kw_pattern)
+                    || content_lower.starts_with(kw)
+                    || content_lower.contains(&kw_pattern_start)
+            })
+            .collect();
 
-        for kw in &keywords {
-            // Check for keyword with word boundaries
-            let kw_pattern = format!(" {}", kw);
-            let kw_pattern_start = format!("{}:", kw); // e.g. for lists
-            if content_lower.contains(&kw_pattern)
-                || content_lower.starts_with(kw)
-                || content_lower.contains(&kw_pattern_start)
-            {
-                matched.push(*kw);
-            }
-        }
+        match matched.is_empty() {
+            true => {}
+            false => {
+                let doc_name = url.to_string();
+                self.add_node(doc_name.clone(), "Document".to_string());
 
-        if !matched.is_empty() {
-            // Add the document node
-            let doc_name = url.to_string();
-            self.add_node(doc_name.clone(), "Document".to_string());
-
-            for term in matched {
-                let canonical_term = capitalize_keyword(term);
-                self.add_edge(
-                    doc_name.clone(),
-                    "Document".to_string(),
-                    canonical_term,
-                    "Technology/Topic".to_string(),
-                    "mentions".to_string(),
-                );
+                for term in matched {
+                    let canonical_term = capitalize_keyword(term);
+                    self.add_edge(
+                        doc_name.clone(),
+                        "Document".to_string(),
+                        canonical_term,
+                        "Technology/Topic".to_string(),
+                        "mentions".to_string(),
+                    );
+                }
             }
         }
     }
@@ -221,19 +226,22 @@ impl KnowledgeGraph {
 
     /// Load the graph from a JSON file.
     pub fn load_from_file(path: &Path) -> Result<Self, std::io::Error> {
-        if !path.exists() {
-            return Ok(Self::new());
+        match path.exists() {
+            false => Ok(Self::new()),
+            true => {
+                let file = std::fs::File::open(path)?;
+                let reader = std::io::BufReader::new(file);
+                let graph = serde_json::from_reader(reader)?;
+                Ok(graph)
+            }
         }
-        let file = std::fs::File::open(path)?;
-        let reader = std::io::BufReader::new(file);
-        let graph = serde_json::from_reader(reader)?;
-        Ok(graph)
     }
 
     /// Save the graph to a JSON file.
     pub fn save_to_file(&self, path: &Path) -> Result<(), std::io::Error> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+        match path.parent() {
+            Some(parent) => std::fs::create_dir_all(parent)?,
+            None => {}
         }
         let file = std::fs::File::create(path)?;
         let writer = std::io::BufWriter::new(file);

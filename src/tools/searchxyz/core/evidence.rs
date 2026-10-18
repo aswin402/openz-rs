@@ -7,92 +7,96 @@ pub fn build_evidence_summary(query: &str, pages: &[ExtractedContent]) -> String
         pages.len()
     );
 
-    output.push_str("### Claims\n");
-    let claims = extract_claims(pages, 8);
-    if claims.is_empty() {
-        output.push_str("- No concise claims extracted from retrieved pages.\n");
-    } else {
-        for claim in claims {
-            output.push_str(&format!("- {}\n", claim));
-        }
-    }
+    push_bullet_section(
+        &mut output,
+        "### Claims\n",
+        &extract_claims(pages, 8),
+        "- No concise claims extracted from retrieved pages.\n",
+    );
 
     output.push_str("\n### Evidence Sources\n");
     for page in pages {
         output.push_str(&format!("- **{}** -- {}\n", page.title, page.url));
     }
 
-    output.push_str("\n### Potential Conflicts\n");
-    let conflicts = detect_conflicts(pages);
-    if conflicts.is_empty() {
-        output.push_str("- No explicit conflicts detected in retrieved sources.\n");
-    } else {
-        for conflict in conflicts {
-            output.push_str(&format!("- {}\n", conflict));
-        }
-    }
+    push_bullet_section(
+        &mut output,
+        "\n### Potential Conflicts\n",
+        &detect_conflicts(pages),
+        "- No explicit conflicts detected in retrieved sources.\n",
+    );
 
-    output.push_str("\n### Unknowns\n");
-    let unknowns = extract_unknowns(pages);
-    if unknowns.is_empty() {
-        output.push_str("- No explicit unknowns detected; verify missing pricing, dates, and private implementation details before final claims.\n");
-    } else {
-        for unknown in unknowns {
-            output.push_str(&format!("- {}\n", unknown));
-        }
-    }
+    push_bullet_section(
+        &mut output,
+        "\n### Unknowns\n",
+        &extract_unknowns(pages),
+        "- No explicit unknowns detected; verify missing pricing, dates, and private implementation details before final claims.\n",
+    );
     output.push('\n');
     output
 }
 
-fn extract_claims(pages: &[ExtractedContent], limit: usize) -> Vec<String> {
-    let mut claims = Vec::new();
-    for page in pages {
-        for sentence in split_sentences(&page.content_markdown) {
-            let trimmed = sentence.trim();
-            if trimmed.len() < 24 || trimmed.len() > 240 {
-                continue;
-            }
-            if looks_like_boilerplate(trimmed) {
-                continue;
-            }
-            claims.push(format!("{} [{}]", trimmed, page.url));
-            if claims.len() >= limit {
-                return claims;
+fn push_bullet_section(output: &mut String, heading: &str, items: &[String], empty_msg: &str) {
+    output.push_str(heading);
+    match items.is_empty() {
+        true => output.push_str(empty_msg),
+        false => {
+            for item in items {
+                output.push_str(&format!("- {}\n", item));
             }
         }
     }
-    claims
+}
+
+fn extract_claims(pages: &[ExtractedContent], limit: usize) -> Vec<String> {
+    pages
+        .iter()
+        .flat_map(|page| {
+            split_sentences(&page.content_markdown)
+                .into_iter()
+                .filter_map(move |sentence| {
+                    let trimmed = sentence.trim();
+                    let valid_len = (24..=240).contains(&trimmed.len());
+                    (valid_len && !looks_like_boilerplate(trimmed))
+                        .then(|| format!("{} [{}]", trimmed, page.url))
+                })
+        })
+        .take(limit)
+        .collect()
 }
 
 fn detect_conflicts(pages: &[ExtractedContent]) -> Vec<String> {
-    let mut conflicts = Vec::new();
     let joined = pages
         .iter()
         .map(|page| page.content_markdown.to_ascii_lowercase())
         .collect::<Vec<_>>()
         .join("\n");
 
-    if contains_positive_phrase(&joined, "free tier", &["no free tier", "without free tier"])
-        && joined.contains("no free tier")
-    {
-        conflicts.push("Sources mention both free tier and no free tier.".to_string());
-    }
-    if joined.contains("open source") && joined.contains("proprietary") {
-        conflicts.push("Sources mention both open source and proprietary positioning.".to_string());
-    }
-    if contains_positive_phrase(&joined, "available", &["not available", "unavailable"])
-        && (joined.contains("not available") || joined.contains("unavailable"))
-    {
-        conflicts.push("Sources mention both availability and non-availability.".to_string());
-    }
-    if joined.contains("real-time") && joined.contains("offline") {
-        conflicts.push(
-            "Sources mix real-time and offline positioning; clarify mode-specific behavior."
-                .to_string(),
-        );
-    }
-    conflicts
+    let rules: [(bool, &str); 4] = [
+        (
+            contains_positive_phrase(&joined, "free tier", &["no free tier", "without free tier"])
+                && joined.contains("no free tier"),
+            "Sources mention both free tier and no free tier.",
+        ),
+        (
+            joined.contains("open source") && joined.contains("proprietary"),
+            "Sources mention both open source and proprietary positioning.",
+        ),
+        (
+            contains_positive_phrase(&joined, "available", &["not available", "unavailable"])
+                && (joined.contains("not available") || joined.contains("unavailable")),
+            "Sources mention both availability and non-availability.",
+        ),
+        (
+            joined.contains("real-time") && joined.contains("offline"),
+            "Sources mix real-time and offline positioning; clarify mode-specific behavior.",
+        ),
+    ];
+
+    rules
+        .into_iter()
+        .filter_map(|(cond, msg)| cond.then(|| msg.to_string()))
+        .collect()
 }
 
 fn contains_positive_phrase(text: &str, phrase: &str, negative_forms: &[&str]) -> bool {
@@ -107,7 +111,6 @@ fn contains_positive_phrase(text: &str, phrase: &str, negative_forms: &[&str]) -
 }
 
 fn extract_unknowns(pages: &[ExtractedContent]) -> Vec<String> {
-    let mut unknowns = Vec::new();
     let markers = [
         "not publicly disclosed",
         "not disclosed",
@@ -119,18 +122,21 @@ fn extract_unknowns(pages: &[ExtractedContent]) -> Vec<String> {
         "requires login",
     ];
 
-    for page in pages {
-        for sentence in split_sentences(&page.content_markdown) {
-            let lower = sentence.to_ascii_lowercase();
-            if markers.iter().any(|marker| lower.contains(marker)) {
-                unknowns.push(format!("{} [{}]", sentence.trim(), page.url));
-                if unknowns.len() >= 6 {
-                    return unknowns;
-                }
-            }
-        }
-    }
-    unknowns
+    pages
+        .iter()
+        .flat_map(|page| {
+            split_sentences(&page.content_markdown)
+                .into_iter()
+                .filter_map(move |sentence| {
+                    let lower = sentence.to_ascii_lowercase();
+                    markers
+                        .iter()
+                        .any(|marker| lower.contains(marker))
+                        .then(|| format!("{} [{}]", sentence.trim(), page.url))
+                })
+        })
+        .take(6)
+        .collect()
 }
 
 fn split_sentences(text: &str) -> Vec<String> {
@@ -138,17 +144,22 @@ fn split_sentences(text: &str) -> Vec<String> {
     let mut current = String::new();
     for ch in text.chars() {
         current.push(ch);
-        if matches!(ch, '.' | '!' | '?') {
-            let sentence = current.trim();
-            if !sentence.is_empty() {
-                sentences.push(sentence.to_string());
+        match matches!(ch, '.' | '!' | '?') {
+            true => {
+                let sentence = current.trim();
+                match sentence.is_empty() {
+                    true => {}
+                    false => sentences.push(sentence.to_string()),
+                }
+                current.clear();
             }
-            current.clear();
+            false => {}
         }
     }
     let rest = current.trim();
-    if !rest.is_empty() {
-        sentences.push(rest.to_string());
+    match rest.is_empty() {
+        true => {}
+        false => sentences.push(rest.to_string()),
     }
     sentences
 }

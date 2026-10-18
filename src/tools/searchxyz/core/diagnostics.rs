@@ -12,9 +12,7 @@ pub(crate) fn format_search_diagnostics(report: &SearchReport) -> String {
             "- **{}:** {} (usable_results={})",
             attempt.backend, attempt.status, attempt.usable_results
         ));
-        if let Some(detail) = &attempt.detail {
-            out.push_str(&format!(" -- {}", compact_detail(detail)));
-        }
+        push_attempt_detail(&mut out, &attempt.detail);
         out.push('\n');
     }
     out
@@ -44,12 +42,17 @@ pub(crate) fn format_search_and_read_diagnostics(
     ));
     for attempt in &report.page_attempts {
         out.push_str(&format!("- **{}:** {}", attempt.url, attempt.status));
-        if let Some(detail) = &attempt.detail {
-            out.push_str(&format!(" -- {}", compact_detail(detail)));
-        }
+        push_attempt_detail(&mut out, &attempt.detail);
         out.push('\n');
     }
     out
+}
+
+fn push_attempt_detail(out: &mut String, detail: &Option<String>) {
+    match detail {
+        Some(text) => out.push_str(&format!(" -- {}", compact_detail(text))),
+        None => {}
+    }
 }
 
 fn compact_detail(detail: &str) -> String {

@@ -58,8 +58,68 @@ impl std::fmt::Debug for EmbeddingGenerator {
     }
 }
 
+fn require_api_key_and_url(
+    config: &crate::tools::searchxyz::core::config::EmbeddingConfig,
+    provider_name: &str,
+    default_url: &str,
+) -> Result<(String, String), SearchXyzError> {
+    let api_key = config.api_key.clone().ok_or_else(|| {
+        SearchXyzError::ConfigError(format!(
+            "API key is required for {provider_name} embedding provider"
+        ))
+    })?;
+    let api_url = config
+        .api_url
+        .clone()
+        .unwrap_or_else(|| default_url.to_string());
+    Ok((api_key, api_url))
+}
+
+async fn ensure_http_success(
+    res: reqwest::Response,
+    url: &str,
+    provider_label: &str,
+) -> Result<reqwest::Response, SearchXyzError> {
+    match res.status().is_success() {
+        true => Ok(res),
+        false => {
+            let status = res.status().as_u16();
+            let text = res.text().await.unwrap_or_default();
+            Err(SearchXyzError::HttpError {
+                url: url.to_string(),
+                status,
+                reason: format!("{provider_label} embedding failed: {text}"),
+            })
+        }
+    }
+}
+
+fn encode_embedding_bytes(embedding: &[f32]) -> Vec<u8> {
+    let mut embedding_bytes = Vec::with_capacity(embedding.len() * 4);
+    for val in embedding {
+        embedding_bytes.extend_from_slice(&val.to_le_bytes());
+    }
+    embedding_bytes
+}
+
+fn delete_url_and_chunks(
+    writer: &mut IndexWriter,
+    f_url: Field,
+    url: &str,
+) -> Result<(), SearchXyzError> {
+    let term = tantivy::Term::from_field_text(f_url, url);
+    writer.delete_term(term);
+
+    let pattern = format!("{}.*", escape_regex(&format!("{url}#")));
+    let query = tantivy::query::RegexQuery::from_pattern(&pattern, f_url)?;
+    writer.delete_query(Box::new(query))?;
+    Ok(())
+}
+
 impl EmbeddingGenerator {
-    pub fn new(config: &crate::tools::searchxyz::core::config::EmbeddingConfig) -> Result<Self, SearchXyzError> {
+    pub fn new(
+        config: &crate::tools::searchxyz::core::config::EmbeddingConfig,
+    ) -> Result<Self, SearchXyzError> {
         let client = reqwest::Client::new();
         match config.provider.to_lowercase().as_str() {
             "local" => {
@@ -86,15 +146,11 @@ impl EmbeddingGenerator {
                 ))))
             }
             "openai" => {
-                let api_key = config.api_key.clone().ok_or_else(|| {
-                    SearchXyzError::ConfigError(
-                        "API key is required for openai embedding provider".to_string(),
-                    )
-                })?;
-                let api_url = config
-                    .api_url
-                    .clone()
-                    .unwrap_or_else(|| "https://api.openai.com/v1/embeddings".to_string());
+                let (api_key, api_url) = require_api_key_and_url(
+                    config,
+                    "openai",
+                    "https://api.openai.com/v1/embeddings",
+                )?;
                 Ok(Self::OpenAi {
                     client,
                     model: config.model.clone(),
@@ -103,15 +159,11 @@ impl EmbeddingGenerator {
                 })
             }
             "gemini" => {
-                let api_key = config.api_key.clone().ok_or_else(|| {
-                    SearchXyzError::ConfigError(
-                        "API key is required for gemini embedding provider".to_string(),
-                    )
-                })?;
-                let api_url = config
-                    .api_url
-                    .clone()
-                    .unwrap_or_else(|| "https://generativelanguage.googleapis.com".to_string());
+                let (api_key, api_url) = require_api_key_and_url(
+                    config,
+                    "gemini",
+                    "https://generativelanguage.googleapis.com",
+                )?;
                 Ok(Self::Gemini {
                     client,
                     model: config.model.clone(),
@@ -120,15 +172,8 @@ impl EmbeddingGenerator {
                 })
             }
             "cohere" => {
-                let api_key = config.api_key.clone().ok_or_else(|| {
-                    SearchXyzError::ConfigError(
-                        "API key is required for cohere embedding provider".to_string(),
-                    )
-                })?;
-                let api_url = config
-                    .api_url
-                    .clone()
-                    .unwrap_or_else(|| "https://api.cohere.com/v1/embed".to_string());
+                let (api_key, api_url) =
+                    require_api_key_and_url(config, "cohere", "https://api.cohere.com/v1/embed")?;
                 Ok(Self::Cohere {
                     client,
                     model: config.model.clone(),
@@ -149,15 +194,13 @@ impl EmbeddingGenerator {
     ) -> Result<Vec<Vec<f32>>, SearchXyzError> {
         match self {
             Self::Local(mutex) => {
+                let prefix = match is_query {
+                    true => "query",
+                    false => "passage",
+                };
                 let formatted: Vec<String> = texts
                     .iter()
-                    .map(|&text| {
-                        if is_query {
-                            format!("query: {text}")
-                        } else {
-                            format!("passage: {text}")
-                        }
-                    })
+                    .map(|&text| format!("{prefix}: {text}"))
                     .collect();
                 let refs: Vec<&str> = formatted.iter().map(|s| s.as_str()).collect();
                 let mut model = mutex.lock().map_err(|e| {
@@ -184,16 +227,7 @@ impl EmbeddingGenerator {
                     .json(&body)
                     .send()
                     .await?;
-
-                if !res.status().is_success() {
-                    let status = res.status().as_u16();
-                    let text = res.text().await.unwrap_or_default();
-                    return Err(SearchXyzError::HttpError {
-                        url: api_url.clone(),
-                        status,
-                        reason: format!("OpenAI embedding failed: {}", text),
-                    });
-                }
+                let res = ensure_http_success(res, api_url, "OpenAI").await?;
 
                 #[derive(Deserialize)]
                 struct OpenAiEmbeddingData {
@@ -214,10 +248,9 @@ impl EmbeddingGenerator {
                 api_key,
                 api_url,
             } => {
-                let formatted_model = if model.starts_with("models/") {
-                    model.clone()
-                } else {
-                    format!("models/{}", model)
+                let formatted_model = match model.starts_with("models/") {
+                    true => model.clone(),
+                    false => format!("models/{}", model),
                 };
                 let url = format!(
                     "{}/v1beta/{}:batchEmbedContents?key={}",
@@ -250,16 +283,7 @@ impl EmbeddingGenerator {
                     .json(&body)
                     .send()
                     .await?;
-
-                if !res.status().is_success() {
-                    let status = res.status().as_u16();
-                    let text = res.text().await.unwrap_or_default();
-                    return Err(SearchXyzError::HttpError {
-                        url,
-                        status,
-                        reason: format!("Gemini embedding failed: {}", text),
-                    });
-                }
+                let res = ensure_http_success(res, &url, "Gemini").await?;
 
                 #[derive(Deserialize)]
                 struct GeminiEmbeddingValues {
@@ -280,10 +304,9 @@ impl EmbeddingGenerator {
                 api_key,
                 api_url,
             } => {
-                let input_type = if is_query {
-                    "search_query"
-                } else {
-                    "search_document"
+                let input_type = match is_query {
+                    true => "search_query",
+                    false => "search_document",
                 };
                 let body = serde_json::json!({
                     "texts": texts,
@@ -298,16 +321,7 @@ impl EmbeddingGenerator {
                     .json(&body)
                     .send()
                     .await?;
-
-                if !res.status().is_success() {
-                    let status = res.status().as_u16();
-                    let text = res.text().await.unwrap_or_default();
-                    return Err(SearchXyzError::HttpError {
-                        url: api_url.clone(),
-                        status,
-                        reason: format!("Cohere embedding failed: {}", text),
-                    });
-                }
+                let res = ensure_http_success(res, api_url, "Cohere").await?;
 
                 #[derive(Deserialize)]
                 struct CohereResponse {
@@ -356,6 +370,13 @@ pub struct SourceEntry {
 }
 
 impl SearchIndex {
+    fn doc_string(&self, doc: &tantivy::TantivyDocument, field: Field) -> String {
+        doc.get_first(field)
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string()
+    }
+
     /// Open or create the index at the configured path.
     pub fn open(config: &IndexConfig) -> Result<Self, SearchXyzError> {
         // Ensure directory exists.
@@ -422,10 +443,9 @@ impl SearchIndex {
         let now = tantivy::DateTime::from_timestamp_secs(Utc::now().timestamp());
 
         let chunks = chunk_content(&content.content_markdown, 1500, 200);
-        let chunks = if chunks.is_empty() {
-            vec![content.content_markdown.clone()]
-        } else {
-            chunks
+        let chunks = match chunks.is_empty() {
+            true => vec![content.content_markdown.clone()],
+            false => chunks,
         };
 
         let texts_to_embed: Vec<String> = chunks
@@ -442,50 +462,40 @@ impl SearchIndex {
         let mut writer = self.writer.lock().await;
 
         // Remove existing document with same URL to avoid duplicates.
-        let term = tantivy::Term::from_field_text(self.f_url, &content.url);
-        writer.delete_term(term);
+        delete_url_and_chunks(&mut writer, self.f_url, &content.url)?;
 
-        let pattern = format!("{}.*", escape_regex(&format!("{}#", content.url)));
-        let query = tantivy::query::RegexQuery::from_pattern(&pattern, self.f_url)?;
-        writer.delete_query(Box::new(query))?;
+        match chunks.len() > 1 {
+            true => {
+                for (idx, (chunk, embedding)) in chunks.into_iter().zip(embeddings).enumerate() {
+                    let chunk_url = format!("{}#chunk-{}", content.url, idx);
+                    let embedding_bytes = encode_embedding_bytes(&embedding);
 
-        if chunks.len() > 1 {
-            for (idx, (chunk, embedding)) in chunks.into_iter().zip(embeddings).enumerate() {
-                let chunk_url = format!("{}#chunk-{}", content.url, idx);
-                let mut embedding_bytes = Vec::with_capacity(embedding.len() * 4);
-                for val in &embedding {
-                    embedding_bytes.extend_from_slice(&val.to_le_bytes());
+                    writer.add_document(doc!(
+                        self.f_url     => chunk_url,
+                        self.f_title   => content.title.clone(),
+                        self.f_content => chunk,
+                        self.f_source  => source.to_string(),
+                        self.f_indexed_at => now,
+                        self.f_embedding => embedding_bytes,
+                    ))?;
                 }
+            }
+            false => {
+                let chunk_content = chunks.into_iter().next().unwrap();
+                let embedding = embeddings.into_iter().next().ok_or_else(|| {
+                    SearchXyzError::IndexError("No embedding returned".to_string())
+                })?;
+                let embedding_bytes = encode_embedding_bytes(&embedding);
 
                 writer.add_document(doc!(
-                    self.f_url     => chunk_url,
+                    self.f_url     => content.url.clone(),
                     self.f_title   => content.title.clone(),
-                    self.f_content => chunk,
+                    self.f_content => chunk_content,
                     self.f_source  => source.to_string(),
                     self.f_indexed_at => now,
                     self.f_embedding => embedding_bytes,
                 ))?;
             }
-        } else {
-            let chunk_content = chunks.into_iter().next().unwrap();
-            let embedding = embeddings
-                .into_iter()
-                .next()
-                .ok_or_else(|| SearchXyzError::IndexError("No embedding returned".to_string()))?;
-
-            let mut embedding_bytes = Vec::with_capacity(embedding.len() * 4);
-            for val in &embedding {
-                embedding_bytes.extend_from_slice(&val.to_le_bytes());
-            }
-
-            writer.add_document(doc!(
-                self.f_url     => content.url.clone(),
-                self.f_title   => content.title.clone(),
-                self.f_content => chunk_content,
-                self.f_source  => source.to_string(),
-                self.f_indexed_at => now,
-                self.f_embedding => embedding_bytes,
-            ))?;
         }
         writer.commit()?;
 
@@ -527,62 +537,49 @@ impl SearchIndex {
                 .map_err(|e| SearchXyzError::IndexError(format!("Failed to retrieve doc: {e}")))?;
 
             let embedding_val = doc.get_first(self.f_embedding);
-            if let Some(bytes_val) = embedding_val.and_then(|v| v.as_bytes()) {
-                let mut doc_embedding = Vec::with_capacity(bytes_val.len() / 4);
-                for chunk in bytes_val.chunks_exact(4) {
-                    let array: [u8; 4] = chunk.try_into().unwrap();
-                    doc_embedding.push(f32::from_le_bytes(array));
+            match embedding_val.and_then(|v| v.as_bytes()) {
+                Some(bytes_val) => {
+                    let mut doc_embedding = Vec::with_capacity(bytes_val.len() / 4);
+                    for chunk in bytes_val.chunks_exact(4) {
+                        let array: [u8; 4] = chunk.try_into().unwrap();
+                        doc_embedding.push(f32::from_le_bytes(array));
+                    }
+
+                    match doc_embedding.len() == query_embedding.len() {
+                        true => {
+                            let score: f32 = query_embedding
+                                .iter()
+                                .zip(&doc_embedding)
+                                .map(|(a, b)| a * b)
+                                .sum();
+
+                            let url = self.doc_string(&doc, self.f_url);
+                            let title = self.doc_string(&doc, self.f_title);
+                            let source = self.doc_string(&doc, self.f_source);
+                            let content = self.doc_string(&doc, self.f_content);
+
+                            let snippet = content
+                                .chars()
+                                .take(250)
+                                .collect::<String>()
+                                .replace('\n', " ")
+                                .replace("  ", " ");
+
+                            scored_results.push((
+                                score,
+                                IndexSearchResult {
+                                    url,
+                                    title,
+                                    snippet,
+                                    source,
+                                    score,
+                                },
+                            ));
+                        }
+                        false => {}
+                    }
                 }
-
-                if doc_embedding.len() == query_embedding.len() {
-                    let score: f32 = query_embedding
-                        .iter()
-                        .zip(&doc_embedding)
-                        .map(|(a, b)| a * b)
-                        .sum();
-
-                    let url = doc
-                        .get_first(self.f_url)
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-
-                    let title = doc
-                        .get_first(self.f_title)
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-
-                    let source = doc
-                        .get_first(self.f_source)
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-
-                    let content = doc
-                        .get_first(self.f_content)
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-
-                    let snippet = content
-                        .chars()
-                        .take(250)
-                        .collect::<String>()
-                        .replace('\n', " ")
-                        .replace("  ", " ");
-
-                    scored_results.push((
-                        score,
-                        IndexSearchResult {
-                            url,
-                            title,
-                            snippet,
-                            source,
-                            score,
-                        },
-                    ));
-                }
+                None => {}
             }
         }
 
@@ -630,24 +627,9 @@ impl SearchIndex {
                 .doc(doc_address)
                 .map_err(|e| SearchXyzError::IndexError(format!("Failed to retrieve doc: {e}")))?;
 
-            let url = doc
-                .get_first(self.f_url)
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            let title = doc
-                .get_first(self.f_title)
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            let source = doc
-                .get_first(self.f_source)
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
+            let url = self.doc_string(&doc, self.f_url);
+            let title = self.doc_string(&doc, self.f_title);
+            let source = self.doc_string(&doc, self.f_source);
             let snippet = snippet_generator.snippet_from_doc(&doc).to_html();
 
             results.push(IndexSearchResult {
@@ -671,15 +653,18 @@ impl SearchIndex {
     ) -> Result<(Vec<SourceEntry>, usize), SearchXyzError> {
         let searcher = self.reader.searcher();
 
-        let query: Box<dyn tantivy::query::Query> = if let Some(src) = source_filter {
-            let term = tantivy::Term::from_field_text(self.f_source, src);
-            Box::new(tantivy::query::TermQuery::new(
-                term,
-                IndexRecordOption::WithFreqs,
-            ))
-        } else {
-            use tantivy::query::AllQuery;
-            Box::new(AllQuery)
+        let query: Box<dyn tantivy::query::Query> = match source_filter {
+            Some(src) => {
+                let term = tantivy::Term::from_field_text(self.f_source, src);
+                Box::new(tantivy::query::TermQuery::new(
+                    term,
+                    IndexRecordOption::WithFreqs,
+                ))
+            }
+            None => {
+                use tantivy::query::AllQuery;
+                Box::new(AllQuery)
+            }
         };
 
         let top_docs = searcher
@@ -692,23 +677,9 @@ impl SearchIndex {
                 .doc(doc_address)
                 .map_err(|e| SearchXyzError::IndexError(format!("Failed to retrieve doc: {e}")))?;
 
-            let url = doc
-                .get_first(self.f_url)
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            let title = doc
-                .get_first(self.f_title)
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            let source = doc
-                .get_first(self.f_source)
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+            let url = self.doc_string(&doc, self.f_url);
+            let title = self.doc_string(&doc, self.f_title);
+            let source = self.doc_string(&doc, self.f_source);
 
             let date_val = doc
                 .get_first(self.f_indexed_at)
@@ -755,21 +726,20 @@ impl SearchIndex {
     ) -> Result<Vec<ExtractedContent>, SearchXyzError> {
         let searcher = self.reader.searcher();
 
-        let query: Box<dyn tantivy::query::Query> = if let Some(q) = query_str {
-            if q.trim().is_empty() {
-                use tantivy::query::AllQuery;
-                Box::new(AllQuery)
-            } else {
-                let query_parser =
-                    QueryParser::for_index(&self.index, vec![self.f_title, self.f_content]);
-                query_parser.parse_query(q).map_err(|e| {
-                    SearchXyzError::IndexError(format!("Failed to parse query `{q}`: {e}"))
-                })?
-            }
-        } else {
-            use tantivy::query::AllQuery;
-            Box::new(AllQuery)
-        };
+        let query: Box<dyn tantivy::query::Query> =
+            match query_str.filter(|q| !q.trim().is_empty()) {
+                Some(q) => {
+                    let query_parser =
+                        QueryParser::for_index(&self.index, vec![self.f_title, self.f_content]);
+                    query_parser.parse_query(q).map_err(|e| {
+                        SearchXyzError::IndexError(format!("Failed to parse query `{q}`: {e}"))
+                    })?
+                }
+                None => {
+                    use tantivy::query::AllQuery;
+                    Box::new(AllQuery)
+                }
+            };
 
         let top_docs = searcher
             .search(&query, &TopDocs::with_limit(limit))
@@ -781,29 +751,10 @@ impl SearchIndex {
                 .doc(doc_address)
                 .map_err(|e| SearchXyzError::IndexError(format!("Failed to retrieve doc: {e}")))?;
 
-            let url = doc
-                .get_first(self.f_url)
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            let title = doc
-                .get_first(self.f_title)
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            let content_markdown = doc
-                .get_first(self.f_content)
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            let source = doc
-                .get_first(self.f_source)
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
+            let url = self.doc_string(&doc, self.f_url);
+            let title = self.doc_string(&doc, self.f_title);
+            let content_markdown = self.doc_string(&doc, self.f_content);
+            let source = self.doc_string(&doc, self.f_source);
 
             results.push(ExtractedContent {
                 url,
@@ -839,12 +790,7 @@ impl SearchIndex {
     /// Delete a document by url and any of its associated chunk documents.
     pub async fn delete_document(&self, url: &str) -> Result<(), SearchXyzError> {
         let mut writer = self.writer.lock().await;
-        let term = tantivy::Term::from_field_text(self.f_url, url);
-        writer.delete_term(term);
-
-        let pattern = format!("{}.*", escape_regex(&format!("{}#", url)));
-        let query = tantivy::query::RegexQuery::from_pattern(&pattern, self.f_url)?;
-        writer.delete_query(Box::new(query))?;
+        delete_url_and_chunks(&mut writer, self.f_url, url)?;
         writer.commit()?;
         Ok(())
     }
@@ -856,32 +802,39 @@ pub fn chunk_content(content: &str, chunk_size: usize, overlap: usize) -> Vec<St
     let mut has_headers = false;
 
     for line in content.lines() {
-        if line.starts_with("# ") || line.starts_with("## ") || line.starts_with("### ") {
-            has_headers = true;
-            if !current_section.trim().is_empty() {
-                sections.push(current_section.trim().to_string());
+        let is_header =
+            line.starts_with("# ") || line.starts_with("## ") || line.starts_with("### ");
+        match is_header {
+            true => {
+                has_headers = true;
+                match current_section.trim().is_empty() {
+                    true => {}
+                    false => sections.push(current_section.trim().to_string()),
+                }
+                current_section = line.to_string();
+                current_section.push('\n');
             }
-            current_section = line.to_string();
-            current_section.push('\n');
-        } else {
-            current_section.push_str(line);
-            current_section.push('\n');
+            false => {
+                current_section.push_str(line);
+                current_section.push('\n');
+            }
         }
     }
-    if !current_section.trim().is_empty() {
-        sections.push(current_section.trim().to_string());
+    match current_section.trim().is_empty() {
+        true => {}
+        false => sections.push(current_section.trim().to_string()),
     }
 
-    if !has_headers {
-        return sliding_window_chunk(content, chunk_size, overlap);
+    match has_headers {
+        false => return sliding_window_chunk(content, chunk_size, overlap),
+        true => {}
     }
 
     let mut chunks = Vec::new();
     for section in sections {
-        if section.chars().count() > chunk_size {
-            chunks.extend(sliding_window_chunk(&section, chunk_size, overlap));
-        } else {
-            chunks.push(section);
+        match section.chars().count() > chunk_size {
+            true => chunks.extend(sliding_window_chunk(&section, chunk_size, overlap)),
+            false => chunks.push(section),
         }
     }
     chunks
@@ -891,8 +844,9 @@ fn sliding_window_chunk(text: &str, chunk_size: usize, overlap: usize) -> Vec<St
     let chars: Vec<char> = text.chars().collect();
     let mut chunks = Vec::new();
 
-    if chars.is_empty() {
-        return chunks;
+    match chars.is_empty() {
+        true => return chunks,
+        false => {}
     }
 
     let mut start = 0;
@@ -900,18 +854,19 @@ fn sliding_window_chunk(text: &str, chunk_size: usize, overlap: usize) -> Vec<St
         let end = std::cmp::min(start + chunk_size, chars.len());
         let chunk: String = chars[start..end].iter().collect();
         let chunk_trimmed = chunk.trim().to_string();
-        if !chunk_trimmed.is_empty() {
-            chunks.push(chunk_trimmed);
+        match chunk_trimmed.is_empty() {
+            true => {}
+            false => chunks.push(chunk_trimmed),
         }
 
-        if end == chars.len() {
-            break;
+        match end == chars.len() {
+            true => break,
+            false => {}
         }
 
-        let step = if chunk_size > overlap {
-            chunk_size - overlap
-        } else {
-            1
+        let step = match chunk_size > overlap {
+            true => chunk_size - overlap,
+            false => 1,
         };
         start += step;
     }
@@ -1170,48 +1125,52 @@ mod tests {
 
         let handle = tokio::spawn(async move {
             loop {
-                if let Ok((mut stream, _)) = listener.accept().await {
-                    tokio::spawn(async move {
-                        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-                        let mut buf = [0u8; 4096];
-                        let n = stream.read(&mut buf).await.unwrap_or(0);
-                        let req_str = String::from_utf8_lossy(&buf[..n]);
+                match listener.accept().await {
+                    Ok((mut stream, _)) => {
+                        tokio::spawn(async move {
+                            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+                            let mut buf = [0u8; 4096];
+                            let n = stream.read(&mut buf).await.unwrap_or(0);
+                            let req_str = String::from_utf8_lossy(&buf[..n]);
 
-                        let response_body = if req_str.contains("/v1/embeddings") {
-                            serde_json::json!({
-                                "data": [
-                                    { "embedding": vec![0.1f32; 1536] }
-                                ]
-                            })
-                            .to_string()
-                        } else if req_str.contains("batchEmbedContents") {
-                            serde_json::json!({
-                                "embeddings": [
-                                    { "values": vec![0.2f32; 768] }
-                                ]
-                            })
-                            .to_string()
-                        } else if req_str.contains("/v1/embed") {
-                            serde_json::json!({
-                                "embeddings": [
-                                    vec![0.3f32; 1024]
-                                ]
-                            })
-                            .to_string()
-                        } else {
-                            serde_json::json!({
-                                "error": "unknown endpoint"
-                            })
-                            .to_string()
-                        };
+                            let response_body = match (
+                                req_str.contains("/v1/embeddings"),
+                                req_str.contains("batchEmbedContents"),
+                                req_str.contains("/v1/embed"),
+                            ) {
+                                (true, _, _) => serde_json::json!({
+                                    "data": [
+                                        { "embedding": vec![0.1f32; 1536] }
+                                    ]
+                                })
+                                .to_string(),
+                                (_, true, _) => serde_json::json!({
+                                    "embeddings": [
+                                        { "values": vec![0.2f32; 768] }
+                                    ]
+                                })
+                                .to_string(),
+                                (_, _, true) => serde_json::json!({
+                                    "embeddings": [
+                                        vec![0.3f32; 1024]
+                                    ]
+                                })
+                                .to_string(),
+                                _ => serde_json::json!({
+                                    "error": "unknown endpoint"
+                                })
+                                .to_string(),
+                            };
 
-                        let response = format!(
-                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                            response_body.len(),
-                            response_body
-                        );
-                        let _ = stream.write_all(response.as_bytes()).await;
-                    });
+                            let response = format!(
+                                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                                response_body.len(),
+                                response_body
+                            );
+                            let _ = stream.write_all(response.as_bytes()).await;
+                        });
+                    }
+                    Err(_) => {}
                 }
             }
         });
