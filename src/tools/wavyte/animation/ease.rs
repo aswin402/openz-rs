@@ -25,22 +25,16 @@ impl Ease {
             Self::Linear => t,
             Self::InQuad => t * t,
             Self::OutQuad => 1.0 - (1.0 - t) * (1.0 - t),
-            Self::InOutQuad => {
-                if t < 0.5 {
-                    2.0 * t * t
-                } else {
-                    1.0 - ((-2.0 * t + 2.0).powi(2) / 2.0)
-                }
-            }
+            Self::InOutQuad => match t < 0.5 {
+                true => 2.0 * t * t,
+                false => 1.0 - ((-2.0 * t + 2.0).powi(2) / 2.0),
+            },
             Self::InCubic => t * t * t,
             Self::OutCubic => 1.0 - (1.0 - t).powi(3),
-            Self::InOutCubic => {
-                if t < 0.5 {
-                    4.0 * t * t * t
-                } else {
-                    1.0 - ((-2.0 * t + 2.0).powi(3) / 2.0)
-                }
-            }
+            Self::InOutCubic => match t < 0.5 {
+                true => 4.0 * t * t * t,
+                false => 1.0 - ((-2.0 * t + 2.0).powi(3) / 2.0),
+            },
         }
     }
 }

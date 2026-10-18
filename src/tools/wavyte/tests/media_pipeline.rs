@@ -173,8 +173,9 @@ mod media_pipeline {
 
     #[test]
     fn video_render_is_consistent_between_sequential_and_parallel() {
-        if !ffmpeg_tools_available() {
-            return;
+        match ffmpeg_tools_available() {
+            true => {}
+            false => return,
         }
         let root = std::env::temp_dir().join(format!(
             "wavyte_media_pipeline_{}_{}",
@@ -220,8 +221,9 @@ mod media_pipeline {
 
     #[test]
     fn audio_manifest_and_mux_are_nonempty() {
-        if !ffmpeg_tools_available() {
-            return;
+        match ffmpeg_tools_available() {
+            true => {}
+            false => return,
         }
         let root = std::env::temp_dir().join(format!(
             "wavyte_media_mux_{}_{}",
@@ -270,8 +272,9 @@ mod media_pipeline {
 
     #[test]
     fn static_elision_still_works_when_audio_media_is_present() {
-        if !ffmpeg_tools_available() {
-            return;
+        match ffmpeg_tools_available() {
+            true => {}
+            false => return,
         }
         let root = std::env::temp_dir().join(format!(
             "wavyte_media_elision_{}_{}",

@@ -289,8 +289,9 @@ pub(crate) fn compile_frame_with_cache(
         // only (clip opacity + inline opacity effect).
         let opacity = ((node.opacity as f32) * fx.inline.opacity_mul).clamp(0.0, 1.0);
 
-        if opacity <= 0.0 {
-            continue;
+        match opacity <= 0.0 {
+            true => continue,
+            false => {}
         }
 
         let transform = node.transform * fx.inline.transform_post;
@@ -379,84 +380,77 @@ pub(crate) fn compile_frame_with_cache(
     while i < layers.len() {
         let layer = &layers[i];
 
-        let mut paired = false;
-        if i + 1 < layers.len() {
-            let next = &layers[i + 1];
+        let paired_op = layers.get(i + 1).and_then(|next| {
+            let out_tr = layer.transition_out.as_ref()?;
+            let in_tr = next.transition_in.as_ref()?;
+            let out_kind = parse_transition_cached(cache, out_tr).ok()?;
+            let in_kind = parse_transition_cached(cache, in_tr).ok()?;
+            let t_in = (in_tr.progress as f32).clamp(0.0, 1.0);
+            let t_out = (out_tr.progress as f32).clamp(0.0, 1.0);
 
-            if let (Some(out_tr), Some(in_tr)) =
-                (layer.transition_out.as_ref(), next.transition_in.as_ref())
-            {
-                let out_kind = parse_transition_cached(cache, out_tr).ok();
-                let in_kind = parse_transition_cached(cache, in_tr).ok();
-
-                if let (Some(out_kind), Some(in_kind)) = (out_kind, in_kind) {
-                    let t_in = (in_tr.progress as f32).clamp(0.0, 1.0);
-                    let t_out = (out_tr.progress as f32).clamp(0.0, 1.0);
-
-                    // Explicit v0.2 pairing rule: the Out and In edges must agree on progress
-                    // (same duration/ease and overlapping window).
-                    let progress_close = (t_in - t_out).abs() <= 0.05;
-
-                    if progress_close {
-                        match (out_kind, in_kind) {
-                            (TransitionKind::Crossfade, TransitionKind::Crossfade) => {
-                                composite_ops.push(CompositeOp::Crossfade {
-                                    a: layer.surface,
-                                    b: next.surface,
-                                    t: t_in,
-                                });
-                                paired = true;
-                            }
-                            (
-                                TransitionKind::Wipe {
-                                    dir: dir_a,
-                                    soft_edge: soft_a,
-                                },
-                                TransitionKind::Wipe {
-                                    dir: dir_b,
-                                    soft_edge: soft_b,
-                                },
-                            ) => {
-                                if dir_a == dir_b && (soft_a - soft_b).abs() <= 1e-6 {
-                                    composite_ops.push(CompositeOp::Wipe {
-                                        a: layer.surface,
-                                        b: next.surface,
-                                        t: t_in,
-                                        dir: dir_a,
-                                        soft_edge: soft_a,
-                                    });
-                                    paired = true;
-                                }
-                            }
-                            _ => {}
-                        }
+            // Explicit v0.2 pairing rule: the Out and In edges must agree on progress
+            // (same duration/ease and overlapping window).
+            let progress_close = (t_in - t_out).abs() <= 0.05;
+            progress_close
+                .then(|| match (out_kind, in_kind) {
+                    (TransitionKind::Crossfade, TransitionKind::Crossfade) => {
+                        Some(CompositeOp::Crossfade {
+                            a: layer.surface,
+                            b: next.surface,
+                            t: t_in,
+                        })
                     }
+                    (
+                        TransitionKind::Wipe {
+                            dir: dir_a,
+                            soft_edge: soft_a,
+                        },
+                        TransitionKind::Wipe {
+                            dir: dir_b,
+                            soft_edge: soft_b,
+                        },
+                    ) => (dir_a == dir_b && (soft_a - soft_b).abs() <= 1e-6).then_some(
+                        CompositeOp::Wipe {
+                            a: layer.surface,
+                            b: next.surface,
+                            t: t_in,
+                            dir: dir_a,
+                            soft_edge: soft_a,
+                        },
+                    ),
+                    _ => None,
+                })
+                .flatten()
+        });
+
+        match paired_op {
+            Some(op) => {
+                composite_ops.push(op);
+                i += 2;
+            }
+            None => {
+                let mut layer_opacity = 1.0f32;
+                match &layer.transition_in {
+                    Some(tr) => layer_opacity *= tr.progress as f32,
+                    None => {}
                 }
+                match &layer.transition_out {
+                    Some(tr) => layer_opacity *= (1.0 - tr.progress) as f32,
+                    None => {}
+                }
+                layer_opacity = layer_opacity.clamp(0.0, 1.0);
+
+                match layer_opacity > 0.0 {
+                    true => composite_ops.push(CompositeOp::Over {
+                        src: layer.surface,
+                        opacity: layer_opacity,
+                    }),
+                    false => {}
+                }
+
+                i += 1;
             }
         }
-
-        if paired {
-            i += 2;
-            continue;
-        }
-
-        let mut layer_opacity = 1.0f32;
-        if let Some(tr) = &layer.transition_in {
-            layer_opacity *= tr.progress as f32;
-        }
-        if let Some(tr) = &layer.transition_out {
-            layer_opacity *= (1.0 - tr.progress) as f32;
-        }
-        layer_opacity = layer_opacity.clamp(0.0, 1.0);
-
-        if layer_opacity > 0.0 {
-            composite_ops.push(CompositeOp::Over {
-                src: layer.surface,
-                opacity: layer_opacity,
-            });
-        }
-
-        i += 1;
     }
 
     Ok(RenderPlan {
@@ -483,29 +477,31 @@ fn parse_effect_cached(
         params_fingerprint: fingerprint_json_value(&effect.params),
     };
 
-    if let Some(bucket) = cache.effect_cache.get(&key) {
-        if let Some(found) = bucket
+    let cached = cache.effect_cache.get(&key).and_then(|bucket| {
+        bucket
             .iter()
             .find(|entry| entry.kind == effect.kind && entry.params == effect.params)
-        {
-            return Ok(found.parsed.clone());
+            .map(|found| found.parsed.clone())
+    });
+    match cached {
+        Some(found) => Ok(found),
+        None => {
+            let parsed = parse_effect(&crate::tools::wavyte::composition::model::EffectInstance {
+                kind: effect.kind.clone(),
+                params: effect.params.clone(),
+            })?;
+            cache
+                .effect_cache
+                .entry(key)
+                .or_default()
+                .push(EffectCacheEntry {
+                    kind: effect.kind.clone(),
+                    params: effect.params.clone(),
+                    parsed: parsed.clone(),
+                });
+            Ok(parsed)
         }
     }
-
-    let parsed = parse_effect(&crate::tools::wavyte::composition::model::EffectInstance {
-        kind: effect.kind.clone(),
-        params: effect.params.clone(),
-    })?;
-    cache
-        .effect_cache
-        .entry(key)
-        .or_default()
-        .push(EffectCacheEntry {
-            kind: effect.kind.clone(),
-            params: effect.params.clone(),
-            parsed: parsed.clone(),
-        });
-    Ok(parsed)
 }
 
 fn parse_transition_cached(
@@ -517,26 +513,28 @@ fn parse_transition_cached(
         params_fingerprint: fingerprint_json_value(&transition.params),
     };
 
-    if let Some(bucket) = cache.transition_cache.get(&key) {
-        if let Some(found) = bucket
+    let cached = cache.transition_cache.get(&key).and_then(|bucket| {
+        bucket
             .iter()
             .find(|entry| entry.kind == transition.kind && entry.params == transition.params)
-        {
-            return Ok(found.parsed.clone());
+            .map(|found| found.parsed.clone())
+    });
+    match cached {
+        Some(found) => Ok(found),
+        None => {
+            let parsed = parse_transition_kind_params(&transition.kind, &transition.params)?;
+            cache
+                .transition_cache
+                .entry(key)
+                .or_default()
+                .push(TransitionCacheEntry {
+                    kind: transition.kind.clone(),
+                    params: transition.params.clone(),
+                    parsed: parsed.clone(),
+                });
+            Ok(parsed)
         }
     }
-
-    let parsed = parse_transition_kind_params(&transition.kind, &transition.params)?;
-    cache
-        .transition_cache
-        .entry(key)
-        .or_default()
-        .push(TransitionCacheEntry {
-            kind: transition.kind.clone(),
-            params: transition.params.clone(),
-            parsed: parsed.clone(),
-        });
-    Ok(parsed)
 }
 
 fn hash_str64(value: &str) -> u64 {
@@ -564,18 +562,23 @@ fn hash_json_value_pair(a: &mut Fnv1a64, b: &mut Fnv1a64, v: &serde_json::Value)
         }
         serde_json::Value::Number(n) => {
             write_u8_pair(a, b, 2);
-            if let Some(i) = n.as_i64() {
-                write_u8_pair(a, b, 0);
-                write_i64_pair(a, b, i);
-            } else if let Some(u) = n.as_u64() {
-                write_u8_pair(a, b, 1);
-                write_u64_pair(a, b, u);
-            } else if let Some(f) = n.as_f64() {
-                write_u8_pair(a, b, 2);
-                write_u64_pair(a, b, f.to_bits());
-            } else {
-                write_u8_pair(a, b, 3);
-                write_str_pair(a, b, &n.to_string());
+            match (n.as_i64(), n.as_u64(), n.as_f64()) {
+                (Some(i), _, _) => {
+                    write_u8_pair(a, b, 0);
+                    write_i64_pair(a, b, i);
+                }
+                (None, Some(u), _) => {
+                    write_u8_pair(a, b, 1);
+                    write_u64_pair(a, b, u);
+                }
+                (None, None, Some(f)) => {
+                    write_u8_pair(a, b, 2);
+                    write_u64_pair(a, b, f.to_bits());
+                }
+                (None, None, None) => {
+                    write_u8_pair(a, b, 3);
+                    write_str_pair(a, b, &n.to_string());
+                }
             }
         }
         serde_json::Value::String(s) => {

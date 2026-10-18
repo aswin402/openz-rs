@@ -11,65 +11,69 @@ pub fn blur_rgba8_premul(
         .checked_mul(height as usize)
         .and_then(|v| v.checked_mul(4))
         .ok_or_else(|| WavyteError::evaluation("blur buffer size overflow"))?;
-    if src.len() != expected_len {
-        return Err(WavyteError::evaluation(
-            "blur_rgba8_premul expects src matching width*height*4",
-        ));
-    }
-    if radius == 0 {
-        return Ok(src.to_vec());
-    }
+    (src.len() == expected_len).then_some(()).ok_or_else(|| {
+        WavyteError::evaluation("blur_rgba8_premul expects src matching width*height*4")
+    })?;
+    match radius == 0 {
+        true => Ok(src.to_vec()),
+        false => {
+            let kernel = gaussian_kernel_q16(radius, sigma)?;
+            let mut tmp = vec![0u8; expected_len];
+            let mut out = vec![0u8; expected_len];
 
-    let kernel = gaussian_kernel_q16(radius, sigma)?;
-    let mut tmp = vec![0u8; expected_len];
-    let mut out = vec![0u8; expected_len];
-
-    horizontal_pass(src, &mut tmp, width, height, &kernel);
-    vertical_pass(&tmp, &mut out, width, height, &kernel);
-    Ok(out)
+            horizontal_pass(src, &mut tmp, width, height, &kernel);
+            vertical_pass(&tmp, &mut out, width, height, &kernel);
+            Ok(out)
+        }
+    }
 }
 
 fn gaussian_kernel_q16(radius: u32, sigma: f32) -> WavyteResult<Vec<u32>> {
-    if radius == 0 {
-        return Ok(vec![1 << 16]);
-    }
-    if !sigma.is_finite() || sigma <= 0.0 {
-        return Err(WavyteError::validation("blur sigma must be > 0"));
-    }
+    match radius == 0 {
+        true => Ok(vec![1 << 16]),
+        false => {
+            (sigma.is_finite() && sigma > 0.0)
+                .then_some(())
+                .ok_or_else(|| WavyteError::validation("blur sigma must be > 0"))?;
 
-    let r = radius as i32;
-    let mut weights_f = Vec::<f64>::with_capacity((2 * r + 1) as usize);
-    let mut sum = 0.0f64;
-    let sigma = sigma as f64;
-    let denom = 2.0 * sigma * sigma;
-    for i in -r..=r {
-        let x = i as f64;
-        let w = (-x * x / denom).exp();
-        weights_f.push(w);
-        sum += w;
-    }
-    if sum <= 0.0 {
-        return Err(WavyteError::evaluation("gaussian kernel sum is zero"));
-    }
+            let r = radius as i32;
+            let mut weights_f = Vec::<f64>::with_capacity((2 * r + 1) as usize);
+            let mut sum = 0.0f64;
+            let sigma = sigma as f64;
+            let denom = 2.0 * sigma * sigma;
+            for i in -r..=r {
+                let x = i as f64;
+                let w = (-x * x / denom).exp();
+                weights_f.push(w);
+                sum += w;
+            }
+            (sum > 0.0)
+                .then_some(())
+                .ok_or_else(|| WavyteError::evaluation("gaussian kernel sum is zero"))?;
 
-    let mut weights = Vec::<u32>::with_capacity(weights_f.len());
-    let mut acc: i64 = 0;
-    for &wf in &weights_f {
-        let q = ((wf / sum) * 65536.0).round() as i64;
-        let q = q.clamp(0, 65536);
-        weights.push(q as u32);
-        acc += q;
-    }
-    let target: i64 = 65536;
-    let delta = target - acc;
-    if delta != 0 {
-        let mid = weights.len() / 2;
-        let mid_val = i64::from(weights[mid]);
-        let new_mid = (mid_val + delta).clamp(0, 65536);
-        weights[mid] = new_mid as u32;
-    }
+            let mut weights = Vec::<u32>::with_capacity(weights_f.len());
+            let mut acc: i64 = 0;
+            for &wf in &weights_f {
+                let q = ((wf / sum) * 65536.0).round() as i64;
+                let q = q.clamp(0, 65536);
+                weights.push(q as u32);
+                acc += q;
+            }
+            let target: i64 = 65536;
+            let delta = target - acc;
+            match delta != 0 {
+                true => {
+                    let mid = weights.len() / 2;
+                    let mid_val = i64::from(weights[mid]);
+                    let new_mid = (mid_val + delta).clamp(0, 65536);
+                    weights[mid] = new_mid as u32;
+                }
+                false => {}
+            }
 
-    Ok(weights)
+            Ok(weights)
+        }
+    }
 }
 
 fn horizontal_pass(src: &[u8], dst: &mut [u8], width: u32, height: u32, k: &[u32]) {

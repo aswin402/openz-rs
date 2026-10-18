@@ -129,16 +129,21 @@ fn sample_scalar(s: &ProcScalar, fps: Fps, frame: u64, seed: u64) -> f64 {
             release,
         } => {
             let f = frame;
-            if attack > 0 && f < attack {
-                f as f64 / attack as f64
-            } else if decay > 0 && f < attack.saturating_add(decay) {
-                let u = (f - attack) as f64 / decay as f64;
-                1.0 + (sustain - 1.0) * u
-            } else if release > 0 && f < attack.saturating_add(decay).saturating_add(release) {
-                let u = (f - attack - decay) as f64 / release as f64;
-                sustain * (1.0 - u)
-            } else {
-                0.0
+            match (
+                attack > 0 && f < attack,
+                decay > 0 && f < attack.saturating_add(decay),
+                release > 0 && f < attack.saturating_add(decay).saturating_add(release),
+            ) {
+                (true, _, _) => f as f64 / attack as f64,
+                (false, true, _) => {
+                    let u = (f - attack) as f64 / decay as f64;
+                    1.0 + (sustain - 1.0) * u
+                }
+                (false, false, true) => {
+                    let u = (f - attack - decay) as f64 / release as f64;
+                    sustain * (1.0 - u)
+                }
+                (false, false, false) => 0.0,
             }
         }
         ProcScalar::Spring {

@@ -49,8 +49,9 @@ fn resolve_track_offsets(
     }
 
     let mut offsets = vec![Vec2::new(0.0, 0.0); track.clips.len()];
-    if track.layout_mode == LayoutMode::Absolute || track.clips.is_empty() {
-        return Ok(offsets);
+    match track.layout_mode == LayoutMode::Absolute || track.clips.is_empty() {
+        true => return Ok(offsets),
+        false => {}
     }
 
     let x0 = track.layout_padding.left;

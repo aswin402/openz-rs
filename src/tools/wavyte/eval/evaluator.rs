@@ -93,35 +93,37 @@ impl Evaluator {
         layout: &crate::tools::wavyte::LayoutOffsets,
         validate_comp: bool,
     ) -> WavyteResult<EvaluatedGraph> {
-        if validate_comp {
-            comp.validate()?;
+        match validate_comp {
+            true => comp.validate()?,
+            false => {}
         }
-        if frame.0 >= comp.duration.0 {
-            return Err(WavyteError::evaluation("frame is out of bounds"));
-        }
+        (frame.0 < comp.duration.0)
+            .then_some(())
+            .ok_or_else(|| WavyteError::evaluation("frame is out of bounds"))?;
 
         let mut nodes_with_key: Vec<((i32, usize, u64, String), EvaluatedClipNode)> = Vec::new();
 
         for (track_index, track) in comp.tracks.iter().enumerate() {
             for (clip_index, clip) in track.clips.iter().enumerate() {
-                if !clip.range.contains(frame) {
-                    continue;
+                match clip.range.contains(frame) {
+                    true => {
+                        let node = eval_clip(
+                            comp,
+                            clip,
+                            frame,
+                            track.z_base,
+                            layout.offset_for(track_index, clip_index),
+                        )?;
+                        let sort_key = (
+                            node.z,
+                            track_index,
+                            clip.range.start.0,
+                            node.clip_id.clone(),
+                        );
+                        nodes_with_key.push((sort_key, node));
+                    }
+                    false => {}
                 }
-
-                let node = eval_clip(
-                    comp,
-                    clip,
-                    frame,
-                    track.z_base,
-                    layout.offset_for(track_index, clip_index),
-                )?;
-                let sort_key = (
-                    node.z,
-                    track_index,
-                    clip.range.start.0,
-                    node.clip_id.clone(),
-                );
-                nodes_with_key.push((sort_key, node));
             }
         }
 
@@ -181,13 +183,12 @@ fn eval_clip(
 }
 
 fn resolve_effect(e: &EffectInstance) -> WavyteResult<ResolvedEffect> {
-    if e.kind.trim().is_empty() {
-        return Err(WavyteError::evaluation("effect kind must be non-empty"));
-    }
-    Ok(ResolvedEffect {
-        kind: e.kind.clone(),
-        params: e.params.clone(),
-    })
+    (!e.kind.trim().is_empty())
+        .then(|| ResolvedEffect {
+            kind: e.kind.clone(),
+            params: e.params.clone(),
+        })
+        .ok_or_else(|| WavyteError::evaluation("effect kind must be non-empty"))
 }
 
 fn resolve_transition_in(clip: &Clip, frame: FrameIndex) -> Option<ResolvedTransition> {
@@ -219,14 +220,8 @@ fn resolve_transition_window(
     edge_frame: FrameIndex,
     edge: TransitionEdge,
 ) -> Option<ResolvedTransition> {
-    if spec.duration_frames == 0 {
-        return None;
-    }
-
     let clip_len = clip_range.len_frames();
-    if clip_len == 0 {
-        return None;
-    }
+    (spec.duration_frames > 0 && clip_len > 0).then_some(())?;
     let dur = spec.duration_frames.min(clip_len);
 
     let (window_start, window_end_excl) = match edge {
@@ -242,16 +237,15 @@ fn resolve_transition_window(
         }
     };
 
-    if !(window_start.0 <= frame.0 && frame.0 < window_end_excl.0) {
-        return None;
-    }
+    (window_start.0 <= frame.0 && frame.0 < window_end_excl.0).then_some(())?;
 
     let denom = dur.saturating_sub(1);
-    let t = if denom == 0 {
-        1.0
-    } else {
-        let offset = frame.0 - window_start.0;
-        (offset as f64) / (denom as f64)
+    let t = match denom == 0 {
+        true => 1.0,
+        false => {
+            let offset = frame.0 - window_start.0;
+            (offset as f64) / (denom as f64)
+        }
     };
     let progress = spec.ease.apply(t).clamp(0.0, 1.0);
 

@@ -109,8 +109,9 @@ fn compile_path_emits_fillpath_without_asset_cache() {
     let eval = Evaluator::eval_frame(&comp, FrameIndex(1)).unwrap();
     let store = store_for(&comp);
     let plan = compile_frame(&comp, &eval, &store).unwrap();
-    let Pass::Scene(scene) = &plan.passes[0] else {
-        panic!("expected Scene pass");
+    let scene = match &plan.passes[0] {
+        Pass::Scene(scene) => scene,
+        _ => panic!("expected Scene pass"),
     };
     assert_eq!(scene.ops.len(), 1);
     match &scene.ops[0] {
@@ -178,14 +179,15 @@ fn compile_applies_inline_effects_to_opacity_and_transform() {
     let eval = Evaluator::eval_frame(&comp, FrameIndex(0)).unwrap();
     let store = store_for(&comp);
     let plan = compile_frame(&comp, &eval, &store).unwrap();
-    let Pass::Scene(scene) = &plan.passes[0] else {
-        panic!("expected Scene pass");
+    let scene = match &plan.passes[0] {
+        Pass::Scene(scene) => scene,
+        _ => panic!("expected Scene pass"),
     };
-    let DrawOp::FillPath {
-        transform, opacity, ..
-    } = &scene.ops[0]
-    else {
-        panic!("expected FillPath");
+    let (transform, opacity) = match &scene.ops[0] {
+        DrawOp::FillPath {
+            transform, opacity, ..
+        } => (transform, opacity),
+        _ => panic!("expected FillPath"),
     };
     assert_eq!(*opacity, 0.5);
 
@@ -356,8 +358,9 @@ fn compile_pairs_crossfade_into_single_composite_op() {
     let eval = Evaluator::eval_frame(&comp, FrameIndex(8)).unwrap();
     let store = store_for(&comp);
     let plan = compile_frame(&comp, &eval, &store).unwrap();
-    let Pass::Composite(p) = plan.passes.last().unwrap() else {
-        panic!("expected Composite pass");
+    let p = match plan.passes.last().unwrap() {
+        Pass::Composite(p) => p,
+        _ => panic!("expected Composite pass"),
     };
     assert_eq!(p.ops.len(), 1);
 
@@ -442,8 +445,9 @@ fn compile_pairs_wipe_into_single_composite_op() {
     let eval = Evaluator::eval_frame(&comp, FrameIndex(8)).unwrap();
     let store = store_for(&comp);
     let plan = compile_frame(&comp, &eval, &store).unwrap();
-    let Pass::Composite(p) = plan.passes.last().unwrap() else {
-        panic!("expected Composite pass");
+    let p = match plan.passes.last().unwrap() {
+        Pass::Composite(p) => p,
+        _ => panic!("expected Composite pass"),
     };
     assert_eq!(p.ops.len(), 1);
 
@@ -542,24 +546,19 @@ fn compile_does_not_pair_transitions_when_progress_is_not_aligned() {
     let eval = Evaluator::eval_frame(&comp, FrameIndex(8)).unwrap();
     let store = store_for(&comp);
     let plan = compile_frame(&comp, &eval, &store).unwrap();
-    let Pass::Composite(p) = plan.passes.last().unwrap() else {
-        panic!("expected Composite pass");
+    let p = match plan.passes.last().unwrap() {
+        Pass::Composite(p) => p,
+        _ => panic!("expected Composite pass"),
     };
     assert_eq!(p.ops.len(), 2);
 
-    let CompositeOp::Over {
-        src: src0,
-        opacity: op0,
-    } = p.ops[0]
-    else {
-        panic!("expected Over op 0");
+    let (src0, op0) = match p.ops[0] {
+        CompositeOp::Over { src, opacity } => (src, opacity),
+        _ => panic!("expected Over op 0"),
     };
-    let CompositeOp::Over {
-        src: src1,
-        opacity: op1,
-    } = p.ops[1]
-    else {
-        panic!("expected Over op 1");
+    let (src1, op1) = match p.ops[1] {
+        CompositeOp::Over { src, opacity } => (src, opacity),
+        _ => panic!("expected Over op 1"),
     };
 
     assert_eq!(src0, SurfaceId(1));

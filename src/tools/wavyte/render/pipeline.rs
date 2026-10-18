@@ -94,8 +94,9 @@ pub fn render_frames_with_stats(
     assets: &PreparedAssetStore,
     threading: &RenderThreading,
 ) -> WavyteResult<(Vec<FrameRGBA>, RenderStats)> {
-    if range.is_empty() {
-        return Err(WavyteError::validation("render range must be non-empty"));
+    match range.is_empty() {
+        true => return Err(WavyteError::validation("render range must be non-empty")),
+        false => {}
     }
     comp.validate()?;
 
@@ -106,16 +107,22 @@ pub fn render_frames_with_stats(
     let layout_offsets = crate::tools::wavyte::resolve_layout_offsets(comp, assets)?;
     let mut compile_cache = CompileCache::default();
 
-    if !threading.parallel {
-        for f in range.start.0..range.end.0 {
-            let eval =
-                Evaluator::eval_frame_with_layout_unchecked(comp, FrameIndex(f), &layout_offsets)?;
-            let plan = compile_frame_with_cache(comp, &eval, assets, &mut compile_cache)?;
-            out.push(execute_plan(backend, &plan, assets)?);
-            stats.frames_total += 1;
-            stats.frames_rendered += 1;
+    match threading.parallel {
+        false => {
+            for f in range.start.0..range.end.0 {
+                let eval = Evaluator::eval_frame_with_layout_unchecked(
+                    comp,
+                    FrameIndex(f),
+                    &layout_offsets,
+                )?;
+                let plan = compile_frame_with_cache(comp, &eval, assets, &mut compile_cache)?;
+                out.push(execute_plan(backend, &plan, assets)?);
+                stats.frames_total += 1;
+                stats.frames_rendered += 1;
+            }
+            return Ok((out, stats));
         }
-        return Ok((out, stats));
+        true => {}
     }
 
     let worker_settings = backend.worker_render_settings().ok_or_else(|| {
@@ -206,53 +213,64 @@ pub fn render_to_mp4_with_stats(
     assets: &PreparedAssetStore,
 ) -> WavyteResult<RenderStats> {
     comp.validate()?;
-    if opts.range.end.0 > comp.duration.0 {
-        return Err(WavyteError::validation(
-            "render_to_mp4 range must be within composition duration",
-        ));
+    match opts.range.end.0 > comp.duration.0 {
+        true => {
+            return Err(WavyteError::validation(
+                "render_to_mp4 range must be within composition duration",
+            ));
+        }
+        false => {}
     }
-    if opts.range.is_empty() {
-        return Err(WavyteError::validation(
-            "render_to_mp4 range must be non-empty",
-        ));
+    match opts.range.is_empty() {
+        true => {
+            return Err(WavyteError::validation(
+                "render_to_mp4 range must be non-empty",
+            ));
+        }
+        false => {}
     }
 
-    let fps = if comp.fps.den == 1 {
-        comp.fps.num
-    } else {
-        return Err(WavyteError::validation(
-            "render_to_mp4 currently requires integer fps (fps.den == 1)",
-        ));
+    let fps = match comp.fps.den == 1 {
+        true => comp.fps.num,
+        false => {
+            return Err(WavyteError::validation(
+                "render_to_mp4 currently requires integer fps (fps.den == 1)",
+            ));
+        }
     };
 
     let out_path = out_path.into();
-    if !crate::tools::wavyte::encode::ffmpeg::is_ffmpeg_on_path() {
-        return Err(WavyteError::evaluation(
-            "ffmpeg is required for MP4 rendering, but was not found on PATH",
-        ));
+    match crate::tools::wavyte::encode::ffmpeg::is_ffmpeg_on_path() {
+        true => {}
+        false => {
+            return Err(WavyteError::evaluation(
+                "ffmpeg is required for MP4 rendering, but was not found on PATH",
+            ));
+        }
     }
 
     let mut audio_tmp = TempFileGuard(None);
     let audio_manifest = crate::tools::wavyte::build_audio_manifest(comp, assets, opts.range)?;
-    let audio_cfg = if audio_manifest.segments.is_empty() {
-        None
-    } else {
-        let mixed = crate::tools::wavyte::mix_manifest(&audio_manifest);
-        let path = std::env::temp_dir().join(format!(
-            "wavyte_audio_mix_{}_{}.f32le",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        crate::tools::wavyte::write_mix_to_f32le_file(&mixed, &path)?;
-        audio_tmp.0 = Some(path.clone());
-        Some(crate::tools::wavyte::encode::ffmpeg::AudioInputConfig {
-            path,
-            sample_rate: audio_manifest.sample_rate,
-            channels: audio_manifest.channels,
-        })
+    let audio_cfg = match audio_manifest.segments.is_empty() {
+        true => None,
+        false => {
+            let mixed = crate::tools::wavyte::mix_manifest(&audio_manifest);
+            let path = std::env::temp_dir().join(format!(
+                "wavyte_audio_mix_{}_{}.f32le",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+            ));
+            crate::tools::wavyte::write_mix_to_f32le_file(&mixed, &path)?;
+            audio_tmp.0 = Some(path.clone());
+            Some(crate::tools::wavyte::encode::ffmpeg::AudioInputConfig {
+                path,
+                sample_rate: audio_manifest.sample_rate,
+                channels: audio_manifest.channels,
+            })
+        }
     };
 
     let cfg = crate::tools::wavyte::encode::ffmpeg::EncodeConfig {
@@ -272,13 +290,16 @@ pub fn render_to_mp4_with_stats(
     let mut maybe_worker_settings = None;
     let layout_offsets = crate::tools::wavyte::resolve_layout_offsets(comp, assets)?;
     let mut compile_cache = CompileCache::default();
-    if opts.threading.parallel {
-        maybe_pool = Some(build_thread_pool(opts.threading.threads)?);
-        maybe_worker_settings = Some(backend.worker_render_settings().ok_or_else(|| {
-            WavyteError::evaluation(
-                "parallel render_to_mp4 requires backend worker settings support (CpuBackend)",
-            )
-        })?);
+    match opts.threading.parallel {
+        true => {
+            maybe_pool = Some(build_thread_pool(opts.threading.threads)?);
+            maybe_worker_settings = Some(backend.worker_render_settings().ok_or_else(|| {
+                WavyteError::evaluation(
+                    "parallel render_to_mp4 requires backend worker settings support (CpuBackend)",
+                )
+            })?);
+        }
+        false => {}
     }
 
     let mut chunk_start = opts.range.start.0;
@@ -287,8 +308,8 @@ pub fn render_to_mp4_with_stats(
         let chunk = FrameRange::new(FrameIndex(chunk_start), FrameIndex(chunk_end))
             .map_err(|e| WavyteError::evaluation(format!("invalid chunk range: {e}")))?;
 
-        let chunk_out = if opts.threading.parallel {
-            render_chunk_parallel_cpu_unique(
+        let chunk_out = match opts.threading.parallel {
+            true => render_chunk_parallel_cpu_unique(
                 comp,
                 chunk,
                 assets,
@@ -298,21 +319,22 @@ pub fn render_to_mp4_with_stats(
                 &opts.threading,
                 maybe_pool.as_ref().expect("pool present when parallel"),
                 &layout_offsets,
-            )?
-        } else {
-            let (frames, stats_chunk) = render_chunk_sequential(
-                comp,
-                chunk,
-                backend,
-                assets,
-                &layout_offsets,
-                &mut compile_cache,
-            )?;
-            let frame_count = frames.len();
-            ChunkParallelOut {
-                unique_frames: frames,
-                frame_to_unique: (0..frame_count).collect(),
-                stats: stats_chunk,
+            )?,
+            false => {
+                let (frames, stats_chunk) = render_chunk_sequential(
+                    comp,
+                    chunk,
+                    backend,
+                    assets,
+                    &layout_offsets,
+                    &mut compile_cache,
+                )?;
+                let frame_count = frames.len();
+                ChunkParallelOut {
+                    unique_frames: frames,
+                    frame_to_unique: (0..frame_count).collect(),
+                    stats: stats_chunk,
+                }
             }
         };
 
@@ -387,23 +409,27 @@ fn render_chunk_parallel_cpu_unique(
 
     let mut unique_indices = Vec::<usize>::with_capacity(evals.len());
     let mut frame_to_unique = Vec::<usize>::with_capacity(evals.len());
-    if threading.static_frame_elision {
-        let mut first = HashMap::<FrameFingerprint, usize>::new();
-        for (idx, eval) in evals.iter().enumerate() {
-            let fingerprint = fingerprint_eval(eval);
-            if let Some(existing) = first.get(&fingerprint).copied() {
-                frame_to_unique.push(existing);
-            } else {
-                let slot = unique_indices.len();
-                unique_indices.push(idx);
-                first.insert(fingerprint, slot);
-                frame_to_unique.push(slot);
+    match threading.static_frame_elision {
+        true => {
+            let mut first = HashMap::<FrameFingerprint, usize>::new();
+            for (idx, eval) in evals.iter().enumerate() {
+                let fingerprint = fingerprint_eval(eval);
+                match first.get(&fingerprint).copied() {
+                    Some(existing) => frame_to_unique.push(existing),
+                    None => {
+                        let slot = unique_indices.len();
+                        unique_indices.push(idx);
+                        first.insert(fingerprint, slot);
+                        frame_to_unique.push(slot);
+                    }
+                }
             }
         }
-    } else {
-        for idx in 0..evals.len() {
-            frame_to_unique.push(idx);
-            unique_indices.push(idx);
+        false => {
+            for idx in 0..evals.len() {
+                frame_to_unique.push(idx);
+                unique_indices.push(idx);
+            }
         }
     }
 
@@ -475,21 +501,24 @@ fn render_chunk_parallel_cpu(
 
     let mut out = Vec::<FrameRGBA>::with_capacity(chunk_out.frame_to_unique.len());
     for u in chunk_out.frame_to_unique {
-        if remaining[u] == 1 {
-            out.push(unique_frames[u].take().ok_or_else(|| {
-                WavyteError::evaluation("internal error: unique frame missing at final take")
-            })?);
-        } else {
-            out.push(
-                unique_frames[u]
-                    .as_ref()
-                    .ok_or_else(|| {
-                        WavyteError::evaluation(
-                            "internal error: unique frame missing during clone path",
-                        )
-                    })?
-                    .clone(),
-            );
+        match remaining[u] == 1 {
+            true => {
+                out.push(unique_frames[u].take().ok_or_else(|| {
+                    WavyteError::evaluation("internal error: unique frame missing at final take")
+                })?);
+            }
+            false => {
+                out.push(
+                    unique_frames[u]
+                        .as_ref()
+                        .ok_or_else(|| {
+                            WavyteError::evaluation(
+                                "internal error: unique frame missing during clone path",
+                            )
+                        })?
+                        .clone(),
+                );
+            }
         }
         remaining[u] -= 1;
     }
@@ -497,15 +526,21 @@ fn render_chunk_parallel_cpu(
 }
 
 fn build_thread_pool(threads: Option<usize>) -> WavyteResult<rayon::ThreadPool> {
-    if threads == Some(0) {
-        return Err(WavyteError::validation(
-            "render threading 'threads' must be >= 1 when set",
-        ));
+    match threads == Some(0) {
+        true => {
+            return Err(WavyteError::validation(
+                "render threading 'threads' must be >= 1 when set",
+            ));
+        }
+        false => {}
     }
 
     let mut builder = rayon::ThreadPoolBuilder::new();
-    if let Some(n) = threads {
-        builder = builder.num_threads(n);
+    match threads {
+        Some(n) => {
+            builder = builder.num_threads(n);
+        }
+        None => {}
     }
     builder
         .build()
@@ -513,10 +548,9 @@ fn build_thread_pool(threads: Option<usize>) -> WavyteResult<rayon::ThreadPool> 
 }
 
 fn normalized_chunk_size(chunk_size: usize) -> u64 {
-    if chunk_size == 0 {
-        1
-    } else {
-        chunk_size as u64
+    match chunk_size {
+        0 => 1,
+        _ => chunk_size as u64,
     }
 }
 
@@ -524,8 +558,11 @@ struct TempFileGuard(Option<std::path::PathBuf>);
 
 impl Drop for TempFileGuard {
     fn drop(&mut self) {
-        if let Some(path) = self.0.take() {
-            let _ = std::fs::remove_file(path);
+        match self.0.take() {
+            Some(path) => {
+                let _ = std::fs::remove_file(path);
+            }
+            None => {}
         }
     }
 }

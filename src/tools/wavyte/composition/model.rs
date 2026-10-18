@@ -310,93 +310,111 @@ pub struct TransitionSpec {
 impl Composition {
     /// Validate composition invariants and asset/clip references.
     pub fn validate(&self) -> WavyteResult<()> {
-        if self.fps.num == 0 || self.fps.den == 0 {
-            return Err(WavyteError::validation("fps must have num>0 and den>0"));
-        }
-        if self.canvas.width == 0 || self.canvas.height == 0 {
-            return Err(WavyteError::validation("canvas width/height must be > 0"));
-        }
-        if self.duration.0 == 0 {
-            return Err(WavyteError::validation("duration must be > 0 frames"));
-        }
+        (self.fps.num > 0 && self.fps.den > 0)
+            .then_some(())
+            .ok_or_else(|| WavyteError::validation("fps must have num>0 and den>0"))?;
+        (self.canvas.width > 0 && self.canvas.height > 0)
+            .then_some(())
+            .ok_or_else(|| WavyteError::validation("canvas width/height must be > 0"))?;
+        (self.duration.0 > 0)
+            .then_some(())
+            .ok_or_else(|| WavyteError::validation("duration must be > 0 frames"))?;
 
         for track in &self.tracks {
-            if !track.layout_gap_px.is_finite() || track.layout_gap_px < 0.0 {
-                return Err(WavyteError::validation(
-                    "track layout_gap_px must be finite and >= 0",
-                ));
-            }
+            (track.layout_gap_px.is_finite() && track.layout_gap_px >= 0.0)
+                .then_some(())
+                .ok_or_else(|| {
+                    WavyteError::validation("track layout_gap_px must be finite and >= 0")
+                })?;
             for (name, value) in [
                 ("left", track.layout_padding.left),
                 ("right", track.layout_padding.right),
                 ("top", track.layout_padding.top),
                 ("bottom", track.layout_padding.bottom),
             ] {
-                if !value.is_finite() || value < 0.0 {
-                    return Err(WavyteError::validation(format!(
-                        "track layout_padding.{name} must be finite and >= 0",
-                    )));
-                }
+                (value.is_finite() && value >= 0.0)
+                    .then_some(())
+                    .ok_or_else(|| {
+                        WavyteError::validation(format!(
+                            "track layout_padding.{name} must be finite and >= 0",
+                        ))
+                    })?;
             }
-            if track.layout_mode == LayoutMode::Grid && track.layout_grid_columns == 0 {
-                return Err(WavyteError::validation(
-                    "track layout_grid_columns must be > 0 for Grid layout",
-                ));
-            }
+            (!(track.layout_mode == LayoutMode::Grid && track.layout_grid_columns == 0))
+                .then_some(())
+                .ok_or_else(|| {
+                    WavyteError::validation(
+                        "track layout_grid_columns must be > 0 for Grid layout",
+                    )
+                })?;
 
             for clip in &track.clips {
-                if !self.assets.contains_key(&clip.asset) {
-                    return Err(WavyteError::validation(format!(
-                        "clip '{}' references missing asset key '{}'",
-                        clip.id, clip.asset
-                    )));
-                }
-                if clip.range.start.0 > clip.range.end.0 {
-                    return Err(WavyteError::validation(format!(
-                        "clip '{}' has invalid range (start > end)",
-                        clip.id
-                    )));
-                }
-                if clip.range.end.0 > self.duration.0 {
-                    return Err(WavyteError::validation(format!(
-                        "clip '{}' range exceeds composition duration",
-                        clip.id
-                    )));
-                }
+                self.assets
+                    .contains_key(&clip.asset)
+                    .then_some(())
+                    .ok_or_else(|| {
+                        WavyteError::validation(format!(
+                            "clip '{}' references missing asset key '{}'",
+                            clip.id, clip.asset
+                        ))
+                    })?;
+                (clip.range.start.0 <= clip.range.end.0)
+                    .then_some(())
+                    .ok_or_else(|| {
+                        WavyteError::validation(format!(
+                            "clip '{}' has invalid range (start > end)",
+                            clip.id
+                        ))
+                    })?;
+                (clip.range.end.0 <= self.duration.0)
+                    .then_some(())
+                    .ok_or_else(|| {
+                        WavyteError::validation(format!(
+                            "clip '{}' range exceeds composition duration",
+                            clip.id
+                        ))
+                    })?;
 
                 clip.props.opacity.validate()?;
                 clip.props.transform.validate()?;
 
-                if let Some(tr) = &clip.transition_in {
-                    tr.validate()?;
+                match &clip.transition_in {
+                    Some(tr) => tr.validate()?,
+                    None => {}
                 }
-                if let Some(tr) = &clip.transition_out {
-                    tr.validate()?;
+                match &clip.transition_out {
+                    Some(tr) => tr.validate()?,
+                    None => {}
                 }
             }
         }
 
         for (key, asset) in &self.assets {
-            if key.trim().is_empty() {
-                return Err(WavyteError::validation("asset key must be non-empty"));
-            }
+            (!key.trim().is_empty())
+                .then_some(())
+                .ok_or_else(|| WavyteError::validation("asset key must be non-empty"))?;
             match asset {
                 Asset::Text(a) => {
-                    if a.text.trim().is_empty() {
-                        return Err(WavyteError::validation("text asset text must be non-empty"));
-                    }
+                    (!a.text.trim().is_empty())
+                        .then_some(())
+                        .ok_or_else(|| {
+                            WavyteError::validation("text asset text must be non-empty")
+                        })?;
                     validate_rel_source(&a.font_source, "text asset font_source")?;
-                    if !a.size_px.is_finite() || a.size_px <= 0.0 {
-                        return Err(WavyteError::validation(
-                            "text asset size_px must be finite and > 0",
-                        ));
-                    }
-                    if let Some(w) = a.max_width_px {
-                        if !w.is_finite() || w <= 0.0 {
-                            return Err(WavyteError::validation(
-                                "text asset max_width_px must be finite and > 0 when set",
-                            ));
+                    (a.size_px.is_finite() && a.size_px > 0.0)
+                        .then_some(())
+                        .ok_or_else(|| {
+                            WavyteError::validation("text asset size_px must be finite and > 0")
+                        })?;
+                    match a.max_width_px {
+                        Some(w) => {
+                            (w.is_finite() && w > 0.0).then_some(()).ok_or_else(|| {
+                                WavyteError::validation(
+                                    "text asset max_width_px must be finite and > 0 when set",
+                                )
+                            })?;
                         }
+                        None => {}
                     }
                 }
                 Asset::Svg(a) => validate_rel_source(&a.source, "svg asset source")?,
@@ -426,11 +444,11 @@ impl Composition {
                     )?;
                 }
                 Asset::Path(a) => {
-                    if a.svg_path_d.trim().is_empty() {
-                        return Err(WavyteError::validation(
-                            "path asset svg_path_d must be non-empty",
-                        ));
-                    }
+                    (!a.svg_path_d.trim().is_empty())
+                        .then_some(())
+                        .ok_or_else(|| {
+                            WavyteError::validation("path asset svg_path_d must be non-empty")
+                        })?;
                 }
             }
         }
@@ -440,25 +458,16 @@ impl Composition {
 }
 
 fn validate_rel_source(source: &str, field: &str) -> WavyteResult<()> {
-    if source.trim().is_empty() {
-        return Err(WavyteError::validation(format!(
-            "{field} must be non-empty"
-        )));
-    }
+    (!source.trim().is_empty())
+        .then_some(())
+        .ok_or_else(|| WavyteError::validation(format!("{field} must be non-empty")))?;
     let s = source.replace('\\', "/");
-    if s.starts_with('/') {
-        return Err(WavyteError::validation(format!(
-            "{field} must be a relative path"
-        )));
-    }
-    for part in s.split('/') {
-        if part == ".." {
-            return Err(WavyteError::validation(format!(
-                "{field} must not contain '..'"
-            )));
-        }
-    }
-    Ok(())
+    (!s.starts_with('/'))
+        .then_some(())
+        .ok_or_else(|| WavyteError::validation(format!("{field} must be a relative path")))?;
+    (!s.split('/').any(|part| part == ".."))
+        .then_some(())
+        .ok_or_else(|| WavyteError::validation(format!("{field} must not contain '..'")))
 }
 
 fn validate_media_controls(
@@ -470,37 +479,38 @@ fn validate_media_controls(
     fade_out_sec: f64,
     kind: &str,
 ) -> WavyteResult<()> {
-    if !trim_start_sec.is_finite() || trim_start_sec < 0.0 {
-        return Err(WavyteError::validation(format!(
-            "{kind} trim_start_sec must be finite and >= 0",
-        )));
-    }
-    if let Some(end) = trim_end_sec {
-        if !end.is_finite() || end <= trim_start_sec {
-            return Err(WavyteError::validation(format!(
-                "{kind} trim_end_sec must be finite and > trim_start_sec",
-            )));
+    (trim_start_sec.is_finite() && trim_start_sec >= 0.0)
+        .then_some(())
+        .ok_or_else(|| {
+            WavyteError::validation(format!("{kind} trim_start_sec must be finite and >= 0"))
+        })?;
+    match trim_end_sec {
+        Some(end) => {
+            (end.is_finite() && end > trim_start_sec)
+                .then_some(())
+                .ok_or_else(|| {
+                    WavyteError::validation(format!(
+                        "{kind} trim_end_sec must be finite and > trim_start_sec",
+                    ))
+                })?;
         }
+        None => {}
     }
-    if !playback_rate.is_finite() || playback_rate <= 0.0 {
-        return Err(WavyteError::validation(format!(
-            "{kind} playback_rate must be finite and > 0",
-        )));
-    }
-    if !volume.is_finite() || volume < 0.0 {
-        return Err(WavyteError::validation(format!(
-            "{kind} volume must be finite and >= 0",
-        )));
-    }
-    if !fade_in_sec.is_finite() || fade_in_sec < 0.0 {
-        return Err(WavyteError::validation(format!(
-            "{kind} fade_in_sec must be finite and >= 0",
-        )));
-    }
-    if !fade_out_sec.is_finite() || fade_out_sec < 0.0 {
-        return Err(WavyteError::validation(format!(
-            "{kind} fade_out_sec must be finite and >= 0",
-        )));
+    (playback_rate.is_finite() && playback_rate > 0.0)
+        .then_some(())
+        .ok_or_else(|| {
+            WavyteError::validation(format!("{kind} playback_rate must be finite and > 0"))
+        })?;
+    for (field, value) in [
+        ("volume", volume),
+        ("fade_in_sec", fade_in_sec),
+        ("fade_out_sec", fade_out_sec),
+    ] {
+        (value.is_finite() && value >= 0.0)
+            .then_some(())
+            .ok_or_else(|| {
+                WavyteError::validation(format!("{kind} {field} must be finite and >= 0"))
+            })?;
     }
     Ok(())
 }
@@ -508,20 +518,17 @@ fn validate_media_controls(
 impl TransitionSpec {
     /// Validate transition payload invariants.
     pub fn validate(&self) -> WavyteResult<()> {
-        if self.kind.trim().is_empty() {
-            return Err(WavyteError::validation("transition kind must be non-empty"));
-        }
-        if self.duration_frames == 0 {
-            return Err(WavyteError::validation(
-                "transition duration_frames must be > 0",
-            ));
-        }
-        if !(self.params.is_null() || self.params.is_object()) {
-            return Err(WavyteError::validation(
-                "transition params must be an object when set",
-            ));
-        }
-        Ok(())
+        (!self.kind.trim().is_empty())
+            .then_some(())
+            .ok_or_else(|| WavyteError::validation("transition kind must be non-empty"))?;
+        (self.duration_frames > 0)
+            .then_some(())
+            .ok_or_else(|| WavyteError::validation("transition duration_frames must be > 0"))?;
+        (self.params.is_null() || self.params.is_object())
+            .then_some(())
+            .ok_or_else(|| {
+                WavyteError::validation("transition params must be an object when set")
+            })
     }
 }
 

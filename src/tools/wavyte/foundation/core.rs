@@ -20,10 +20,9 @@ pub struct FrameRange {
 impl FrameRange {
     /// Create a validated range with `start <= end`.
     pub fn new(start: FrameIndex, end: FrameIndex) -> WavyteResult<Self> {
-        if start.0 > end.0 {
-            return Err(WavyteError::validation("FrameRange start must be <= end"));
-        }
-        Ok(Self { start, end })
+        (start.0 <= end.0)
+            .then_some(Self { start, end })
+            .ok_or_else(|| WavyteError::validation("FrameRange start must be <= end"))
     }
 
     /// Number of frames contained in the range.
@@ -45,20 +44,21 @@ impl FrameRange {
     ///
     /// Empty ranges clamp to `start`.
     pub fn clamp(self, f: FrameIndex) -> FrameIndex {
-        if self.is_empty() {
-            return self.start;
+        match self.is_empty() {
+            true => self.start,
+            false => {
+                let max_inclusive = self.end.0.saturating_sub(1);
+                FrameIndex(f.0.clamp(self.start.0, max_inclusive))
+            }
         }
-        let max_inclusive = self.end.0.saturating_sub(1);
-        FrameIndex(f.0.clamp(self.start.0, max_inclusive))
     }
 
     /// Shift both bounds by `delta` frames using saturating arithmetic.
     pub fn shift(self, delta: i64) -> Self {
         fn shift_idx(v: u64, delta: i64) -> u64 {
-            if delta >= 0 {
-                v.saturating_add(delta as u64)
-            } else {
-                v.saturating_sub(delta.unsigned_abs())
+            match delta >= 0 {
+                true => v.saturating_add(delta as u64),
+                false => v.saturating_sub(delta.unsigned_abs()),
             }
         }
 
@@ -81,13 +81,12 @@ pub struct Fps {
 impl Fps {
     /// Create a validated FPS value.
     pub fn new(num: u32, den: u32) -> WavyteResult<Self> {
-        if den == 0 {
-            return Err(WavyteError::validation("Fps den must be > 0"));
-        }
-        if num == 0 {
-            return Err(WavyteError::validation("Fps num must be > 0"));
-        }
-        Ok(Self { num, den })
+        (den > 0)
+            .then_some(())
+            .ok_or_else(|| WavyteError::validation("Fps den must be > 0"))?;
+        (num > 0)
+            .then_some(Self { num, den })
+            .ok_or_else(|| WavyteError::validation("Fps num must be > 0"))
     }
 
     /// Convert to floating-point FPS.

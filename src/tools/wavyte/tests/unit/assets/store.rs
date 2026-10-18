@@ -52,8 +52,9 @@ fn prepare_path_assets_without_external_io() {
     let store = PreparedAssetStore::prepare(&comp, ".").unwrap();
     let id = store.id_for_key("p0").unwrap();
     let prepared = store.get(id).unwrap();
-    let PreparedAsset::Path(p) = prepared else {
-        panic!("expected prepared path");
+    let p = match prepared {
+        PreparedAsset::Path(p) => p,
+        _ => panic!("expected prepared path"),
     };
     assert!(!p.path.is_empty());
 }
@@ -61,8 +62,9 @@ fn prepare_path_assets_without_external_io() {
 #[test]
 fn text_layout_smoke_with_local_font_if_present() {
     let font_path = std::path::Path::new("assets/PlayfairDisplay.ttf");
-    let Ok(font_bytes) = std::fs::read(font_path) else {
-        return;
+    let font_bytes = match std::fs::read(font_path) {
+        Ok(b) => b,
+        Err(_) => return,
     };
 
     let mut engine = TextLayoutEngine::new();
@@ -127,8 +129,9 @@ fn prepare_single_image_asset() {
     let store = PreparedAssetStore::prepare(&comp, &tmp).unwrap();
     let id = store.id_for_key("img").unwrap();
     let prepared = store.get(id).unwrap();
-    let PreparedAsset::Image(p) = prepared else {
-        panic!("expected prepared image");
+    let p = match prepared {
+        PreparedAsset::Image(p) => p,
+        _ => panic!("expected prepared image"),
     };
     assert_eq!(p.width, 1);
     assert_eq!(p.height, 1);

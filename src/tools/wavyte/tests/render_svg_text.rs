@@ -121,8 +121,9 @@ mod svg_text {
     fn assert_svg_fixture_fontdb_contains_inconsolata(assets: &PreparedAssetStore) {
         let id = assets.id_for_key("s0").unwrap();
         let prepared = assets.get(id).unwrap();
-        let wavyte::PreparedAsset::Svg(p) = prepared else {
-            panic!("expected prepared svg asset");
+        let p = match prepared {
+            wavyte::PreparedAsset::Svg(p) => p,
+            _ => panic!("expected prepared svg asset"),
         };
 
         let has_inconsolata = p
@@ -170,8 +171,9 @@ mod svg_text {
         // back to any available face (vendored font in tests/data/fonts).
         let id = assets.id_for_key("s0").unwrap();
         let prepared = assets.get(id).unwrap();
-        let wavyte::PreparedAsset::Svg(p) = prepared else {
-            panic!("expected prepared svg asset");
+        let p = match prepared {
+            wavyte::PreparedAsset::Svg(p) => p,
+            _ => panic!("expected prepared svg asset"),
         };
         assert_eq!(count_text_nodes(p.tree.root()), 1);
 

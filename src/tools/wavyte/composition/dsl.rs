@@ -42,11 +42,9 @@ impl CompositionBuilder {
     /// Insert an asset under unique key.
     pub fn asset(mut self, key: impl Into<String>, asset: Asset) -> WavyteResult<Self> {
         let key = key.into();
-        if self.assets.contains_key(&key) {
-            return Err(WavyteError::validation(format!(
-                "duplicate asset key '{key}'"
-            )));
-        }
+        (!self.assets.contains_key(&key))
+            .then_some(())
+            .ok_or_else(|| WavyteError::validation(format!("duplicate asset key '{key}'")))?;
         self.assets.insert(key, asset);
         Ok(self)
     }
@@ -178,7 +176,11 @@ impl TrackBuilder {
     }
 
     /// Set horizontal and vertical alignment for layout placement.
-    pub fn layout_align(mut self, x: crate::tools::wavyte::LayoutAlignX, y: crate::tools::wavyte::LayoutAlignY) -> Self {
+    pub fn layout_align(
+        mut self,
+        x: crate::tools::wavyte::LayoutAlignX,
+        y: crate::tools::wavyte::LayoutAlignY,
+    ) -> Self {
         self.layout_align_x = x;
         self.layout_align_y = y;
         self
@@ -192,9 +194,9 @@ impl TrackBuilder {
 
     /// Build validated [`Track`](crate::tools::wavyte::Track).
     pub fn build(self) -> WavyteResult<Track> {
-        if self.name.trim().is_empty() {
-            return Err(WavyteError::validation("track name must be non-empty"));
-        }
+        (!self.name.trim().is_empty())
+            .then_some(())
+            .ok_or_else(|| WavyteError::validation("track name must be non-empty"))?;
         Ok(Track {
             name: self.name,
             z_base: self.z_base,
@@ -278,12 +280,12 @@ impl ClipBuilder {
 
     /// Build validated [`Clip`](crate::tools::wavyte::Clip).
     pub fn build(self) -> WavyteResult<Clip> {
-        if self.id.trim().is_empty() {
-            return Err(WavyteError::validation("clip id must be non-empty"));
-        }
-        if self.asset_key.trim().is_empty() {
-            return Err(WavyteError::validation("clip asset key must be non-empty"));
-        }
+        (!self.id.trim().is_empty())
+            .then_some(())
+            .ok_or_else(|| WavyteError::validation("clip id must be non-empty"))?;
+        (!self.asset_key.trim().is_empty())
+            .then_some(())
+            .ok_or_else(|| WavyteError::validation("clip asset key must be non-empty"))?;
         self.opacity.validate()?;
         self.transform.validate()?;
 

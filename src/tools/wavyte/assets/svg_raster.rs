@@ -20,10 +20,9 @@ pub fn svg_raster_params(
     transform: crate::tools::wavyte::foundation::core::Affine,
 ) -> WavyteResult<(u32, u32, crate::tools::wavyte::foundation::core::Affine)> {
     fn to_px(v: f32) -> WavyteResult<u32> {
-        if !v.is_finite() || v <= 0.0 {
-            return Err(WavyteError::evaluation("svg has invalid width/height"));
-        }
-        Ok((v.ceil() as u32).max(1))
+        (v.is_finite() && v > 0.0)
+            .then(|| (v.ceil() as u32).max(1))
+            .ok_or_else(|| WavyteError::evaluation("svg has invalid width/height"))
     }
 
     let size = tree.size();
@@ -40,11 +39,11 @@ pub fn svg_raster_params(
     // Avoid pathological allocations. If the caller needs very large SVGs they should change the
     // render strategy and caching policy explicitly.
     const MAX_DIM: u32 = 16_384;
-    if w > MAX_DIM || h > MAX_DIM {
-        return Err(WavyteError::evaluation(format!(
+    (w <= MAX_DIM && h <= MAX_DIM).then_some(()).ok_or_else(|| {
+        WavyteError::evaluation(format!(
             "svg raster size too large: {w}x{h} (max {MAX_DIM}x{MAX_DIM})"
-        )));
-    }
+        ))
+    })?;
 
     // The SVG was rasterized with a scale applied. Adjust the draw transform so that pixel-space
     // coordinates map back into the SVG's logical coordinate space before the original transform.

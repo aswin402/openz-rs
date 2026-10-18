@@ -109,8 +109,9 @@ fn media_assets_serde_defaults_and_validation() {
     let comp: Composition = serde_json::from_str(json).unwrap();
     comp.validate().unwrap();
 
-    let Asset::Video(v) = comp.assets.get("v0").unwrap() else {
-        panic!("expected video asset");
+    let v = match comp.assets.get("v0").unwrap() {
+        Asset::Video(v) => v,
+        _ => panic!("expected video asset"),
     };
     assert_eq!(v.trim_start_sec, 0.0);
     assert_eq!(v.playback_rate, 1.0);

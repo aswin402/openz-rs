@@ -72,15 +72,16 @@ pub fn sequence(a: Anim<f64>, a_len: u64, b: Anim<f64>) -> Anim<f64> {
 pub fn stagger(mut anims: Vec<(u64, Anim<f64>)>) -> Anim<f64> {
     anims.sort_by_key(|(offset, _)| *offset);
     let mut iter = anims.into_iter();
-    let Some((first_offset, first_anim)) = iter.next() else {
-        return Anim::constant(0.0);
-    };
-
-    let mut out = delay(first_anim, first_offset);
-    for (offset, anim) in iter {
-        out = sequence(out, offset, anim);
+    match iter.next() {
+        Some((first_offset, first_anim)) => {
+            let mut out = delay(first_anim, first_offset);
+            for (offset, anim) in iter {
+                out = sequence(out, offset, anim);
+            }
+            out
+        }
+        None => Anim::constant(0.0),
     }
-    out
 }
 
 #[cfg(test)]

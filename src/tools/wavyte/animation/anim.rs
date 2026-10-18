@@ -137,50 +137,48 @@ where
 {
     /// Validate keyframe ordering and default/fallback requirements.
     pub fn validate(&self) -> WavyteResult<()> {
-        if self.keys.is_empty() && self.default.is_none() {
-            return Err(WavyteError::animation(
-                "Keyframes must have at least one key or a default value",
-            ));
-        }
-        if !self.keys.windows(2).all(|w| w[0].frame.0 <= w[1].frame.0) {
-            return Err(WavyteError::animation(
-                "Keyframes keys must be sorted by frame",
-            ));
-        }
-        Ok(())
+        (!(self.keys.is_empty() && self.default.is_none())).then_some(()).ok_or_else(|| {
+            WavyteError::animation("Keyframes must have at least one key or a default value")
+        })?;
+        self.keys
+            .windows(2)
+            .all(|w| w[0].frame.0 <= w[1].frame.0)
+            .then_some(())
+            .ok_or_else(|| WavyteError::animation("Keyframes keys must be sorted by frame"))
     }
 
     /// Sample keyframed value in clip-local time.
     pub fn sample(&self, ctx: SampleCtx) -> WavyteResult<T> {
-        if self.keys.is_empty() {
-            return self
+        match self.keys.is_empty() {
+            true => self
                 .default
                 .clone()
-                .ok_or_else(|| WavyteError::animation("Keyframes has no keys and no default"));
-        }
+                .ok_or_else(|| WavyteError::animation("Keyframes has no keys and no default")),
+            false => {
+                let f = ctx.clip_local.0;
+                let idx = self.keys.partition_point(|k| k.frame.0 <= f);
 
-        let f = ctx.clip_local.0;
-        let idx = self.keys.partition_point(|k| k.frame.0 <= f);
-
-        if idx == 0 {
-            return Ok(self.keys[0].value.clone());
-        }
-        if idx >= self.keys.len() {
-            return Ok(self.keys[self.keys.len() - 1].value.clone());
-        }
-
-        let a = &self.keys[idx - 1];
-        let b = &self.keys[idx];
-        let denom = b.frame.0.saturating_sub(a.frame.0);
-        if denom == 0 {
-            return Ok(a.value.clone());
-        }
-
-        let t = ((f - a.frame.0) as f64) / (denom as f64);
-        let te = a.ease.apply(t);
-        match self.mode {
-            InterpMode::Hold => Ok(a.value.clone()),
-            InterpMode::Linear => Ok(T::lerp(&a.value, &b.value, te)),
+                match (idx == 0, idx >= self.keys.len()) {
+                    (true, _) => Ok(self.keys[0].value.clone()),
+                    (false, true) => Ok(self.keys[self.keys.len() - 1].value.clone()),
+                    (false, false) => {
+                        let a = &self.keys[idx - 1];
+                        let b = &self.keys[idx];
+                        let denom = b.frame.0.saturating_sub(a.frame.0);
+                        match denom == 0 {
+                            true => Ok(a.value.clone()),
+                            false => {
+                                let t = ((f - a.frame.0) as f64) / (denom as f64);
+                                let te = a.ease.apply(t);
+                                match self.mode {
+                                    InterpMode::Hold => Ok(a.value.clone()),
+                                    InterpMode::Linear => Ok(T::lerp(&a.value, &b.value, te)),
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -267,15 +265,15 @@ where
         match self {
             Self::Delay { inner, by: _ } => inner.validate(),
             Self::Speed { inner, factor } => {
-                if *factor <= 0.0 {
-                    return Err(WavyteError::animation("Speed factor must be > 0"));
-                }
+                (*factor > 0.0)
+                    .then_some(())
+                    .ok_or_else(|| WavyteError::animation("Speed factor must be > 0"))?;
                 inner.validate()
             }
             Self::Reverse { inner, duration } => {
-                if *duration == 0 {
-                    return Err(WavyteError::animation("Reverse duration must be > 0"));
-                }
+                (*duration > 0)
+                    .then_some(())
+                    .ok_or_else(|| WavyteError::animation("Reverse duration must be > 0"))?;
                 inner.validate()
             }
             Self::Loop {
@@ -283,9 +281,9 @@ where
                 period,
                 mode: _,
             } => {
-                if *period == 0 {
-                    return Err(WavyteError::animation("Loop period must be > 0"));
-                }
+                (*period > 0)
+                    .then_some(())
+                    .ok_or_else(|| WavyteError::animation("Loop period must be > 0"))?;
                 inner.validate()
             }
             Self::Mix { a, b, t } => {
@@ -300,10 +298,9 @@ where
     pub fn sample(&self, ctx: SampleCtx) -> WavyteResult<T> {
         fn with_clip_local(mut ctx: SampleCtx, clip_local: FrameIndex) -> SampleCtx {
             let delta = clip_local.0 as i128 - ctx.clip_local.0 as i128;
-            let new_frame = if delta >= 0 {
-                ctx.frame.0.saturating_add(delta as u64)
-            } else {
-                ctx.frame.0.saturating_sub((-delta) as u64)
+            let new_frame = match delta >= 0 {
+                true => ctx.frame.0.saturating_add(delta as u64),
+                false => ctx.frame.0.saturating_sub((-delta) as u64),
             };
             ctx.frame = FrameIndex(new_frame);
             ctx.clip_local = clip_local;
@@ -313,21 +310,21 @@ where
         match self {
             Self::Delay { inner, by } => {
                 let f = ctx.clip_local.0;
-                let mapped = FrameIndex(if f < *by { 0 } else { f - by });
+                let mapped = FrameIndex(f.saturating_sub(*by));
                 inner.sample(with_clip_local(ctx, mapped))
             }
             Self::Speed { inner, factor } => {
-                if *factor <= 0.0 {
-                    return Err(WavyteError::animation("Speed factor must be > 0"));
-                }
+                (*factor > 0.0)
+                    .then_some(())
+                    .ok_or_else(|| WavyteError::animation("Speed factor must be > 0"))?;
                 let f = ctx.clip_local.0 as f64;
                 let mapped = FrameIndex((f * factor).floor().max(0.0) as u64);
                 inner.sample(with_clip_local(ctx, mapped))
             }
             Self::Reverse { inner, duration } => {
-                if *duration == 0 {
-                    return Err(WavyteError::animation("Reverse duration must be > 0"));
-                }
+                (*duration > 0)
+                    .then_some(())
+                    .ok_or_else(|| WavyteError::animation("Reverse duration must be > 0"))?;
                 let max = duration - 1;
                 let f = ctx.clip_local.0.min(max);
                 let mapped = FrameIndex(max - f);
@@ -338,25 +335,23 @@ where
                 period,
                 mode,
             } => {
-                if *period == 0 {
-                    return Err(WavyteError::animation("Loop period must be > 0"));
-                }
+                (*period > 0)
+                    .then_some(())
+                    .ok_or_else(|| WavyteError::animation("Loop period must be > 0"))?;
                 let f = ctx.clip_local.0;
                 let mapped = match mode {
                     LoopMode::Repeat => FrameIndex(f % period),
-                    LoopMode::PingPong => {
-                        if *period == 1 {
-                            FrameIndex(0)
-                        } else {
+                    LoopMode::PingPong => match *period == 1 {
+                        true => FrameIndex(0),
+                        false => {
                             let cycle = 2 * (period - 1);
                             let pos = f % cycle;
-                            if pos < *period {
-                                FrameIndex(pos)
-                            } else {
-                                FrameIndex(cycle - pos)
+                            match pos < *period {
+                                true => FrameIndex(pos),
+                                false => FrameIndex(cycle - pos),
                             }
                         }
-                    }
+                    },
                 };
                 inner.sample(with_clip_local(ctx, mapped))
             }

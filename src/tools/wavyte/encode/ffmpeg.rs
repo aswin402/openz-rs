@@ -41,31 +41,32 @@ pub struct AudioInputConfig {
 impl EncodeConfig {
     /// Validate invariants required by the current MP4 encoder configuration.
     pub fn validate(&self) -> WavyteResult<()> {
-        if self.width == 0 || self.height == 0 {
-            return Err(WavyteError::validation(
-                "encode width/height must be non-zero",
-            ));
-        }
-        if self.fps == 0 {
-            return Err(WavyteError::validation("encode fps must be non-zero"));
-        }
-        if !self.width.is_multiple_of(2) || !self.height.is_multiple_of(2) {
-            // With the default settings we target yuv420p output for maximum compatibility.
-            return Err(WavyteError::validation(
-                "encode width/height must be even (required for yuv420p mp4 output)",
-            ));
-        }
-        if let Some(audio) = &self.audio {
-            if audio.sample_rate == 0 {
-                return Err(WavyteError::validation(
-                    "audio sample_rate must be non-zero when audio is enabled",
-                ));
+        (self.width > 0 && self.height > 0)
+            .then_some(())
+            .ok_or_else(|| WavyteError::validation("encode width/height must be non-zero"))?;
+        (self.fps > 0)
+            .then_some(())
+            .ok_or_else(|| WavyteError::validation("encode fps must be non-zero"))?;
+        (self.width.is_multiple_of(2) && self.height.is_multiple_of(2))
+            .then_some(())
+            .ok_or_else(|| {
+                // With the default settings we target yuv420p output for maximum compatibility.
+                WavyteError::validation(
+                    "encode width/height must be even (required for yuv420p mp4 output)",
+                )
+            })?;
+        match &self.audio {
+            Some(audio) => {
+                (audio.sample_rate > 0).then_some(()).ok_or_else(|| {
+                    WavyteError::validation(
+                        "audio sample_rate must be non-zero when audio is enabled",
+                    )
+                })?;
+                (audio.channels > 0).then_some(()).ok_or_else(|| {
+                    WavyteError::validation("audio channels must be non-zero when audio is enabled")
+                })?;
             }
-            if audio.channels == 0 {
-                return Err(WavyteError::validation(
-                    "audio channels must be non-zero when audio is enabled",
-                ));
-            }
+            None => {}
         }
         Ok(())
     }
@@ -107,10 +108,14 @@ pub fn is_ffmpeg_on_path() -> bool {
 
 /// Create the parent directory for `path` if it does not exist.
 pub fn ensure_parent_dir(path: &Path) -> WavyteResult<()> {
-    if let Some(parent) = path.parent() {
-        use anyhow::Context as _;
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("failed to create output directory '{}'", parent.display()))?;
+    match path.parent() {
+        Some(parent) => {
+            use anyhow::Context as _;
+            std::fs::create_dir_all(parent).with_context(|| {
+                format!("failed to create output directory '{}'", parent.display())
+            })?;
+        }
+        None => {}
     }
     Ok(())
 }
@@ -135,18 +140,20 @@ impl FfmpegEncoder {
         cfg.validate()?;
         ensure_parent_dir(&cfg.out_path)?;
 
-        if !cfg.overwrite && cfg.out_path.exists() {
-            return Err(WavyteError::validation(format!(
-                "output file '{}' already exists",
-                cfg.out_path.display()
-            )));
-        }
+        (cfg.overwrite || !cfg.out_path.exists())
+            .then_some(())
+            .ok_or_else(|| {
+                WavyteError::validation(format!(
+                    "output file '{}' already exists",
+                    cfg.out_path.display()
+                ))
+            })?;
 
-        if !is_ffmpeg_on_path() {
-            return Err(WavyteError::evaluation(
+        is_ffmpeg_on_path().then_some(()).ok_or_else(|| {
+            WavyteError::evaluation(
                 "ffmpeg is required for MP4 encoding, but was not found on PATH",
-            ));
-        }
+            )
+        })?;
 
         // We intentionally use the system `ffmpeg` binary rather than `ffmpeg-next` to avoid
         // native FFmpeg dev header/lib requirements.
@@ -155,11 +162,10 @@ impl FfmpegEncoder {
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
 
-        if cfg.overwrite {
-            cmd.arg("-y");
-        } else {
-            cmd.arg("-n");
-        }
+        cmd.arg(match cfg.overwrite {
+            true => "-y",
+            false => "-n",
+        });
 
         cmd.args([
             "-loglevel",
@@ -175,38 +181,41 @@ impl FfmpegEncoder {
             "-i",
             "pipe:0",
         ]);
-        if let Some(audio) = &cfg.audio {
-            cmd.args([
-                "-f",
-                "f32le",
-                "-ar",
-                &audio.sample_rate.to_string(),
-                "-ac",
-                &audio.channels.to_string(),
-                "-i",
-            ])
-            .arg(&audio.path)
-            .args([
-                "-c:v",
-                "libx264",
-                "-pix_fmt",
-                "yuv420p",
-                "-c:a",
-                "aac",
-                "-shortest",
-                "-movflags",
-                "+faststart",
-            ]);
-        } else {
-            cmd.args([
-                "-an",
-                "-c:v",
-                "libx264",
-                "-pix_fmt",
-                "yuv420p",
-                "-movflags",
-                "+faststart",
-            ]);
+        match &cfg.audio {
+            Some(audio) => {
+                cmd.args([
+                    "-f",
+                    "f32le",
+                    "-ar",
+                    &audio.sample_rate.to_string(),
+                    "-ac",
+                    &audio.channels.to_string(),
+                    "-i",
+                ])
+                .arg(&audio.path)
+                .args([
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-c:a",
+                    "aac",
+                    "-shortest",
+                    "-movflags",
+                    "+faststart",
+                ]);
+            }
+            None => {
+                cmd.args([
+                    "-an",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    "-movflags",
+                    "+faststart",
+                ]);
+            }
         }
         cmd.arg(&cfg.out_path);
 
@@ -245,18 +254,20 @@ impl FfmpegEncoder {
     /// Wavyte renderers output premultiplied RGBA8 by default; this method can flatten either
     /// premultiplied or straight-alpha input over `bg_rgba`.
     pub fn encode_frame(&mut self, frame: &FrameRGBA) -> WavyteResult<()> {
-        if frame.width != self.cfg.width || frame.height != self.cfg.height {
-            return Err(WavyteError::validation(format!(
-                "frame size mismatch: got {}x{}, expected {}x{}",
-                frame.width, frame.height, self.cfg.width, self.cfg.height
-            )));
-        }
+        (frame.width == self.cfg.width && frame.height == self.cfg.height)
+            .then_some(())
+            .ok_or_else(|| {
+                WavyteError::validation(format!(
+                    "frame size mismatch: got {}x{}, expected {}x{}",
+                    frame.width, frame.height, self.cfg.width, self.cfg.height
+                ))
+            })?;
 
-        if frame.data.len() != self.scratch.len() {
-            return Err(WavyteError::validation(
-                "frame.data size mismatch with width*height*4",
-            ));
-        }
+        (frame.data.len() == self.scratch.len())
+            .then_some(())
+            .ok_or_else(|| {
+                WavyteError::validation("frame.data size mismatch with width*height*4")
+            })?;
 
         flatten_to_opaque_rgba8(
             &mut self.scratch,
@@ -265,11 +276,10 @@ impl FfmpegEncoder {
             self.bg_rgba,
         )?;
 
-        let Some(stdin) = self.stdin.as_mut() else {
-            return Err(WavyteError::evaluation(
-                "ffmpeg encoder is already finalized",
-            ));
-        };
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| WavyteError::evaluation("ffmpeg encoder is already finalized"))?;
 
         use std::io::Write as _;
         stdin.write_all(&self.scratch).map_err(|e| {
@@ -294,16 +304,14 @@ impl FfmpegEncoder {
             None => Vec::new(),
         };
 
-        if !status.success() {
+        status.success().then_some(()).ok_or_else(|| {
             let stderr = String::from_utf8_lossy(&stderr_bytes);
-            return Err(WavyteError::evaluation(format!(
+            WavyteError::evaluation(format!(
                 "ffmpeg exited with status {}: {}",
                 status,
                 stderr.trim()
-            )));
-        }
-
-        Ok(())
+            ))
+        })
     }
 }
 
@@ -313,11 +321,11 @@ fn flatten_to_opaque_rgba8(
     src_is_premul: bool,
     bg_rgba: [u8; 4],
 ) -> WavyteResult<()> {
-    if dst.len() != src.len() || !dst.len().is_multiple_of(4) {
-        return Err(WavyteError::validation(
-            "flatten_to_opaque_rgba8 expects equal-length rgba8 buffers",
-        ));
-    }
+    (dst.len() == src.len() && dst.len().is_multiple_of(4))
+        .then_some(())
+        .ok_or_else(|| {
+            WavyteError::validation("flatten_to_opaque_rgba8 expects equal-length rgba8 buffers")
+        })?;
 
     let bg_r = bg_rgba[0] as u16;
     let bg_g = bg_rgba[1] as u16;
@@ -325,32 +333,33 @@ fn flatten_to_opaque_rgba8(
 
     for (d, s) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
         let a = s[3] as u16;
-        if a == 255 {
-            d.copy_from_slice(s);
-            d[3] = 255;
-            continue;
+        match a == 255 {
+            true => {
+                d.copy_from_slice(s);
+                d[3] = 255;
+            }
+            false => {
+                let inv = 255u16 - a;
+
+                let (r, g, b) = match src_is_premul {
+                    true => (
+                        s[0] as u16 + mul_div255(bg_r, inv),
+                        s[1] as u16 + mul_div255(bg_g, inv),
+                        s[2] as u16 + mul_div255(bg_b, inv),
+                    ),
+                    false => (
+                        mul_div255(s[0] as u16, a) + mul_div255(bg_r, inv),
+                        mul_div255(s[1] as u16, a) + mul_div255(bg_g, inv),
+                        mul_div255(s[2] as u16, a) + mul_div255(bg_b, inv),
+                    ),
+                };
+
+                d[0] = r.min(255) as u8;
+                d[1] = g.min(255) as u8;
+                d[2] = b.min(255) as u8;
+                d[3] = 255;
+            }
         }
-
-        let inv = 255u16 - a;
-
-        let (r, g, b) = if src_is_premul {
-            (
-                s[0] as u16 + mul_div255(bg_r, inv),
-                s[1] as u16 + mul_div255(bg_g, inv),
-                s[2] as u16 + mul_div255(bg_b, inv),
-            )
-        } else {
-            (
-                mul_div255(s[0] as u16, a) + mul_div255(bg_r, inv),
-                mul_div255(s[1] as u16, a) + mul_div255(bg_g, inv),
-                mul_div255(s[2] as u16, a) + mul_div255(bg_b, inv),
-            )
-        };
-
-        d[0] = r.min(255) as u8;
-        d[1] = g.min(255) as u8;
-        d[2] = b.min(255) as u8;
-        d[3] = 255;
     }
 
     Ok(())

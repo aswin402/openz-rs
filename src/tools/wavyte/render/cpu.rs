@@ -57,16 +57,23 @@ impl VideoFrameDecoder {
 
     fn decode_at(&mut self, source_time_s: f64) -> WavyteResult<vello_cpu::Image> {
         let key = self.key_for_time(source_time_s);
-        if let Some(img) = self.frame_cache.get(&key).cloned() {
-            self.touch(key);
-            return Ok(img);
-        }
-
-        if self.prefetch_for_key(key).is_ok() {
-            if let Some(img) = self.frame_cache.get(&key).cloned() {
+        match self.frame_cache.get(&key).cloned() {
+            Some(img) => {
                 self.touch(key);
                 return Ok(img);
             }
+            None => {}
+        }
+
+        match self.prefetch_for_key(key) {
+            Ok(()) => match self.frame_cache.get(&key).cloned() {
+                Some(img) => {
+                    self.touch(key);
+                    return Ok(img);
+                }
+                None => {}
+            },
+            Err(_) => {}
         }
 
         // Fallback for sparse decode requests where batch prefetch didn't include the key.
@@ -82,10 +89,9 @@ impl VideoFrameDecoder {
 
     fn prefetch_for_key(&mut self, key_ms: u64) -> WavyteResult<()> {
         let source_fps = self.info.source_fps();
-        let step_ms = if source_fps.is_finite() && source_fps > 0.0 {
-            1000.0 / source_fps
-        } else {
-            1.0
+        let step_ms = match source_fps.is_finite() && source_fps > 0.0 {
+            true => 1000.0 / source_fps,
+            false => 1.0,
         };
         let window_ms = (step_ms * self.prefetch_frames as f64).max(step_ms);
         let bucket = ((key_ms as f64) / window_ms).floor();
@@ -96,12 +102,15 @@ impl VideoFrameDecoder {
 
         for (offset, rgba) in frames.iter().enumerate() {
             let key = ((start_key_ms as f64) + ((offset as f64) * step_ms)).round() as u64;
-            if self.frame_cache.contains_key(&key) {
-                self.touch(key);
-                continue;
+            match self.frame_cache.contains_key(&key) {
+                true => {
+                    self.touch(key);
+                }
+                false => {
+                    let image = self.rgba_to_image(rgba)?;
+                    self.insert_frame(key, image);
+                }
             }
-            let image = self.rgba_to_image(rgba)?;
-            self.insert_frame(key, image);
         }
         Ok(())
     }
@@ -118,15 +127,21 @@ impl VideoFrameDecoder {
         self.frame_cache.insert(key, image);
         self.touch(key);
         while self.lru.len() > self.capacity {
-            if let Some(old) = self.lru.pop_front() {
-                self.frame_cache.remove(&old);
+            match self.lru.pop_front() {
+                Some(old) => {
+                    self.frame_cache.remove(&old);
+                }
+                None => {}
             }
         }
     }
 
     fn touch(&mut self, key: u64) {
-        if let Some(pos) = self.lru.iter().position(|x| *x == key) {
-            self.lru.remove(pos);
+        match self.lru.iter().position(|x| *x == key) {
+            Some(pos) => {
+                self.lru.remove(pos);
+            }
+            None => {}
         }
         self.lru.push_back(key);
     }
@@ -144,6 +159,15 @@ impl CpuBackend {
             surfaces: HashMap::new(),
         }
     }
+
+    fn get_composite_surface(&self, id: SurfaceId) -> WavyteResult<&CpuSurface> {
+        self.surfaces.get(&id).ok_or_else(|| {
+            WavyteError::evaluation(format!(
+                "composite src surface {:?} was not initialized",
+                id
+            ))
+        })
+    }
 }
 
 impl PassBackend for CpuBackend {
@@ -158,15 +182,16 @@ impl PassBackend for CpuBackend {
             .map_err(|_| WavyteError::evaluation("surface height exceeds u16"))?;
 
         match self.surfaces.get_mut(&id) {
-            Some(surface) => {
-                if surface.width != width_u16 || surface.height != height_u16 {
+            Some(surface) => match surface.width != width_u16 || surface.height != height_u16 {
+                true => {
                     *surface = CpuSurface {
                         width: width_u16,
                         height: height_u16,
                         pixmap: vello_cpu::Pixmap::new(width_u16, height_u16),
                     };
                 }
-            }
+                false => {}
+            },
             None => {
                 self.surfaces.insert(
                     id,
@@ -179,17 +204,20 @@ impl PassBackend for CpuBackend {
             }
         }
 
-        if id == SurfaceId(0) {
-            let premul = self
-                .settings
-                .clear_rgba
-                .map(|[r, g, b, a]| premul_rgba8(r, g, b, a))
-                .unwrap_or([0, 0, 0, 0]);
-            let s = self
-                .surfaces
-                .get_mut(&SurfaceId(0))
-                .ok_or_else(|| WavyteError::evaluation("surface 0 missing"))?;
-            clear_pixmap(&mut s.pixmap, premul);
+        match id == SurfaceId(0) {
+            true => {
+                let premul = self
+                    .settings
+                    .clear_rgba
+                    .map(|[r, g, b, a]| premul_rgba8(r, g, b, a))
+                    .unwrap_or([0, 0, 0, 0]);
+                let s = self
+                    .surfaces
+                    .get_mut(&SurfaceId(0))
+                    .ok_or_else(|| WavyteError::evaluation("surface 0 missing"))?;
+                clear_pixmap(&mut s.pixmap, premul);
+            }
+            false => {}
         }
         Ok(())
     }
@@ -206,8 +234,9 @@ impl PassBackend for CpuBackend {
             ))
         })?;
 
-        if pass.clear_to_transparent {
-            clear_pixmap(&mut surface.pixmap, [0, 0, 0, 0]);
+        match pass.clear_to_transparent {
+            true => clear_pixmap(&mut surface.pixmap, [0, 0, 0, 0]),
+            false => {}
         }
 
         let mut ctx = vello_cpu::RenderContext::new(surface.width, surface.height);
@@ -233,27 +262,35 @@ impl PassBackend for CpuBackend {
         })?;
 
         let (w, h) = (u32::from(output.width), u32::from(output.height));
-        let input_bytes = if pass.input == pass.output {
-            output.pixmap.data_as_u8_slice().to_vec()
-        } else {
-            let input = self.surfaces.get(&pass.input).ok_or_else(|| {
-                WavyteError::evaluation(format!(
-                    "offscreen input surface {:?} was not initialized",
-                    pass.input
-                ))
-            })?;
-            if input.width != output.width || input.height != output.height {
-                return Err(WavyteError::evaluation(
-                    "offscreen input/output surface size mismatch",
-                ));
+        let input_bytes = match pass.input == pass.output {
+            true => output.pixmap.data_as_u8_slice().to_vec(),
+            false => {
+                let input = self.surfaces.get(&pass.input).ok_or_else(|| {
+                    WavyteError::evaluation(format!(
+                        "offscreen input surface {:?} was not initialized",
+                        pass.input
+                    ))
+                })?;
+                match input.width != output.width || input.height != output.height {
+                    true => {
+                        return Err(WavyteError::evaluation(
+                            "offscreen input/output surface size mismatch",
+                        ));
+                    }
+                    false => input.pixmap.data_as_u8_slice().to_vec(),
+                }
             }
-            input.pixmap.data_as_u8_slice().to_vec()
         };
 
         match pass.fx {
             crate::tools::wavyte::effects::fx::PassFx::Blur { radius_px, sigma } => {
-                let blurred =
-                    crate::tools::wavyte::effects::blur::blur_rgba8_premul(&input_bytes, w, h, radius_px, sigma)?;
+                let blurred = crate::tools::wavyte::effects::blur::blur_rgba8_premul(
+                    &input_bytes,
+                    w,
+                    h,
+                    radius_px,
+                    sigma,
+                )?;
                 output
                     .pixmap
                     .data_as_u8_slice_mut()
@@ -280,12 +317,7 @@ impl PassBackend for CpuBackend {
         for op in &pass.ops {
             match *op {
                 CompositeOp::Over { src, opacity } => {
-                    let src = self.surfaces.get(&src).ok_or_else(|| {
-                        WavyteError::evaluation(format!(
-                            "composite src surface {:?} was not initialized",
-                            src
-                        ))
-                    })?;
+                    let src = self.get_composite_surface(src)?;
                     crate::tools::wavyte::effects::composite::over_in_place(
                         dst.pixmap.data_as_u8_slice_mut(),
                         src.pixmap.data_as_u8_slice(),
@@ -293,18 +325,8 @@ impl PassBackend for CpuBackend {
                     )?;
                 }
                 CompositeOp::Crossfade { a, b, t } => {
-                    let a = self.surfaces.get(&a).ok_or_else(|| {
-                        WavyteError::evaluation(format!(
-                            "composite src surface {:?} was not initialized",
-                            a
-                        ))
-                    })?;
-                    let b = self.surfaces.get(&b).ok_or_else(|| {
-                        WavyteError::evaluation(format!(
-                            "composite src surface {:?} was not initialized",
-                            b
-                        ))
-                    })?;
+                    let a = self.get_composite_surface(a)?;
+                    let b = self.get_composite_surface(b)?;
                     crate::tools::wavyte::effects::composite::crossfade_over_in_place(
                         dst.pixmap.data_as_u8_slice_mut(),
                         a.pixmap.data_as_u8_slice(),
@@ -319,18 +341,8 @@ impl PassBackend for CpuBackend {
                     dir,
                     soft_edge,
                 } => {
-                    let a = self.surfaces.get(&a).ok_or_else(|| {
-                        WavyteError::evaluation(format!(
-                            "composite src surface {:?} was not initialized",
-                            a
-                        ))
-                    })?;
-                    let b = self.surfaces.get(&b).ok_or_else(|| {
-                        WavyteError::evaluation(format!(
-                            "composite src surface {:?} was not initialized",
-                            b
-                        ))
-                    })?;
+                    let a = self.get_composite_surface(a)?;
+                    let b = self.get_composite_surface(b)?;
                     crate::tools::wavyte::effects::composite::wipe_over_in_place(
                         dst.pixmap.data_as_u8_slice_mut(),
                         a.pixmap.data_as_u8_slice(),
@@ -394,6 +406,23 @@ fn clear_pixmap(pixmap: &mut vello_cpu::Pixmap, rgba: [u8; 4]) {
     }
 }
 
+fn with_opacity_layer(
+    ctx: &mut vello_cpu::RenderContext,
+    opacity: f32,
+    f: impl FnOnce(&mut vello_cpu::RenderContext),
+) {
+    let use_layer = opacity < 1.0;
+    match use_layer {
+        true => ctx.push_opacity_layer(opacity),
+        false => {}
+    }
+    f(ctx);
+    match use_layer {
+        true => ctx.pop_layer(),
+        false => {}
+    }
+}
+
 fn draw_op(
     backend: &mut CpuBackend,
     ctx: &mut vello_cpu::RenderContext,
@@ -415,14 +444,10 @@ fn draw_op(
             ctx.set_paint(vello_cpu::peniko::Color::from_rgba8(
                 color.r, color.g, color.b, color.a,
             ));
-            if *opacity < 1.0 {
-                ctx.push_opacity_layer(*opacity);
-            }
             let cpu_path = bezpath_to_cpu(path);
-            ctx.fill_path(&cpu_path);
-            if *opacity < 1.0 {
-                ctx.pop_layer();
-            }
+            with_opacity_layer(ctx, *opacity, |ctx| {
+                ctx.fill_path(&cpu_path);
+            });
             Ok(())
         }
         DrawOp::Image {
@@ -437,14 +462,9 @@ fn draw_op(
 
             ctx.set_transform(affine_to_cpu(*transform));
             ctx.set_paint(image_paint);
-
-            if *opacity < 1.0 {
-                ctx.push_opacity_layer(*opacity);
-            }
-            ctx.fill_rect(&vello_cpu::kurbo::Rect::new(0.0, 0.0, w, h));
-            if *opacity < 1.0 {
-                ctx.pop_layer();
-            }
+            with_opacity_layer(ctx, *opacity, |ctx| {
+                ctx.fill_rect(&vello_cpu::kurbo::Rect::new(0.0, 0.0, w, h));
+            });
 
             Ok(())
         }
@@ -456,42 +476,38 @@ fn draw_op(
             z: _,
         } => {
             let prepared = assets.get(*asset)?;
-            let PreparedAsset::Text(t) = prepared else {
-                return Err(WavyteError::evaluation("AssetId is not a PreparedText"));
+            let t = match prepared {
+                PreparedAsset::Text(t) => t,
+                _ => return Err(WavyteError::evaluation("AssetId is not a PreparedText")),
             };
 
             let font = backend.font_for_text_asset(*asset, assets)?;
             ctx.set_transform(affine_to_cpu(*transform));
 
-            if *opacity < 1.0 {
-                ctx.push_opacity_layer(*opacity);
-            }
+            with_opacity_layer(ctx, *opacity, |ctx| {
+                for line in t.layout.lines() {
+                    for item in line.items() {
+                        match item {
+                            parley::layout::PositionedLayoutItem::GlyphRun(run) => {
+                                let brush = run.style().brush;
+                                ctx.set_paint(vello_cpu::peniko::Color::from_rgba8(
+                                    brush.r, brush.g, brush.b, brush.a,
+                                ));
 
-            for line in t.layout.lines() {
-                for item in line.items() {
-                    let parley::layout::PositionedLayoutItem::GlyphRun(run) = item else {
-                        continue;
-                    };
-
-                    let brush = run.style().brush;
-                    ctx.set_paint(vello_cpu::peniko::Color::from_rgba8(
-                        brush.r, brush.g, brush.b, brush.a,
-                    ));
-
-                    let glyphs = run.glyphs().map(|g| vello_cpu::Glyph {
-                        id: g.id,
-                        x: g.x,
-                        y: g.y,
-                    });
-                    ctx.glyph_run(&font)
-                        .font_size(run.run().font_size())
-                        .fill_glyphs(glyphs);
+                                let glyphs = run.glyphs().map(|g| vello_cpu::Glyph {
+                                    id: g.id,
+                                    x: g.x,
+                                    y: g.y,
+                                });
+                                ctx.glyph_run(&font)
+                                    .font_size(run.run().font_size())
+                                    .fill_glyphs(glyphs);
+                            }
+                            _ => {}
+                        }
+                    }
                 }
-            }
-
-            if *opacity < 1.0 {
-                ctx.pop_layer();
-            }
+            });
 
             Ok(())
         }
@@ -507,14 +523,9 @@ fn draw_op(
 
             ctx.set_transform(affine_to_cpu(transform_adjust));
             ctx.set_paint(svg_paint);
-
-            if *opacity < 1.0 {
-                ctx.push_opacity_layer(*opacity);
-            }
-            ctx.fill_rect(&vello_cpu::kurbo::Rect::new(0.0, 0.0, w, h));
-            if *opacity < 1.0 {
-                ctx.pop_layer();
-            }
+            with_opacity_layer(ctx, *opacity, |ctx| {
+                ctx.fill_rect(&vello_cpu::kurbo::Rect::new(0.0, 0.0, w, h));
+            });
 
             Ok(())
         }
@@ -531,13 +542,9 @@ fn draw_op(
 
             ctx.set_transform(affine_to_cpu(*transform));
             ctx.set_paint(video_paint);
-            if *opacity < 1.0 {
-                ctx.push_opacity_layer(*opacity);
-            }
-            ctx.fill_rect(&vello_cpu::kurbo::Rect::new(0.0, 0.0, w, h));
-            if *opacity < 1.0 {
-                ctx.pop_layer();
-            }
+            with_opacity_layer(ctx, *opacity, |ctx| {
+                ctx.fill_rect(&vello_cpu::kurbo::Rect::new(0.0, 0.0, w, h));
+            });
             Ok(())
         }
     }
@@ -580,10 +587,13 @@ fn image_premul_bytes_to_pixmap(
     let h: u16 = height
         .try_into()
         .map_err(|_| WavyteError::evaluation("image height exceeds u16"))?;
-    if rgba8_premul.len() != width as usize * height as usize * 4 {
-        return Err(WavyteError::evaluation(
-            "prepared image byte length mismatch",
-        ));
+    match rgba8_premul.len() != width as usize * height as usize * 4 {
+        true => {
+            return Err(WavyteError::evaluation(
+                "prepared image byte length mismatch",
+            ));
+        }
+        false => {}
     }
 
     let mut may_have_opacities = false;
@@ -622,13 +632,15 @@ impl CpuBackend {
         id: AssetId,
         assets: &PreparedAssetStore,
     ) -> WavyteResult<vello_cpu::Image> {
-        if let Some(paint) = self.image_cache.get(&id) {
-            return Ok(paint.clone());
+        match self.image_cache.get(&id) {
+            Some(paint) => return Ok(paint.clone()),
+            None => {}
         }
 
         let prepared = assets.get(id)?;
-        let PreparedAsset::Image(img) = prepared else {
-            return Err(WavyteError::evaluation("AssetId is not a PreparedImage"));
+        let img = match prepared {
+            PreparedAsset::Image(img) => img,
+            _ => return Err(WavyteError::evaluation("AssetId is not a PreparedImage")),
         };
 
         let pixmap =
@@ -647,13 +659,15 @@ impl CpuBackend {
         id: AssetId,
         assets: &PreparedAssetStore,
     ) -> WavyteResult<vello_cpu::peniko::FontData> {
-        if let Some(font) = self.font_cache.get(&id) {
-            return Ok(font.clone());
+        match self.font_cache.get(&id) {
+            Some(font) => return Ok(font.clone()),
+            None => {}
         }
 
         let prepared = assets.get(id)?;
-        let PreparedAsset::Text(t) = prepared else {
-            return Err(WavyteError::evaluation("AssetId is not a PreparedText"));
+        let t = match prepared {
+            PreparedAsset::Text(t) => t,
+            _ => return Err(WavyteError::evaluation("AssetId is not a PreparedText")),
         };
 
         let font_bytes = t.font_bytes.as_ref().clone();
@@ -669,8 +683,9 @@ impl CpuBackend {
         assets: &PreparedAssetStore,
     ) -> WavyteResult<(vello_cpu::Image, f64, f64, crate::tools::wavyte::foundation::core::Affine)> {
         let prepared = assets.get(id)?;
-        let PreparedAsset::Svg(svg) = prepared else {
-            return Err(WavyteError::evaluation("AssetId is not a PreparedSvg"));
+        let svg = match prepared {
+            PreparedAsset::Svg(svg) => svg,
+            _ => return Err(WavyteError::evaluation("AssetId is not a PreparedSvg")),
         };
 
         let (w, h, transform_adjust) = svg_raster_params(&svg.tree, transform)?;
@@ -679,8 +694,9 @@ impl CpuBackend {
             width: w,
             height: h,
         };
-        if let Some(paint) = self.svg_cache.get(&key) {
-            return Ok((paint.clone(), w as f64, h as f64, transform_adjust));
+        match self.svg_cache.get(&key) {
+            Some(paint) => return Ok((paint.clone(), w as f64, h as f64, transform_adjust)),
+            None => {}
         }
 
         let rgba8_premul = rasterize_svg_to_premul_rgba8(&svg.tree, w, h)?;
@@ -702,8 +718,9 @@ impl CpuBackend {
         assets: &PreparedAssetStore,
     ) -> WavyteResult<vello_cpu::Image> {
         let prepared = assets.get(id)?;
-        let PreparedAsset::Video(video) = prepared else {
-            return Err(WavyteError::evaluation("AssetId is not a PreparedVideo"));
+        let video = match prepared {
+            PreparedAsset::Video(video) => video,
+            _ => return Err(WavyteError::evaluation("AssetId is not a PreparedVideo")),
         };
         let decoder = self
             .video_decoders

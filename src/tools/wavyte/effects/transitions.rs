@@ -36,21 +36,20 @@ pub fn parse_transition_kind_params(
     params: &serde_json::Value,
 ) -> WavyteResult<TransitionKind> {
     let kind = kind.trim().to_ascii_lowercase();
-    if kind.is_empty() {
-        return Err(WavyteError::validation("transition kind must be non-empty"));
-    }
+    (!kind.is_empty())
+        .then_some(())
+        .ok_or_else(|| WavyteError::validation("transition kind must be non-empty"))?;
 
     match kind.as_str() {
         "crossfade" => Ok(TransitionKind::Crossfade),
         "wipe" => {
-            let params = if params.is_null() {
-                None
-            } else {
-                Some(
+            let params = match params.is_null() {
+                true => None,
+                false => Some(
                     params
                         .as_object()
                         .ok_or_else(|| WavyteError::validation("wipe params must be an object"))?,
-                )
+                ),
             };
 
             let dir = match params.and_then(|p| p.get("dir")).and_then(|v| v.as_str()) {
@@ -75,12 +74,11 @@ pub fn parse_transition_kind_params(
                 None => 0.0,
                 Some(v) => {
                     let f = v as f32;
-                    if !f.is_finite() {
-                        return Err(WavyteError::validation(
-                            "wipe.soft_edge must be finite when set",
-                        ));
-                    }
-                    f.clamp(0.0, 1.0)
+                    f.is_finite()
+                        .then(|| f.clamp(0.0, 1.0))
+                        .ok_or_else(|| {
+                            WavyteError::validation("wipe.soft_edge must be finite when set")
+                        })?
                 }
             };
 

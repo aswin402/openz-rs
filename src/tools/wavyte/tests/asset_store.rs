@@ -51,8 +51,9 @@ fn prepare_loads_image_asset() {
     let store = PreparedAssetStore::prepare(&comp, &tmp).unwrap();
     let id = store.id_for_key("img").unwrap();
     let prepared = store.get(id).unwrap();
-    let PreparedAsset::Image(image) = prepared else {
-        panic!("expected image asset");
+    let image = match prepared {
+        PreparedAsset::Image(image) => image,
+        _ => panic!("expected image asset"),
     };
     assert_eq!(image.width, 1);
     assert_eq!(image.height, 1);
@@ -91,8 +92,9 @@ fn prepare_loads_inline_path_without_external_io() {
     let store = PreparedAssetStore::prepare(&comp, ".").unwrap();
     let id = store.id_for_key("p0").unwrap();
     let prepared = store.get(id).unwrap();
-    let PreparedAsset::Path(path) = prepared else {
-        panic!("expected path asset");
+    let path = match prepared {
+        PreparedAsset::Path(path) => path,
+        _ => panic!("expected path asset"),
     };
     assert!(!path.path.is_empty());
 }

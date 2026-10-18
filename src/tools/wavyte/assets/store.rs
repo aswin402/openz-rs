@@ -208,20 +208,19 @@ impl PreparedAssetStore {
                 model::Asset::Video(a) => {
                     let source_path = out.root.join(Path::new(&key.norm_path));
                     let info = media::probe_video(&source_path)?;
-                    let audio = if info.has_audio {
-                        let pcm =
-                            media::decode_audio_f32_stereo(&source_path, media::MIX_SAMPLE_RATE)?;
-                        if pcm.interleaved_f32.is_empty() {
-                            None
-                        } else {
-                            Some(PreparedAudio {
+                    let audio = match info.has_audio {
+                        true => {
+                            let pcm = media::decode_audio_f32_stereo(
+                                &source_path,
+                                media::MIX_SAMPLE_RATE,
+                            )?;
+                            (!pcm.interleaved_f32.is_empty()).then(|| PreparedAudio {
                                 sample_rate: pcm.sample_rate,
                                 channels: pcm.channels,
                                 interleaved_f32: Arc::new(pcm.interleaved_f32),
                             })
                         }
-                    } else {
-                        None
+                        false => None,
                     };
                     let _ = a;
                     PreparedAsset::Video(PreparedVideo {
@@ -291,11 +290,12 @@ impl PreparedAssetStore {
                         ),
                     ),
                 ];
-                if let Some(w) = a.max_width_px {
-                    params.push((
+                match a.max_width_px {
+                    Some(w) => params.push((
                         "max_width_px_bits".to_string(),
                         format!("0x{:08x}", w.to_bits()),
-                    ));
+                    )),
+                    None => {}
                 }
                 Ok((b'T', AssetKey::new(norm_path, params)))
             }
@@ -366,32 +366,41 @@ fn build_svg_fontdb(
     load_fonts_from_dir(&mut db, &root.join("fonts"));
     load_fonts_from_dir(&mut db, &root.join("assets"));
 
-    if let Some(dir) = resources_dir {
-        load_fonts_from_dir(&mut db, dir);
-        load_fonts_from_dir(&mut db, &dir.join("fonts"));
+    match resources_dir {
+        Some(dir) => {
+            load_fonts_from_dir(&mut db, dir);
+            load_fonts_from_dir(&mut db, &dir.join("fonts"));
+        }
+        None => {}
     }
 
     std::sync::Arc::new(db)
 }
 
 fn load_fonts_from_dir(db: &mut usvg::fontdb::Database, dir: &Path) {
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return;
+    let rd = match std::fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(_) => return,
     };
 
     for entry in rd.flatten() {
         let path = entry.path();
-        if !path.is_file() {
-            continue;
+        let is_valid_font = path
+            .is_file()
+            .then(|| path.extension().and_then(|s| s.to_str()))
+            .flatten()
+            .is_some_and(|ext| {
+                matches!(
+                    ext.to_ascii_lowercase().as_str(),
+                    "ttf" | "otf" | "ttc"
+                )
+            });
+        match is_valid_font {
+            true => {
+                let _ = db.load_font_file(&path);
+            }
+            false => {}
         }
-        let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        let ext = ext.to_ascii_lowercase();
-        if ext != "ttf" && ext != "otf" && ext != "ttc" {
-            continue;
-        }
-        let _ = db.load_font_file(&path);
     }
 }
 
@@ -441,10 +450,9 @@ fn make_svg_font_resolver() -> usvg::FontResolver<'static> {
                 style,
             };
 
-            if let Some(id) = fontdb.query(&query) {
-                return Some(id);
-            }
-            fontdb.faces().next().map(|f| f.id)
+            fontdb
+                .query(&query)
+                .or_else(|| fontdb.faces().next().map(|f| f.id))
         }),
         select_fallback: FontResolver::default_fallback_selector(),
     }
@@ -456,40 +464,34 @@ fn make_svg_font_resolver() -> usvg::FontResolver<'static> {
 /// parent traversals (`..`).
 pub fn normalize_rel_path(source: &str) -> WavyteResult<String> {
     let s = source.replace('\\', "/");
-    if s.starts_with('/') {
-        return Err(WavyteError::validation("asset paths must be relative"));
-    }
-    if s.is_empty() {
-        return Err(WavyteError::validation("asset path must be non-empty"));
-    }
+    (!s.starts_with('/'))
+        .then_some(())
+        .ok_or_else(|| WavyteError::validation("asset paths must be relative"))?;
+    (!s.is_empty())
+        .then_some(())
+        .ok_or_else(|| WavyteError::validation("asset path must be non-empty"))?;
 
     let mut out = Vec::<&str>::new();
     for part in s.split('/') {
-        if part.is_empty() || part == "." {
-            continue;
+        match part {
+            "" | "." => {}
+            ".." => return Err(WavyteError::validation("asset paths must not contain '..'")),
+            valid => out.push(valid),
         }
-        if part == ".." {
-            return Err(WavyteError::validation("asset paths must not contain '..'"));
-        }
-        out.push(part);
     }
 
-    if out.is_empty() {
-        return Err(WavyteError::validation(
-            "asset path must contain a file name",
-        ));
-    }
+    (!out.is_empty())
+        .then_some(())
+        .ok_or_else(|| WavyteError::validation("asset path must contain a file name"))?;
 
     Ok(out.join("/"))
 }
 
 fn parse_svg_path(d: &str) -> WavyteResult<BezPath> {
     let d = d.trim();
-    if d.is_empty() {
-        return Err(WavyteError::validation(
-            "path asset svg_path_d must be non-empty",
-        ));
-    }
+    (!d.is_empty())
+        .then_some(())
+        .ok_or_else(|| WavyteError::validation("path asset svg_path_d must be non-empty"))?;
 
     BezPath::from_svg(d).map_err(|e| WavyteError::validation(format!("invalid svg_path_d: {e}")))
 }
@@ -531,11 +533,9 @@ impl TextLayoutEngine {
         brush: TextBrushRgba8,
         max_width_px: Option<f32>,
     ) -> WavyteResult<parley::Layout<TextBrushRgba8>> {
-        if !size_px.is_finite() || size_px <= 0.0 {
-            return Err(WavyteError::validation(
-                "text size_px must be finite and > 0",
-            ));
-        }
+        (size_px.is_finite() && size_px > 0.0)
+            .then_some(())
+            .ok_or_else(|| WavyteError::validation("text size_px must be finite and > 0"))?;
 
         let families = self
             .font_ctx
@@ -563,15 +563,18 @@ impl TextLayoutEngine {
         builder.push_default(parley::style::StyleProperty::Brush(brush));
 
         let mut layout: parley::Layout<TextBrushRgba8> = builder.build(text);
-        if let Some(w) = max_width_px {
-            layout.break_all_lines(Some(w));
-            layout.align(
-                Some(w),
-                parley::Alignment::Start,
-                parley::AlignmentOptions::default(),
-            );
-        } else {
-            layout.break_all_lines(None);
+        match max_width_px {
+            Some(w) => {
+                layout.break_all_lines(Some(w));
+                layout.align(
+                    Some(w),
+                    parley::Alignment::Start,
+                    parley::AlignmentOptions::default(),
+                );
+            }
+            None => {
+                layout.break_all_lines(None);
+            }
         }
 
         Ok(layout)
