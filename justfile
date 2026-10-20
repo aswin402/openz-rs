@@ -60,3 +60,7 @@ format:
 # Clean cargo build artifacts to free disk space
 clean:
     cargo clean
+
+# Reclaim multi-GB stale openz binary/rlib artifacts while preserving upstream dependency caches
+prune-target:
+    rm -rf target/release target/debug/deps/openz-* target/debug/deps/libopenz-* target/release-balanced/deps/openz-* target/release-balanced/deps/libopenz-* target/version_sync_tests_runner

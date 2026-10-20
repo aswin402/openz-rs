@@ -71,85 +71,10 @@ macro_rules! define_openmedia_tool {
     };
 }
 
-fn parse_embedded_json_string(value: &Value) -> Option<Value> {
-    let raw = value.as_str()?.trim();
-    match raw.starts_with('{') || raw.starts_with('[') {
-        true => serde_json::from_str(raw).ok(),
-        false => None,
-    }
-}
-
-fn parse_json_string_fields(arguments: &Value, fields: &[&str]) -> Value {
-    let obj = match arguments.as_object() {
-        Some(obj) => obj,
-        None => return arguments.clone(),
-    };
-
-    let mut normalized = obj.clone();
-    let mut changed = false;
-    for field in fields {
-        match normalized.get(*field).and_then(parse_embedded_json_string) {
-            Some(parsed) => {
-                normalized.insert((*field).to_string(), parsed);
-                changed = true;
-            }
-            None => {}
-        }
-    }
-
-    match changed {
-        true => Value::Object(normalized),
-        false => arguments.clone(),
-    }
-}
-
-fn coerce_number_value(v: &Value) -> Option<Value> {
-    let trimmed = v.as_str()?.trim();
-    trimmed
-        .parse::<i64>()
-        .ok()
-        .map(|i| json!(i))
-        .or_else(|| trimmed.parse::<f64>().ok().map(|f| json!(f)))
-}
-
-fn coerce_numeric_fields(obj: &mut serde_json::Map<String, Value>, fields: &[&str]) {
-    for field in fields {
-        match obj.get(*field).and_then(coerce_number_value) {
-            Some(coerced) => {
-                obj.insert((*field).to_string(), coerced);
-            }
-            None => {}
-        }
-    }
-}
-
-fn coerce_object_numeric_fields(arguments: &Value, fields: &[&str]) -> Value {
-    match arguments.as_object().cloned() {
-        Some(mut obj) => {
-            coerce_numeric_fields(&mut obj, fields);
-            Value::Object(obj)
-        }
-        None => arguments.clone(),
-    }
-}
-
-fn rename_map_field(
-    map: &mut serde_json::Map<String, Value>,
-    from_key: &str,
-    to_key: &str,
-    coerce_num: bool,
-) {
-    match map.remove(from_key) {
-        Some(val) => {
-            let final_val = match coerce_num {
-                true => coerce_number_value(&val).unwrap_or(val),
-                false => val,
-            };
-            map.insert(to_key.to_string(), final_val);
-        }
-        None => {}
-    }
-}
+use crate::tools::arguments::{
+    coerce_numeric_fields_in_map as coerce_numeric_fields, coerce_object_numeric_fields,
+    parse_embedded_json_string, parse_json_string_fields, rename_map_field,
+};
 
 fn normalize_create_svg_arguments(arguments: &Value) -> Value {
     let obj = match arguments.as_object() {

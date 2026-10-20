@@ -1,5 +1,37 @@
+## [0.0.277] - 2026-10-20
+### v0.0.277 (Latest Release)
+
+#### Changed
+- **Consolidated Cross-Tool JSON Argument Coercion & Alias Helpers into [`src/tools/arguments.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments.rs) ([`src/tools/opendoc/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs), [`src/tools/openmedia/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/mod.rs), [`src/tools/searchxyz/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/mod.rs), [`src/tools/arguments_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments_tests.rs), [`justfile`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/justfile))**:
+  - **Unified Canonical Argument Coercion & Alias API (`src/tools/arguments.rs`)**:
+    - Consolidated `coerce_u32`, `coerce_usize`, `coerce_f64`, `coerce_f32`, `coerce_number_value`, `coerce_numeric_fields_in_map`, `coerce_numeric_fields`, `coerce_object_numeric_fields`, `coerce_single_bool`, `coerce_bool_fields`, `get_alias`, `fill_from_aliases`, `map_field_alias`, `rename_map_field`, `parse_embedded_json_string`, `parse_json_string_field`, `parse_json_string_fields`, and `wrap_string_arg` into [`src/tools/arguments.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments.rs).
+    - Replaced ~240 lines of duplicated argument coercion and alias helpers across [`src/tools/opendoc/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs), [`src/tools/openmedia/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/mod.rs), and [`src/tools/searchxyz/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/mod.rs) with imports from `crate::tools::arguments`.
+    - Added `cross_tool_coercion_and_alias_helpers_work_consistently` unit test in [`src/tools/arguments_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments_tests.rs) and added `just prune-target` in [`justfile`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/justfile) to reclaim stale `openz-*`/`libopenz-*` artifacts (~16 GB freed) without invalidating cached upstream dependency `.rlib`s.
+
+#### Documentation
+- **Synchronized Release Manifests**: Updated [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md), and [`CHANGELOG.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/CHANGELOG.md) to `0.0.277`.
+
+### Sources & Inspirations
+- **[Inspiration]**: Serde `Value` schema normalizers and DRY tool boundary layers — centralizing numeric/boolean string coercion, embedded JSON parsing, and field alias mapping across all native tool families.
+
+- **Ideas**:
+  - Eliminate cross-subsystem duplication of JSON argument coercion (`coerce_number_value`, `coerce_numeric_fields`, `coerce_bool_fields`), alias mapping (`get_alias`, `fill_from_aliases`, `map_field_alias`, `rename_map_field`), and embedded JSON parsing (`parse_json_string_field`, `parse_json_string_fields`) across `opendoc`, `openmedia`, and `searchxyz` by promoting them to `src/tools/arguments.rs`.
+- **Inspirations**:
+  - Serde `Value` schema normalizers and DRY tool boundary layers (`0` `if/else`, `0` `regex` across all 624 files).
+- **Sources & References**:
+  - [`src/tools/arguments.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments.rs), [`src/tools/arguments_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments_tests.rs)
+  - [`src/tools/opendoc/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs), [`src/tools/openmedia/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/mod.rs), [`src/tools/searchxyz/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/mod.rs)
+  - [`justfile`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/justfile), [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md)
+- **Details & Metrics**:
+  - Consolidated 18 cross-tool argument coercion and alias functions into [`src/tools/arguments.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments.rs), removing ~240 duplicate lines across `opendoc`, `openmedia`, and `searchxyz`.
+  - Reclaimed 16 GB of disk space (`target/` reduced from 26 GB to 16 GB) and added `just prune-target` in [`justfile`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/justfile).
+- **Verification**:
+  - Verified `just test-guard` passes in `0.15s` across all 624 `.rs` files (`0` `if`/`else`, `0` `regex`) and `just check openz` passes with `0` warnings and `0` errors.
+
+---
+
 ## [0.0.276] - 2026-10-20
-### v0.0.276 (Latest Release)
+### v0.0.276
 
 #### Changed
 - **Removed Direct `regex` Dependency & Added Automated Zero-`if`/`else` & Zero-Regex Codebase Lexer Guard ([`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`src/lib.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/lib.rs), [`src/version_sync_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/version_sync_tests.rs), [`justfile`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/justfile))**:

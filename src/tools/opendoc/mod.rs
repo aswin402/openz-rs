@@ -45,53 +45,10 @@ fn coerce_bool(v: &Value) -> Option<bool> {
     }
 }
 
-fn coerce_u32(v: &Value) -> Option<u32> {
-    match v {
-        Value::Number(n) => n.as_u64().map(|u| u as u32),
-        Value::String(s) => s.trim().parse::<u32>().ok(),
-        _ => None,
-    }
-}
-
-fn coerce_usize(v: &Value) -> Option<usize> {
-    match v {
-        Value::Number(n) => n.as_u64().map(|u| u as usize),
-        Value::String(s) => s.trim().parse::<usize>().ok(),
-        _ => None,
-    }
-}
-
-fn coerce_f64(v: &Value) -> Option<f64> {
-    match v {
-        Value::Number(n) => n.as_f64(),
-        Value::String(s) => s.trim().parse::<f64>().ok(),
-        _ => None,
-    }
-}
-
-fn coerce_f32(v: &Value) -> Option<f32> {
-    match v {
-        Value::Number(n) => n.as_f64().map(|f| f as f32),
-        Value::String(s) => s.trim().parse::<f32>().ok(),
-        _ => None,
-    }
-}
-
-fn get_alias(map: &serde_json::Map<String, Value>, aliases: &[&str]) -> Option<Value> {
-    aliases.iter().find_map(|alias| map.get(*alias).cloned())
-}
-
-fn fill_from_aliases(map: &mut serde_json::Map<String, Value>, key: &str, aliases: &[&str]) {
-    match map.contains_key(key) {
-        true => {}
-        false => match get_alias(map, aliases) {
-            Some(val) => {
-                map.insert(key.to_string(), val);
-            }
-            None => {}
-        },
-    }
-}
+use crate::tools::arguments::{
+    coerce_f32, coerce_f64, coerce_u32, coerce_usize, fill_from_aliases, get_alias,
+    parse_json_string_field,
+};
 
 fn resolve_path_field(map: &mut serde_json::Map<String, Value>, key: &str) {
     let resolved = match map.get(key) {
@@ -109,19 +66,6 @@ fn resolve_path_field(map: &mut serde_json::Map<String, Value>, key: &str) {
 fn fill_and_resolve_path(map: &mut serde_json::Map<String, Value>, key: &str, aliases: &[&str]) {
     fill_from_aliases(map, key, aliases);
     resolve_path_field(map, key);
-}
-
-fn parse_json_string_field(map: &mut serde_json::Map<String, Value>, key: &str) {
-    let parsed = match map.get(key) {
-        Some(Value::String(s)) => serde_json::from_str::<Value>(s).ok(),
-        _ => None,
-    };
-    match parsed {
-        Some(p) => {
-            map.insert(key.to_string(), p);
-        }
-        None => {}
-    }
 }
 
 fn normalize_opendoc_args(tool_name: &str, arguments: &Value) -> Value {

@@ -53,3 +53,49 @@ fn typed_argument_kinds_share_compatibility_aliases() {
         "123".to_string()
     ]);
 }
+
+#[test]
+fn cross_tool_coercion_and_alias_helpers_work_consistently() {
+    let mut val = serde_json::json!({
+        "width": "1920",
+        "fps": "29.97",
+        "enabled": "yes",
+        "silent": "0",
+        "q": "rust async",
+        "old_count": "42",
+        "embedded": "{\"nested\":true}",
+    });
+
+    coerce_numeric_fields(&mut val, &["width", "fps"]);
+    coerce_bool_fields(&mut val, &["enabled", "silent"]);
+    map_field_alias(&mut val, "query", &["q", "search"]);
+
+    assert_eq!(val["width"], serde_json::json!(1920));
+    assert_eq!(val["fps"], serde_json::json!(29.97));
+    assert_eq!(val["enabled"], serde_json::json!(true));
+    assert_eq!(val["silent"], serde_json::json!(false));
+    assert_eq!(val["query"], serde_json::json!("rust async"));
+
+    let parsed = parse_json_string_fields(&val, &["embedded"]);
+    assert_eq!(parsed["embedded"], serde_json::json!({ "nested": true }));
+
+    let mut map = parsed.as_object().cloned().expect("object");
+    rename_map_field(&mut map, "old_count", "count", true);
+    fill_from_aliases(&mut map, "search_query", &["query"]);
+    parse_json_string_field(&mut map, "embedded");
+
+    assert_eq!(map.get("count"), Some(&serde_json::json!(42)));
+    assert_eq!(map.get("search_query"), Some(&serde_json::json!("rust async")));
+    assert_eq!(coerce_u32(&serde_json::json!("1080")), Some(1080));
+    assert_eq!(coerce_usize(&serde_json::json!("64")), Some(64));
+    assert_eq!(coerce_f64(&serde_json::json!("3.5")), Some(3.5));
+    assert_eq!(coerce_f32(&serde_json::json!("1.25")), Some(1.25));
+    assert_eq!(
+        wrap_string_arg(&serde_json::json!("  hello  "), "text"),
+        serde_json::json!({ "text": "hello" })
+    );
+    assert_eq!(
+        coerce_object_numeric_fields(&serde_json::json!({ "limit": "25" }), &["limit"]),
+        serde_json::json!({ "limit": 25 })
+    );
+}
