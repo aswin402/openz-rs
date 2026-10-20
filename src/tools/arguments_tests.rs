@@ -134,3 +134,34 @@ fn multi_key_extractors_and_url_normalization_work_consistently() {
         Some("memory-tag".to_string())
     );
 }
+
+#[test]
+fn map_field_and_dotted_path_helpers_work_consistently() {
+    let val = serde_json::json!({
+        "thoughtNumber": "3",
+        "confidence": "0.95",
+        "nextThoughtNeeded": "y",
+        "tags": ["alpha", 42],
+        "steps": ["1", 2],
+        "user": {
+            "profile": {
+                "name": "Aswin"
+            }
+        }
+    });
+    let map = val.as_object().expect("object");
+
+    assert_eq!(get_usize_field(map, &["thought_number", "thoughtNumber"]), Some(3));
+    assert_eq!(get_f64_field(map, &["score", "confidence"]), Some(0.95));
+    assert_eq!(get_bool_field(map, &["next_thought_needed", "nextThoughtNeeded"]), Some(true));
+    assert_eq!(
+        get_string_vec_field(map, &["tags"]),
+        Some(vec!["alpha".to_string(), "42".to_string()])
+    );
+    assert_eq!(get_usize_vec_field(map, &["steps"]), Some(vec![1, 2]));
+    assert_eq!(
+        resolve_dotted_json_path(&val, "user.profile.name"),
+        Some(&serde_json::json!("Aswin"))
+    );
+    assert_eq!(resolve_dotted_json_path(&val, "this"), Some(&val));
+}

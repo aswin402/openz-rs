@@ -236,14 +236,14 @@ pub fn coerce_object_numeric_fields(
 pub fn coerce_single_bool(entry: &serde_json::Value) -> Option<bool> {
     match entry {
         serde_json::Value::String(s) => match s.trim().to_ascii_lowercase().as_str() {
-            "true" | "1" | "yes" | "on" => Some(true),
-            "false" | "0" | "no" | "off" => Some(false),
+            "true" | "1" | "yes" | "y" | "on" => Some(true),
+            "false" | "0" | "no" | "n" | "off" => Some(false),
             _ => None,
         },
         serde_json::Value::Number(n) => match n.as_i64() {
-            Some(1) => Some(true),
             Some(0) => Some(false),
-            _ => None,
+            Some(_) => Some(true),
+            None => None,
         },
         _ => None,
     }
@@ -492,6 +492,114 @@ pub fn extract_normalized_url_from_aliases(
     (!raw_url.is_empty())
         .then(|| crate::tools::web::normalize_web_url(raw_url))
         .ok_or_else(|| anyhow::anyhow!("{empty_err}"))
+}
+
+pub fn value_to_non_empty_string(v: &serde_json::Value) -> Option<String> {
+    match v {
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        }
+        serde_json::Value::Number(_) | serde_json::Value::Bool(_) => Some(v.to_string()),
+        _ => None,
+    }
+}
+
+pub fn value_to_usize(v: &serde_json::Value) -> Option<usize> {
+    coerce_u64(v).map(|u| u as usize)
+}
+
+pub fn get_string_field(
+    map: &serde_json::Map<String, serde_json::Value>,
+    aliases: &[&str],
+) -> Option<String> {
+    aliases
+        .iter()
+        .find_map(|&k| map.get(k).and_then(value_to_non_empty_string))
+}
+
+pub fn get_usize_field(
+    map: &serde_json::Map<String, serde_json::Value>,
+    aliases: &[&str],
+) -> Option<usize> {
+    aliases
+        .iter()
+        .find_map(|&k| map.get(k).and_then(value_to_usize))
+}
+
+pub fn get_f64_field(
+    map: &serde_json::Map<String, serde_json::Value>,
+    aliases: &[&str],
+) -> Option<f64> {
+    aliases
+        .iter()
+        .find_map(|&k| map.get(k).and_then(coerce_f64))
+}
+
+pub fn get_bool_field(
+    map: &serde_json::Map<String, serde_json::Value>,
+    aliases: &[&str],
+) -> Option<bool> {
+    aliases
+        .iter()
+        .find_map(|&k| map.get(k).and_then(parse_bool_value))
+}
+
+pub fn get_string_vec_field(
+    map: &serde_json::Map<String, serde_json::Value>,
+    aliases: &[&str],
+) -> Option<Vec<String>> {
+    aliases.iter().find_map(|&k| {
+        map.get(k).and_then(|v| match v {
+            serde_json::Value::Array(arr) => {
+                let items: Vec<String> =
+                    arr.iter().filter_map(value_to_non_empty_string).collect();
+                (!items.is_empty()).then_some(items)
+            }
+            _ => value_to_non_empty_string(v).map(|s| vec![s]),
+        })
+    })
+}
+
+pub fn get_usize_vec_field(
+    map: &serde_json::Map<String, serde_json::Value>,
+    aliases: &[&str],
+) -> Option<Vec<usize>> {
+    aliases.iter().find_map(|&k| {
+        map.get(k).and_then(|v| match v {
+            serde_json::Value::Array(arr) => {
+                let items: Vec<usize> = arr.iter().filter_map(value_to_usize).collect();
+                (!items.is_empty()).then_some(items)
+            }
+            _ => value_to_usize(v).map(|n| vec![n]),
+        })
+    })
+}
+
+pub fn resolve_dotted_json_path<'a>(
+    root: &'a serde_json::Value,
+    path: &str,
+) -> Option<&'a serde_json::Value> {
+    match path.is_empty() || path == "this" || path == "." {
+        true => {
+            let from_map = match root {
+                serde_json::Value::Object(map) => map.get(path),
+                _ => None,
+            };
+            return Some(from_map.unwrap_or(root));
+        }
+        false => {}
+    }
+    let mut current = root;
+    for segment in path.split('.') {
+        match current {
+            serde_json::Value::Object(map) => {
+                current = map.get(segment)?;
+            }
+            _ => return None,
+        }
+    }
+    Some(current)
 }
 
 #[cfg(test)]

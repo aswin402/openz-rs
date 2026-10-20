@@ -427,17 +427,12 @@ pub fn substitute_template(template: &str, context: &serde_json::Value) -> Strin
 }
 
 fn resolve_path_value(json_value: &serde_json::Value, path: &str) -> String {
-    let parts: Vec<&str> = path.split('.').collect();
-    let mut current = json_value;
-    for part in parts {
-        match current.get(part) {
-            Some(next) => current = next,
-            None => return format!("{{{{{path}}}}}"),
-        }
-    }
-    match current.as_str() {
-        Some(s) => s.to_string(),
-        None => current.to_string(),
+    match crate::tools::arguments::resolve_dotted_json_path(json_value, path) {
+        Some(val) => match val.as_str() {
+            Some(s) => s.to_string(),
+            None => val.to_string(),
+        },
+        None => format!("{{{{{path}}}}}"),
     }
 }
 

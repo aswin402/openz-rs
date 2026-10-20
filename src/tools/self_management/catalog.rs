@@ -7,15 +7,8 @@ pub struct ToolCatalogTool {
 }
 
 fn parse_bool_value(v: Option<&Value>, default: bool) -> bool {
-    match v {
-        Some(Value::Bool(b)) => *b,
-        Some(Value::String(s)) => match s.trim().to_lowercase().as_str() {
-            "true" | "1" | "yes" | "on" => true,
-            "false" | "0" | "no" | "off" => false,
-            _ => default,
-        },
-        _ => default,
-    }
+    v.and_then(crate::tools::arguments::parse_bool_value)
+        .unwrap_or(default)
 }
 
 impl ToolCatalogTool {

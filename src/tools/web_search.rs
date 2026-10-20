@@ -128,71 +128,54 @@ fn searchxyz_results_to_json(results: Vec<crate::tools::searchxyz::core::search:
         .collect()
 }
 
-fn parse_bool_override(val: &Value) -> Option<bool> {
-    val.as_bool().or_else(|| {
-        let lower = val.as_str()?.trim().to_lowercase();
-        match lower.as_str() {
-            "true" | "1" | "yes" => Some(true),
-            "false" | "0" | "no" => Some(false),
-            _ => None,
-        }
-    })
-}
-
 fn web_search_should_auto_read_top_results(query: &str, arguments: &Value) -> bool {
-    arguments
-        .get("read_top_results")
-        .or_else(|| arguments.get("readTopResults"))
-        .and_then(parse_bool_override)
-        .unwrap_or_else(|| {
-            let normalized = query.to_ascii_lowercase();
-            [
-                "research",
-                "summarize",
-                "summary",
-                "compare",
-                "comparison",
-                "latest",
-                "current",
-                "today",
-                "pricing",
-                "release",
-                "changelog",
-                "what's new",
-                "whats new",
-                "market",
-                "landscape",
-                "deep dive",
-            ]
-            .iter()
-            .any(|needle| normalized.contains(needle))
-        })
+    crate::tools::arguments::extract_bool_arg(
+        arguments,
+        &["read_top_results", "readTopResults"],
+    )
+    .unwrap_or_else(|| {
+        let normalized = query.to_ascii_lowercase();
+        [
+            "research",
+            "summarize",
+            "summary",
+            "compare",
+            "comparison",
+            "latest",
+            "current",
+            "today",
+            "pricing",
+            "release",
+            "changelog",
+            "what's new",
+            "whats new",
+            "market",
+            "landscape",
+            "deep dive",
+        ]
+        .iter()
+        .any(|needle| normalized.contains(needle))
+    })
 }
 
 fn web_search_auto_read_max_pages(arguments: &Value, should_read: bool) -> usize {
     match should_read {
         false => 0,
-        true => arguments
-            .get("max_pages")
-            .or_else(|| arguments.get("maxPages"))
-            .or_else(|| arguments.get("limit"))
-            .or_else(|| arguments.get("max_results"))
-            .and_then(|value| {
-                value.as_u64().or_else(|| {
-                    value.as_str().and_then(|s| s.trim().parse::<u64>().ok())
-                })
-            })
-            .map(|value| value.clamp(1, 5) as usize)
-            .unwrap_or(3),
+        true => crate::tools::arguments::extract_u64_arg(
+            arguments,
+            &["max_pages", "maxPages", "limit", "max_results"],
+        )
+        .map(|value| value.clamp(1, 5) as usize)
+        .unwrap_or(3),
     }
 }
 
 fn web_search_should_diagnose_on_failure(arguments: &Value) -> bool {
-    arguments
-        .get("diagnose_on_failure")
-        .or_else(|| arguments.get("diagnoseOnFailure"))
-        .and_then(parse_bool_override)
-        .unwrap_or(true)
+    crate::tools::arguments::get_bool_arg(
+        arguments,
+        &["diagnose_on_failure", "diagnoseOnFailure"],
+        true,
+    )
 }
 
 pub fn extract_web_search_query(arguments: &Value) -> Result<String> {

@@ -22,29 +22,7 @@ pub fn fill_template_enhanced(doc: &mut Document, vars: &Value) -> usize {
     super::replace::transform_doc_strings(doc, true, |text| render_template(text, vars))
 }
 
-/// Resolve a dotted path against a JSON value.
-fn resolve_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
-    match path.is_empty() || path == "this" || path == "." {
-        true => {
-            let from_map = match root {
-                Value::Object(map) => map.get(path),
-                _ => None,
-            };
-            return Some(from_map.unwrap_or(root));
-        }
-        false => {}
-    }
-    let mut current = root;
-    for segment in path.split('.') {
-        match current {
-            Value::Object(map) => {
-                current = map.get(segment)?;
-            }
-            _ => return None,
-        }
-    }
-    Some(current)
-}
+pub(crate) use crate::tools::arguments::resolve_dotted_json_path as resolve_path;
 
 /// Check whether a JSON value is truthy.
 fn is_truthy(val: &Value) -> bool {

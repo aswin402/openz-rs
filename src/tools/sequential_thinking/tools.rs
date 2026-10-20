@@ -151,94 +151,10 @@ impl SequentialThinkingEngine {
 
 // ─── Input Normalization Helpers ─────────────────────────────────
 
-fn value_to_non_empty_string(v: &Value) -> Option<String> {
-    match v {
-        Value::String(s) => {
-            let trimmed = s.trim();
-            (!trimmed.is_empty()).then(|| trimmed.to_string())
-        }
-        Value::Number(_) | Value::Bool(_) => Some(v.to_string()),
-        _ => None,
-    }
-}
-
-fn value_to_usize(v: &Value) -> Option<usize> {
-    v.as_u64()
-        .map(|n| n as usize)
-        .or_else(|| {
-            v.as_i64()
-                .and_then(|n| usize::try_from(n).ok())
-        })
-        .or_else(|| v.as_str().and_then(|s| s.trim().parse::<usize>().ok()))
-}
-
-fn get_string_field(map: &serde_json::Map<String, Value>, aliases: &[&str]) -> Option<String> {
-    aliases
-        .iter()
-        .find_map(|&k| map.get(k).and_then(value_to_non_empty_string))
-}
-
-fn get_usize_field(map: &serde_json::Map<String, Value>, aliases: &[&str]) -> Option<usize> {
-    aliases
-        .iter()
-        .find_map(|&k| map.get(k).and_then(value_to_usize))
-}
-
-fn get_f64_field(map: &serde_json::Map<String, Value>, aliases: &[&str]) -> Option<f64> {
-    aliases.iter().find_map(|&k| {
-        map.get(k).and_then(|v| {
-            v.as_f64()
-                .or_else(|| v.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
-        })
-    })
-}
-
-fn get_bool_field(map: &serde_json::Map<String, Value>, aliases: &[&str]) -> Option<bool> {
-    aliases.iter().find_map(|&k| {
-        map.get(k).and_then(|v| {
-            v.as_bool()
-                .or_else(|| {
-                    v.as_str().and_then(|s| match s.trim().to_lowercase().as_str() {
-                        "true" | "1" | "yes" | "y" => Some(true),
-                        "false" | "0" | "no" | "n" => Some(false),
-                        _ => None,
-                    })
-                })
-                .or_else(|| v.as_i64().map(|n| n != 0))
-        })
-    })
-}
-
-fn get_string_vec_field(
-    map: &serde_json::Map<String, Value>,
-    aliases: &[&str],
-) -> Option<Vec<String>> {
-    aliases.iter().find_map(|&k| {
-        map.get(k).and_then(|v| match v {
-            Value::Array(arr) => {
-                let items: Vec<String> =
-                    arr.iter().filter_map(value_to_non_empty_string).collect();
-                (!items.is_empty()).then_some(items)
-            }
-            _ => value_to_non_empty_string(v).map(|s| vec![s]),
-        })
-    })
-}
-
-fn get_usize_vec_field(
-    map: &serde_json::Map<String, Value>,
-    aliases: &[&str],
-) -> Option<Vec<usize>> {
-    aliases.iter().find_map(|&k| {
-        map.get(k).and_then(|v| match v {
-            Value::Array(arr) => {
-                let items: Vec<usize> = arr.iter().filter_map(value_to_usize).collect();
-                (!items.is_empty()).then_some(items)
-            }
-            _ => value_to_usize(v).map(|n| vec![n]),
-        })
-    })
-}
+use crate::tools::arguments::{
+    get_bool_field, get_f64_field, get_string_field, get_string_vec_field, get_usize_field,
+    get_usize_vec_field,
+};
 
 fn collect_unverified_assumptions(thoughts: &[ThoughtData]) -> Vec<String> {
     let mut assumed = HashSet::new();

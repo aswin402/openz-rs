@@ -1,5 +1,35 @@
+## [0.0.279] - 2026-10-20
+### v0.0.279 (Latest Release)
+
+#### Changed
+- **Consolidated Map-Based Field Extractors, Boolean Coercion, & Dotted JSON Path Resolution into [`src/tools/arguments.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments.rs) ([`src/tools/sequential_thinking/tools.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/sequential_thinking/tools.rs), [`src/tools/web_search.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web_search.rs), [`src/tools/self_management/catalog.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog.rs), [`src/tools/opendoc/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs), [`src/tools/opendoc/engine/template.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/engine/template.rs), [`src/sop/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/sop/mod.rs))**:
+  - **Unified Map Field & Array Extractors (`src/tools/arguments.rs`)**:
+    - Added `value_to_non_empty_string`, `value_to_usize`, `get_string_field`, `get_usize_field`, `get_f64_field`, `get_bool_field`, `get_string_vec_field`, `get_usize_vec_field`, and `resolve_dotted_json_path` to [`src/tools/arguments.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments.rs).
+    - Replaced 88 lines of duplicated map field extraction in [`src/tools/sequential_thinking/tools.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/sequential_thinking/tools.rs), duplicated boolean/u64 overrides in [`src/tools/web_search.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web_search.rs), [`src/tools/self_management/catalog.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog.rs), and [`src/tools/opendoc/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs), and duplicated dotted JSON path traversal in [`src/tools/opendoc/engine/template.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/engine/template.rs) and [`src/sop/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/sop/mod.rs).
+
+#### Documentation
+- **Synchronized Release Manifests**: Updated [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md), and [`CHANGELOG.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/CHANGELOG.md) to `0.0.279`.
+
+### Sources & Inspirations
+- **[Inspiration]**: JSON Pointer / Handlebars path resolution (`resolve_dotted_json_path`) and unified `serde_json::Map` schema adapters.
+
+- **Ideas**:
+  - Consolidate map-level field/array extractors (`get_string_field`, `get_usize_field`, `get_f64_field`, `get_bool_field`, `get_string_vec_field`, `get_usize_vec_field`) and dotted JSON path traversal (`resolve_dotted_json_path`) into `src/tools/arguments.rs`.
+- **Inspirations**:
+  - JSON Pointer / Handlebars path resolution (`0` `if/else`, `0` `regex` across all 624 files).
+- **Sources & References**:
+  - [`src/tools/arguments.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments.rs), [`src/tools/arguments_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments_tests.rs)
+  - [`src/tools/sequential_thinking/tools.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/sequential_thinking/tools.rs), [`src/tools/web_search.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web_search.rs), [`src/tools/self_management/catalog.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/catalog.rs), [`src/tools/opendoc/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs), [`src/tools/opendoc/engine/template.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/engine/template.rs), [`src/sop/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/sop/mod.rs)
+- **Details & Metrics**:
+  - Removed ~160 lines of duplicated map extraction, boolean coercion, and dotted JSON path traversal across 6 modules.
+  - Added `map_field_and_dotted_path_helpers_work_consistently` in [`src/tools/arguments_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments_tests.rs).
+- **Verification**:
+  - Verified `just test-guard` passes across all 624 `.rs` files (`0` `if`/`else`, `0` `regex`) and `just check openz` passes with `0` warnings and `0` errors.
+
+---
+
 ## [0.0.278] - 2026-10-20
-### v0.0.278 (Latest Release)
+### v0.0.278
 
 #### Changed
 - **Unified Multi-Key Parameter & URL/Browser Extractors Across Tool Subsystems ([`src/tools/arguments.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments.rs), [`src/tools/browser/common.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/common.rs), [`src/tools/crawl.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/crawl.rs), [`src/tools/web.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web.rs), [`src/tools/headroom/compress.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/compress.rs), [`src/tools/self_management/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/mod.rs), [`src/tools/shared_memory/cognitive.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/cognitive.rs), [`src/tools/subagent/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod.rs))**:

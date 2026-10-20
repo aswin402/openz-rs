@@ -28,26 +28,9 @@ fn clean_and_resolve_path(raw: &str) -> String {
         .to_string()
 }
 
-fn coerce_bool(v: &Value) -> Option<bool> {
-    match v {
-        Value::Bool(b) => Some(*b),
-        Value::String(s) => match s.trim().to_lowercase().as_str() {
-            "true" | "1" | "yes" | "on" => Some(true),
-            "false" | "0" | "no" | "off" => Some(false),
-            _ => None,
-        },
-        Value::Number(n) => match n.as_i64() {
-            Some(1) => Some(true),
-            Some(0) => Some(false),
-            _ => None,
-        },
-        _ => None,
-    }
-}
-
 use crate::tools::arguments::{
     coerce_f32, coerce_f64, coerce_u32, coerce_usize, fill_from_aliases, get_alias,
-    parse_json_string_field,
+    parse_bool_value as coerce_bool, parse_json_string_field,
 };
 
 fn resolve_path_field(map: &mut serde_json::Map<String, Value>, key: &str) {
