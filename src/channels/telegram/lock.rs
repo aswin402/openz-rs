@@ -52,10 +52,12 @@ pub(crate) fn acquire_channel_singleton_lock(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn telegram_lock_path_in(data_dir: &Path, bot_token: &str) -> PathBuf {
     channel_singleton_lock_path_in(data_dir, "telegram", bot_token)
 }
 
+#[cfg(test)]
 pub(crate) fn acquire_telegram_poll_lock_at(
     data_dir: &Path,
     bot_token: &str,

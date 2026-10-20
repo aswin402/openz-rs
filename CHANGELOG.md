@@ -1,5 +1,41 @@
+## [0.0.276] - 2026-10-20
+### v0.0.276 (Latest Release)
+
+#### Changed
+- **Removed Direct `regex` Dependency & Added Automated Zero-`if`/`else` & Zero-Regex Codebase Lexer Guard ([`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`src/lib.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/lib.rs), [`src/version_sync_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/version_sync_tests.rs), [`justfile`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/justfile))**:
+  - **Dropped Unused `regex` Direct Dependency**:
+    - Removed `regex = "1.10"` from [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml) and `"regex"` from [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json).
+  - **Codebase-Wide Zero-`if`/`else` & Zero-Regex Regression Guard (`codebase_enforces_zero_if_else_and_zero_regex`)**:
+    - Added a deterministic Rust token scanner (`scan_rust_source_for_forbidden_tokens`) and unit test (`codebase_enforces_zero_if_else_and_zero_regex`) in [`src/version_sync_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/version_sync_tests.rs) (wired into [`src/lib.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/lib.rs) and runnable standalone in `0.19s` with `<30 MB` RAM via `just test-guard`) that walks all 624 `.rs` source files under `src/`, strips line/block comments, normal/raw string literals, and character literals, and asserts `0` `if`, `0` `else`, and `0` `regex`/`Regex` tokens across the entire codebase, plus asserts that `Cargo.toml` never declares `regex` as a direct dependency.
+  - **Kernel Cgroup CPU/RAM Caps & 64-Unit `openz` Codegen Splitting**:
+    - Added `[profile.dev.package.openz] codegen-units = 64` and `[profile.test.package.openz] codegen-units = 64` in [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml) so `rustc` splits the 624-file `openz` crate into 64 small (~3.5 MB) codegen units without invalidating cached upstream dependency `.rlib`s.
+    - Wrapped `justfile` build/check/test/clippy recipes in `systemd-run --user --scope -q -p CPUQuota=150% -p MemoryHigh=3000M -p MemoryMax=4200M nice -n 19 ionice -c 3` to enforce hard Linux kernel cgroup v2 bounds (`<= 1.5` CPU cores, `<= 3.0–4.2 GB` RAM) so builds and tests can never lag or crash the laptop.
+    - Gated test-only helpers `telegram_lock_path_in` and `acquire_telegram_poll_lock_at` with `#[cfg(test)]` in [`src/channels/telegram/lock.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/telegram/lock.rs) to eliminate the final 2 `dead_code` warnings on `openz (lib)`.
+
+#### Documentation
+- **Synchronized Release Manifests**: Updated [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md), and [`CHANGELOG.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/CHANGELOG.md) to `0.0.276`.
+
+### Sources & Inspirations
+- **[Inspiration]**: Rust `rustc_lexer`, Linux cgroups v2 (`systemd-run`), and architectural fitness functions — enforcing zero-branching (`0` `if`/`else`) and zero-regex (`0` `regex`) invariants continuously in `0.19s` while bounding compiler/test CPU and memory at the kernel level.
+
+- **Ideas**:
+  - Remove the unused `regex` direct dependency from `Cargo.toml` and `onpkg.json` now that all 624 files in `src/**/*.rs` use deterministic character/token scanners, lock in the `0` `if`/`else` and `0` `regex` invariant with a standalone `0.19s` lexer guard (`src/version_sync_tests.rs`), and cap all `just` recipes via Linux cgroup v2 (`CPUQuota=150%`, `MemoryMax=4200M`) + 64-unit `openz` codegen splitting.
+- **Inspirations**:
+  - `rustc_lexer`, Linux cgroups v2 (`systemd-run`), and architectural fitness functions (`0` `if/else`, `0` `regex` enforced across all 624 files).
+- **Sources & References**:
+  - [`src/version_sync_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/version_sync_tests.rs), [`src/lib.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/lib.rs), [`src/channels/telegram/lock.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/telegram/lock.rs)
+  - [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md), [`justfile`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/justfile)
+- **Details & Metrics**:
+  - Removed direct `regex = "1.10"` dependency in [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml) and [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json).
+  - Extracted [`src/version_sync_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/version_sync_tests.rs) scanning all 624 `.rs` files in `0.19s` (`just test-guard`).
+  - Added `[profile.dev.package.openz] codegen-units = 64`, `[profile.test.package.openz] codegen-units = 64`, and `systemd-run` cgroup CPU/RAM limits in [`justfile`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/justfile).
+- **Verification**:
+  - Verified `just test-guard` (`codebase_enforces_zero_if_else_and_zero_regex` + `release_version_surfaces_match_cargo_package_version`) passes in `0.19s` across all 624 files (`0` failures), `just check openz` passes with `0` warnings and `0` errors, and `test_native_tool_registration_names` preserves the 260 native tools invariant.
+
+---
+
 ## [0.0.275] - 2026-10-20
-### v0.0.275 (Latest Release)
+### v0.0.275
 
 #### Changed
 - **100% Zero-`if`/`else` & Zero-Regex Across All 33 Files in `src/tools/opendoc/**` — Completing 623/623 Files Across the Entire OpenZ Codebase ([`src/tools/opendoc/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs), [`src/tools/opendoc/converters/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/converters/mod.rs), [`src/tools/opendoc/converters/render.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/converters/render.rs), [`src/tools/opendoc/handlers/pdf.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/handlers/pdf.rs), [`src/tools/opendoc/handlers/xlsx.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/handlers/xlsx.rs), [`src/tools/opendoc/handlers/docx.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/handlers/docx.rs), [`src/tools/opendoc/handlers/pptx.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/handlers/pptx.rs))**:

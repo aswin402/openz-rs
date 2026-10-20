@@ -1,6 +1,6 @@
 [package]
 name = "openz"
-version = "0.0.275"
+version = "0.0.276"
 edition = "2021"
 
 [lib]
@@ -36,7 +36,6 @@ axum = { version = "0.7", features = ["ws"] }
 tower-http = { version = "0.5", features = ["fs", "cors"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-regex = "1.10"
 dirs = "5.0"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.8", features = ["v4", "v7", "serde"] }
@@ -179,5 +178,14 @@ debug = 0               # Disable debug symbols to eliminate test linker memory 
 codegen-units = 2       # Cap LLVM codegen threads to 2 per test compilation to prevent laptop lag/OOM
 incremental = false     # Disable incremental compilation bloat to stop test memory spikes
 strip = true            # Strip symbols from test binaries to eliminate linker RAM exhaustion
+
+[profile.dev.package.openz]
+codegen-units = 64      # Split the 624-file openz crate into 64 tiny (~3.5MB) units so single-job LLVM never holds >200MB IR
+
+[profile.test.package.openz]
+codegen-units = 64      # Split openz test compilation into 64 tiny units while keeping upstream deps cached
+
+[profile.release-balanced.package.openz]
+codegen-units = 64      # Split openz balanced release compilation into 64 tiny units while keeping upstream deps cached
 
 
