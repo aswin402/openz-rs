@@ -344,7 +344,7 @@ pub(crate) fn select_domains_with_bm25(
     domains
 }
 
-fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+pub(crate) fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
 }
 
@@ -423,7 +423,7 @@ pub(crate) fn tool_selection_reasons_with_bm25(
     .collect()
 }
 
-fn contains_phrase_bounded(haystack: &str, needle: &str) -> bool {
+pub(crate) fn contains_phrase_bounded(haystack: &str, needle: &str) -> bool {
     !needle.is_empty()
         && haystack.match_indices(needle).any(|(start, _)| {
             let end = start + needle.len();

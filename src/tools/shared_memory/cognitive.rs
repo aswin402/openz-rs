@@ -61,52 +61,9 @@ pub fn prune_decayed_memories(conn: &Connection) -> Result<usize> {
 
 // ─── Extraction Helpers ─────────────────────────────────────────
 
-fn extract_single_string(val: &Value) -> Option<String> {
-    val.as_str()
-        .map(|s| s.trim().to_string())
-        .or_else(|| {
-            (val.is_number() || val.is_boolean()).then(|| val.to_string().trim().to_string())
-        })
-        .filter(|s| !s.is_empty())
-}
-
-fn extract_string_field(val: &Value, keys: &[&str]) -> Option<String> {
-    extract_single_string(val).or_else(|| {
-        keys.iter()
-            .find_map(|key| val.get(*key).and_then(extract_single_string))
-    })
-}
-
-fn extract_string_list_field(val: &Value, keys: &[&str]) -> Vec<String> {
-    keys.iter()
-        .find_map(|key| {
-            let v = val.get(*key)?;
-            match v {
-                Value::Array(arr) => {
-                    let list: Vec<String> = arr.iter().filter_map(extract_single_string).collect();
-                    (!list.is_empty()).then_some(list)
-                }
-                Value::String(s) => {
-                    let trimmed = s.trim();
-                    match (trimmed.is_empty(), trimmed.contains(',')) {
-                        (true, _) => None,
-                        (false, true) => Some(
-                            trimmed
-                                .split(',')
-                                .map(|part| part.trim().to_string())
-                                .filter(|p| !p.is_empty())
-                                .collect(),
-                        ),
-                        (false, false) => Some(vec![trimmed.to_string()]),
-                    }
-                }
-                _ => None,
-            }
-        })
-        .unwrap_or_default()
-}
-
-use crate::tools::arguments::{extract_f32_arg, extract_usize_arg};
+use crate::tools::arguments::{
+    extract_f32_arg, extract_string_field, extract_string_list_field, extract_usize_arg,
+};
 
 // 1. StoreMemoryTool
 pub struct StoreMemoryTool;

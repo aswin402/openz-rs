@@ -121,9 +121,7 @@ fn mentions_ai_agent(lower: &str) -> bool {
     contains_any(lower, AI_AGENT_KEYWORDS)
 }
 
-fn contains_any(text: &str, needles: &[&str]) -> bool {
-    needles.iter().any(|needle| text.contains(needle))
-}
+use crate::tools::routing::contains_any;
 
 #[cfg(test)]
 #[path = "marketplace_intent_tests.rs"]

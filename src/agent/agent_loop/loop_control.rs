@@ -272,9 +272,7 @@ pub(crate) fn count_previous_text_responses(messages: &[Message], next_content: 
     }
 }
 
-fn contains_any(haystack: &str, needles: &[&str]) -> bool {
-    needles.iter().any(|needle| haystack.contains(needle))
-}
+use crate::tools::routing::contains_any;
 
 fn is_research_or_browser_tool(tool_lower: &str) -> bool {
     contains_any(

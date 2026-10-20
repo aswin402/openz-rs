@@ -165,3 +165,24 @@ fn map_field_and_dotted_path_helpers_work_consistently() {
     );
     assert_eq!(resolve_dotted_json_path(&val, "this"), Some(&val));
 }
+
+#[test]
+fn string_field_and_list_extractors_coerce_csv_arrays_and_scalars() {
+    let val = serde_json::json!({
+        "entityName": "  OpenZ  ",
+        "observations": "fast, async , , rust",
+        "items": [" alpha ", "", "beta"]
+    });
+    assert_eq!(
+        extract_string_field(&val, &["name", "entityName"]),
+        Some("OpenZ".to_string())
+    );
+    assert_eq!(
+        extract_string_list_field(&val, &["observations"]),
+        vec!["fast".to_string(), "async".to_string(), "rust".to_string()]
+    );
+    assert_eq!(
+        extract_trimmed_string_array(val.get("items")),
+        vec!["alpha".to_string(), "beta".to_string()]
+    );
+}

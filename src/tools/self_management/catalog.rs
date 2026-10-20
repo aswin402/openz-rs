@@ -6,11 +6,6 @@ pub struct ToolCatalogTool {
     registry: crate::tools::ToolRegistry,
 }
 
-fn parse_bool_value(v: Option<&Value>, default: bool) -> bool {
-    v.and_then(crate::tools::arguments::parse_bool_value)
-        .unwrap_or(default)
-}
-
 impl ToolCatalogTool {
     pub fn new(registry: crate::tools::ToolRegistry) -> Self {
         Self { registry }
@@ -287,9 +282,12 @@ impl Tool for ToolCatalogTool {
             .and_then(|v| v.as_str())
             .map(str::trim)
             .filter(|s| !s.is_empty());
-        let mount = parse_bool_value(arguments.get("mount"), query_str.is_some());
-        let include_schema = parse_bool_value(arguments.get("include_schema"), false);
-        let only_exposed = parse_bool_value(arguments.get("only_exposed"), false);
+        let mount =
+            crate::tools::arguments::get_bool_arg(arguments, &["mount"], query_str.is_some());
+        let include_schema =
+            crate::tools::arguments::get_bool_arg(arguments, &["include_schema"], false);
+        let only_exposed =
+            crate::tools::arguments::get_bool_arg(arguments, &["only_exposed"], false);
         let domain_filter = arguments
             .get("domain")
             .and_then(|v| v.as_str())

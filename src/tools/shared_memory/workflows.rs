@@ -30,17 +30,7 @@ fn now_rfc3339() -> String {
     chrono::Utc::now().to_rfc3339()
 }
 
-fn string_array(value: Option<&Value>) -> Vec<String> {
-    value
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
-                .filter(|s| !s.is_empty())
-                .collect()
-        })
-        .unwrap_or_default()
-}
+use crate::tools::arguments::extract_trimmed_string_array as string_array;
 
 fn parse_array(raw: &str) -> Vec<String> {
     serde_json::from_str(raw).unwrap_or_default()

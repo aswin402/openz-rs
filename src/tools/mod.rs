@@ -55,13 +55,7 @@ pub fn clamp_tool_timeout_secs(timeout_secs: u64) -> u64 {
     timeout_secs.clamp(MIN_TOOL_TIMEOUT_SECS, MAX_TOOL_TIMEOUT_SECS)
 }
 
-pub fn to_snake_case(s: &str) -> String {
-    arguments::to_snake_case(s)
-}
-
-pub fn normalize_tool_args(args: &serde_json::Value) -> serde_json::Value {
-    arguments::normalize_tool_args(args)
-}
+pub use arguments::{normalize_tool_args, to_snake_case};
 
 #[async_trait::async_trait]
 pub trait Tool: Send + Sync {

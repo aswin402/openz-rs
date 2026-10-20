@@ -1,4 +1,5 @@
 use super::research_policy::{has_live_research_intent, text_has_http_url};
+use crate::tools::routing::{contains_any, contains_phrase_bounded};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnIntent {
@@ -102,17 +103,6 @@ const MEDIA_OR_DOCUMENT_KEYWORDS: &[&str] = &[
     "ocr",
 ];
 
-fn contains_phrase_bounded(text_lower: &str, phrase: &str) -> bool {
-    let bytes = text_lower.as_bytes();
-    let p_len = phrase.len();
-    text_lower.match_indices(phrase).any(|(idx, _)| {
-        let before_ok = idx == 0 || !bytes[idx - 1].is_ascii_alphanumeric();
-        let after_idx = idx + p_len;
-        let after_ok = after_idx >= bytes.len() || !bytes[after_idx].is_ascii_alphanumeric();
-        before_ok && after_ok
-    })
-}
-
 pub fn classify_turn_intent(user_content: &str) -> IntentDecision {
     let lower = user_content.to_lowercase();
 
@@ -178,9 +168,7 @@ pub fn classify_turn_intent(user_content: &str) -> IntentDecision {
 }
 
 fn is_local_repo_query(lower: &str) -> bool {
-    LOCAL_REPO_KEYWORDS
-        .iter()
-        .any(|needle| lower.contains(needle))
+    contains_any(lower, LOCAL_REPO_KEYWORDS)
 }
 
 fn is_explicit_mutation_or_exec(lower: &str) -> bool {
@@ -196,23 +184,19 @@ fn is_local_execution_query(lower: &str) -> bool {
 }
 
 fn is_orchestration_query(lower: &str) -> bool {
-    ORCHESTRATION_KEYWORDS
-        .iter()
-        .any(|needle| lower.contains(needle))
+    contains_any(lower, ORCHESTRATION_KEYWORDS)
 }
 
 fn is_cron_query(lower: &str) -> bool {
-    CRON_KEYWORDS.iter().any(|needle| lower.contains(needle))
+    contains_any(lower, CRON_KEYWORDS)
 }
 
 fn is_memory_query(lower: &str) -> bool {
-    MEMORY_KEYWORDS.iter().any(|needle| lower.contains(needle))
+    contains_any(lower, MEMORY_KEYWORDS)
 }
 
 fn is_media_or_document_query(lower: &str) -> bool {
-    MEDIA_OR_DOCUMENT_KEYWORDS
-        .iter()
-        .any(|needle| lower.contains(needle))
+    contains_any(lower, MEDIA_OR_DOCUMENT_KEYWORDS)
 }
 
 #[cfg(test)]

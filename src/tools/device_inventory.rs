@@ -650,19 +650,7 @@ fn required_str<'a>(arguments: &'a Value, field: &str) -> Result<&'a str> {
 }
 
 fn string_array(arguments: &Value, field: &str) -> Vec<String> {
-    arguments
-        .get(field)
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(ToOwned::to_owned)
-                .collect()
-        })
-        .unwrap_or_default()
+    crate::tools::arguments::extract_trimmed_string_array(arguments.get(field))
 }
 
 fn normalize_list(items: Vec<String>) -> Vec<String> {

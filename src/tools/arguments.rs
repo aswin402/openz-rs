@@ -505,6 +505,57 @@ pub fn value_to_non_empty_string(v: &serde_json::Value) -> Option<String> {
     }
 }
 
+pub fn extract_string_field(val: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    value_to_non_empty_string(val).or_else(|| {
+        keys.iter()
+            .find_map(|key| val.get(*key).and_then(value_to_non_empty_string))
+    })
+}
+
+pub fn value_to_string_list(v: &serde_json::Value) -> Option<Vec<String>> {
+    match v {
+        serde_json::Value::Array(arr) => {
+            let list: Vec<String> = arr.iter().filter_map(value_to_non_empty_string).collect();
+            (!list.is_empty()).then_some(list)
+        }
+        serde_json::Value::String(s) => {
+            let trimmed = s.trim();
+            match (trimmed.is_empty(), trimmed.contains(',')) {
+                (true, _) => None,
+                (false, true) => Some(
+                    trimmed
+                        .split(',')
+                        .map(|part| part.trim().to_string())
+                        .filter(|p| !p.is_empty())
+                        .collect(),
+                ),
+                (false, false) => Some(vec![trimmed.to_string()]),
+            }
+        }
+        _ => None,
+    }
+}
+
+pub fn extract_string_list_field(val: &serde_json::Value, keys: &[&str]) -> Vec<String> {
+    keys.iter()
+        .find_map(|key| val.get(*key).and_then(value_to_string_list))
+        .unwrap_or_default()
+}
+
+pub fn extract_trimmed_string_array(value: Option<&serde_json::Value>) -> Vec<String> {
+    value
+        .and_then(serde_json::Value::as_array)
+        .map(|arr| {
+            arr.iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub fn value_to_usize(v: &serde_json::Value) -> Option<usize> {
     coerce_u64(v).map(|u| u as usize)
 }

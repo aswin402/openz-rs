@@ -1,3 +1,4 @@
+use crate::tools::routing::{contains_any, contains_phrase_bounded};
 use chrono::Datelike;
 
 const CURRENT_OR_LATEST_TERMS: &[&str] = &[
@@ -128,17 +129,6 @@ const RESEARCH_FAILURE_RULES: &[(ResearchFailureKind, &[&str])] = &[
     ),
 ];
 
-fn contains_phrase_bounded(text_lower: &str, phrase: &str) -> bool {
-    let bytes = text_lower.as_bytes();
-    let p_len = phrase.len();
-    text_lower.match_indices(phrase).any(|(idx, _)| {
-        let before_ok = idx == 0 || !bytes[idx - 1].is_ascii_alphanumeric();
-        let after_idx = idx + p_len;
-        let after_ok = after_idx >= bytes.len() || !bytes[after_idx].is_ascii_alphanumeric();
-        before_ok && after_ok
-    })
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResearchBudget {
     pub default_time_budget_secs: u64,
@@ -202,12 +192,7 @@ pub fn classify_research_failure(error: &str) -> ResearchFailureKind {
     let lower = error.to_lowercase();
     RESEARCH_FAILURE_RULES
         .iter()
-        .find_map(|(kind, needles)| {
-            needles
-                .iter()
-                .any(|needle| lower.contains(needle))
-                .then(|| kind.clone())
-        })
+        .find_map(|(kind, needles)| contains_any(&lower, needles).then(|| kind.clone()))
         .unwrap_or(ResearchFailureKind::Other)
 }
 
@@ -260,9 +245,7 @@ pub fn is_explicit_research_request(text: &str) -> bool {
 
 fn is_local_operational_query(text: &str) -> bool {
     let lower = text.to_lowercase();
-    LOCAL_OPERATIONAL_QUERY_TERMS
-        .iter()
-        .any(|needle| lower.contains(needle))
+    contains_any(&lower, LOCAL_OPERATIONAL_QUERY_TERMS)
 }
 
 pub fn has_live_research_intent(text: &str) -> bool {

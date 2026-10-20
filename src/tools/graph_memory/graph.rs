@@ -6,55 +6,7 @@ use serde_json::{json, Value};
 
 // ─── Extraction Helpers ─────────────────────────────────────────
 
-fn coerce_non_empty_string(v: &Value) -> Option<String> {
-    match v {
-        Value::String(s) => {
-            let trimmed = s.trim();
-            (!trimmed.is_empty()).then(|| trimmed.to_string())
-        }
-        Value::Number(_) | Value::Bool(_) => {
-            let s = v.to_string();
-            let trimmed = s.trim();
-            (!trimmed.is_empty()).then(|| trimmed.to_string())
-        }
-        _ => None,
-    }
-}
-
-pub(crate) fn extract_string_field(val: &Value, keys: &[&str]) -> Option<String> {
-    keys.iter()
-        .find_map(|key| val.get(*key).and_then(coerce_non_empty_string))
-}
-
-fn value_to_string_list(v: &Value) -> Option<Vec<String>> {
-    match v {
-        Value::Array(arr) => {
-            let list: Vec<String> = arr.iter().filter_map(coerce_non_empty_string).collect();
-            (!list.is_empty()).then_some(list)
-        }
-        Value::String(s) => {
-            let trimmed = s.trim();
-            match (!trimmed.is_empty(), trimmed.contains(',')) {
-                (false, _) => None,
-                (true, true) => Some(
-                    trimmed
-                        .split(',')
-                        .map(|part| part.trim().to_string())
-                        .filter(|p| !p.is_empty())
-                        .collect(),
-                ),
-                (true, false) => Some(vec![trimmed.to_string()]),
-            }
-        }
-        _ => None,
-    }
-}
-
-pub(crate) fn extract_string_list_field(val: &Value, keys: &[&str]) -> Vec<String> {
-    keys.iter()
-        .find_map(|key| val.get(*key).and_then(value_to_string_list))
-        .unwrap_or_default()
-}
+pub(crate) use crate::tools::arguments::{extract_string_field, extract_string_list_field};
 
 fn extract_object_list_arg(
     arguments: &Value,

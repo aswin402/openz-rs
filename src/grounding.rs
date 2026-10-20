@@ -19,12 +19,10 @@ pub struct StepExecutionPolicy {
     pub suppress_evolution: bool,
 }
 
+use crate::tools::routing::contains_any;
+
 fn normalized(text: &str) -> String {
     text.to_ascii_lowercase()
-}
-
-fn contains_any(text: &str, needles: &[&str]) -> bool {
-    needles.iter().any(|needle| text.contains(needle))
 }
 
 fn contains_any_word(text: &str, needles: &[&str]) -> bool {
