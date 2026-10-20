@@ -33,11 +33,7 @@ impl TelegramChannel {
         TelegramChannel {
             bot_token,
             agent_loop,
-            client: Client::builder()
-                .use_rustls_tls()
-                .timeout(Duration::from_secs(35))
-                .build()
-                .unwrap_or_default(),
+            client: crate::core::http::http_client_with_timeout(Duration::from_secs(35)),
             concurrency_limit: Arc::new(tokio::sync::Semaphore::new(5)),
         }
     }

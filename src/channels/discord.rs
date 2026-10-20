@@ -57,7 +57,7 @@ impl DiscordChannel {
         DiscordChannel {
             bot_token,
             agent_loop,
-            client: Client::builder().use_rustls_tls().build().unwrap_or_default(),
+            client: crate::core::http::default_http_client(),
             concurrency_limit: Arc::new(tokio::sync::Semaphore::new(5)),
         }
     }

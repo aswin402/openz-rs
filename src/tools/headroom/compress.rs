@@ -1239,15 +1239,10 @@ impl Tool for CompressUrlTool {
 
         crate::tools::web::validate_url(url).await?;
 
-        let redirect_policy = reqwest::redirect::Policy::custom(|attempt| {
-            match crate::tools::web::validate_url_sync(attempt.url()).is_err() {
-                true => attempt.stop(),
-                false => attempt.follow(),
-            }
-        });
         let client = reqwest::Client::builder()
+            .use_rustls_tls()
             .timeout(Duration::from_secs(10))
-            .redirect(redirect_policy)
+            .redirect(crate::tools::web::ssrf_redirect_policy())
             .build()
             .map_err(|e| anyhow!("Failed to build HTTP client: {}", e))?;
 

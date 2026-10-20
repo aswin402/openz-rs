@@ -26,18 +26,11 @@ pub(crate) fn configured_git_token(
 }
 
 pub(crate) fn build_git_http_client() -> Result<reqwest::Client> {
-    let redirect_policy = reqwest::redirect::Policy::custom(
-        |attempt| match crate::tools::web::validate_url_sync(attempt.url()).is_err() {
-            true => attempt.stop(),
-            false => attempt.follow(),
-        },
-    );
-
     reqwest::Client::builder()
         .use_rustls_tls()
         .connect_timeout(crate::core::http::DEFAULT_CONNECT_TIMEOUT)
         .timeout(crate::core::http::DEFAULT_REQUEST_TIMEOUT)
-        .redirect(redirect_policy)
+        .redirect(crate::tools::web::ssrf_redirect_policy())
         .build()
         .map_err(|e| anyhow!("Failed to build HTTP client: {}", e))
 }

@@ -534,7 +534,7 @@ async fn web_fetch_browser_render(url: &str) -> Result<String> {
     ))
 }
 
-fn ssrf_redirect_policy() -> reqwest::redirect::Policy {
+pub fn ssrf_redirect_policy() -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(|attempt| match validate_url_sync(attempt.url()) {
         Ok(_) => attempt.follow(),
         Err(_) => attempt.stop(),

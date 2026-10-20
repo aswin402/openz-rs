@@ -38,13 +38,11 @@ pub(crate) fn build_provider_client() -> Client {
 }
 
 pub(crate) fn build_provider_client_with_config(config: ProviderHttpConfig) -> Client {
-    Client::builder()
-        .use_rustls_tls()
-        .connect_timeout(config.connect_timeout)
-        .read_timeout(config.read_timeout)
-        .timeout(config.request_timeout)
-        .build()
-        .unwrap_or_default()
+    crate::core::http::http_client_with_read_timeout(
+        config.connect_timeout,
+        config.read_timeout,
+        config.request_timeout,
+    )
 }
 
 pub(crate) fn openai_chat_endpoint(api_base: &str) -> String {

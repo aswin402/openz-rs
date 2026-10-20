@@ -372,10 +372,7 @@ impl Default for WebSearchTool {
 impl WebSearchTool {
     pub fn new() -> Self {
         WebSearchTool {
-            client: Client::builder()
-                .use_rustls_tls()
-                .build()
-                .unwrap_or_default(),
+            client: crate::core::http::default_http_client(),
         }
     }
 }

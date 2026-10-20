@@ -10,17 +10,11 @@ const MULTIMODAL_TOTAL_TIMEOUT_SECS: u64 = 60;
 
 fn get_http_client() -> &'static reqwest::Client {
     HTTP_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .use_rustls_tls()
-            .connect_timeout(std::time::Duration::from_secs(
-                MULTIMODAL_CONNECT_TIMEOUT_SECS,
-            ))
-            .read_timeout(std::time::Duration::from_secs(MULTIMODAL_READ_TIMEOUT_SECS))
-            .timeout(std::time::Duration::from_secs(
-                MULTIMODAL_TOTAL_TIMEOUT_SECS,
-            ))
-            .build()
-            .unwrap_or_default()
+        crate::core::http::http_client_with_read_timeout(
+            std::time::Duration::from_secs(MULTIMODAL_CONNECT_TIMEOUT_SECS),
+            std::time::Duration::from_secs(MULTIMODAL_READ_TIMEOUT_SECS),
+            std::time::Duration::from_secs(MULTIMODAL_TOTAL_TIMEOUT_SECS),
+        )
     })
 }
 

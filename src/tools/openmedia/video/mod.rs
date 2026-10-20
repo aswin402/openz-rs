@@ -1582,11 +1582,10 @@ pub async fn resolve_custom_fonts(
 
     static HTTP_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     let client = HTTP_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(5))
-            .timeout(std::time::Duration::from_secs(15))
-            .build()
-            .unwrap_or_default()
+        crate::core::http::custom_http_client(
+            std::time::Duration::from_secs(5),
+            std::time::Duration::from_secs(15),
+        )
     });
 
     let mut resolved = std::collections::HashMap::new();

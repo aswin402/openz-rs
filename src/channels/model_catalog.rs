@@ -378,11 +378,7 @@ pub async fn fetch_provider_models(
 ) -> Option<Vec<String>> {
     static HTTP: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
     let client = HTTP.get_or_init(|| {
-        reqwest::Client::builder()
-            .use_rustls_tls()
-            .timeout(std::time::Duration::from_secs(5))
-            .build()
-            .unwrap_or_default()
+        crate::core::http::http_client_with_timeout(std::time::Duration::from_secs(5))
     });
 
     let (api_key, api_base) = config.resolve_provider_config(provider_name);

@@ -118,9 +118,7 @@ pub fn kill_browser_on_port_9222() {
 
 pub async fn ensure_browser_running() -> Result<()> {
     let port = browser_cdp_port();
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(500))
-        .build()?;
+    let client = crate::core::http::http_client_with_timeout(Duration::from_millis(500));
 
     let list_url = format!("http://127.0.0.1:{port}/json/list");
 

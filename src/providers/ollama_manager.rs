@@ -185,11 +185,7 @@ pub async fn unload_ollama_model(config: &Config, model: &str) {
 
     let native_url = ollama_native_generate_url(&api_base);
 
-    let client = reqwest::Client::builder()
-        .use_rustls_tls()
-        .timeout(Duration::from_secs(3))
-        .build()
-        .unwrap_or_default();
+    let client = crate::core::http::http_client_with_timeout(Duration::from_secs(3));
 
     let payload = serde_json::json!({
         "model": model,

@@ -16,6 +16,34 @@ pub fn global_http_client() -> &'static reqwest::Client {
     CLIENT.get_or_init(default_http_client)
 }
 
+/// Build an HTTP client with a single custom request timeout and default connect timeout.
+pub fn http_client_with_timeout(request_timeout: Duration) -> reqwest::Client {
+    custom_http_client(DEFAULT_CONNECT_TIMEOUT.min(request_timeout), request_timeout)
+}
+
+/// Build an HTTP client with custom connect, read, and total request timeouts.
+pub fn http_client_with_read_timeout(
+    connect_timeout: Duration,
+    read_timeout: Duration,
+    request_timeout: Duration,
+) -> reqwest::Client {
+    reqwest::Client::builder()
+        .use_rustls_tls()
+        .connect_timeout(connect_timeout)
+        .read_timeout(read_timeout)
+        .timeout(request_timeout)
+        .build()
+        .unwrap_or_else(|err| {
+            tracing::warn!(error = ?err, "failed to build custom reqwest client with rustls, falling back to default TLS client with preserved timeouts");
+            reqwest::Client::builder()
+                .connect_timeout(connect_timeout)
+                .read_timeout(read_timeout)
+                .timeout(request_timeout)
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new())
+        })
+}
+
 /// Build an HTTP client with custom connect and request timeouts.
 pub fn custom_http_client(connect_timeout: Duration, request_timeout: Duration) -> reqwest::Client {
     reqwest::Client::builder()
