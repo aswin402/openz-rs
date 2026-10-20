@@ -143,18 +143,12 @@ impl ObscuraBrowserTool {
 }
 
 pub fn extract_obscura_url(arguments: &Value) -> Result<String> {
-    let raw_url = match arguments.as_str() {
-        Some(s) => s.trim(),
-        None => extract_first_str(arguments, URL_ALIASES)
-            .ok_or_else(|| anyhow!("Missing 'url' parameter"))?
-            .trim(),
-    };
-
-    let non_empty = Some(raw_url)
-        .filter(|u| !u.is_empty())
-        .ok_or_else(|| anyhow!("Missing 'url' parameter (received empty string)"))?;
-
-    Ok(crate::tools::web::normalize_web_url(non_empty))
+    crate::tools::arguments::extract_normalized_url_from_aliases(
+        arguments,
+        URL_ALIASES,
+        "Missing 'url' parameter",
+        "Missing 'url' parameter (received empty string)",
+    )
 }
 
 pub fn is_obscura_eval_action(action: &str) -> bool {

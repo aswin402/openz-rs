@@ -99,3 +99,38 @@ fn cross_tool_coercion_and_alias_helpers_work_consistently() {
         serde_json::json!({ "limit": 25 })
     );
 }
+
+#[test]
+fn multi_key_extractors_and_url_normalization_work_consistently() {
+    let args = serde_json::json!({
+        "targetUrl": "example.com/docs",
+        "maxLength": "4096",
+        "timeoutSecs": 120,
+        "respectRobots": "false",
+        "importance": "0.85",
+        "label": "  memory-tag  ",
+    });
+
+    assert_eq!(
+        extract_normalized_url_from_aliases(
+            &args,
+            &["url", "targetUrl"],
+            "missing url",
+            "empty url"
+        )
+        .expect("valid url"),
+        "https://example.com/docs"
+    );
+    assert_eq!(extract_usize_arg(&args, &["max_length", "maxLength"]), Some(4096));
+    assert_eq!(get_u64_arg(&args, &["timeout_secs", "timeoutSecs"], 30), 120);
+    assert!(!get_bool_arg(&args, &["respect_robots", "respectRobots"], true));
+    assert_eq!(extract_f32_arg(&args, &["weight", "importance"]), Some(0.85));
+    assert_eq!(
+        extract_string_arg(&args, &["tag", "label"]),
+        Some("memory-tag".to_string())
+    );
+    assert_eq!(
+        extract_trimmed_str(&args, &["tag", "label"]),
+        Some("memory-tag".to_string())
+    );
+}

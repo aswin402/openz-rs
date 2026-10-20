@@ -106,25 +106,7 @@ fn extract_string_list_field(val: &Value, keys: &[&str]) -> Vec<String> {
         .unwrap_or_default()
 }
 
-fn extract_f32_arg(val: &Value, keys: &[&str]) -> Option<f32> {
-    keys.iter().find_map(|key| {
-        let v = val.get(*key)?;
-        v.as_f64()
-            .map(|f| f as f32)
-            .or_else(|| v.as_i64().map(|i| i as f32))
-            .or_else(|| v.as_str().and_then(|s| s.trim().parse::<f32>().ok()))
-    })
-}
-
-fn extract_usize_arg(val: &Value, keys: &[&str]) -> Option<usize> {
-    keys.iter().find_map(|key| {
-        let v = val.get(*key)?;
-        v.as_u64()
-            .map(|u| u as usize)
-            .or_else(|| v.as_i64().filter(|i| *i >= 0).map(|i| i as usize))
-            .or_else(|| v.as_str().and_then(|s| s.trim().parse::<usize>().ok()))
-    })
-}
+use crate::tools::arguments::{extract_f32_arg, extract_usize_arg};
 
 // 1. StoreMemoryTool
 pub struct StoreMemoryTool;

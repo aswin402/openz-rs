@@ -1,6 +1,5 @@
 use super::common::{
-    extract_first_str, extract_trimmed_non_empty_str, ACTION_ALIASES, PATH_ALIASES,
-    SCRIPT_ALIASES, SELECTOR_ALIASES, TEXT_ALIASES, URL_ALIASES,
+    extract_first_str, PATH_ALIASES, SCRIPT_ALIASES, SELECTOR_ALIASES, TEXT_ALIASES, URL_ALIASES,
 };
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
@@ -229,15 +228,7 @@ pub fn resolve_firefox_action_and_url(arguments: &Value) -> (String, Option<Stri
         None => {}
     }
 
-    let url_opt = extract_trimmed_non_empty_str(arguments, URL_ALIASES).map(ToString::to_string);
-    let action = extract_trimmed_non_empty_str(arguments, ACTION_ALIASES)
-        .map(ToString::to_string)
-        .unwrap_or_else(|| match url_opt.is_some() {
-            true => "navigate".to_string(),
-            false => "render".to_string(),
-        });
-
-    (action, url_opt)
+    super::common::resolve_browser_object_action_and_url(arguments, "render")
 }
 
 #[async_trait::async_trait]

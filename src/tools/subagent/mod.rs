@@ -73,27 +73,7 @@ pub(crate) fn filesystem_write_denied_by_policy(
         .unwrap_or(false)
 }
 
-pub(crate) fn extract_string_arg(arguments: &serde_json::Value, keys: &[&str]) -> Option<String> {
-    keys.iter().find_map(|key| {
-        let val = arguments.get(*key)?;
-        let raw = val
-            .as_str()
-            .map(str::to_string)
-            .or_else(|| (val.is_number() || val.is_boolean()).then(|| val.to_string()))?;
-        let trimmed = raw.trim();
-        (!trimmed.is_empty()).then(|| trimmed.to_string())
-    })
-}
-
-pub(crate) fn extract_u64_arg(arguments: &serde_json::Value, keys: &[&str]) -> Option<u64> {
-    keys.iter().find_map(|key| {
-        let val = arguments.get(*key)?;
-        val.as_u64()
-            .or_else(|| val.as_i64().filter(|&n| n >= 0).map(|n| n as u64))
-            .or_else(|| val.as_f64().filter(|&f| f >= 0.0).map(|f| f as u64))
-            .or_else(|| val.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
-    })
-}
+pub(crate) use crate::tools::arguments::{extract_string_arg, extract_u64_arg};
 
 pub mod runner;
 pub use runner::*;

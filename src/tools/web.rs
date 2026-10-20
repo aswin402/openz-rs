@@ -625,18 +625,29 @@ pub fn normalize_web_url(raw: &str) -> String {
     }
 }
 
+const WEB_FETCH_URL_ALIASES: &[&str] = &[
+    "url",
+    "target_url",
+    "targetUrl",
+    "uri",
+    "link",
+    "target",
+    "href",
+    "page",
+    "endpoint",
+    "address",
+    "site",
+    "website",
+    "domain",
+    "host",
+    "path",
+];
+
 pub fn parse_max_length(arguments: &serde_json::Value) -> Option<usize> {
-    arguments
-        .get("max_length")
-        .or_else(|| arguments.get("maxLength"))
-        .or_else(|| arguments.get("limit"))
-        .or_else(|| arguments.get("max_chars"))
-        .or_else(|| arguments.get("maxChars"))
-        .and_then(|v| {
-            v.as_u64()
-                .map(|n| n as usize)
-                .or_else(|| v.as_str().and_then(|s| s.trim().parse::<usize>().ok()))
-        })
+    crate::tools::arguments::extract_usize_arg(
+        arguments,
+        &["max_length", "maxLength", "limit", "max_chars", "maxChars"],
+    )
 }
 
 pub fn truncate_web_fetch_output(text: String, max_length: Option<usize>) -> String {
@@ -654,32 +665,12 @@ pub fn truncate_web_fetch_output(text: String, max_length: Option<usize>) -> Str
 }
 
 pub fn extract_web_fetch_url(arguments: &serde_json::Value) -> Result<String> {
-    let raw_url = match arguments.as_str() {
-        Some(s) => s.trim(),
-        None => arguments
-            .get("url")
-            .or_else(|| arguments.get("target_url"))
-            .or_else(|| arguments.get("targetUrl"))
-            .or_else(|| arguments.get("uri"))
-            .or_else(|| arguments.get("link"))
-            .or_else(|| arguments.get("target"))
-            .or_else(|| arguments.get("href"))
-            .or_else(|| arguments.get("page"))
-            .or_else(|| arguments.get("endpoint"))
-            .or_else(|| arguments.get("address"))
-            .or_else(|| arguments.get("site"))
-            .or_else(|| arguments.get("website"))
-            .or_else(|| arguments.get("domain"))
-            .or_else(|| arguments.get("host"))
-            .or_else(|| arguments.get("path"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'url' argument"))?
-            .trim(),
-    };
-
-    (!raw_url.is_empty())
-        .then(|| normalize_web_url(raw_url))
-        .ok_or_else(|| anyhow!("Missing 'url' argument (received empty string)"))
+    crate::tools::arguments::extract_normalized_url_from_aliases(
+        arguments,
+        WEB_FETCH_URL_ALIASES,
+        "Missing 'url' argument",
+        "Missing 'url' argument (received empty string)",
+    )
 }
 
 fn return_cached_body(

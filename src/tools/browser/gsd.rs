@@ -1,6 +1,5 @@
 use super::common::{
-    extract_first_str, extract_trimmed_non_empty_str, ACTION_ALIASES, PATH_ALIASES,
-    REF_ID_ALIASES, SCRIPT_ALIASES, TEXT_ALIASES, URL_ALIASES,
+    extract_first_str, PATH_ALIASES, REF_ID_ALIASES, SCRIPT_ALIASES, TEXT_ALIASES,
 };
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
@@ -77,19 +76,9 @@ async fn restart_gsd_browser_daemon(bin_path: &PathBuf) {
 
 fn resolve_gsd_browser_action_and_url(arguments: &Value) -> (String, Option<String>) {
     match arguments.as_str() {
-        Some(s) => return ("navigate".to_string(), Some(s.trim().to_string())),
-        None => {}
+        Some(s) => ("navigate".to_string(), Some(s.trim().to_string())),
+        None => super::common::resolve_browser_object_action_and_url(arguments, "snapshot"),
     }
-
-    let url_opt = extract_trimmed_non_empty_str(arguments, URL_ALIASES).map(ToString::to_string);
-    let action = extract_trimmed_non_empty_str(arguments, ACTION_ALIASES)
-        .map(ToString::to_string)
-        .unwrap_or_else(|| match url_opt.is_some() {
-            true => "navigate".to_string(),
-            false => "snapshot".to_string(),
-        });
-
-    (action, url_opt)
 }
 
 fn build_gsd_browser_command(bin_path: &PathBuf, arguments: &Value) -> Result<Command> {

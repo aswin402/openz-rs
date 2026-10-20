@@ -1,4 +1,5 @@
-use super::{extract_first_str, parse_bool_value};
+use super::extract_first_str;
+use crate::tools::arguments::get_bool_arg as parse_bool_param;
 use crate::tools::Tool;
 use anyhow::Result;
 use serde_json::Value;
@@ -243,12 +244,6 @@ fn check_db(path: &std::path::Path, run_integrity: bool) -> Value {
             }
         }
     }
-}
-
-fn parse_bool_param(arguments: &Value, keys: &[&str], default: bool) -> bool {
-    keys.iter()
-        .find_map(|&key| arguments.get(key).and_then(parse_bool_value))
-        .unwrap_or(default)
 }
 
 fn dir_stat_json(path: &std::path::Path) -> Value {

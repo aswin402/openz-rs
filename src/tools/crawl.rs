@@ -91,29 +91,27 @@ impl CrawlSiteTool {
     }
 }
 
-fn get_u64_arg(arguments: &Value, keys: &[&str], default: u64) -> u64 {
-    keys.iter()
-        .find_map(|key| {
-            let val = arguments.get(*key)?;
-            val.as_u64().or_else(|| val.as_str()?.trim().parse::<u64>().ok())
-        })
-        .unwrap_or(default)
-}
+use crate::tools::arguments::{
+    extract_normalized_url_from_aliases, get_bool_arg, get_u64_arg,
+};
 
-fn get_bool_arg(arguments: &Value, keys: &[&str], default: bool) -> bool {
-    keys.iter()
-        .find_map(|key| {
-            let val = arguments.get(*key)?;
-            val.as_bool().or_else(|| {
-                match val.as_str()?.trim().to_lowercase().as_str() {
-                    "true" | "1" | "yes" => Some(true),
-                    "false" | "0" | "no" => Some(false),
-                    _ => None,
-                }
-            })
-        })
-        .unwrap_or(default)
-}
+const CRAWL_URL_ALIASES: &[&str] = &[
+    "url",
+    "target_url",
+    "targetUrl",
+    "uri",
+    "link",
+    "target",
+    "site",
+    "website",
+    "domain",
+    "host",
+    "start_url",
+    "startUrl",
+    "href",
+    "page",
+    "address",
+];
 
 fn crawl_timeout_secs(arguments: &Value) -> u64 {
     get_u64_arg(arguments, &["timeout_secs", "timeout", "timeoutSecs"], 45).clamp(5, 300)
@@ -147,33 +145,12 @@ fn crawl_timeout_response(
 }
 
 pub fn extract_crawl_url(arguments: &Value) -> Result<String> {
-    let raw_url = match arguments.as_str() {
-        Some(s) => s.trim(),
-        None => arguments
-            .get("url")
-            .or_else(|| arguments.get("target_url"))
-            .or_else(|| arguments.get("targetUrl"))
-            .or_else(|| arguments.get("uri"))
-            .or_else(|| arguments.get("link"))
-            .or_else(|| arguments.get("target"))
-            .or_else(|| arguments.get("site"))
-            .or_else(|| arguments.get("website"))
-            .or_else(|| arguments.get("domain"))
-            .or_else(|| arguments.get("host"))
-            .or_else(|| arguments.get("start_url"))
-            .or_else(|| arguments.get("startUrl"))
-            .or_else(|| arguments.get("href"))
-            .or_else(|| arguments.get("page"))
-            .or_else(|| arguments.get("address"))
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'url' parameter"))?
-            .trim(),
-    };
-
-    match raw_url.is_empty() {
-        true => Err(anyhow!("Missing 'url' parameter (received empty string)")),
-        false => Ok(crate::tools::web::normalize_web_url(raw_url)),
-    }
+    extract_normalized_url_from_aliases(
+        arguments,
+        CRAWL_URL_ALIASES,
+        "Missing 'url' parameter",
+        "Missing 'url' parameter (received empty string)",
+    )
 }
 
 #[async_trait::async_trait]

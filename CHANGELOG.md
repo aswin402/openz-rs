@@ -1,5 +1,38 @@
+## [0.0.278] - 2026-10-20
+### v0.0.278 (Latest Release)
+
+#### Changed
+- **Unified Multi-Key Parameter & URL/Browser Extractors Across Tool Subsystems ([`src/tools/arguments.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments.rs), [`src/tools/browser/common.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/common.rs), [`src/tools/crawl.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/crawl.rs), [`src/tools/web.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web.rs), [`src/tools/headroom/compress.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/compress.rs), [`src/tools/self_management/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/mod.rs), [`src/tools/shared_memory/cognitive.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/cognitive.rs), [`src/tools/subagent/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod.rs))**:
+  - **Consolidated Multi-Key Scalar & String Extractors (`src/tools/arguments.rs`)**:
+    - Added `coerce_u64`, `parse_bool_value`, `parse_u64_value`, `parse_f64_value`, `extract_first_str`, `extract_trimmed_non_empty_str`, `extract_trimmed_str`, `to_non_empty_trimmed`, `extract_string_arg`, `extract_u64_arg`, `get_u64_arg`, `extract_usize_arg`, `extract_f32_arg`, `extract_bool_arg`, `get_bool_arg`, and `extract_normalized_url_from_aliases` to [`src/tools/arguments.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments.rs).
+    - Replaced duplicated local extractors across [`src/tools/self_management/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/mod.rs), [`src/tools/self_management/diagnostics.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/diagnostics.rs), [`src/tools/headroom/compress.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/compress.rs), [`src/tools/subagent/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod.rs), [`src/tools/shared_memory/cognitive.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/cognitive.rs), [`src/tools/crawl.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/crawl.rs), and [`src/tools/web.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web.rs).
+  - **Consolidated Browser Action & URL Resolution (`src/tools/browser/common.rs`)**:
+    - Added `resolve_browser_object_action_and_url` in [`src/tools/browser/common.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/common.rs) and routed [`src/tools/browser/firefox.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/firefox.rs), [`src/tools/browser/gsd.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/gsd.rs), and [`src/tools/browser/obscura.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/obscura.rs) through shared URL/action resolution helpers.
+
+#### Documentation
+- **Synchronized Release Manifests**: Updated [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md), and [`CHANGELOG.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/CHANGELOG.md) to `0.0.278`.
+
+### Sources & Inspirations
+- **[Inspiration]**: Canonical tool parameter adapters — eliminating per-tool scalar/string/URL extraction boilerplate across browser, web, memory, headroom, subagent, and self-management subsystems.
+
+- **Ideas**:
+  - Eliminate remaining multi-key argument and URL extraction duplication across 11 tool modules by promoting shared scalar/string/URL extractors to `src/tools/arguments.rs` and shared browser action/URL resolution to `src/tools/browser/common.rs`.
+- **Inspirations**:
+  - Canonical tool parameter adapters (`0` `if/else`, `0` `regex` across all 624 files).
+- **Sources & References**:
+  - [`src/tools/arguments.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments.rs), [`src/tools/arguments_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments_tests.rs)
+  - [`src/tools/browser/common.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/common.rs), [`src/tools/browser/firefox.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/firefox.rs), [`src/tools/browser/gsd.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/gsd.rs), [`src/tools/browser/obscura.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/obscura.rs)
+  - [`src/tools/crawl.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/crawl.rs), [`src/tools/web.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/web.rs), [`src/tools/headroom/compress.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/compress.rs), [`src/tools/self_management/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/mod.rs), [`src/tools/self_management/diagnostics.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/diagnostics.rs), [`src/tools/shared_memory/cognitive.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/shared_memory/cognitive.rs), [`src/tools/subagent/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/mod.rs)
+- **Details & Metrics**:
+  - Removed ~200 lines of duplicated multi-key scalar/string/URL extraction functions across 11 tool files.
+  - Added `multi_key_extractors_and_url_normalization_work_consistently` in [`src/tools/arguments_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments_tests.rs).
+- **Verification**:
+  - Verified `just test-guard` passes across all 624 `.rs` files (`0` `if`/`else`, `0` `regex`) and `just check openz` passes with `0` warnings and `0` errors.
+
+---
+
 ## [0.0.277] - 2026-10-20
-### v0.0.277 (Latest Release)
+### v0.0.277
 
 #### Changed
 - **Consolidated Cross-Tool JSON Argument Coercion & Alias Helpers into [`src/tools/arguments.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments.rs) ([`src/tools/opendoc/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/mod.rs), [`src/tools/openmedia/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/mod.rs), [`src/tools/searchxyz/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/mod.rs), [`src/tools/arguments_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/arguments_tests.rs), [`justfile`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/justfile))**:

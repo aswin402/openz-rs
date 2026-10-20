@@ -1,7 +1,5 @@
 //! Configuration, diagnostics, discovery, and maintenance tools for OpenZ.
 
-use serde_json::Value;
-
 mod backups;
 mod catalog;
 mod config;
@@ -22,44 +20,10 @@ pub use sessions::ManageSessionsTool;
 
 pub(crate) const ACTION_KEYS: &[&str] = &["action", "act", "command", "cmd", "op", "mode"];
 
-pub(crate) fn extract_first_str<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a str> {
-    keys.iter()
-        .find_map(|&key| value.get(key).and_then(|v| v.as_str()))
-}
-
-pub(crate) fn extract_trimmed_str(value: &Value, keys: &[&str]) -> Option<String> {
-    extract_first_str(value, keys)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(ToString::to_string)
-}
-
-pub(crate) fn to_non_empty_trimmed(opt: Option<&str>) -> Option<String> {
-    opt.map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(ToString::to_string)
-}
-
-pub(crate) fn parse_bool_value(v: &Value) -> Option<bool> {
-    v.as_bool().or_else(|| {
-        v.as_str()
-            .and_then(|s| match s.trim().to_lowercase().as_str() {
-                "true" | "1" | "yes" | "on" => Some(true),
-                "false" | "0" | "no" | "off" => Some(false),
-                _ => None,
-            })
-    })
-}
-
-pub(crate) fn parse_u64_value(v: &Value) -> Option<u64> {
-    v.as_u64()
-        .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
-}
-
-pub(crate) fn parse_f64_value(v: &Value) -> Option<f64> {
-    v.as_f64()
-        .or_else(|| v.as_str().and_then(|s| s.trim().parse::<f64>().ok()))
-}
+pub(crate) use crate::tools::arguments::{
+    extract_first_str, extract_trimmed_str, parse_bool_value, parse_f64_value, parse_u64_value,
+    to_non_empty_trimmed,
+};
 
 #[cfg(test)]
 pub(crate) struct TestEnvLock {

@@ -739,46 +739,7 @@ fn safe_threshold_text(text: &str, limit: usize) -> String {
     format!("{}\n... [TRUNCATED TO {} CHARS] ...\n{}", head, limit, tail)
 }
 
-fn extract_string_arg(arguments: &Value, keys: &[&str]) -> Option<String> {
-    arguments
-        .as_str()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_owned)
-        .or_else(|| {
-            keys.iter().find_map(|key| {
-                arguments
-                    .get(key)
-                    .and_then(|v| v.as_str())
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_owned)
-            })
-        })
-}
-
-fn extract_bool_arg(arguments: &Value, keys: &[&str]) -> Option<bool> {
-    keys.iter().find_map(|key| {
-        let val = arguments.get(key)?;
-        val.as_bool().or_else(|| {
-            let s = val.as_str()?;
-            match s.trim().to_lowercase().as_str() {
-                "true" | "1" | "yes" => Some(true),
-                "false" | "0" | "no" => Some(false),
-                _ => None,
-            }
-        })
-    })
-}
-
-fn extract_usize_arg(arguments: &Value, keys: &[&str]) -> Option<usize> {
-    keys.iter().find_map(|key| {
-        let val = arguments.get(key)?;
-        val.as_u64()
-            .map(|n| n as usize)
-            .or_else(|| val.as_str()?.trim().parse::<usize>().ok())
-    })
-}
+use crate::tools::arguments::{extract_bool_arg, extract_string_arg, extract_usize_arg};
 
 const CCR_REF_PREFIXES: &[&str] = &[
     "CCR Ref:",

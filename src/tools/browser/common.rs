@@ -66,18 +66,20 @@ pub(crate) const PATH_ALIASES: &[&str] = &[
 
 pub(crate) const SCRIPT_ALIASES: &[&str] = &["script", "expression", "code", "js", "expr"];
 
-pub(crate) fn extract_first_str<'a>(arguments: &'a Value, keys: &[&str]) -> Option<&'a str> {
-    keys.iter()
-        .find_map(|&key| arguments.get(key).and_then(|v| v.as_str()))
-}
+pub(crate) use crate::tools::arguments::{extract_first_str, extract_trimmed_non_empty_str};
 
-pub(crate) fn extract_trimmed_non_empty_str<'a>(
-    arguments: &'a Value,
-    keys: &[&str],
-) -> Option<&'a str> {
-    extract_first_str(arguments, keys)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
+pub(crate) fn resolve_browser_object_action_and_url(
+    arguments: &Value,
+    default_no_url_action: &str,
+) -> (String, Option<String>) {
+    let url_opt = extract_trimmed_non_empty_str(arguments, URL_ALIASES).map(ToString::to_string);
+    let action = extract_trimmed_non_empty_str(arguments, ACTION_ALIASES)
+        .map(ToString::to_string)
+        .unwrap_or_else(|| match url_opt.is_some() {
+            true => "navigate".to_string(),
+            false => default_no_url_action.to_string(),
+        });
+    (action, url_opt)
 }
 
 pub fn browser_cdp_port() -> u16 {

@@ -383,6 +383,117 @@ pub fn wrap_string_arg(val: &serde_json::Value, key: &str) -> serde_json::Value 
     }
 }
 
+pub fn coerce_u64(v: &serde_json::Value) -> Option<u64> {
+    v.as_u64()
+        .or_else(|| v.as_i64().filter(|&n| n >= 0).map(|n| n as u64))
+        .or_else(|| v.as_f64().filter(|&f| f >= 0.0).map(|f| f as u64))
+        .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+}
+
+pub fn parse_bool_value(v: &serde_json::Value) -> Option<bool> {
+    v.as_bool().or_else(|| coerce_single_bool(v))
+}
+
+pub fn parse_u64_value(v: &serde_json::Value) -> Option<u64> {
+    coerce_u64(v)
+}
+
+pub fn parse_f64_value(v: &serde_json::Value) -> Option<f64> {
+    coerce_f64(v)
+}
+
+pub fn extract_first_str<'a>(arguments: &'a serde_json::Value, keys: &[&str]) -> Option<&'a str> {
+    keys.iter()
+        .find_map(|&key| arguments.get(key).and_then(|v| v.as_str()))
+}
+
+pub fn extract_trimmed_non_empty_str<'a>(
+    arguments: &'a serde_json::Value,
+    keys: &[&str],
+) -> Option<&'a str> {
+    extract_first_str(arguments, keys)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+pub fn extract_trimmed_str(value: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    extract_trimmed_non_empty_str(value, keys).map(ToString::to_string)
+}
+
+pub fn to_non_empty_trimmed(opt: Option<&str>) -> Option<String> {
+    opt.map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string)
+}
+
+pub fn extract_string_arg(arguments: &serde_json::Value, keys: &[&str]) -> Option<String> {
+    arguments
+        .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .or_else(|| {
+            keys.iter().find_map(|key| {
+                let val = arguments.get(*key)?;
+                let raw = val
+                    .as_str()
+                    .map(str::to_string)
+                    .or_else(|| (val.is_number() || val.is_boolean()).then(|| val.to_string()))?;
+                let trimmed = raw.trim();
+                (!trimmed.is_empty()).then(|| trimmed.to_string())
+            })
+        })
+}
+
+pub fn extract_u64_arg(arguments: &serde_json::Value, keys: &[&str]) -> Option<u64> {
+    keys.iter()
+        .find_map(|key| arguments.get(*key).and_then(coerce_u64))
+}
+
+pub fn get_u64_arg(arguments: &serde_json::Value, keys: &[&str], default: u64) -> u64 {
+    extract_u64_arg(arguments, keys).unwrap_or(default)
+}
+
+pub fn extract_usize_arg(arguments: &serde_json::Value, keys: &[&str]) -> Option<usize> {
+    extract_u64_arg(arguments, keys).map(|u| u as usize)
+}
+
+pub fn extract_f32_arg(arguments: &serde_json::Value, keys: &[&str]) -> Option<f32> {
+    keys.iter().find_map(|key| {
+        let v = arguments.get(*key)?;
+        v.as_f64()
+            .map(|f| f as f32)
+            .or_else(|| v.as_i64().map(|i| i as f32))
+            .or_else(|| v.as_str().and_then(|s| s.trim().parse::<f32>().ok()))
+    })
+}
+
+pub fn extract_bool_arg(arguments: &serde_json::Value, keys: &[&str]) -> Option<bool> {
+    keys.iter()
+        .find_map(|key| arguments.get(*key).and_then(parse_bool_value))
+}
+
+pub fn get_bool_arg(arguments: &serde_json::Value, keys: &[&str], default: bool) -> bool {
+    extract_bool_arg(arguments, keys).unwrap_or(default)
+}
+
+pub fn extract_normalized_url_from_aliases(
+    arguments: &serde_json::Value,
+    aliases: &[&str],
+    missing_err: &str,
+    empty_err: &str,
+) -> anyhow::Result<String> {
+    let raw_url = match arguments.as_str() {
+        Some(s) => s.trim(),
+        None => extract_first_str(arguments, aliases)
+            .ok_or_else(|| anyhow::anyhow!("{missing_err}"))?
+            .trim(),
+    };
+    (!raw_url.is_empty())
+        .then(|| crate::tools::web::normalize_web_url(raw_url))
+        .ok_or_else(|| anyhow::anyhow!("{empty_err}"))
+}
+
 #[cfg(test)]
 #[path = "arguments_tests.rs"]
 mod tests;
