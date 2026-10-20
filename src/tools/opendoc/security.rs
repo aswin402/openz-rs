@@ -7,40 +7,38 @@ use std::path::PathBuf;
 /// 2. Does not contain path traversal components (e.g. `..`) that escape the directory.
 /// 3. Does not contain null bytes.
 pub fn validate_path(file_path: &str) -> Result<PathBuf, String> {
-    if file_path.contains('\0') {
-        return Err("Path contains null byte".to_string());
+    match file_path.contains('\0') {
+        true => return Err("Path contains null byte".to_string()),
+        false => {}
     }
 
-    // Standard validation: check if the path can be canonicalized if it exists.
-    // If the path doesn't exist, we can validate its parent directory.
+    // Standard validation: check whether the path can be canonicalized when it exists.
     let resolved = crate::config::loader::resolve_path(file_path.trim_start_matches("file://"));
-    let absolute_path = if resolved.exists() {
-        std::fs::canonicalize(&resolved).unwrap_or(resolved)
-    } else {
-        resolved
+    let absolute_path = match resolved.exists() {
+        true => std::fs::canonicalize(&resolved).unwrap_or(resolved),
+        false => resolved,
     };
 
-    // If OPENDOC_ALLOWED_DIRS is specified, restrict access
-    if let Ok(allowed_dirs_env) = std::env::var("OPENDOC_ALLOWED_DIRS") {
-        let mut allowed = false;
-        for dir in allowed_dirs_env.split(',') {
-            let dir = dir.trim();
-            if dir.is_empty() {
-                continue;
-            }
-            if let Ok(allowed_path) = std::fs::canonicalize(dir) {
-                if absolute_path.starts_with(&allowed_path) {
-                    allowed = true;
-                    break;
+    // When OPENDOC_ALLOWED_DIRS is specified, restrict access
+    match std::env::var("OPENDOC_ALLOWED_DIRS") {
+        Ok(allowed_dirs_env) => {
+            let allowed = allowed_dirs_env
+                .split(',')
+                .map(str::trim)
+                .filter(|dir| !dir.is_empty())
+                .filter_map(|dir| std::fs::canonicalize(dir).ok())
+                .any(|allowed_path| absolute_path.starts_with(&allowed_path));
+            match allowed {
+                true => {}
+                false => {
+                    return Err(
+                        "Access to the path is not allowed under current security sandbox policy"
+                            .to_string(),
+                    );
                 }
             }
         }
-        if !allowed {
-            return Err(
-                "Access to the path is not allowed under current security sandbox policy"
-                    .to_string(),
-            );
-        }
+        Err(_) => {}
     }
 
     Ok(absolute_path)

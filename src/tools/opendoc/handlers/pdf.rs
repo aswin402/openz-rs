@@ -43,6 +43,12 @@ struct PdfBuilder<'a> {
     page_num: usize,
 }
 
+fn escape_pdf_text(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('(', "\\(")
+        .replace(')', "\\)")
+}
+
 impl<'a> PdfBuilder<'a> {
     fn new(config: &'a PdfLayoutConfig) -> Self {
         Self {
@@ -67,43 +73,36 @@ impl<'a> PdfBuilder<'a> {
 
     /// Add a line of text at the current position
     fn add_text_line(&mut self, line: &str) {
-        if self.y_pos < self.config.margin_top + self.config.font_size {
-            self.flush_page();
+        match self.y_pos < self.config.margin_top + self.config.font_size {
+            true => self.flush_page(),
+            false => {}
         }
-        let escaped = line
-            .replace('\\', "\\\\")
-            .replace('(', "\\(")
-            .replace(')', "\\)");
-        self.current_page.push(format!(
-            "{} Td ({}) Tj",
-            if self.current_page.is_empty() {
-                format!("1 0 0 1 {} {} Tm", self.config.margin_left, self.y_pos)
-            } else {
-                format!("0 {} Td", -self.config.line_height)
-            },
-            escaped
-        ));
+        let escaped = escape_pdf_text(line);
+        let pos_op = match self.current_page.is_empty() {
+            true => format!("1 0 0 1 {} {} Tm", self.config.margin_left, self.y_pos),
+            false => format!("0 {} Td", -self.config.line_height),
+        };
+        self.current_page
+            .push(format!("{} Td ({}) Tj", pos_op, escaped));
         self.y_pos -= self.config.line_height;
     }
 
     /// Add wrapped text (word-wrap at margin width)
-    #[allow(dead_code)]
-    fn add_wrapped_text(&mut self, text: &str) {
-        let max_chars = self.chars_per_line();
-        for line in text.lines() {
-            let mut remaining = line;
-            while !remaining.is_empty() {
-                if remaining.len() <= max_chars {
+    fn add_wrapped_line(&mut self, line: &str, max_chars: usize) {
+        let mut remaining = line;
+        while !remaining.is_empty() {
+            match remaining.len() <= max_chars {
+                true => {
                     self.add_text_line(remaining);
                     break;
                 }
-                // Try to break at word boundary
-                let break_at = match remaining[..max_chars].rfind(' ') {
-                    Some(pos) => pos,
-                    None => max_chars,
-                };
-                self.add_text_line(&remaining[..break_at]);
-                remaining = remaining[break_at..].trim_start();
+                false => {
+                    let break_at = remaining[..max_chars]
+                        .rfind(|c: char| c.is_whitespace())
+                        .unwrap_or(max_chars);
+                    self.add_text_line(&remaining[..break_at]);
+                    remaining = remaining[break_at..].trim_start();
+                }
             }
         }
     }
@@ -115,13 +114,11 @@ impl<'a> PdfBuilder<'a> {
 
     /// Add centered title with spacing
     fn add_centered(&mut self, text: &str, size: f64, spacing: f64) {
-        if self.y_pos < self.config.margin_top + size + spacing {
-            self.flush_page();
+        match self.y_pos < self.config.margin_top + size + spacing {
+            true => self.flush_page(),
+            false => {}
         }
-        let escaped = text
-            .replace('\\', "\\\\")
-            .replace('(', "\\(")
-            .replace(')', "\\)");
+        let escaped = escape_pdf_text(text);
         // Approximate centering: center of content area
         let x_center = self.config.margin_left + self.content_width() / 2.0;
         self.current_page.push(format!(
@@ -133,18 +130,19 @@ impl<'a> PdfBuilder<'a> {
 
     /// Flush current page to pages list
     fn flush_page(&mut self) {
-        if !self.current_page.is_empty() || self.pages.is_empty() {
-            self.page_num += 1;
-            self.pages.push(std::mem::take(&mut self.current_page));
-            self.y_pos = self.config.page_height - self.config.margin_top;
+        match !self.current_page.is_empty() || self.pages.is_empty() {
+            true => {
+                self.page_num += 1;
+                self.pages.push(std::mem::take(&mut self.current_page));
+                self.y_pos = self.config.page_height - self.config.margin_top;
+            }
+            false => {}
         }
     }
 
     /// Finalize and produce page content strings + total page count
     fn finalize(mut self) -> Vec<String> {
-        if !self.current_page.is_empty() || self.pages.is_empty() {
-            self.flush_page();
-        }
+        self.flush_page();
         let total = self.pages.len();
         let show_page_numbers = self.config.page_numbers;
         let x_center = self.config.margin_left + self.content_width() / 2.0;
@@ -154,28 +152,71 @@ impl<'a> PdfBuilder<'a> {
             .enumerate()
             .map(|(idx, page_content)| {
                 let joined = page_content.join(" ");
-                let mut full_content = if !joined.is_empty() && !joined.starts_with("BT") {
-                    format!("BT /F1 {} Tf {} ET", self.config.font_size, joined)
-                } else {
-                    joined
+                let mut full_content = match !joined.is_empty() && !joined.starts_with("BT") {
+                    true => format!("BT /F1 {} Tf {} ET", self.config.font_size, joined),
+                    false => joined,
                 };
 
-                if show_page_numbers {
-                    let page_num_text = format!("{} / {}", idx + 1, total);
-                    let escaped = page_num_text
-                        .replace('\\', "\\\\")
-                        .replace('(', "\\(")
-                        .replace(')', "\\)");
-                    let page_num_content = format!(
-                        " BT /F1 9 Tf {} {} Tmd ({}) Tj ET",
-                        x_center, y_bottom, escaped
-                    );
-                    full_content.push_str(&page_num_content);
+                match show_page_numbers {
+                    true => {
+                        let page_num_text = format!("{} / {}", idx + 1, total);
+                        let escaped = escape_pdf_text(&page_num_text);
+                        let page_num_content = format!(
+                            " BT /F1 9 Tf {} {} Tmd ({}) Tj ET",
+                            x_center, y_bottom, escaped
+                        );
+                        full_content.push_str(&page_num_content);
+                    }
+                    false => {}
                 }
                 full_content
             })
             .collect()
     }
+}
+
+fn add_page_with_content(
+    doc: &mut Document,
+    pages_id: ObjectId,
+    font_id: ObjectId,
+    config: &PdfLayoutConfig,
+    content_bytes: Vec<u8>,
+) -> ObjectId {
+    let mut dict = Dictionary::new();
+    dict.set("Length", content_bytes.len() as i64);
+    let content_id = doc.add_object(Object::Stream(Stream {
+        dict,
+        content: content_bytes,
+        allows_compression: true,
+        start_position: None,
+    }));
+    let page_id = doc.new_object_id();
+    let page = Object::Dictionary(Dictionary::from_iter([
+        (b"Type".to_vec(), Object::Name(b"Page".to_vec())),
+        (b"Parent".to_vec(), Object::Reference(pages_id)),
+        (b"Contents".to_vec(), Object::Reference(content_id)),
+        (
+            b"Resources".to_vec(),
+            Object::Dictionary(Dictionary::from_iter([(
+                b"Font".to_vec(),
+                Object::Dictionary(Dictionary::from_iter([(
+                    b"F1".to_vec(),
+                    Object::Reference(font_id),
+                )])),
+            )])),
+        ),
+        (
+            b"MediaBox".to_vec(),
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(0),
+                Object::Integer(config.page_width as i64),
+                Object::Integer(config.page_height as i64),
+            ]),
+        ),
+    ]));
+    doc.objects.insert(page_id, page);
+    page_id
 }
 
 /// Create a PDF with word-wrapping, page breaks, and auto-pagination.
@@ -201,47 +242,40 @@ pub fn create_formatted_pdf(file_path: &str, text: &str, config: &PdfLayoutConfi
     let mut builder = PdfBuilder::new(config);
 
     // Title page if title is set
-    if let Some(ref title) = config.title {
-        // Push y to center area
-        builder.y_pos = config.page_height * 0.7;
-        builder.add_centered(title, 24.0, 30.0);
-        if let Some(ref author) = config.author {
-            builder.add_centered(&format!("by {}", author), 14.0, 20.0);
+    match config.title {
+        Some(ref title) => {
+            // Push y to center area
+            builder.y_pos = config.page_height * 0.7;
+            builder.add_centered(title, 24.0, 30.0);
+            match config.author {
+                Some(ref author) => {
+                    builder.add_centered(&format!("by {}", author), 14.0, 20.0);
+                }
+                None => {}
+            }
+            builder.add_centered("", 12.0, 40.0); // spacing
         }
-        builder.add_centered("", 12.0, 40.0); // spacing
+        None => {}
     }
 
     // Render text content with word-wrapping and explicit page breaks
     let max_chars = builder.chars_per_line();
+    let first_segment = text.split('\x0c').next().unwrap_or("");
 
     for segment in text.split('\x0c') {
-        if segment != text.split('\x0c').next().unwrap_or("") {
-            builder.add_page_break();
+        match segment != first_segment {
+            true => builder.add_page_break(),
+            false => {}
         }
-        let segment = if segment == text && config.title.is_some() {
-            // Skip first blank if it was just the title
-            segment.trim_start()
-        } else {
-            segment
+        let segment = match segment == text && config.title.is_some() {
+            true => segment.trim_start(),
+            false => segment,
         };
 
         for line in segment.lines() {
-            if line.trim().is_empty() {
-                builder.add_text_line("");
-                continue;
-            }
-            let mut remaining = line;
-            while !remaining.is_empty() {
-                if remaining.len() <= max_chars {
-                    builder.add_text_line(remaining);
-                    break;
-                }
-                let break_at = match remaining[..max_chars].rfind(|c: char| c.is_whitespace()) {
-                    Some(pos) => pos,
-                    None => max_chars,
-                };
-                builder.add_text_line(&remaining[..break_at]);
-                remaining = remaining[break_at..].trim_start();
+            match line.trim().is_empty() {
+                true => builder.add_text_line(""),
+                false => builder.add_wrapped_line(line, max_chars),
             }
         }
     }
@@ -250,83 +284,28 @@ pub fn create_formatted_pdf(file_path: &str, text: &str, config: &PdfLayoutConfi
     let mut page_ids = Vec::new();
     let pages_id = doc.new_object_id();
 
-    if page_contents.is_empty() {
-        // Create empty page
-        let content_bytes = b"BT /F1 12 Tf 50 700 Td () Tj ET".to_vec();
-        let mut dict = Dictionary::new();
-        dict.set("Length", content_bytes.len() as i64);
-        let content_id = doc.add_object(Object::Stream(Stream {
-            dict,
-            content: content_bytes,
-            allows_compression: true,
-            start_position: None,
-        }));
-        let page_id = doc.new_object_id();
-        let page = Object::Dictionary(Dictionary::from_iter([
-            (b"Type".to_vec(), Object::Name(b"Page".to_vec())),
-            (b"Parent".to_vec(), Object::Reference(pages_id)),
-            (b"Contents".to_vec(), Object::Reference(content_id)),
-            (
-                b"Resources".to_vec(),
-                Object::Dictionary(Dictionary::from_iter([(
-                    b"Font".to_vec(),
-                    Object::Dictionary(Dictionary::from_iter([(
-                        b"F1".to_vec(),
-                        Object::Reference(font_id),
-                    )])),
-                )])),
-            ),
-            (
-                b"MediaBox".to_vec(),
-                Object::Array(vec![
-                    Object::Integer(0),
-                    Object::Integer(0),
-                    Object::Integer(config.page_width as i64),
-                    Object::Integer(config.page_height as i64),
-                ]),
-            ),
-        ]));
-        doc.objects.insert(page_id, page);
-        page_ids.push(page_id);
-    } else {
-        for content_str in &page_contents {
-            let content_bytes = content_str.as_bytes().to_vec();
-            let mut dict = Dictionary::new();
-            dict.set("Length", content_bytes.len() as i64);
-            let content_id = doc.add_object(Object::Stream(Stream {
-                dict,
-                content: content_bytes,
-                allows_compression: true,
-                start_position: None,
-            }));
-
-            let page_id = doc.new_object_id();
-            let page = Object::Dictionary(Dictionary::from_iter([
-                (b"Type".to_vec(), Object::Name(b"Page".to_vec())),
-                (b"Parent".to_vec(), Object::Reference(pages_id)),
-                (b"Contents".to_vec(), Object::Reference(content_id)),
-                (
-                    b"Resources".to_vec(),
-                    Object::Dictionary(Dictionary::from_iter([(
-                        b"Font".to_vec(),
-                        Object::Dictionary(Dictionary::from_iter([(
-                            b"F1".to_vec(),
-                            Object::Reference(font_id),
-                        )])),
-                    )])),
-                ),
-                (
-                    b"MediaBox".to_vec(),
-                    Object::Array(vec![
-                        Object::Integer(0),
-                        Object::Integer(0),
-                        Object::Integer(config.page_width as i64),
-                        Object::Integer(config.page_height as i64),
-                    ]),
-                ),
-            ]));
-            doc.objects.insert(page_id, page);
+    match page_contents.is_empty() {
+        true => {
+            let page_id = add_page_with_content(
+                &mut doc,
+                pages_id,
+                font_id,
+                config,
+                b"BT /F1 12 Tf 50 700 Td () Tj ET".to_vec(),
+            );
             page_ids.push(page_id);
+        }
+        false => {
+            for content_str in &page_contents {
+                let page_id = add_page_with_content(
+                    &mut doc,
+                    pages_id,
+                    font_id,
+                    config,
+                    content_str.as_bytes().to_vec(),
+                );
+                page_ids.push(page_id);
+            }
         }
     }
 
@@ -384,11 +363,12 @@ pub fn open_pdf(file_path: &str) -> String {
 
 /// Merge multiple PDF files into a single document with automatic object renumbering.
 pub fn merge_pdfs(sources: &[String], output: &str) -> String {
-    if sources.is_empty() {
-        return serde_json::json!({"error": "no source files provided"}).to_string();
-    }
+    let first_source = match sources.first() {
+        Some(s) => s,
+        None => return serde_json::json!({"error": "no source files provided"}).to_string(),
+    };
 
-    let mut result_doc = match Document::load(&sources[0]) {
+    let mut result_doc = match Document::load(first_source) {
         Ok(d) => d,
         Err(e) => return serde_json::json!({"error": e.to_string()}).to_string(),
     };
@@ -415,21 +395,27 @@ pub fn merge_pdfs(sources: &[String], output: &str) -> String {
         }
 
         // Get the root Pages object ID from Catalog
-        let mut root_pages_id = None;
-        if let Ok(catalog) = result_doc.catalog() {
-            if let Ok(Object::Reference(p_ref)) = catalog.get(b"Pages") {
-                root_pages_id = Some(*p_ref);
-            }
-        }
+        let root_pages_id = result_doc
+            .catalog()
+            .ok()
+            .and_then(|c| c.get(b"Pages").ok().and_then(|o| o.as_reference().ok()));
 
-        if let Some(p_id) = root_pages_id {
-            if let Ok(dict) = result_doc.get_dictionary_mut(p_id) {
-                if let Ok(Object::Array(ref mut kids)) = dict.get_mut(b"Kids") {
-                    for page_id in page_ids {
-                        kids.push(Object::Reference(page_id));
+        match root_pages_id {
+            Some(p_id) => {
+                match result_doc
+                    .get_dictionary_mut(p_id)
+                    .ok()
+                    .and_then(|dict| dict.get_mut(b"Kids").ok())
+                {
+                    Some(Object::Array(ref mut kids)) => {
+                        for page_id in page_ids {
+                            kids.push(Object::Reference(page_id));
+                        }
                     }
+                    _ => {}
                 }
             }
+            None => {}
         }
 
         // Find and update the Pages tree in result_doc
@@ -439,19 +425,22 @@ pub fn merge_pdfs(sources: &[String], output: &str) -> String {
         let pages_to_update: Vec<ObjectId> = result_doc
             .objects
             .iter()
-            .filter(|(_, obj)| {
-                if let Object::Dictionary(dict) = obj {
-                    matches!(dict.get(b"Type"), Ok(Object::Name(name)) if name == b"Pages")
-                } else {
-                    false
-                }
+            .filter(|(_, obj)| match obj {
+                Object::Dictionary(dict) => match dict.get(b"Type") {
+                    Ok(Object::Name(name)) => name == b"Pages",
+                    _ => false,
+                },
+                _ => false,
             })
             .map(|(id, _)| *id)
             .collect();
 
         for pages_id in pages_to_update {
-            if let Ok(dict) = result_doc.get_dictionary_mut(pages_id) {
-                dict.set("Count", Object::Integer(page_count));
+            match result_doc.get_dictionary_mut(pages_id) {
+                Ok(dict) => {
+                    dict.set("Count", Object::Integer(page_count));
+                }
+                Err(_) => {}
             }
         }
     }
@@ -475,12 +464,17 @@ pub fn extract_text(file_path: &str, page: Option<u32>) -> String {
         Ok(doc) => {
             let pages = doc.get_pages();
             let page_numbers: Vec<u32> = match page {
-                Some(p) if p < pages.len() as u32 => {
-                    let keys: Vec<&u32> = pages.keys().collect();
-                    vec![*keys[p as usize]]
-                }
+                Some(p) => match (p as usize) < pages.len() {
+                    true => {
+                        let keys: Vec<&u32> = pages.keys().collect();
+                        vec![*keys[p as usize]]
+                    }
+                    false => {
+                        return serde_json::json!({"error": "page number out of range"})
+                            .to_string();
+                    }
+                },
                 None => pages.keys().copied().collect(),
-                _ => return serde_json::json!({"error": "page number out of range"}).to_string(),
             };
 
             match doc.extract_text(&page_numbers) {
@@ -492,6 +486,17 @@ pub fn extract_text(file_path: &str, page: Option<u32>) -> String {
             }
         }
         Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+    }
+}
+
+fn decrypt_if_needed(doc: &mut Document, password: Option<&str>) -> Result<(), String> {
+    match doc.is_encrypted() {
+        true => {
+            let pass = password.unwrap_or("");
+            doc.decrypt(pass.as_bytes())
+                .map_err(|e| format!("Failed to decrypt PDF: {}", e))
+        }
+        false => Ok(()),
     }
 }
 
@@ -512,19 +517,17 @@ pub fn replace_text_with_password(
         Err(e) => return serde_json::json!({"error": e.to_string()}).to_string(),
     };
 
-    if doc.is_encrypted() {
-        let pass = password.unwrap_or("");
-        if let Err(e) = doc.decrypt(pass.as_bytes()) {
-            return serde_json::json!({"error": format!("Failed to decrypt PDF: {}", e)})
-                .to_string();
-        }
+    match decrypt_if_needed(&mut doc, password) {
+        Ok(()) => {}
+        Err(err) => return serde_json::json!({"error": err}).to_string(),
     }
 
     let pages = doc.get_pages();
     let mut total_replacements = 0u32;
     for page_num in pages.keys() {
-        if doc.replace_text(*page_num, find, replace).is_ok() {
-            total_replacements += 1;
+        match doc.replace_text(*page_num, find, replace) {
+            Ok(()) => total_replacements += 1,
+            Err(_) => {}
         }
     }
     match doc.save(file_path) {
@@ -540,7 +543,9 @@ pub fn replace_text_with_password(
 }
 
 /// Load a PDF file into the Internal Representation (IR)
-pub fn to_ir(file_path: &str) -> Result<crate::tools::opendoc::ir::Document, crate::tools::opendoc::handlers::LoadError> {
+pub fn to_ir(
+    file_path: &str,
+) -> Result<crate::tools::opendoc::ir::Document, crate::tools::opendoc::handlers::LoadError> {
     to_ir_with_password(file_path, None)
 }
 
@@ -552,13 +557,8 @@ pub fn to_ir_with_password(
     let mut doc = lopdf::Document::load(file_path)
         .map_err(|e| crate::tools::opendoc::handlers::LoadError::ParseError(e.to_string()))?;
 
-    let is_encrypted = doc.is_encrypted();
-    if is_encrypted {
-        let pass = password.unwrap_or("");
-        doc.decrypt(pass.as_bytes()).map_err(|e| {
-            crate::tools::opendoc::handlers::LoadError::ParseError(format!("Failed to decrypt PDF: {}", e))
-        })?;
-    }
+    decrypt_if_needed(&mut doc, password)
+        .map_err(crate::tools::opendoc::handlers::LoadError::ParseError)?;
 
     let mut ir = crate::tools::opendoc::ir::Document::new("pdf");
     ir.path = Some(file_path.to_string());
@@ -566,14 +566,20 @@ pub fn to_ir_with_password(
     ir.metadata.encrypted = doc.is_encrypted();
 
     let pages: Vec<u32> = doc.get_pages().keys().copied().collect();
-    if let Ok(text) = doc.extract_text(&pages) {
-        for line in text.lines() {
-            let trimmed = line.trim();
-            if !trimmed.is_empty() {
-                ir.paragraphs
-                    .push(crate::tools::opendoc::ir::elements::Paragraph::new(trimmed));
+    match doc.extract_text(&pages) {
+        Ok(text) => {
+            for line in text.lines() {
+                let trimmed = line.trim();
+                match trimmed.is_empty() {
+                    true => {}
+                    false => {
+                        ir.paragraphs
+                            .push(crate::tools::opendoc::ir::elements::Paragraph::new(trimmed));
+                    }
+                }
             }
         }
+        Err(_) => {}
     }
 
     Ok(ir)
@@ -600,29 +606,25 @@ pub fn split_pdf_with_password(
     let mut doc =
         lopdf::Document::load(file_path).map_err(|e| format!("Failed to load PDF: {}", e))?;
 
-    if doc.is_encrypted() {
-        let pass = password.unwrap_or("");
-        doc.decrypt(pass.as_bytes())
-            .map_err(|e| format!("Failed to decrypt PDF: {}", e))?;
-    }
+    decrypt_if_needed(&mut doc, password)?;
 
     let total_pages = doc.get_pages().len() as u32;
-    if start_page == 0 || end_page == 0 || start_page > end_page || start_page > total_pages {
-        return Err(format!(
-            "Invalid page range {}-{} for a {} page document",
-            start_page, end_page, total_pages
-        ));
+    match start_page == 0 || end_page == 0 || start_page > end_page || start_page > total_pages {
+        true => {
+            return Err(format!(
+                "Invalid page range {}-{} for a {} page document",
+                start_page, end_page, total_pages
+            ));
+        }
+        false => {}
     }
 
     let end_page = std::cmp::min(end_page, total_pages);
 
     // Find page numbers to delete
-    let mut pages_to_delete = Vec::new();
-    for p in 1..=total_pages {
-        if p < start_page || p > end_page {
-            pages_to_delete.push(p);
-        }
-    }
+    let pages_to_delete: Vec<u32> = (1..=total_pages)
+        .filter(|&p| p < start_page || p > end_page)
+        .collect();
 
     doc.delete_pages(&pages_to_delete);
     doc.prune_objects();

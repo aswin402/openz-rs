@@ -9,55 +9,74 @@ fn get_rpr_xml(
     italic: bool,
 ) -> String {
     let mut attrs = Vec::new();
-    if let Some(sz) = font_size {
-        attrs.push(format!("sz=\"{}\"", (sz * 100.0) as u32));
+    match font_size {
+        Some(sz) => attrs.push(format!("sz=\"{}\"", (sz * 100.0) as u32)),
+        None => {}
     }
-    if bold {
-        attrs.push("b=\"1\"".to_string());
+    match bold {
+        true => attrs.push("b=\"1\"".to_string()),
+        false => {}
     }
-    if italic {
-        attrs.push("i=\"1\"".to_string());
+    match italic {
+        true => attrs.push("i=\"1\"".to_string()),
+        false => {}
     }
 
-    let attrs_str = if attrs.is_empty() {
-        String::new()
-    } else {
-        format!(" {}", attrs.join(" "))
+    let attrs_str = match attrs.is_empty() {
+        true => String::new(),
+        false => format!(" {}", attrs.join(" ")),
     };
 
     let mut children = String::new();
-    if let Some(color) = font_color {
-        children.push_str(&format!(
-            "<a:solidFill><a:srgbClr val=\"{}\"/></a:solidFill>",
-            color
-        ));
+    match font_color {
+        Some(color) => {
+            children.push_str(&format!(
+                "<a:solidFill><a:srgbClr val=\"{}\"/></a:solidFill>",
+                color
+            ));
+        }
+        None => {}
     }
-    if let Some(family) = font_family {
-        children.push_str(&format!(
-            "<a:latin typeface=\"{}\"/><a:cs typeface=\"{}\"/>",
-            family, family
-        ));
+    match font_family {
+        Some(family) => {
+            children.push_str(&format!(
+                "<a:latin typeface=\"{}\"/><a:cs typeface=\"{}\"/>",
+                family, family
+            ));
+        }
+        None => {}
     }
 
-    if children.is_empty() {
-        format!("<a:rPr{}/>", attrs_str)
-    } else {
-        format!("<a:rPr{}>{}</a:rPr>", attrs_str, children)
+    match children.is_empty() {
+        true => format!("<a:rPr{}/>", attrs_str),
+        false => format!("<a:rPr{}>{}</a:rPr>", attrs_str, children),
     }
 }
 
 fn get_ppr_xml(alignment: Option<&str>) -> String {
-    if let Some(align) = alignment {
-        let align_val = match align.to_lowercase().as_str() {
-            "center" | "ctr" => "ctr",
-            "right" | "r" => "r",
-            "justify" | "just" => "just",
-            _ => "l",
-        };
-        format!("<a:pPr algn=\"{}\"/>", align_val)
-    } else {
-        String::new()
+    match alignment {
+        Some(align) => {
+            let align_val = match align.to_lowercase().as_str() {
+                "center" | "ctr" => "ctr",
+                "right" | "r" => "r",
+                "justify" | "just" => "just",
+                _ => "l",
+            };
+            format!("<a:pPr algn=\"{}\"/>", align_val)
+        }
+        None => String::new(),
     }
+}
+
+fn get_bg_xml(bg_color: Option<&str>) -> String {
+    bg_color
+        .map(|color| {
+            format!(
+                r#"<p:bg><p:bgPr><a:solidFill><a:srgbClr val="{}"/></a:solidFill><a:effectLst/></p:bgPr></p:bg>"#,
+                color
+            )
+        })
+        .unwrap_or_default()
 }
 
 /// Create a simple slide with a title text box
@@ -69,13 +88,7 @@ fn create_title_slide_xml(
     font_family: Option<&str>,
     alignment: Option<&str>,
 ) -> Vec<u8> {
-    let bg_xml = bg_color.map(|color| {
-        format!(
-            r#"<p:bg><p:bgPr><a:solidFill><a:srgbClr val="{}"/></a:solidFill><a:effectLst/></p:bgPr></p:bg>"#,
-            color
-        )
-    }).unwrap_or_default();
-
+    let bg_xml = get_bg_xml(bg_color);
     let ppr = get_ppr_xml(alignment);
     let rpr = get_rpr_xml(font_size, font_color, font_family, true, false);
 
@@ -144,13 +157,7 @@ fn create_content_slide_xml(
     font_family: Option<&str>,
     alignment: Option<&str>,
 ) -> Vec<u8> {
-    let bg_xml = bg_color.map(|color| {
-        format!(
-            r#"<p:bg><p:bgPr><a:solidFill><a:srgbClr val="{}"/></a:solidFill><a:effectLst/></p:bgPr></p:bg>"#,
-            color
-        )
-    }).unwrap_or_default();
-
+    let bg_xml = get_bg_xml(bg_color);
     let ppr = get_ppr_xml(alignment);
     let title_rpr = get_rpr_xml(Some(44.0), font_color, font_family, true, false);
 
@@ -263,10 +270,11 @@ pub fn create_presentation(file_path: &str, _title: Option<&str>) -> String {
     match Presentation::new() {
         Ok(mut prs) => {
             // Add a title slide
-            if let Ok(layouts) = prs.slide_layouts() {
-                if let Some(layout) = layouts.first() {
-                    let _ = prs.add_slide(layout);
+            match prs.slide_layouts().ok().and_then(|l| l.first().cloned()) {
+                Some(layout) => {
+                    let _ = prs.add_slide(&layout);
                 }
+                None => {}
             }
             match prs.save(file_path) {
                 Ok(_) => serde_json::json!({
@@ -332,18 +340,17 @@ pub fn add_slide(
             let slide_idx = prs.slide_index(&slide_ref).unwrap_or(0);
 
             // Determine XML content based on whether we have body
-            let xml = if let Some(body_items) = body {
-                if body_items.is_empty() {
-                    create_title_slide_xml(
+            let xml = match body {
+                Some(body_items) => match body_items.is_empty() {
+                    true => create_title_slide_xml(
                         title,
                         bg_color.as_deref(),
                         font_size,
                         font_color.as_deref(),
                         font_family.as_deref(),
                         alignment.as_deref(),
-                    )
-                } else {
-                    create_content_slide_xml(
+                    ),
+                    false => create_content_slide_xml(
                         title,
                         body_items,
                         bg_color.as_deref(),
@@ -351,22 +358,24 @@ pub fn add_slide(
                         font_color.as_deref(),
                         font_family.as_deref(),
                         alignment.as_deref(),
-                    )
-                }
-            } else {
-                create_title_slide_xml(
+                    ),
+                },
+                None => create_title_slide_xml(
                     title,
                     bg_color.as_deref(),
                     font_size,
                     font_color.as_deref(),
                     font_family.as_deref(),
                     alignment.as_deref(),
-                )
+                ),
             };
 
             // Set the slide content
-            if let Ok(xml_mut) = prs.slide_xml_mut(&slide_ref) {
-                *xml_mut = xml;
+            match prs.slide_xml_mut(&slide_ref) {
+                Ok(xml_mut) => {
+                    *xml_mut = xml;
+                }
+                Err(_) => {}
             }
 
             match prs.save(file_path) {
@@ -456,6 +465,8 @@ pub fn add_slide_image(file_path: &str, slide_number: u32, image_path: &str) -> 
     let mut slide_rels: Option<Vec<u8>> = None;
     let mut slide_xml: Option<Vec<u8>> = None;
     let mut slide_xml_path = String::new();
+    let target_slide_name = format!("ppt/slides/slide{}.xml", slide_number);
+    let target_rels_name = format!("ppt/slides/_rels/slide{}.xml.rels", slide_number);
 
     for i in 0..archive.len() {
         let mut file = match archive.by_index(i) {
@@ -466,29 +477,37 @@ pub fn add_slide_image(file_path: &str, slide_number: u32, image_path: &str) -> 
         let mut data = Vec::new();
         let _ = file.read_to_end(&mut data);
 
-        // Capture the requested slide's XML and its rels
-        if name == format!("ppt/slides/slide{}.xml", slide_number) {
-            slide_xml = Some(data.clone());
-            slide_xml_path = name.clone();
+        match name.as_str() {
+            "[Content_Types].xml" => {
+                content_types = Some(data);
+            }
+            n => {
+                match (n == target_slide_name, n == target_rels_name) {
+                    (true, _) => {
+                        slide_xml = Some(data.clone());
+                        slide_xml_path = name.clone();
+                    }
+                    (false, true) => {
+                        slide_rels = Some(data.clone());
+                    }
+                    (false, false) => {}
+                }
+                entries.push((name, data));
+            }
         }
-        if name == format!("ppt/slides/_rels/slide{}.xml.rels", slide_number) {
-            slide_rels = Some(data.clone());
-        }
-        if name == "[Content_Types].xml" {
-            content_types = Some(data);
-            continue;
-        }
-        entries.push((name, data));
     }
 
-    if slide_xml.is_none() {
-        return serde_json::json!({
-            "error": format!("Slide {} not found in presentation", slide_number),
-            "error_code": "SLIDE_NOT_FOUND",
-            "category": "validation",
-            "suggestion": format!("Slide numbers start at 1. Check the slide count first.")
-        })
-        .to_string();
+    match slide_xml {
+        None => {
+            return serde_json::json!({
+                "error": format!("Slide {} not found in presentation", slide_number),
+                "error_code": "SLIDE_NOT_FOUND",
+                "category": "validation",
+                "suggestion": "Slide numbers start at 1. Check the slide count first."
+            })
+            .to_string();
+        }
+        Some(_) => {}
     }
 
     // Find max existing image number in media folder
@@ -511,44 +530,50 @@ pub fn add_slide_image(file_path: &str, slide_number: u32, image_path: &str) -> 
     entries.push((media_path, img_data));
 
     // Update [Content_Types].xml to include the image
-    if let Some(ref ct_bytes) = content_types {
-        let ct_str = String::from_utf8_lossy(ct_bytes);
-        // Insert new content type before </Types>
-        let insert_before = "</Types>";
-        if let Some(pos) = ct_str.rfind(insert_before) {
-            let mut new_ct = ct_str[..pos].to_string();
-            new_ct.push_str(&format!(
-                "  <Override PartName=\"/ppt/media/image{}.{}\" ContentType=\"{}\"/>\n",
-                new_img_num, storage_ext, mime_type
-            ));
-            new_ct.push_str("</Types>");
-            entries.push(("[Content_Types].xml".to_string(), new_ct.into_bytes()));
+    match content_types {
+        Some(ref ct_bytes) => {
+            let ct_str = String::from_utf8_lossy(ct_bytes);
+            // Insert new content type before </Types>
+            let insert_before = "</Types>";
+            match ct_str.rfind(insert_before) {
+                Some(pos) => {
+                    let mut new_ct = ct_str[..pos].to_string();
+                    new_ct.push_str(&format!(
+                        "  <Override PartName=\"/ppt/media/image{}.{}\" ContentType=\"{}\"/>\n",
+                        new_img_num, storage_ext, mime_type
+                    ));
+                    new_ct.push_str("</Types>");
+                    entries.push(("[Content_Types].xml".to_string(), new_ct.into_bytes()));
+                }
+                None => {}
+            }
         }
+        None => {}
     }
 
     // Update slide rels to include image relationship
-    let mut new_slide_rels = if let Some(ref rels_bytes) = slide_rels {
-        let rels_str = String::from_utf8_lossy(rels_bytes).to_string();
-        rels_str
-    } else {
-        // Create minimal rels file
-        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    let mut new_slide_rels = match slide_rels {
+        Some(ref rels_bytes) => String::from_utf8_lossy(rels_bytes).to_string(),
+        None => r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
 </Relationships>"#
-            .to_string()
+            .to_string(),
     };
 
     // Insert image relationship before </Relationships>
-    if let Some(pos) = new_slide_rels.rfind("</Relationships>") {
-        new_slide_rels.insert_str(pos, &format!(
-            "  <Relationship Id=\"{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"../media/image{}.{}\"/>\n",
-            rel_id, new_img_num, storage_ext
-        ));
+    match new_slide_rels.rfind("</Relationships>") {
+        Some(pos) => {
+            new_slide_rels.insert_str(
+                pos,
+                &format!(
+                    "  <Relationship Id=\"{}\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\"../media/image{}.{}\"/>\n",
+                    rel_id, new_img_num, storage_ext
+                ),
+            );
+        }
+        None => {}
     }
-    entries.push((
-        format!("ppt/slides/_rels/slide{}.xml.rels", slide_number),
-        new_slide_rels.into_bytes(),
-    ));
+    entries.push((target_rels_name, new_slide_rels.into_bytes()));
 
     // Generate picture XML for the slide
     let pic_xml = format!(
@@ -581,12 +606,18 @@ pub fn add_slide_image(file_path: &str, slide_number: u32, image_path: &str) -> 
     );
 
     // Insert picture into slide XML (inside spTree but before </p:spTree>)
-    if let Some(ref slide_bytes) = slide_xml {
-        let mut slide_str = String::from_utf8_lossy(slide_bytes).to_string();
-        if let Some(pos) = slide_str.rfind("</p:spTree>") {
-            slide_str.insert_str(pos, &format!("\n{}", pic_xml));
+    match slide_xml {
+        Some(ref slide_bytes) => {
+            let mut slide_str = String::from_utf8_lossy(slide_bytes).to_string();
+            match slide_str.rfind("</p:spTree>") {
+                Some(pos) => {
+                    slide_str.insert_str(pos, &format!("\n{}", pic_xml));
+                }
+                None => {}
+            }
+            entries.push((slide_xml_path, slide_str.into_bytes()));
         }
-        entries.push((slide_xml_path, slide_str.into_bytes()));
+        None => {}
     }
 
     // Write everything back to a new ZIP file
@@ -610,17 +641,23 @@ pub fn add_slide_image(file_path: &str, slide_number: u32, image_path: &str) -> 
             .compression_method(zip::CompressionMethod::Deflated);
 
         for (name, data) in &entries {
-            if zip_writer.start_file(name, options).is_ok() {
-                let _ = zip_writer.write_all(data);
+            match zip_writer.start_file(name, options) {
+                Ok(_) => {
+                    let _ = zip_writer.write_all(data);
+                }
+                Err(_) => {}
             }
         }
         let _ = zip_writer.finish();
     }
 
     // Replace original with temp
-    if std::fs::rename(&temp_path, file_path).is_err() {
-        let _ = std::fs::copy(&temp_path, file_path);
-        let _ = std::fs::remove_file(&temp_path);
+    match std::fs::rename(&temp_path, file_path) {
+        Ok(_) => {}
+        Err(_) => {
+            let _ = std::fs::copy(&temp_path, file_path);
+            let _ = std::fs::remove_file(&temp_path);
+        }
     }
 
     serde_json::json!({
@@ -666,19 +703,15 @@ fn html_to_markdown_pptx(html_str: &str) -> String {
     for el in document.select(&selector) {
         let tag = el.value().name();
         let text = el.text().collect::<String>().trim().to_string();
-        if text.is_empty() {
-            if tag == "br" {
-                parts.push("\n".to_string());
-            }
-            continue;
-        }
-        match tag {
-            "h1" => parts.push(format!("\n# {}\n", text)),
-            "h2" => parts.push(format!("\n## {}\n", text)),
-            "h3" | "h4" | "h5" | "h6" => parts.push(format!("\n### {}\n", text)),
-            "li" => parts.push(format!("- {}\n", text)),
-            "p" | "div" => parts.push(format!("{}\n", text)),
-            _ => parts.push(text),
+        match (text.is_empty(), tag) {
+            (true, "br") => parts.push("\n".to_string()),
+            (true, _) => {}
+            (false, "h1") => parts.push(format!("\n# {}\n", text)),
+            (false, "h2") => parts.push(format!("\n## {}\n", text)),
+            (false, "h3" | "h4" | "h5" | "h6") => parts.push(format!("\n### {}\n", text)),
+            (false, "li") => parts.push(format!("- {}\n", text)),
+            (false, "p" | "div") => parts.push(format!("{}\n", text)),
+            (false, _) => parts.push(text),
         }
     }
     parts.join("")
@@ -704,7 +737,9 @@ pub fn to_markdown(source: &str) -> String {
 }
 
 /// Load a PPTX file into the Internal Representation (IR)
-pub fn to_ir(file_path: &str) -> Result<crate::tools::opendoc::ir::Document, crate::tools::opendoc::handlers::LoadError> {
+pub fn to_ir(
+    file_path: &str,
+) -> Result<crate::tools::opendoc::ir::Document, crate::tools::opendoc::handlers::LoadError> {
     let prs = Presentation::open(file_path)
         .map_err(|e| crate::tools::opendoc::handlers::LoadError::ParseError(e.to_string()))?;
 
@@ -717,9 +752,12 @@ pub fn to_ir(file_path: &str) -> Result<crate::tools::opendoc::ir::Document, cra
 
     for line in text.lines() {
         let trimmed = line.trim();
-        if !trimmed.is_empty() && trimmed.len() > 2 {
-            ir.paragraphs
-                .push(crate::tools::opendoc::ir::elements::Paragraph::new(trimmed));
+        match !trimmed.is_empty() && trimmed.len() > 2 {
+            true => {
+                ir.paragraphs
+                    .push(crate::tools::opendoc::ir::elements::Paragraph::new(trimmed));
+            }
+            false => {}
         }
     }
 

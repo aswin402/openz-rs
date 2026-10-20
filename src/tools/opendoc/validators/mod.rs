@@ -22,13 +22,13 @@ pub fn validate_document(doc: &Document) -> ValidationResult {
     let mut checks = Vec::new();
 
     // Check for empty documents
+    let has_content = !doc.paragraphs.is_empty() || doc.text.is_some();
     checks.push(ValidationCheck {
         name: "non_empty".to_string(),
-        passed: !doc.paragraphs.is_empty() || doc.text.is_some(),
-        message: if doc.paragraphs.is_empty() && doc.text.is_none() {
-            "Document has no content".to_string()
-        } else {
-            "Document has content".to_string()
+        passed: has_content,
+        message: match has_content {
+            false => "Document has no content".to_string(),
+            true => "Document has content".to_string(),
         },
     });
 

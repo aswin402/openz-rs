@@ -1,5 +1,20 @@
 use crate::tools::opendoc::ir::Document;
 
+fn compute_lcs_dp(a: &[&str], b: &[&str]) -> Vec<Vec<usize>> {
+    let n = a.len();
+    let m = b.len();
+    let mut dp = vec![vec![0; m + 1]; n + 1];
+    for i in 1..=n {
+        for j in 1..=m {
+            dp[i][j] = match a[i - 1] == b[j - 1] {
+                true => dp[i - 1][j - 1] + 1,
+                false => dp[i - 1][j].max(dp[i][j - 1]),
+            };
+        }
+    }
+    dp
+}
+
 /// Compare two documents and return a structured diff (simple line-based)
 pub fn diff_documents(a: &Document, b: &Document) -> DiffResult {
     let text_a: Vec<&str> = a.paragraphs.iter().map(|p| p.text.as_str()).collect();
@@ -7,43 +22,38 @@ pub fn diff_documents(a: &Document, b: &Document) -> DiffResult {
 
     let n = text_a.len();
     let m = text_b.len();
-
-    let mut dp = vec![vec![0; m + 1]; n + 1];
-
-    for i in 1..=n {
-        for j in 1..=m {
-            if text_a[i - 1] == text_b[j - 1] {
-                dp[i][j] = dp[i - 1][j - 1] + 1;
-            } else {
-                dp[i][j] = dp[i - 1][j].max(dp[i][j - 1]);
-            }
-        }
-    }
+    let dp = compute_lcs_dp(&text_a, &text_b);
 
     let mut changes = Vec::new();
     let mut i = n;
     let mut j = m;
 
     while i > 0 || j > 0 {
-        if i > 0 && j > 0 && text_a[i - 1] == text_b[j - 1] {
-            i -= 1;
-            j -= 1;
-        } else if j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j]) {
-            changes.push(DiffChange {
-                tag: "added".to_string(),
-                line: j - 1,
-                old_value: String::new(),
-                new_value: text_b[j - 1].to_string(),
-            });
-            j -= 1;
-        } else if i > 0 && (j == 0 || dp[i - 1][j] >= dp[i][j - 1]) {
-            changes.push(DiffChange {
-                tag: "removed".to_string(),
-                line: i - 1,
-                old_value: text_a[i - 1].to_string(),
-                new_value: String::new(),
-            });
-            i -= 1;
+        let same = i > 0 && j > 0 && text_a[i - 1] == text_b[j - 1];
+        let take_b = !same && j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j]);
+        match (same, take_b) {
+            (true, _) => {
+                i -= 1;
+                j -= 1;
+            }
+            (false, true) => {
+                changes.push(DiffChange {
+                    tag: "added".to_string(),
+                    line: j - 1,
+                    old_value: String::new(),
+                    new_value: text_b[j - 1].to_string(),
+                });
+                j -= 1;
+            }
+            (false, false) => {
+                changes.push(DiffChange {
+                    tag: "removed".to_string(),
+                    line: i - 1,
+                    old_value: text_a[i - 1].to_string(),
+                    new_value: String::new(),
+                });
+                i -= 1;
+            }
         }
     }
 
@@ -54,21 +64,22 @@ pub fn diff_documents(a: &Document, b: &Document) -> DiffResult {
     let mut merged_changes = Vec::new();
     let mut iter = changes.into_iter().peekable();
     while let Some(change) = iter.next() {
-        if change.tag == "removed" {
-            if let Some(next_change) = iter.peek() {
-                if next_change.tag == "added" && next_change.line == change.line {
-                    let next_change = iter.next().unwrap();
-                    merged_changes.push(DiffChange {
-                        tag: "modified".to_string(),
-                        line: change.line,
-                        old_value: change.old_value,
-                        new_value: next_change.new_value,
-                    });
-                    continue;
-                }
+        let merge_with_next = change.tag == "removed"
+            && iter
+                .peek()
+                .is_some_and(|next_change| next_change.tag == "added" && next_change.line == change.line);
+        match merge_with_next {
+            true => {
+                let next_change = iter.next().unwrap();
+                merged_changes.push(DiffChange {
+                    tag: "modified".to_string(),
+                    line: change.line,
+                    old_value: change.old_value,
+                    new_value: next_change.new_value,
+                });
             }
+            false => merged_changes.push(change),
         }
-        merged_changes.push(change);
     }
 
     DiffResult {
@@ -109,46 +120,45 @@ fn diff_words(old_val: &str, new_val: &str, is_html: bool) -> String {
 
     let n = words_a.len();
     let m = words_b.len();
-
-    let mut dp = vec![vec![0; m + 1]; n + 1];
-
-    for i in 1..=n {
-        for j in 1..=m {
-            if words_a[i - 1] == words_b[j - 1] {
-                dp[i][j] = dp[i - 1][j - 1] + 1;
-            } else {
-                dp[i][j] = dp[i - 1][j].max(dp[i][j - 1]);
-            }
-        }
-    }
+    let dp = compute_lcs_dp(&words_a, &words_b);
 
     let mut result = Vec::new();
     let mut i = n;
     let mut j = m;
 
     while i > 0 || j > 0 {
-        if i > 0 && j > 0 && words_a[i - 1] == words_b[j - 1] {
-            result.push(words_a[i - 1].to_string());
-            i -= 1;
-            j -= 1;
-        } else if j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j]) {
-            let val = words_b[j - 1];
-            let wrapped = if is_html {
-                format!("<ins style=\"background-color: #e6ffec; text-decoration: none; color: #1a7f37;\">{}</ins>", val)
-            } else {
-                format!("++{}++", val)
-            };
-            result.push(wrapped);
-            j -= 1;
-        } else if i > 0 && (j == 0 || dp[i - 1][j] >= dp[i][j - 1]) {
-            let val = words_a[i - 1];
-            let wrapped = if is_html {
-                format!("<del style=\"background-color: #ffebe9; text-decoration: line-through; color: #cf222e;\">{}</del>", val)
-            } else {
-                format!("~~{}~~", val)
-            };
-            result.push(wrapped);
-            i -= 1;
+        let same = i > 0 && j > 0 && words_a[i - 1] == words_b[j - 1];
+        let take_b = !same && j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j]);
+        match (same, take_b) {
+            (true, _) => {
+                result.push(words_a[i - 1].to_string());
+                i -= 1;
+                j -= 1;
+            }
+            (false, true) => {
+                let val = words_b[j - 1];
+                let wrapped = match is_html {
+                    true => format!(
+                        "<ins style=\"background-color: #e6ffec; text-decoration: none; color: #1a7f37;\">{}</ins>",
+                        val
+                    ),
+                    false => format!("++{}++", val),
+                };
+                result.push(wrapped);
+                j -= 1;
+            }
+            (false, false) => {
+                let val = words_a[i - 1];
+                let wrapped = match is_html {
+                    true => format!(
+                        "<del style=\"background-color: #ffebe9; text-decoration: line-through; color: #cf222e;\">{}</del>",
+                        val
+                    ),
+                    false => format!("~~{}~~", val),
+                };
+                result.push(wrapped);
+                i -= 1;
+            }
         }
     }
 
@@ -163,34 +173,29 @@ pub fn render_diff_visual(a: &Document, b: &Document, is_html: bool) -> String {
 
     let n = text_a.len();
     let m = text_b.len();
-
-    let mut dp = vec![vec![0; m + 1]; n + 1];
-
-    for i in 1..=n {
-        for j in 1..=m {
-            if text_a[i - 1] == text_b[j - 1] {
-                dp[i][j] = dp[i - 1][j - 1] + 1;
-            } else {
-                dp[i][j] = dp[i - 1][j].max(dp[i][j - 1]);
-            }
-        }
-    }
+    let dp = compute_lcs_dp(&text_a, &text_b);
 
     let mut ops = Vec::new();
     let mut i = n;
     let mut j = m;
 
     while i > 0 || j > 0 {
-        if i > 0 && j > 0 && text_a[i - 1] == text_b[j - 1] {
-            ops.push(DiffOp::Unchanged(text_a[i - 1].to_string()));
-            i -= 1;
-            j -= 1;
-        } else if j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j]) {
-            ops.push(DiffOp::Added(text_b[j - 1].to_string()));
-            j -= 1;
-        } else if i > 0 && (j == 0 || dp[i - 1][j] >= dp[i][j - 1]) {
-            ops.push(DiffOp::Removed(text_a[i - 1].to_string()));
-            i -= 1;
+        let same = i > 0 && j > 0 && text_a[i - 1] == text_b[j - 1];
+        let take_b = !same && j > 0 && (i == 0 || dp[i][j - 1] >= dp[i - 1][j]);
+        match (same, take_b) {
+            (true, _) => {
+                ops.push(DiffOp::Unchanged(text_a[i - 1].to_string()));
+                i -= 1;
+                j -= 1;
+            }
+            (false, true) => {
+                ops.push(DiffOp::Added(text_b[j - 1].to_string()));
+                j -= 1;
+            }
+            (false, false) => {
+                ops.push(DiffOp::Removed(text_a[i - 1].to_string()));
+                i -= 1;
+            }
         }
     }
     ops.reverse();
@@ -198,79 +203,81 @@ pub fn render_diff_visual(a: &Document, b: &Document, is_html: bool) -> String {
     let mut merged_ops = Vec::new();
     let mut iter = ops.into_iter().peekable();
     while let Some(op) = iter.next() {
-        if let DiffOp::Removed(ref old_val) = op {
-            if let Some(DiffOp::Added(ref new_val)) = iter.peek() {
+        match (&op, iter.peek()) {
+            (DiffOp::Removed(old_val), Some(DiffOp::Added(new_val))) => {
                 let old_val = old_val.clone();
                 let new_val = new_val.clone();
                 let _ = iter.next();
                 merged_ops.push(DiffOp::Modified(old_val, new_val));
-                continue;
             }
+            _ => merged_ops.push(op),
         }
-        merged_ops.push(op);
     }
 
     let mut rendered_lines = Vec::new();
     for op in merged_ops {
         match op {
-            DiffOp::Unchanged(text) => {
-                if is_html {
-                    rendered_lines.push(format!(
-                        "<div class=\"diff-line\" style=\"padding: 4px 8px;\">{}</div>",
-                        text
-                    ));
-                } else {
-                    rendered_lines.push(text);
-                }
-            }
-            DiffOp::Added(text) => {
-                if is_html {
-                    rendered_lines.push(format!("<div class=\"diff-line diff-add\" style=\"background-color: #e6ffec; border-left: 4px solid #34d058; padding: 4px 8px; margin: 2px 0;\"><ins style=\"text-decoration: none; color: #1a7f37;\">{}</ins></div>", text));
-                } else {
-                    rendered_lines.push(format!("++{}++", text));
-                }
-            }
-            DiffOp::Removed(text) => {
-                if is_html {
-                    rendered_lines.push(format!("<div class=\"diff-line diff-remove\" style=\"background-color: #ffebe9; border-left: 4px solid #d73a49; padding: 4px 8px; margin: 2px 0;\"><del style=\"text-decoration: line-through; color: #cf222e;\">{}</del></div>", text));
-                } else {
-                    rendered_lines.push(format!("~~{}~~", text));
-                }
-            }
+            DiffOp::Unchanged(text) => match is_html {
+                true => rendered_lines.push(format!(
+                    "<div class=\"diff-line\" style=\"padding: 4px 8px;\">{}</div>",
+                    text
+                )),
+                false => rendered_lines.push(text),
+            },
+            DiffOp::Added(text) => match is_html {
+                true => rendered_lines.push(format!(
+                    "<div class=\"diff-line diff-add\" style=\"background-color: #e6ffec; border-left: 4px solid #34d058; padding: 4px 8px; margin: 2px 0;\"><ins style=\"text-decoration: none; color: #1a7f37;\">{}</ins></div>",
+                    text
+                )),
+                false => rendered_lines.push(format!("++{}++", text)),
+            },
+            DiffOp::Removed(text) => match is_html {
+                true => rendered_lines.push(format!(
+                    "<div class=\"diff-line diff-remove\" style=\"background-color: #ffebe9; border-left: 4px solid #d73a49; padding: 4px 8px; margin: 2px 0;\"><del style=\"text-decoration: line-through; color: #cf222e;\">{}</del></div>",
+                    text
+                )),
+                false => rendered_lines.push(format!("~~{}~~", text)),
+            },
             DiffOp::Modified(old, new) => {
                 let diff_content = diff_words(&old, &new, is_html);
-                if is_html {
-                    rendered_lines.push(format!("<div class=\"diff-line diff-modify\" style=\"background-color: #fbf0dc; border-left: 4px solid #e3b341; padding: 4px 8px; margin: 2px 0;\">{}</div>", diff_content));
-                } else {
-                    rendered_lines.push(diff_content);
+                match is_html {
+                    true => rendered_lines.push(format!(
+                        "<div class=\"diff-line diff-modify\" style=\"background-color: #fbf0dc; border-left: 4px solid #e3b341; padding: 4px 8px; margin: 2px 0;\">{}</div>",
+                        diff_content
+                    )),
+                    false => rendered_lines.push(diff_content),
                 }
             }
         }
     }
 
-    if is_html {
-        let mut html = String::new();
-        html.push_str("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>Document Comparison Diff</title>\n");
-        html.push_str("<style>\n");
-        html.push_str("body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; line-height: 1.6; max-width: 900px; margin: 40px auto; padding: 0 20px; background-color: #f6f8fa; color: #24292f; }\n");
-        html.push_str(".diff-container { border: 1px solid #d0d7de; border-radius: 6px; padding: 24px; background-color: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }\n");
-        html.push_str("h1 { border-bottom: 1px solid #d0d7de; padding-bottom: 12px; font-size: 24px; margin-top: 0; }\n");
-        html.push_str(".diff-summary { display: flex; gap: 20px; font-size: 14px; color: #57606a; margin-bottom: 20px; border-bottom: 1px solid #d0d7de; padding-bottom: 12px; }\n");
-        html.push_str(".diff-line { white-space: pre-wrap; font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace; font-size: 14px; line-height: 20px; }\n");
-        html.push_str("</style>\n</head>\n<body>\n");
-        html.push_str("<div class=\"diff-container\">\n");
-        html.push_str("<h1>Document Diff Comparison</h1>\n");
-        html.push_str(&format!("<div class=\"diff-summary\"><span>Original: {} paragraphs</span> <span>Modified: {} paragraphs</span></div>\n", n, m));
+    match is_html {
+        true => {
+            let mut html = String::new();
+            html.push_str("<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>Document Comparison Diff</title>\n");
+            html.push_str("<style>\n");
+            html.push_str("body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; line-height: 1.6; max-width: 900px; margin: 40px auto; padding: 0 20px; background-color: #f6f8fa; color: #24292f; }\n");
+            html.push_str(".diff-container { border: 1px solid #d0d7de; border-radius: 6px; padding: 24px; background-color: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }\n");
+            html.push_str("h1 { border-bottom: 1px solid #d0d7de; padding-bottom: 12px; font-size: 24px; margin-top: 0; }\n");
+            html.push_str(".diff-summary { display: flex; gap: 20px; font-size: 14px; color: #57606a; margin-bottom: 20px; border-bottom: 1px solid #d0d7de; padding-bottom: 12px; }\n");
+            html.push_str(".diff-line { white-space: pre-wrap; font-family: SFMono-Regular, Consolas, 'Liberation Mono', Menlo, monospace; font-size: 14px; line-height: 20px; }\n");
+            html.push_str("</style>\n</head>\n<body>\n");
+            html.push_str("<div class=\"diff-container\">\n");
+            html.push_str("<h1>Document Diff Comparison</h1>\n");
+            html.push_str(&format!(
+                "<div class=\"diff-summary\"><span>Original: {} paragraphs</span> <span>Modified: {} paragraphs</span></div>\n",
+                n, m
+            ));
 
-        for line in rendered_lines {
-            html.push_str(&line);
-            html.push('\n');
+            for line in rendered_lines {
+                html.push_str(&line);
+                html.push('\n');
+            }
+
+            html.push_str("</div>\n</body>\n</html>");
+            html
         }
-
-        html.push_str("</div>\n</body>\n</html>");
-        html
-    } else {
-        rendered_lines.join("\n")
+        false => rendered_lines.join("\n"),
     }
 }
 

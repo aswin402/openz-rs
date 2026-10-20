@@ -2,13 +2,28 @@ use rdocx::Document;
 
 /// Create a new DOCX document and save to a file path.
 /// Returns the path to the created file on success.
+fn parse_alignment(align_str: &str) -> Option<rdocx::Alignment> {
+    match align_str.to_lowercase().as_str() {
+        "left" => Some(rdocx::Alignment::Left),
+        "center" => Some(rdocx::Alignment::Center),
+        "right" => Some(rdocx::Alignment::Right),
+        "justify" => Some(rdocx::Alignment::Justify),
+        _ => None,
+    }
+}
+
+/// Create a new DOCX document and save to a file path.
+/// Returns the path to the created file on success.
 pub fn create_document(file_path: &str, title: Option<&str>) -> String {
     let mut doc = Document::new();
     doc.set_author("OpenZ");
 
-    if let Some(t) = title {
-        let mut p = doc.add_paragraph("");
-        p.add_run(t).bold(true).size(24.0);
+    match title {
+        Some(t) => {
+            let mut p = doc.add_paragraph("");
+            p.add_run(t).bold(true).size(24.0);
+        }
+        None => {}
     }
 
     match doc.save(file_path) {
@@ -63,56 +78,86 @@ pub fn add_paragraph(
 
     let mut p = doc.add_paragraph("");
 
-    if let Some(align_str) = alignment {
-        let align = match align_str.to_lowercase().as_str() {
-            "left" => Some(rdocx::Alignment::Left),
-            "center" => Some(rdocx::Alignment::Center),
-            "right" => Some(rdocx::Alignment::Right),
-            "justify" => Some(rdocx::Alignment::Justify),
-            _ => None,
-        };
-        if let Some(a) = align {
+    match alignment.as_deref().and_then(parse_alignment) {
+        Some(a) => {
             p = p.alignment(a);
         }
+        None => {}
     }
 
-    if let Some(ref shd) = shading {
-        p = p.shading(shd);
+    match shading {
+        Some(ref shd) => {
+            p = p.shading(shd);
+        }
+        None => {}
     }
-    if let Some(spacing) = line_spacing {
-        p = p.line_spacing(spacing);
+    match line_spacing {
+        Some(spacing) => {
+            p = p.line_spacing(spacing);
+        }
+        None => {}
     }
-    if keep_with_next.unwrap_or(false) {
-        p = p.keep_with_next(true);
+    match keep_with_next.unwrap_or(false) {
+        true => {
+            p = p.keep_with_next(true);
+        }
+        false => {}
     }
-    if keep_together.unwrap_or(false) {
-        p = p.keep_together(true);
+    match keep_together.unwrap_or(false) {
+        true => {
+            p = p.keep_together(true);
+        }
+        false => {}
     }
-    if page_break_before.unwrap_or(false) {
-        p = p.page_break_before(true);
+    match page_break_before.unwrap_or(false) {
+        true => {
+            p = p.page_break_before(true);
+        }
+        false => {}
     }
 
     let mut run = p.add_run(text);
-    if bold.unwrap_or(false) {
-        run = run.bold(true);
+    match bold.unwrap_or(false) {
+        true => {
+            run = run.bold(true);
+        }
+        false => {}
     }
-    if italic.unwrap_or(false) {
-        run = run.italic(true);
+    match italic.unwrap_or(false) {
+        true => {
+            run = run.italic(true);
+        }
+        false => {}
     }
-    if underline.unwrap_or(false) {
-        run = run.underline(true);
+    match underline.unwrap_or(false) {
+        true => {
+            run = run.underline(true);
+        }
+        false => {}
     }
-    if let Some(sz) = font_size {
-        run = run.size(sz as f64);
+    match font_size {
+        Some(sz) => {
+            run = run.size(sz as f64);
+        }
+        None => {}
     }
-    if let Some(ref family) = font_family {
-        run = run.font(family);
+    match font_family {
+        Some(ref family) => {
+            run = run.font(family);
+        }
+        None => {}
     }
-    if let Some(ref col) = color {
-        run = run.color(col);
+    match color {
+        Some(ref col) => {
+            run = run.color(col);
+        }
+        None => {}
     }
-    if let Some(ref high) = highlight {
-        let _ = run.highlight(high);
+    match highlight {
+        Some(ref high) => {
+            let _ = run.highlight(high);
+        }
+        None => {}
     }
 
     match doc.save(file_path) {
@@ -143,57 +188,64 @@ pub fn add_table(
     };
 
     let rows = data.len() + 1; // +1 for header
-    let cols = headers
-        .len()
-        .max(if data.is_empty() { 0 } else { data[0].len() });
+    let cols = headers.len().max(data.first().map(|r| r.len()).unwrap_or(0));
 
     let mut table = doc.add_table(rows, cols);
 
-    if let Some(pct) = width_pct {
-        table = table.width_pct(pct);
+    match width_pct {
+        Some(pct) => {
+            table = table.width_pct(pct);
+        }
+        None => {}
     }
 
-    if let Some(align_str) = alignment {
-        let align = match align_str.to_lowercase().as_str() {
-            "left" => Some(rdocx::Alignment::Left),
-            "center" => Some(rdocx::Alignment::Center),
-            "right" => Some(rdocx::Alignment::Right),
-            "justify" => Some(rdocx::Alignment::Justify),
-            _ => None,
-        };
-        if let Some(a) = align {
+    match alignment.as_deref().and_then(parse_alignment) {
+        Some(a) => {
             table = table.alignment(a);
         }
+        None => {}
     }
 
-    if let Some(bs_str) = border_style {
-        let bs = match bs_str.to_lowercase().as_str() {
-            "none" => Some(rdocx::BorderStyle::None),
-            "single" => Some(rdocx::BorderStyle::Single),
-            "thick" => Some(rdocx::BorderStyle::Thick),
-            "double" => Some(rdocx::BorderStyle::Double),
-            "dotted" => Some(rdocx::BorderStyle::Dotted),
-            "dashed" => Some(rdocx::BorderStyle::Dashed),
-            "dotdash" => Some(rdocx::BorderStyle::DotDash),
-            "wave" => Some(rdocx::BorderStyle::Wave),
-            _ => None,
-        };
-        if let Some(b) = bs {
-            table = table.borders(
-                b,
-                border_size.unwrap_or(4),
-                &border_color.clone().unwrap_or_else(|| "CCCCCC".to_string()),
-            );
+    match border_style {
+        Some(bs_str) => {
+            let bs = match bs_str.to_lowercase().as_str() {
+                "none" => Some(rdocx::BorderStyle::None),
+                "single" => Some(rdocx::BorderStyle::Single),
+                "thick" => Some(rdocx::BorderStyle::Thick),
+                "double" => Some(rdocx::BorderStyle::Double),
+                "dotted" => Some(rdocx::BorderStyle::Dotted),
+                "dashed" => Some(rdocx::BorderStyle::Dashed),
+                "dotdash" => Some(rdocx::BorderStyle::DotDash),
+                "wave" => Some(rdocx::BorderStyle::Wave),
+                _ => None,
+            };
+            match bs {
+                Some(b) => {
+                    table = table.borders(
+                        b,
+                        border_size.unwrap_or(4),
+                        &border_color.clone().unwrap_or_else(|| "CCCCCC".to_string()),
+                    );
+                }
+                None => {}
+            }
         }
+        None => {}
     }
 
     // Set headers
     for (col, header) in headers.iter().enumerate() {
-        if let Some(mut cell) = table.cell(0, col) {
-            cell.set_text(header);
-            if let Some(ref color) = shading_header {
-                let _ = cell.shading(color);
+        match table.cell(0, col) {
+            Some(mut cell) => {
+                cell.set_text(header);
+                match shading_header {
+                    Some(ref color) => {
+                        let _ = cell.shading(color);
+                    }
+                    None => {}
+                }
             }
+            None => {}
         }
     }
 
@@ -202,20 +254,25 @@ pub fn add_table(
         let current_row_idx = row_idx + 1;
 
         // Apply row property cant_split if requested
-        if cant_split.unwrap_or(false) {
-            if let Some(row) = table.row(current_row_idx) {
+        match (cant_split.unwrap_or(false), table.row(current_row_idx)) {
+            (true, Some(row)) => {
                 let _ = row.cant_split();
             }
+            _ => {}
         }
 
-        for (col_idx, cell_text) in row_data.iter().enumerate() {
-            if col_idx < cols {
-                if let Some(mut cell) = table.cell(current_row_idx, col_idx) {
+        for (col_idx, cell_text) in row_data.iter().take(cols).enumerate() {
+            match table.cell(current_row_idx, col_idx) {
+                Some(mut cell) => {
                     cell.set_text(cell_text);
-                    if let Some(ref color) = shading_data {
-                        let _ = cell.shading(color);
+                    match shading_data {
+                        Some(ref color) => {
+                            let _ = cell.shading(color);
+                        }
+                        None => {}
                     }
                 }
+                None => {}
             }
         }
     }
@@ -332,7 +389,9 @@ pub fn add_image(
 }
 
 /// Load a DOCX file into the Internal Representation (IR)
-pub fn to_ir(file_path: &str) -> Result<crate::tools::opendoc::ir::Document, crate::tools::opendoc::handlers::LoadError> {
+pub fn to_ir(
+    file_path: &str,
+) -> Result<crate::tools::opendoc::ir::Document, crate::tools::opendoc::handlers::LoadError> {
     let doc = Document::open(file_path)
         .map_err(|e| crate::tools::opendoc::handlers::LoadError::ParseError(e.to_string()))?;
 
@@ -343,9 +402,12 @@ pub fn to_ir(file_path: &str) -> Result<crate::tools::opendoc::ir::Document, cra
 
     for p in doc.paragraphs() {
         let text = p.text().to_string();
-        if !text.is_empty() {
-            ir.paragraphs
-                .push(crate::tools::opendoc::ir::elements::Paragraph::new(text));
+        match text.is_empty() {
+            true => {}
+            false => {
+                ir.paragraphs
+                    .push(crate::tools::opendoc::ir::elements::Paragraph::new(text));
+            }
         }
     }
 
@@ -372,16 +434,15 @@ pub fn to_ir(file_path: &str) -> Result<crate::tools::opendoc::ir::Document, cra
         for row in 0..rows {
             let mut row_data = Vec::new();
             for col in 0..cols {
-                if let Some(cell) = table.cell(row, col) {
-                    row_data.push(cell.text().to_string());
-                } else {
-                    row_data.push(String::new());
-                }
+                let text = table
+                    .cell(row, col)
+                    .map(|cell| cell.text().to_string())
+                    .unwrap_or_default();
+                row_data.push(text);
             }
-            if row == 0 {
-                headers = row_data;
-            } else {
-                data.push(row_data);
+            match row {
+                0 => headers = row_data,
+                _ => data.push(row_data),
             }
         }
 

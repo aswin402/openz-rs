@@ -28,8 +28,9 @@ pub fn convert_with_password(
     password: Option<&str>,
 ) -> Result<ConversionResult, ConversionError> {
     let source_path = Path::new(source);
-    if !source_path.exists() {
-        return Err(ConversionError::FileNotFound(source.to_string()));
+    match source_path.exists() {
+        true => {}
+        false => return Err(ConversionError::FileNotFound(source.to_string())),
     }
 
     let ext = source_path
@@ -114,8 +115,9 @@ fn pptx_to_markdown(source: &str, output: &str) -> Result<ConversionResult, Conv
     let json: serde_json::Value =
         serde_json::from_str(&md).map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
 
-    if let Some(err) = json.get("error") {
-        return Err(ConversionError::ConversionFailed(err.to_string()));
+    match json.get("error") {
+        Some(err) => return Err(ConversionError::ConversionFailed(err.to_string())),
+        None => {}
     }
 
     let md_text = json.get("markdown").and_then(|v| v.as_str()).unwrap_or("");
@@ -129,6 +131,47 @@ fn pptx_to_markdown(source: &str, output: &str) -> Result<ConversionResult, Conv
         target_format: "markdown".to_string(),
         size_bytes: md_text.len(),
     })
+}
+
+fn add_text_page_to_pdf(
+    pdf: &mut lopdf::Document,
+    pages_id: lopdf::ObjectId,
+    font_id: lopdf::ObjectId,
+    content: Vec<u8>,
+) -> lopdf::ObjectId {
+    let content_id = pdf.add_object(lopdf::Object::Stream(lopdf::Stream {
+        dict: lopdf::Dictionary::new(),
+        content,
+        allows_compression: true,
+        start_position: None,
+    }));
+    let page_id = pdf.new_object_id();
+    let page = lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([
+        (b"Type".to_vec(), lopdf::Object::Name(b"Page".to_vec())),
+        (b"Parent".to_vec(), lopdf::Object::Reference(pages_id)),
+        (b"Contents".to_vec(), lopdf::Object::Reference(content_id)),
+        (
+            b"Resources".to_vec(),
+            lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([(
+                b"Font".to_vec(),
+                lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([(
+                    b"F1".to_vec(),
+                    lopdf::Object::Reference(font_id),
+                )])),
+            )])),
+        ),
+        (
+            b"MediaBox".to_vec(),
+            lopdf::Object::Array(vec![
+                lopdf::Object::Integer(0),
+                lopdf::Object::Integer(0),
+                lopdf::Object::Integer(612),
+                lopdf::Object::Integer(792),
+            ]),
+        ),
+    ]));
+    pdf.objects.insert(page_id, page);
+    page_id
 }
 
 /// Convert PPTX to PDF by extracting text and creating a PDF page per slide
@@ -166,85 +209,28 @@ fn pptx_to_pdf(source: &str, output: &str) -> Result<ConversionResult, Conversio
     for chunk in chunks {
         let mut content_parts = vec!["BT /F1 12 Tf 50 700 Td".to_string()];
         for (i, line) in chunk.iter().enumerate() {
-            if i > 0 {
-                content_parts.push(format!("0 -15 Td ({}) Tj", line));
-            } else {
-                content_parts.push(format!("({}) Tj", line));
+            match i > 0 {
+                true => content_parts.push(format!("0 -15 Td ({}) Tj", line)),
+                false => content_parts.push(format!("({}) Tj", line)),
             }
         }
         content_parts.push("ET".to_string());
         let content_str = content_parts.join(" ");
-
-        let content_id = pdf.add_object(lopdf::Object::Stream(lopdf::Stream {
-            dict: lopdf::Dictionary::new(),
-            content: content_str.into_bytes(),
-            allows_compression: true,
-            start_position: None,
-        }));
-
-        let page_id = pdf.new_object_id();
-        let page = lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([
-            (b"Type".to_vec(), lopdf::Object::Name(b"Page".to_vec())),
-            (b"Parent".to_vec(), lopdf::Object::Reference(pages_id)),
-            (b"Contents".to_vec(), lopdf::Object::Reference(content_id)),
-            (
-                b"Resources".to_vec(),
-                lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([(
-                    b"Font".to_vec(),
-                    lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([(
-                        b"F1".to_vec(),
-                        lopdf::Object::Reference(font_id),
-                    )])),
-                )])),
-            ),
-            (
-                b"MediaBox".to_vec(),
-                lopdf::Object::Array(vec![
-                    lopdf::Object::Integer(0),
-                    lopdf::Object::Integer(0),
-                    lopdf::Object::Integer(612),
-                    lopdf::Object::Integer(792),
-                ]),
-            ),
-        ]));
-        pdf.objects.insert(page_id, page);
+        let page_id = add_text_page_to_pdf(&mut pdf, pages_id, font_id, content_str.into_bytes());
         page_ids.push(page_id);
     }
 
-    if page_ids.is_empty() {
-        let content_id = pdf.add_object(lopdf::Object::Stream(lopdf::Stream {
-            dict: lopdf::Dictionary::new(),
-            content: b"BT /F1 12 Tf 50 700 Td (Empty slide) Tj ET".to_vec(),
-            allows_compression: true,
-            start_position: None,
-        }));
-        let page_id = pdf.new_object_id();
-        let page = lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([
-            (b"Type".to_vec(), lopdf::Object::Name(b"Page".to_vec())),
-            (b"Parent".to_vec(), lopdf::Object::Reference(pages_id)),
-            (b"Contents".to_vec(), lopdf::Object::Reference(content_id)),
-            (
-                b"Resources".to_vec(),
-                lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([(
-                    b"Font".to_vec(),
-                    lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([(
-                        b"F1".to_vec(),
-                        lopdf::Object::Reference(font_id),
-                    )])),
-                )])),
-            ),
-            (
-                b"MediaBox".to_vec(),
-                lopdf::Object::Array(vec![
-                    lopdf::Object::Integer(0),
-                    lopdf::Object::Integer(0),
-                    lopdf::Object::Integer(612),
-                    lopdf::Object::Integer(792),
-                ]),
-            ),
-        ]));
-        pdf.objects.insert(page_id, page);
-        page_ids.push(page_id);
+    match page_ids.is_empty() {
+        true => {
+            let page_id = add_text_page_to_pdf(
+                &mut pdf,
+                pages_id,
+                font_id,
+                b"BT /F1 12 Tf 50 700 Td (Empty slide) Tj ET".to_vec(),
+            );
+            page_ids.push(page_id);
+        }
+        false => {}
     }
 
     let pages = lopdf::Object::Dictionary(lopdf::Dictionary::from_iter([
@@ -291,23 +277,32 @@ fn pptx_to_pdf(source: &str, output: &str) -> Result<ConversionResult, Conversio
     })
 }
 
+fn extract_pdf_text_with_password(
+    source: &str,
+    password: Option<&str>,
+) -> Result<String, ConversionError> {
+    let mut doc = lopdf::Document::load(source)
+        .map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
+    match doc.is_encrypted() {
+        true => {
+            let pass = password.unwrap_or("");
+            doc.decrypt(pass.as_bytes()).map_err(|e| {
+                ConversionError::ConversionFailed(format!("Failed to decrypt PDF: {}", e))
+            })?;
+        }
+        false => {}
+    }
+    let pages: Vec<u32> = doc.get_pages().keys().copied().collect();
+    doc.extract_text(&pages)
+        .map_err(|e| ConversionError::ConversionFailed(e.to_string()))
+}
+
 fn pdf_to_text_with_password(
     source: &str,
     output: &str,
     password: Option<&str>,
 ) -> Result<ConversionResult, ConversionError> {
-    let mut doc = lopdf::Document::load(source)
-        .map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
-    if doc.is_encrypted() {
-        let pass = password.unwrap_or("");
-        doc.decrypt(pass.as_bytes()).map_err(|e| {
-            ConversionError::ConversionFailed(format!("Failed to decrypt PDF: {}", e))
-        })?;
-    }
-    let pages: Vec<u32> = doc.get_pages().keys().copied().collect();
-    let text = doc
-        .extract_text(&pages)
-        .map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
+    let text = extract_pdf_text_with_password(source, password)?;
     std::fs::write(output, &text).map_err(|e| ConversionError::IoError(e.to_string()))?;
     Ok(ConversionResult {
         source: source.to_string(),
@@ -323,18 +318,7 @@ fn pdf_to_markdown_with_password(
     output: &str,
     password: Option<&str>,
 ) -> Result<ConversionResult, ConversionError> {
-    let mut doc = lopdf::Document::load(source)
-        .map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
-    if doc.is_encrypted() {
-        let pass = password.unwrap_or("");
-        doc.decrypt(pass.as_bytes()).map_err(|e| {
-            ConversionError::ConversionFailed(format!("Failed to decrypt PDF: {}", e))
-        })?;
-    }
-    let pages: Vec<u32> = doc.get_pages().keys().copied().collect();
-    let text = doc
-        .extract_text(&pages)
-        .map_err(|e| ConversionError::ConversionFailed(e.to_string()))?;
+    let text = extract_pdf_text_with_password(source, password)?;
     let md = format!("# Extracted PDF\n\n{}", text);
     std::fs::write(output, &md).map_err(|e| ConversionError::IoError(e.to_string()))?;
     Ok(ConversionResult {
@@ -354,21 +338,24 @@ fn xlsx_to_csv(source: &str, output: &str) -> Result<ConversionResult, Conversio
         .map_err(|e: calamine::XlsxError| ConversionError::ConversionFailed(e.to_string()))?;
 
     let mut csv_output = String::new();
-    if let Some(Ok(range)) = workbook.worksheet_range_at(0) {
-        for row in range.rows() {
-            let line: Vec<String> = row
-                .iter()
-                .map(|cell| match cell {
-                    calamine::Data::String(s) => s.clone(),
-                    calamine::Data::Float(f) => f.to_string(),
-                    calamine::Data::Int(i) => i.to_string(),
-                    calamine::Data::Bool(b) => b.to_string(),
-                    _ => String::new(),
-                })
-                .collect();
-            csv_output.push_str(&line.join(","));
-            csv_output.push('\n');
+    match workbook.worksheet_range_at(0) {
+        Some(Ok(range)) => {
+            for row in range.rows() {
+                let line: Vec<String> = row
+                    .iter()
+                    .map(|cell| match cell {
+                        calamine::Data::String(s) => s.clone(),
+                        calamine::Data::Float(f) => f.to_string(),
+                        calamine::Data::Int(i) => i.to_string(),
+                        calamine::Data::Bool(b) => b.to_string(),
+                        _ => String::new(),
+                    })
+                    .collect();
+                csv_output.push_str(&line.join(","));
+                csv_output.push('\n');
+            }
         }
+        _ => {}
     }
 
     std::fs::write(output, &csv_output).map_err(|e| ConversionError::IoError(e.to_string()))?;
@@ -397,11 +384,12 @@ fn escape_html(s: &str) -> String {
 }
 
 fn escape_csv(s: &str) -> String {
-    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
-        let escaped = s.replace('"', "\"\"");
-        format!("\"{}\"", escaped)
-    } else {
-        s.to_string()
+    match s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+        true => {
+            let escaped = s.replace('"', "\"\"");
+            format!("\"{}\"", escaped)
+        }
+        false => s.to_string(),
     }
 }
 
@@ -426,11 +414,13 @@ pub fn export(
             })
         }
         "txt" | "text" => {
-            let content = if let Some(ref raw) = doc.text {
-                raw.clone()
-            } else {
-                let p_texts: Vec<String> = doc.paragraphs.iter().map(|p| p.text.clone()).collect();
-                p_texts.join("\n")
+            let content = match doc.text {
+                Some(ref raw) => raw.clone(),
+                None => {
+                    let p_texts: Vec<String> =
+                        doc.paragraphs.iter().map(|p| p.text.clone()).collect();
+                    p_texts.join("\n")
+                }
             };
             std::fs::write(output, &content)
                 .map_err(|e| ConversionError::IoError(e.to_string()))?;
@@ -458,42 +448,66 @@ pub fn export(
             html.push_str(
                 "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n</head>\n<body>\n",
             );
-            if !doc.paragraphs.is_empty() || !doc.tables.is_empty() {
-                for p in &doc.paragraphs {
-                    if p.is_heading {
-                        let tag = format!("h{}", p.heading_level.clamp(1, 6));
-                        html.push_str(&format!("<{}>{}</{}>\n", tag, escape_html(&p.text), tag));
-                    } else {
-                        html.push_str(&format!("<p>{}</p>\n", escape_html(&p.text)));
-                    }
-                }
-                for table in &doc.tables {
-                    html.push_str("<table>\n");
-                    if let Some(ref cap) = table.caption {
-                        html.push_str(&format!("<caption>{}</caption>\n", escape_html(cap)));
-                    }
-                    if !table.headers.is_empty() {
-                        html.push_str("  <thead>\n    <tr>\n");
-                        for h in &table.headers {
-                            html.push_str(&format!("      <th>{}</th>\n", escape_html(h)));
-                        }
-                        html.push_str("    </tr>\n  </thead>\n");
-                    }
-                    if !table.rows.is_empty() {
-                        html.push_str("  <tbody>\n");
-                        for row in &table.rows {
-                            html.push_str("    <tr>\n");
-                            for cell in row {
-                                html.push_str(&format!("      <td>{}</td>\n", escape_html(cell)));
+            match (!doc.paragraphs.is_empty() || !doc.tables.is_empty(), &doc.text) {
+                (true, _) => {
+                    for p in &doc.paragraphs {
+                        match p.is_heading {
+                            true => {
+                                let tag = format!("h{}", p.heading_level.clamp(1, 6));
+                                html.push_str(&format!(
+                                    "<{}>{}</{}>\n",
+                                    tag,
+                                    escape_html(&p.text),
+                                    tag
+                                ));
                             }
-                            html.push_str("    </tr>\n");
+                            false => {
+                                html.push_str(&format!("<p>{}</p>\n", escape_html(&p.text)));
+                            }
                         }
-                        html.push_str("  </tbody>\n");
                     }
-                    html.push_str("</table>\n");
+                    for table in &doc.tables {
+                        html.push_str("<table>\n");
+                        match table.caption {
+                            Some(ref cap) => {
+                                html.push_str(&format!("<caption>{}</caption>\n", escape_html(cap)));
+                            }
+                            None => {}
+                        }
+                        match table.headers.is_empty() {
+                            false => {
+                                html.push_str("  <thead>\n    <tr>\n");
+                                for h in &table.headers {
+                                    html.push_str(&format!("      <th>{}</th>\n", escape_html(h)));
+                                }
+                                html.push_str("    </tr>\n  </thead>\n");
+                            }
+                            true => {}
+                        }
+                        match table.rows.is_empty() {
+                            false => {
+                                html.push_str("  <tbody>\n");
+                                for row in &table.rows {
+                                    html.push_str("    <tr>\n");
+                                    for cell in row {
+                                        html.push_str(&format!(
+                                            "      <td>{}</td>\n",
+                                            escape_html(cell)
+                                        ));
+                                    }
+                                    html.push_str("    </tr>\n");
+                                }
+                                html.push_str("  </tbody>\n");
+                            }
+                            true => {}
+                        }
+                        html.push_str("</table>\n");
+                    }
                 }
-            } else if let Some(ref raw) = doc.text {
-                html.push_str(&format!("<pre>{}</pre>\n", escape_html(raw)));
+                (false, Some(raw)) => {
+                    html.push_str(&format!("<pre>{}</pre>\n", escape_html(raw)));
+                }
+                (false, None) => {}
             }
             html.push_str("</body>\n</html>");
             std::fs::write(output, &html).map_err(|e| ConversionError::IoError(e.to_string()))?;
@@ -507,23 +521,29 @@ pub fn export(
         }
         "csv" => {
             let mut csv_str = String::new();
-            if !doc.tables.is_empty() {
-                let table = &doc.tables[0];
-                if !table.headers.is_empty() {
-                    let escaped_hdrs: Vec<String> =
-                        table.headers.iter().map(|h| escape_csv(h)).collect();
-                    csv_str.push_str(&escaped_hdrs.join(","));
-                    csv_str.push('\n');
+            match doc.tables.first() {
+                Some(table) => {
+                    match table.headers.is_empty() {
+                        false => {
+                            let escaped_hdrs: Vec<String> =
+                                table.headers.iter().map(|h| escape_csv(h)).collect();
+                            csv_str.push_str(&escaped_hdrs.join(","));
+                            csv_str.push('\n');
+                        }
+                        true => {}
+                    }
+                    for row in &table.rows {
+                        let escaped_cells: Vec<String> =
+                            row.iter().map(|c| escape_csv(c)).collect();
+                        csv_str.push_str(&escaped_cells.join(","));
+                        csv_str.push('\n');
+                    }
                 }
-                for row in &table.rows {
-                    let escaped_cells: Vec<String> = row.iter().map(|c| escape_csv(c)).collect();
-                    csv_str.push_str(&escaped_cells.join(","));
-                    csv_str.push('\n');
-                }
-            } else {
-                for p in &doc.paragraphs {
-                    csv_str.push_str(&escape_csv(&p.text));
-                    csv_str.push('\n');
+                None => {
+                    for p in &doc.paragraphs {
+                        csv_str.push_str(&escape_csv(&p.text));
+                        csv_str.push('\n');
+                    }
                 }
             }
             std::fs::write(output, &csv_str)
@@ -552,56 +572,73 @@ pub fn export(
         }
         "docx" => {
             let mut docx_doc = rdocx::Document::new();
-            if let Some(ref raw) = doc.text {
-                for line in raw.lines() {
-                    let mut p = docx_doc.add_paragraph("");
-                    p.add_run(line);
-                }
-            } else {
-                for p in &doc.paragraphs {
-                    let mut docx_p = docx_doc.add_paragraph("");
-                    let mut run = docx_p.add_run(&p.text);
-                    if p.is_heading {
-                        run = run.bold(true).size(24.0);
-                    } else {
-                        if p.bold {
-                            run = run.bold(true);
-                        }
-                        if p.italic {
-                            run = run.italic(true);
-                        }
+            match doc.text {
+                Some(ref raw) => {
+                    for line in raw.lines() {
+                        let mut p = docx_doc.add_paragraph("");
+                        p.add_run(line);
                     }
                 }
-                for table in &doc.tables {
-                    let rows = table.rows.len() + if table.headers.is_empty() { 0 } else { 1 };
-                    let cols = if !table.headers.is_empty() {
-                        table.headers.len()
-                    } else if !table.rows.is_empty() {
-                        table.rows[0].len()
-                    } else {
-                        0
-                    };
-                    if rows > 0 && cols > 0 {
-                        let mut docx_table = docx_doc.add_table(rows, cols);
-                        let mut row_offset = 0;
-                        if !table.headers.is_empty() {
-                            for (c_idx, h) in table.headers.iter().enumerate() {
-                                if let Some(mut cell) = docx_table.cell(0, c_idx) {
-                                    cell.set_text(h);
+                None => {
+                    for p in &doc.paragraphs {
+                        let mut docx_p = docx_doc.add_paragraph("");
+                        let mut run = docx_p.add_run(&p.text);
+                        match p.is_heading {
+                            true => {
+                                run = run.bold(true).size(24.0);
+                            }
+                            false => {
+                                match p.bold {
+                                    true => {
+                                        run = run.bold(true);
+                                    }
+                                    false => {}
+                                }
+                                match p.italic {
+                                    true => {
+                                        let _ = run.italic(true);
+                                    }
+                                    false => {}
                                 }
                             }
-                            row_offset = 1;
                         }
-                        for (r_idx, row) in table.rows.iter().enumerate() {
-                            for (c_idx, cell_val) in row.iter().enumerate() {
-                                if c_idx < cols {
-                                    if let Some(mut cell) =
-                                        docx_table.cell(r_idx + row_offset, c_idx)
-                                    {
-                                        cell.set_text(cell_val);
+                    }
+                    for table in &doc.tables {
+                        let header_row_count = usize::from(!table.headers.is_empty());
+                        let rows = table.rows.len() + header_row_count;
+                        let cols = match (table.headers.is_empty(), table.rows.first()) {
+                            (false, _) => table.headers.len(),
+                            (true, Some(first_row)) => first_row.len(),
+                            (true, None) => 0,
+                        };
+                        match rows > 0 && cols > 0 {
+                            true => {
+                                let mut docx_table = docx_doc.add_table(rows, cols);
+                                match table.headers.is_empty() {
+                                    false => {
+                                        for (c_idx, h) in table.headers.iter().enumerate() {
+                                            match docx_table.cell(0, c_idx) {
+                                                Some(mut cell) => {
+                                                    cell.set_text(h);
+                                                }
+                                                None => {}
+                                            }
+                                        }
+                                    }
+                                    true => {}
+                                }
+                                for (r_idx, row) in table.rows.iter().enumerate() {
+                                    for (c_idx, cell_val) in row.iter().take(cols).enumerate() {
+                                        match docx_table.cell(r_idx + header_row_count, c_idx) {
+                                            Some(mut cell) => {
+                                                cell.set_text(cell_val);
+                                            }
+                                            None => {}
+                                        }
                                     }
                                 }
                             }
+                            false => {}
                         }
                     }
                 }

@@ -32,12 +32,13 @@ pub fn edit_pipeline(doc: &mut Document, operations: &[EditOperation]) -> Vec<St
                 doc.paragraphs.insert(0, p);
                 results.push("prepend: 1 paragraph".to_string());
             }
-            EditOperation::Remove(index) => {
-                if *index < doc.paragraphs.len() {
+            EditOperation::Remove(index) => match *index < doc.paragraphs.len() {
+                true => {
                     doc.paragraphs.remove(*index);
                     results.push(format!("remove: paragraph {}", index));
                 }
-            }
+                false => {}
+            },
             EditOperation::Translate(lang) => {
                 results.push(format!("translate: target={} (requires AI backend)", lang));
             }

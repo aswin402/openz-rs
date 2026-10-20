@@ -14,15 +14,71 @@ fn normalize_json_param(val: serde_json::Value) -> serde_json::Value {
     match val {
         serde_json::Value::String(s) => {
             let trimmed = s.trim();
-            if (trimmed.starts_with('{') && trimmed.ends_with('}'))
+            match (trimmed.starts_with('{') && trimmed.ends_with('}'))
                 || (trimmed.starts_with('[') && trimmed.ends_with(']'))
             {
-                serde_json::from_str(trimmed).unwrap_or(serde_json::Value::String(s))
-            } else {
-                serde_json::Value::String(s)
+                true => serde_json::from_str(trimmed).unwrap_or(serde_json::Value::String(s)),
+                false => serde_json::Value::String(s),
             }
         }
         other => other,
+    }
+}
+
+fn parse_string_kv_map(
+    val: serde_json::Value,
+    field_label: &str,
+) -> Result<Vec<(String, String)>, String> {
+    match normalize_json_param(val) {
+        serde_json::Value::Object(map) => Ok(map
+            .into_iter()
+            .map(|(k, v)| {
+                let val_str = match v {
+                    serde_json::Value::String(s) => s,
+                    serde_json::Value::Null => String::new(),
+                    other => other.to_string(),
+                };
+                (k, val_str)
+            })
+            .collect()),
+        _ => Err(serde_json::json!({"error": format!("{field_label} must be a JSON object")}).to_string()),
+    }
+}
+
+fn persist_ir_after_edit(
+    ir: &crate::tools::opendoc::ir::Document,
+    ext: &str,
+    file_path: &str,
+    count: usize,
+    action_label: &str,
+) -> String {
+    let writable = [
+        "md", "markdown", "html", "csv", "txt", "text", "json", "docx",
+    ];
+    match writable.contains(&ext) && count > 0 {
+        true => match crate::tools::opendoc::converters::export(ir, ext, file_path) {
+            Ok(result) => serde_json::json!({
+                "success": true,
+                "replacements": count,
+                "persisted": true,
+                "output_size": result.size_bytes,
+            })
+            .to_string(),
+            Err(e) => serde_json::json!({
+                "success": true,
+                "replacements": count,
+                "persisted": false,
+                "note": format!("IR modified but failed to save: {e}"),
+            })
+            .to_string(),
+        },
+        false => serde_json::json!({
+            "success": true,
+            "replacements": count,
+            "persisted": false,
+            "note": format!("{action_label}. Saving back to format '{ext}' is not supported yet.")
+        })
+        .to_string(),
     }
 }
 
@@ -39,11 +95,11 @@ impl OpendocServer {
     //  FORMAT-AGNOSTIC IR TOOLS
     // ═══════════════════════════════════════════
 
-        pub fn open_document(
+    pub fn open_document(
         &self,
-                        file_path: String,
-                        detail_level: Option<String>,
-                        password: Option<String>,
+        file_path: String,
+        detail_level: Option<String>,
+        password: Option<String>,
     ) -> String {
         let file_path = validate_path!(file_path);
         let detail = detail_level.unwrap_or_else(|| "full".to_string());
@@ -87,18 +143,13 @@ impl OpendocServer {
         }
     }
 
-        pub fn read_document_text(
-        &self,
-                        file_path: String,
-                        password: Option<String>,
-    ) -> String {
+    pub fn read_document_text(&self, file_path: String, password: Option<String>) -> String {
         let file_path = validate_path!(file_path);
         match handlers::load_to_ir_with_password(&file_path, password.as_deref()) {
             Ok(ir) => {
-                let content = if !ir.paragraphs.is_empty() || !ir.tables.is_empty() {
-                    ir.to_markdown()
-                } else {
-                    ir.text.clone().unwrap_or_default()
+                let content = match !ir.paragraphs.is_empty() || !ir.tables.is_empty() {
+                    true => ir.to_markdown(),
+                    false => ir.text.clone().unwrap_or_default(),
                 };
                 serde_json::json!({
                     "success": true,
@@ -112,17 +163,17 @@ impl OpendocServer {
         }
     }
 
-        pub fn search_document(
+    pub fn search_document(
         &self,
-                        file_path: String,
-                        query: String,
-                        use_regex: Option<bool>,
-                        password: Option<String>,
+        file_path: String,
+        query: String,
+        use_pattern: Option<bool>,
+        password: Option<String>,
     ) -> String {
         let file_path = validate_path!(file_path);
         match handlers::load_to_ir_with_password(&file_path, password.as_deref()) {
             Ok(ir) => {
-                let results = search::search_document(&ir, &query, use_regex.unwrap_or(false));
+                let results = search::search_document(&ir, &query, use_pattern.unwrap_or(false));
                 serde_json::json!({
                     "success": true,
                     "query": query,
@@ -135,12 +186,12 @@ impl OpendocServer {
         }
     }
 
-        pub fn replace_text(
+    pub fn replace_text(
         &self,
-                        file_path: String,
-                        find: String,
-                        replace: String,
-                        password: Option<String>,
+        file_path: String,
+        find: String,
+        replace: String,
+        password: Option<String>,
     ) -> String {
         let file_path = validate_path!(file_path);
         let path = std::path::Path::new(&file_path);
@@ -151,12 +202,10 @@ impl OpendocServer {
             .to_lowercase();
 
         match ext.as_str() {
-            "docx" => {
-                if password.is_some() {
-                    return serde_json::json!({"error": "Password decryption for Office documents (.docx) is not supported under offline mode due to missing office_crypto library. Encrypted PDFs are fully supported."}).to_string();
-                }
-                handlers::docx::find_replace_text(&file_path, &find, &replace)
-            }
+            "docx" => match password.is_some() {
+                true => serde_json::json!({"error": "Password decryption for Office documents (.docx) is not supported under offline mode due to missing office_crypto library. Encrypted PDFs are fully supported."}).to_string(),
+                false => handlers::docx::find_replace_text(&file_path, &find, &replace),
+            },
             "pdf" => handlers::pdf::replace_text_with_password(
                 &file_path,
                 &find,
@@ -164,20 +213,8 @@ impl OpendocServer {
                 password.as_deref(),
             ),
             "txt" | "text" => match std::fs::read_to_string(&file_path) {
-                Ok(content) => {
-                    let re = match regex::RegexBuilder::new(&find)
-                        .size_limit(1_000_000)
-                        .build()
-                    {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return serde_json::json!({"error": format!("invalid regex: {e}")})
-                                .to_string()
-                        }
-                    };
-                    let new_content = re.replace_all(&content, &replace).to_string();
-                    let count = re.find_iter(&content).count();
-                    match std::fs::write(&file_path, new_content) {
+                Ok(content) => match replace::replace_pattern_all(&find, &content, &replace) {
+                    Ok((new_content, count)) => match std::fs::write(&file_path, new_content) {
                         Ok(_) => serde_json::json!({
                             "success": true,
                             "replacements": count,
@@ -188,57 +225,32 @@ impl OpendocServer {
                             serde_json::json!({"error": format!("Failed to write file: {e}")})
                                 .to_string()
                         }
+                    },
+                    Err(e) => {
+                        serde_json::json!({"error": format!("invalid pattern: {e}")}).to_string()
                     }
-                }
+                },
                 Err(e) => {
                     serde_json::json!({"error": format!("Failed to read file: {e}")}).to_string()
                 }
             },
-            _ => {
-                match handlers::load_to_ir_with_password(&file_path, password.as_deref()) {
-                    Ok(mut ir) => {
-                        let count = replace::replace_text(&mut ir, &find, &replace);
-                        // Try to persist via generic export for writable formats
-                        let writable = [
-                            "md", "markdown", "html", "csv", "txt", "text", "json", "docx",
-                        ];
-                        if writable.contains(&ext.as_str()) && count > 0 {
-                            match crate::tools::opendoc::converters::export(&ir, &ext, &file_path) {
-                                Ok(result) => serde_json::json!({
-                                    "success": true,
-                                    "replacements": count,
-                                    "persisted": true,
-                                    "output_size": result.size_bytes,
-                                })
-                                .to_string(),
-                                Err(e) => serde_json::json!({
-                                    "success": true,
-                                    "replacements": count,
-                                    "persisted": false,
-                                    "note": format!("IR modified but failed to save: {e}"),
-                                })
-                                .to_string(),
-                            }
-                        } else {
-                            serde_json::json!({
-                                "success": true,
-                                "replacements": count,
-                                "persisted": false,
-                                "note": format!("Replace operated on extracted text in-memory. Saving back to format '{ext}' is not supported yet.")
-                            }).to_string()
-                        }
-                    }
-                    Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            _ => match handlers::load_to_ir_with_password(&file_path, password.as_deref()) {
+                Ok(mut ir) => {
+                    let count = replace::replace_text(&mut ir, &find, &replace);
+                    persist_ir_after_edit(
+                        &ir,
+                        &ext,
+                        &file_path,
+                        count,
+                        "Replace operated on extracted text in-memory",
+                    )
                 }
-            }
+                Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            },
         }
     }
 
-        pub fn diff_documents(
-        &self,
-                        file_a: String,
-                        file_b: String,
-    ) -> String {
+    pub fn diff_documents(&self, file_a: String, file_b: String) -> String {
         let file_a = validate_path!(file_a);
         let file_b = validate_path!(file_b);
         let (doc_a, doc_b) = match (handlers::load_to_ir(&file_a), handlers::load_to_ir(&file_b)) {
@@ -256,11 +268,11 @@ impl OpendocServer {
         serde_json::to_string_pretty(&result).unwrap_or_default()
     }
 
-        pub fn diff_documents_visual(
+    pub fn diff_documents_visual(
         &self,
-                        file_a: String,
-                        file_b: String,
-                        format: Option<String>,
+        file_a: String,
+        file_b: String,
+        format: Option<String>,
     ) -> String {
         let file_a = validate_path!(file_a);
         let file_b = validate_path!(file_b);
@@ -279,22 +291,24 @@ impl OpendocServer {
         diff::render_diff_visual(&doc_a, &doc_b, is_html)
     }
 
-        pub fn chunk_for_embedding(
+    pub fn chunk_for_embedding(
         &self,
-                        file_path: String,
-                        strategy: Option<String>,
-                        max_tokens: Option<usize>,
-                        overlap: Option<usize>,
-                        generate_embeddings: Option<bool>,
+        file_path: String,
+        strategy: Option<String>,
+        max_tokens: Option<usize>,
+        overlap: Option<usize>,
+        generate_embeddings: Option<bool>,
     ) -> String {
         let file_path = validate_path!(file_path);
         match handlers::load_to_ir(&file_path) {
             Ok(ir) => {
                 let chunking_strategy = match strategy {
-                    Some(s) => match s.parse::<crate::tools::opendoc::engine::chunk::ChunkingStrategy>() {
-                        Ok(st) => st,
-                        Err(e) => return serde_json::json!({"error": e}).to_string(),
-                    },
+                    Some(s) => {
+                        match s.parse::<crate::tools::opendoc::engine::chunk::ChunkingStrategy>() {
+                            Ok(st) => st,
+                            Err(e) => return serde_json::json!({"error": e}).to_string(),
+                        }
+                    }
                     None => crate::tools::opendoc::engine::chunk::ChunkingStrategy::Fixed,
                 };
                 let max_tok = max_tokens.unwrap_or(512);
@@ -302,39 +316,43 @@ impl OpendocServer {
 
                 let chunks = ir.chunk_with_strategy(chunking_strategy, max_tok, over);
                 let embed = generate_embeddings.unwrap_or(false);
-                let embedded_chunks: Vec<serde_json::Value> = if embed {
-                    let texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
-                    let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
-                    let embeddings_res: anyhow::Result<Vec<Vec<f32>>> = crate::tools::shared_memory::with_model(|model| {
-                        model.embed(refs, None).map_err(|e| anyhow::anyhow!(e.to_string()))
-                    });
-                    match embeddings_res {
-                        Ok(vectors) => chunks
-                            .into_iter()
-                            .zip(vectors)
-                            .map(|(c, v)| {
-                                serde_json::json!({
-                                    "index": c.index,
-                                    "heading": c.heading,
-                                    "text": c.text,
-                                    "embedding_dim": v.len(),
-                                    "embedding": v,
-                                })
-                            })
-                            .collect(),
-                        Err(err) => {
-                            tracing::warn!("Failed to compute embeddings for chunks: {}", err);
-                            chunks
+                let embedded_chunks: Vec<serde_json::Value> = match embed {
+                    true => {
+                        let texts: Vec<String> = chunks.iter().map(|c| c.text.clone()).collect();
+                        let refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
+                        let embeddings_res: anyhow::Result<Vec<Vec<f32>>> =
+                            crate::tools::shared_memory::with_model(|model| {
+                                model
+                                    .embed(refs, None)
+                                    .map_err(|e| anyhow::anyhow!(e.to_string()))
+                            });
+                        match embeddings_res {
+                            Ok(vectors) => chunks
                                 .into_iter()
-                                .map(|c| serde_json::to_value(c).unwrap_or_default())
-                                .collect()
+                                .zip(vectors)
+                                .map(|(c, v)| {
+                                    serde_json::json!({
+                                        "index": c.index,
+                                        "heading": c.heading,
+                                        "text": c.text,
+                                        "embedding_dim": v.len(),
+                                        "embedding": v,
+                                    })
+                                })
+                                .collect(),
+                            Err(err) => {
+                                tracing::warn!("Failed to compute embeddings for chunks: {}", err);
+                                chunks
+                                    .into_iter()
+                                    .map(|c| serde_json::to_value(c).unwrap_or_default())
+                                    .collect()
+                            }
                         }
                     }
-                } else {
-                    chunks
+                    false => chunks
                         .into_iter()
                         .map(|c| serde_json::to_value(c).unwrap_or_default())
-                        .collect()
+                        .collect(),
                 };
 
                 serde_json::json!({
@@ -350,27 +368,16 @@ impl OpendocServer {
         }
     }
 
-        pub fn fill_template(
+    pub fn fill_template(
         &self,
-                        file_path: String,
-                        variables: serde_json::Value,
-                        password: Option<String>,
+        file_path: String,
+        variables: serde_json::Value,
+        password: Option<String>,
     ) -> String {
         let file_path = validate_path!(file_path);
-        let variables = normalize_json_param(variables);
-        let vars: Vec<(String, String)> = if let serde_json::Value::Object(map) = variables {
-            map.into_iter()
-                .map(|(k, v)| {
-                    let val_str = match v {
-                        serde_json::Value::String(s) => s,
-                        serde_json::Value::Null => "".to_string(),
-                        other => other.to_string(),
-                    };
-                    (k, val_str)
-                })
-                .collect()
-        } else {
-            return serde_json::json!({"error": "variables must be a JSON object"}).to_string();
+        let vars = match parse_string_kv_map(variables, "variables") {
+            Ok(v) => v,
+            Err(err_json) => return err_json,
         };
 
         let path = std::path::Path::new(&file_path);
@@ -405,10 +412,13 @@ impl OpendocServer {
                     let mut count = 0;
                     for (key, value) in &vars {
                         let placeholder = format!("{{{{{}}}}}", key);
-                        if new_content.contains(&placeholder) {
-                            let occurrences = new_content.matches(&placeholder).count();
-                            new_content = new_content.replace(&placeholder, value);
-                            count += occurrences;
+                        let occurrences = new_content.matches(&placeholder).count();
+                        match occurrences > 0 {
+                            true => {
+                                new_content = new_content.replace(&placeholder, value);
+                                count += occurrences;
+                            }
+                            false => {}
                         }
                     }
                     match std::fs::write(&file_path, new_content) {
@@ -428,51 +438,17 @@ impl OpendocServer {
                     serde_json::json!({"error": format!("Failed to read file: {e}")}).to_string()
                 }
             },
-            _ => {
-                match handlers::load_to_ir_with_password(&file_path, password.as_deref()) {
-                    Ok(mut ir) => {
-                        let count = template::fill_template(&mut ir, &vars);
-                        // Try to persist via generic export for writable formats
-                        let writable = [
-                            "md", "markdown", "html", "csv", "txt", "text", "json", "docx",
-                        ];
-                        if writable.contains(&ext.as_str()) && count > 0 {
-                            match crate::tools::opendoc::converters::export(&ir, &ext, &file_path) {
-                                Ok(result) => serde_json::json!({
-                                    "success": true,
-                                    "replacements": count,
-                                    "persisted": true,
-                                    "output_size": result.size_bytes,
-                                })
-                                .to_string(),
-                                Err(e) => serde_json::json!({
-                                    "success": true,
-                                    "replacements": count,
-                                    "persisted": false,
-                                    "note": format!("IR modified but failed to save: {e}"),
-                                })
-                                .to_string(),
-                            }
-                        } else {
-                            serde_json::json!({
-                                "success": true,
-                                "replacements": count,
-                                "persisted": false,
-                                "note": format!("Template filled in-memory. Saving back to format '{ext}' is not supported yet.")
-                            }).to_string()
-                        }
-                    }
-                    Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            _ => match handlers::load_to_ir_with_password(&file_path, password.as_deref()) {
+                Ok(mut ir) => {
+                    let count = template::fill_template(&mut ir, &vars);
+                    persist_ir_after_edit(&ir, &ext, &file_path, count, "Template filled in-memory")
                 }
-            }
+                Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            },
         }
     }
 
-        pub fn validate_document(
-        &self,
-                        file_path: String,
-                        password: Option<String>,
-    ) -> String {
+    pub fn validate_document(&self, file_path: String, password: Option<String>) -> String {
         let file_path = validate_path!(file_path);
         match handlers::load_to_ir_with_password(&file_path, password.as_deref()) {
             Ok(ir) => {
@@ -483,20 +459,20 @@ impl OpendocServer {
         }
     }
 
-        pub fn validate_pdf_a_compliance(
-        &self,
-                        file_path: String,
-    ) -> String {
+    pub fn validate_pdf_a_compliance(&self, file_path: String) -> String {
         let file_path = validate_path!(file_path);
 
         let path = std::path::Path::new(&file_path);
-        if path
+        match path
             .extension()
             .and_then(|ext| ext.to_str())
             .map(|ext| ext.to_lowercase())
-            != Some("pdf".to_string())
+            == Some("pdf".to_string())
         {
-            return serde_json::json!({"error": "Only PDF files are supported for PDF/A validation"}).to_string();
+            false => {
+                return serde_json::json!({"error": "Only PDF files are supported for PDF/A validation"}).to_string();
+            }
+            true => {}
         }
 
         match crate::tools::opendoc::validators::pdf_a::validate_pdf_a(path) {
@@ -914,26 +890,11 @@ impl OpendocServer {
         }
     }
 
-        pub fn fill_pdf_form(
-        &self,
-                        file_path: String,
-                        values: serde_json::Value,
-    ) -> String {
+    pub fn fill_pdf_form(&self, file_path: String, values: serde_json::Value) -> String {
         let file_path = validate_path!(file_path);
-        let values = normalize_json_param(values);
-        let vals: Vec<(String, String)> = if let serde_json::Value::Object(map) = values {
-            map.into_iter()
-                .map(|(k, v)| {
-                    let val_str = match v {
-                        serde_json::Value::String(s) => s,
-                        serde_json::Value::Null => "".to_string(),
-                        other => other.to_string(),
-                    };
-                    (k, val_str)
-                })
-                .collect()
-        } else {
-            return serde_json::json!({"error": "values must be a JSON object"}).to_string();
+        let vals = match parse_string_kv_map(values, "values") {
+            Ok(v) => v,
+            Err(err_json) => return err_json,
         };
 
         match pdf_forms::fill_form_fields(&file_path, &vals) {

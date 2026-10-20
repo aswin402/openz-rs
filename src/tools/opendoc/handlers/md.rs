@@ -17,9 +17,7 @@ pub fn to_ir(file_path: &str) -> Result<Document, String> {
 /// Convert Markdown string content into IR
 pub fn md_to_ir(md: &str, path: Option<&str>) -> Result<Document, String> {
     let mut doc = Document::new("markdown");
-    if let Some(p) = path {
-        doc.path = Some(p.to_string());
-    }
+    doc.path = path.map(str::to_string);
 
     let mut options = pulldown_cmark::Options::empty();
     options.insert(pulldown_cmark::Options::ENABLE_TABLES);
@@ -41,21 +39,25 @@ pub fn md_to_ir(md: &str, path: Option<&str>) -> Result<Document, String> {
         heading_level: &mut Option<u32>,
     ) {
         let text = current_text.trim().to_string();
-        if text.is_empty() {
-            return;
+        match text.is_empty() {
+            true => return,
+            false => {}
         }
 
-        if let Some(level) = *heading_level {
-            doc.sections.push(Section {
-                title: text.clone(),
-                level,
-                index: doc.sections.len(),
-                content: vec![],
-            });
-            text_parts.push(format!("{} {}", "#".repeat(level as usize), text));
-        } else {
-            doc.paragraphs.push(Paragraph::new(&text));
-            text_parts.push(text);
+        match *heading_level {
+            Some(level) => {
+                doc.sections.push(Section {
+                    title: text.clone(),
+                    level,
+                    index: doc.sections.len(),
+                    content: vec![],
+                });
+                text_parts.push(format!("{} {}", "#".repeat(level as usize), text));
+            }
+            None => {
+                doc.paragraphs.push(Paragraph::new(&text));
+                text_parts.push(text);
+            }
         }
 
         current_text.clear();
@@ -121,26 +123,15 @@ pub fn md_to_ir(md: &str, path: Option<&str>) -> Result<Document, String> {
                     &mut current_heading_level,
                 );
             }
-            Event::Start(Tag::Paragraph) => {
-                if !in_table {
-                    flush_para(
-                        &mut doc,
-                        &mut text_parts,
-                        &mut current_text,
-                        &mut current_heading_level,
-                    );
-                }
-            }
-            Event::End(TagEnd::Paragraph) => {
-                if !in_table {
-                    flush_para(
-                        &mut doc,
-                        &mut text_parts,
-                        &mut current_text,
-                        &mut current_heading_level,
-                    );
-                }
-            }
+            Event::Start(Tag::Paragraph) | Event::End(TagEnd::Paragraph) => match in_table {
+                false => flush_para(
+                    &mut doc,
+                    &mut text_parts,
+                    &mut current_text,
+                    &mut current_heading_level,
+                ),
+                true => {}
+            },
             Event::Text(text) => {
                 current_text.push_str(&text);
             }

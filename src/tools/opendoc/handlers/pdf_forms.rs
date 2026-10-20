@@ -49,9 +49,12 @@ pub fn fill_form_fields(file_path: &str, values: &[(String, String)]) -> Result<
     let field_map = build_field_map(&doc, fields_array, "")?;
 
     for (field_name, value) in values {
-        if let Some(&obj_id) = field_map.get(field_name) {
-            set_field_value(&mut doc, obj_id, value)?;
-            filled_count += 1;
+        match field_map.get(field_name) {
+            Some(&obj_id) => {
+                set_field_value(&mut doc, obj_id, value)?;
+                filled_count += 1;
+            }
+            None => {}
         }
     }
 
@@ -74,6 +77,21 @@ fn get_acroform_id(doc: &Document) -> Result<ObjectId, String> {
     match acroform_obj {
         Object::Reference(id) => Ok(*id),
         _ => Err("AcroForm is not a reference".to_string()),
+    }
+}
+
+fn format_full_field_name(parent_name: &str, partial_name: &str) -> String {
+    match parent_name.is_empty() {
+        true => partial_name.to_string(),
+        false => format!("{}.{}", parent_name, partial_name),
+    }
+}
+
+fn object_as_string_or_name(obj: &Object) -> Option<String> {
+    match obj {
+        Object::String(s, _) => String::from_utf8(s.clone()).ok(),
+        Object::Name(n) => std::str::from_utf8(n).ok().map(|s| s.to_string()),
+        _ => None,
     }
 }
 
@@ -102,25 +120,18 @@ fn build_field_map(
             .unwrap_or_default();
 
         // Build full name
-        let full_name = if parent_name.is_empty() {
-            partial_name.clone()
-        } else {
-            format!("{}.{}", parent_name, partial_name)
-        };
+        let full_name = format_full_field_name(parent_name, &partial_name);
 
         // Check for child fields
-        if let Ok(kids) = field_dict.get(b"Kids").and_then(|o| o.as_array()) {
-            let child_map = build_field_map(doc, kids, &full_name)?;
-            map.extend(child_map);
+        match field_dict.get(b"Kids").and_then(|o| o.as_array()) {
+            Ok(kids) => {
+                let child_map = build_field_map(doc, kids, &full_name)?;
+                map.extend(child_map);
+            }
+            Err(_) => {}
         }
 
-        // Only add leaf fields (or fields with no kids)
-        if field_dict.get(b"Kids").is_err() {
-            map.insert(full_name, obj_id);
-        } else if field_dict.get(b"Kids").is_ok() {
-            // Terminal field with kids? add it anyway
-            map.insert(full_name, obj_id);
-        }
+        map.insert(full_name, obj_id);
     }
 
     Ok(map)
@@ -167,11 +178,7 @@ fn collect_fields(
             .map(|s| s.to_string())
             .unwrap_or_default();
 
-        let full_name = if parent_name.is_empty() {
-            partial_name.clone()
-        } else {
-            format!("{}.{}", parent_name, partial_name)
-        };
+        let full_name = format_full_field_name(parent_name, &partial_name);
 
         // Get field type
         let field_type = field_dict
@@ -191,19 +198,15 @@ fn collect_fields(
         }
         .to_string();
 
-        // Get value
-        let value = field_dict.get(b"V").ok().and_then(|o| match o {
-            Object::String(s, _) => String::from_utf8(s.clone()).ok(),
-            Object::Name(n) => std::str::from_utf8(n).ok().map(|s| s.to_string()),
-            _ => None,
-        });
-
-        // Get default value
-        let default_value = field_dict.get(b"DV").ok().and_then(|o| match o {
-            Object::String(s, _) => String::from_utf8(s.clone()).ok(),
-            Object::Name(n) => std::str::from_utf8(n).ok().map(|s| s.to_string()),
-            _ => None,
-        });
+        // Get value and default value
+        let value = field_dict
+            .get(b"V")
+            .ok()
+            .and_then(object_as_string_or_name);
+        let default_value = field_dict
+            .get(b"DV")
+            .ok()
+            .and_then(object_as_string_or_name);
 
         // Check flags: /Ff
         let flags = field_dict
@@ -215,23 +218,14 @@ fn collect_fields(
         let is_required = (flags & 2) != 0;
 
         // Get options for Choice fields
-        let options = if field_type == "Ch" {
-            field_dict
+        let options = match field_type.as_str() {
+            "Ch" => field_dict
                 .get(b"Opt")
                 .ok()
                 .and_then(|o| o.as_array().ok())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|o| match o {
-                            Object::String(s, _) => String::from_utf8(s.clone()).ok(),
-                            Object::Name(n) => std::str::from_utf8(n).ok().map(|s| s.to_string()),
-                            _ => None,
-                        })
-                        .collect()
-                })
-                .unwrap_or_default()
-        } else {
-            Vec::new()
+                .map(|arr| arr.iter().filter_map(object_as_string_or_name).collect())
+                .unwrap_or_default(),
+            _ => Vec::new(),
         };
 
         // Determine page
@@ -251,8 +245,11 @@ fn collect_fields(
         });
 
         // Recurse into children
-        if let Ok(kids) = field_dict.get(b"Kids").and_then(|o| o.as_array()) {
-            collect_fields(doc, kids, &full_name, result)?;
+        match field_dict.get(b"Kids").and_then(|o| o.as_array()) {
+            Ok(kids) => {
+                collect_fields(doc, kids, &full_name, result)?;
+            }
+            Err(_) => {}
         }
     }
 
@@ -281,21 +278,24 @@ fn set_field_value(doc: &mut Document, field_id: ObjectId, value: &str) -> Resul
         .get_object_mut(field_id)
         .map_err(|e| format!("Cannot modify field: {e}"))?;
 
-    if let Object::Dictionary(ref mut dict) = obj {
-        dict.set("V", pdf_string.clone());
+    match obj {
+        Object::Dictionary(ref mut dict) => {
+            dict.set("V", pdf_string.clone());
 
-        // For text fields, also set /AP if needed
-        if field_type == b"Tx" {
-            // Mark as filled
-            dict.set("AS", pdf_string);
+            match field_type.as_slice() {
+                b"Tx" => {
+                    // Mark as filled
+                    dict.set("AS", pdf_string);
+                }
+                b"Btn" => {
+                    let name = Object::Name(value.as_bytes().to_vec());
+                    dict.set("V", name.clone());
+                    dict.set("AS", name);
+                }
+                _ => {}
+            }
         }
-
-        // For button fields
-        if field_type == b"Btn" {
-            let name = Object::Name(value.as_bytes().to_vec());
-            dict.set("V", name.clone());
-            dict.set("AS", name);
-        }
+        _ => {}
     }
 
     Ok(())

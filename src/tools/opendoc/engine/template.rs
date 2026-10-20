@@ -1,5 +1,4 @@
 use crate::tools::opendoc::ir::Document;
-use regex::Regex;
 use serde_json::Value;
 
 /// Simple template engine: replace `{{key}}` placeholders with values
@@ -8,143 +7,32 @@ pub fn fill_template(doc: &mut Document, vars: &[(String, String)]) -> usize {
 
     for (key, value) in vars {
         let placeholder = format!("{{{{{}}}}}", key);
-        let pattern = regex::escape(&placeholder);
-        let re = match regex::RegexBuilder::new(&pattern)
-            .size_limit(1_000_000)
-            .build()
-        {
-            Ok(r) => r,
-            Err(_) => continue,
-        };
-
-        for p in &mut doc.paragraphs {
-            let new = re.replace_all(&p.text, value.as_str()).to_string();
-            if new != p.text {
-                count += 1;
-                p.text = new;
-            }
-        }
-
-        for section in &mut doc.sections {
-            let new = re.replace_all(&section.title, value.as_str()).to_string();
-            if new != section.title {
-                count += 1;
-                section.title = new;
-            }
-        }
-
-        for table in &mut doc.tables {
-            if let Some(ref mut cap) = table.caption {
-                let new = re.replace_all(cap, value.as_str()).to_string();
-                if new != *cap {
-                    count += 1;
-                    *cap = new;
-                }
-            }
-            for header in &mut table.headers {
-                let new = re.replace_all(header, value.as_str()).to_string();
-                if new != *header {
-                    count += 1;
-                    *header = new;
-                }
-            }
-            for row in &mut table.rows {
-                for cell in row {
-                    let new = re.replace_all(cell, value.as_str()).to_string();
-                    if new != *cell {
-                        count += 1;
-                        *cell = new;
-                    }
-                }
-            }
-        }
+        count += super::replace::transform_doc_strings(doc, true, |text| {
+            let new_text = text.replace(&placeholder, value.as_str());
+            let changed = usize::from(new_text != text);
+            (new_text, changed)
+        });
     }
 
     count
 }
 
 /// Enhanced template engine with nested objects, loops, and conditionals.
-///
-/// # Syntax
-///
-/// | Pattern | Description |
-/// |---------|-------------|
-/// | `{{variable}}` | Simple variable substitution |
-/// | `{{nested.key.path}}` | Dot-notation nested object access |
-/// | `{{this}}` or `{{.}}` | Current context reference (inside loops) |
-/// | `{{#section}}...{{/section}}` | Section: iterate if array, show once if truthy |
-/// | `{{^section}}...{{/section}}` | Inverted section: show if falsy/empty |
-/// | `{{#if cond}}...{{else}}...{{/if}}` | Conditional with optional else |
-/// | `{{#each list}}...{{/each}}` | Explicit loop context |
-///
-/// # Example
-///
-/// ```ignore
-/// let vars = serde_json::json!({
-///     "title": "Report",
-///     "author": { "name": "Alice" },
-///     "items": ["Foo", "Bar"],
-///     "show_footer": true
-/// });
-/// fill_template_enhanced(&mut doc, &vars);
-/// ```
 pub fn fill_template_enhanced(doc: &mut Document, vars: &Value) -> usize {
-    let mut count = 0;
-
-    for p in &mut doc.paragraphs {
-        let (new, c) = render_template(&p.text, vars);
-        if new != p.text {
-            count += c;
-            p.text = new;
-        }
-    }
-
-    for section in &mut doc.sections {
-        let (new, c) = render_template(&section.title, vars);
-        if new != section.title {
-            count += c;
-            section.title = new;
-        }
-    }
-
-    for table in &mut doc.tables {
-        if let Some(ref mut cap) = table.caption {
-            let (new, c) = render_template(cap, vars);
-            if new != *cap {
-                count += c;
-                *cap = new;
-            }
-        }
-        for header in &mut table.headers {
-            let (new, c) = render_template(header, vars);
-            if new != *header {
-                count += c;
-                *header = new;
-            }
-        }
-        for row in &mut table.rows {
-            for cell in row {
-                let (new, c) = render_template(cell, vars);
-                if new != *cell {
-                    count += c;
-                    *cell = new;
-                }
-            }
-        }
-    }
-
-    count
+    super::replace::transform_doc_strings(doc, true, |text| render_template(text, vars))
 }
 
 /// Resolve a dotted path against a JSON value.
 fn resolve_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
-    if path.is_empty() || path == "this" || path == "." {
-        if let Value::Object(map) = root {
-            if let Some(val) = map.get(path) {
-                return Some(val);
-            }
+    match path.is_empty() || path == "this" || path == "." {
+        true => {
+            let from_map = match root {
+                Value::Object(map) => map.get(path),
+                _ => None,
+            };
+            return Some(from_map.unwrap_or(root));
         }
-        return Some(root);
+        false => {}
     }
     let mut current = root;
     for segment in path.split('.') {
@@ -158,7 +46,7 @@ fn resolve_path<'a>(root: &'a Value, path: &str) -> Option<&'a Value> {
     Some(current)
 }
 
-/// Check if a JSON value is "truthy" (for conditionals).
+/// Check whether a JSON value is truthy.
 fn is_truthy(val: &Value) -> bool {
     match val {
         Value::Null => false,
@@ -191,6 +79,12 @@ fn format_value(val: &Value) -> String {
     }
 }
 
+fn is_ident_or_dot(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '.')
+}
+
 /// Find matching closing tag, handling nesting.
 fn find_matching_close_in(
     template: &str,
@@ -215,27 +109,34 @@ fn find_matching_close_in(
 
     while pos < template.len() {
         let remaining = &template[pos..];
-        if remaining.starts_with(&close_pattern) {
-            depth -= 1;
-            if depth == 0 {
-                return Some(pos);
+        match (
+            remaining.starts_with(&close_pattern),
+            remaining.starts_with(&open_pattern),
+        ) {
+            (true, _) => {
+                depth -= 1;
+                match depth == 0 {
+                    true => return Some(pos),
+                    false => pos += close_pattern.len(),
+                }
             }
-            pos += close_pattern.len();
-        } else if remaining.starts_with(&open_pattern) {
-            depth += 1;
-            pos += open_pattern.len();
-        } else {
-            let search_start = if remaining.starts_with("{{") {
-                pos + 2
-            } else {
-                pos
-            };
-            if search_start >= template.len() {
-                break;
+            (false, true) => {
+                depth += 1;
+                pos += open_pattern.len();
             }
-            match template[search_start..].find("{{") {
-                Some(idx) => pos = search_start + idx,
-                None => break,
+            (false, false) => {
+                let search_start = match remaining.starts_with("{{") {
+                    true => pos + 2,
+                    false => pos,
+                };
+                match search_start >= template.len() {
+                    true => break,
+                    false => {}
+                }
+                match template[search_start..].find("{{") {
+                    Some(idx) => pos = search_start + idx,
+                    None => break,
+                }
             }
         }
     }
@@ -256,212 +157,180 @@ fn render_template(template: &str, vars: &Value) -> (String, usize) {
     (after_vars, count)
 }
 
+fn find_first_open_block(s: &str) -> Option<(usize, usize, &'static str, String)> {
+    let mut search_pos = 0usize;
+    while search_pos < s.len() {
+        let rel = s[search_pos..].find("{{#")?;
+        let start = search_pos + rel;
+        let after_open_brace = start + 3;
+        match s[after_open_brace..].find("}}") {
+            Some(close_rel) => {
+                let inner = &s[after_open_brace..after_open_brace + close_rel];
+                let end = after_open_brace + close_rel + 2;
+                let (block_type, name) = match (
+                    inner.strip_prefix("if "),
+                    inner.strip_prefix("each "),
+                ) {
+                    (Some(rest), _) => ("if", rest),
+                    (None, Some(rest)) => ("each", rest),
+                    (None, None) => ("#", inner),
+                };
+                match is_ident_or_dot(name) {
+                    true => return Some((start, end, block_type, name.to_string())),
+                    false => search_pos = after_open_brace,
+                }
+            }
+            None => return None,
+        }
+    }
+    None
+}
+
 /// Process all block sections ({{#...}}...{{/...}}) in a template string.
 fn process_all_blocks(template: &str, vars: &Value, count: &mut usize) -> String {
-    // Regex matches: {{#name}}, {{#if cond}}, {{#each list}}
-    let block_re = Regex::new(r"\{\{#(?:if |each )?([\w.]+)\}\}").unwrap();
     let mut result = template.to_string();
 
-    // Process blocks until none remain
     loop {
         let current = result.clone();
         let mut found = false;
 
-        if let Some(caps) = block_re.captures(&current) {
-            let cap = caps.get(0).unwrap();
-            let full_match = cap.as_str();
-            let block_name_clean = caps.get(1).unwrap().as_str();
+        match find_first_open_block(&current) {
+            Some((start, after_open, block_type, block_name_clean)) => {
+                match find_matching_close_in(&current, block_type, &block_name_clean, after_open) {
+                    Some(close_pos) => {
+                        let content = &current[after_open..close_pos];
+                        let close_len = match block_type {
+                            "if" => "{{/if}}".len(),
+                            "each" => "{{/each}}".len(),
+                            _ => format!("{{{{/{}}}}}", block_name_clean).len(),
+                        };
+                        let end_pos = close_pos + close_len;
 
-            let block_type = if full_match.starts_with("{{#if ") {
-                "if"
-            } else if full_match.starts_with("{{#each ") {
-                "each"
-            } else {
-                "#"
-            };
+                        let expanded = match block_type {
+                            "if" => expand_conditional(&block_name_clean, content, vars, count),
+                            "each" => expand_each(&block_name_clean, content, vars, count),
+                            _ => expand_section(&block_name_clean, content, vars, count),
+                        };
 
-            let start = cap.start();
-            let after_open = start + full_match.len();
-
-            if let Some(close_pos) =
-                find_matching_close_in(&current, block_type, block_name_clean, after_open)
-            {
-                let content = &current[after_open..close_pos];
-                let close_len = match block_type {
-                    "if" => "{{/if}}".len(),
-                    "each" => "{{/each}}".len(),
-                    _ => format!("{{{{/{}}}}}", block_name_clean).len(),
-                };
-                let end_pos = close_pos + close_len;
-
-                let expanded = match block_type {
-                    "if" => expand_conditional(block_name_clean, content, vars, count),
-                    "each" => expand_each(block_name_clean, content, vars, count),
-                    _ => expand_section(block_name_clean, content, vars, count),
-                };
-
-                let new_result =
-                    format!("{}{}{}", &current[..start], expanded, &current[end_pos..]);
-                result = new_result;
-                found = true;
+                        result =
+                            format!("{}{}{}", &current[..start], expanded, &current[end_pos..]);
+                        found = true;
+                    }
+                    None => {}
+                }
             }
+            None => {}
         }
 
-        if !found {
-            break;
+        match found {
+            true => {}
+            false => break,
         }
     }
 
     result
 }
 
-/// Expand a conditional block: {{#if name}}...{{else}}...{{/if}}
-fn expand_conditional(name: &str, content: &str, vars: &Value, count: &mut usize) -> String {
-    let resolved = resolve_path(vars, name);
-    let condition = resolved.is_some_and(is_truthy);
-
-    // Check for {{else}} in content
-    let else_marker = "{{else}}";
-    let else_pos = content.find(else_marker);
-
-    let body = if condition {
-        // Show if-body (before else)
-        match else_pos {
-            Some(pos) => &content[..pos],
-            None => content,
-        }
-    } else {
-        // Show else-body (after else)
-        match else_pos {
-            Some(pos) => &content[pos + else_marker.len()..],
-            None => "",
-        }
-    };
-
-    // Recursively process any nested blocks in body
+fn render_block_body(body: &str, context: &Value, count: &mut usize) -> String {
     let mut sub_count = 0;
-    let expanded = process_all_blocks(body, vars, &mut sub_count);
-    // Replace any remaining variables
-    let (final_str, c) = replace_variables_in_str(&expanded, vars);
+    let processed = process_all_blocks(body, context, &mut sub_count);
+    let (line, c) = replace_variables_in_str(&processed, context);
     sub_count += c;
-
-    if sub_count == 0 {
-        *count += 1;
-    } else {
-        *count += sub_count;
-    }
-    final_str
+    *count += match sub_count == 0 {
+        true => 1,
+        false => sub_count,
+    };
+    line
 }
 
-/// Expand an each loop: {{#each list}}...{{/each}}
-fn expand_each(name: &str, content: &str, vars: &Value, count: &mut usize) -> String {
-    let mut output = String::new();
-
-    if let Some(Value::Array(items)) = resolve_path(vars, name) {
-        for item in items {
-            // Deep-merge the current item into context for direct access
-            let context = if let Value::Object(map) = item {
-                let mut merged = map.clone();
-                merged.insert("this".to_string(), item.clone());
-                merged.insert(".".to_string(), item.clone());
-                Value::Object(merged)
-            } else {
-                let mut merged = serde_json::Map::new();
-                if let Value::Object(map) = vars {
+fn build_item_context(item: &Value, fallback_root: Option<&Value>) -> Value {
+    match item {
+        Value::Object(map) => {
+            let mut merged = map.clone();
+            merged.insert("this".to_string(), item.clone());
+            merged.insert(".".to_string(), item.clone());
+            Value::Object(merged)
+        }
+        _ => {
+            let mut merged = serde_json::Map::new();
+            match fallback_root {
+                Some(Value::Object(map)) => {
                     for (k, v) in map {
                         merged.insert(k.clone(), v.clone());
                     }
                 }
-                merged.insert("this".to_string(), item.clone());
-                merged.insert(".".to_string(), item.clone());
-                Value::Object(merged)
-            };
-
-            // Recursively process blocks in content
-            let mut sub_count = 0;
-            let processed = process_all_blocks(content, &context, &mut sub_count);
-            let (line, c) = replace_variables_in_str(&processed, &context);
-            sub_count += c;
-
-            if sub_count == 0 {
-                *count += 1;
-            } else {
-                *count += sub_count;
+                _ => {}
             }
-            output.push_str(&line);
+            merged.insert("this".to_string(), item.clone());
+            merged.insert(".".to_string(), item.clone());
+            Value::Object(merged)
         }
+    }
+}
+
+/// Expand a conditional block: `{{#if name}}...{{else}}...{{/if}}`
+fn expand_conditional(name: &str, content: &str, vars: &Value, count: &mut usize) -> String {
+    let resolved = resolve_path(vars, name);
+    let condition = resolved.is_some_and(is_truthy);
+
+    let else_marker = "{{else}}";
+    let else_pos = content.find(else_marker);
+
+    let body = match (condition, else_pos) {
+        (true, Some(pos)) => &content[..pos],
+        (true, None) => content,
+        (false, Some(pos)) => &content[pos + else_marker.len()..],
+        (false, None) => "",
+    };
+
+    render_block_body(body, vars, count)
+}
+
+/// Expand an each loop: `{{#each list}}...{{/each}}`
+fn expand_each(name: &str, content: &str, vars: &Value, count: &mut usize) -> String {
+    let mut output = String::new();
+
+    match resolve_path(vars, name) {
+        Some(Value::Array(items)) => {
+            for item in items {
+                let context = build_item_context(item, Some(vars));
+                let line = render_block_body(content, &context, count);
+                output.push_str(&line);
+            }
+        }
+        _ => {}
     }
 
     output
 }
 
-/// Expand a section block: {{#name}}...{{/name}}
-/// If name resolves to an array, iterate. If truthy scalar, show once with context.
+/// Expand a section block: `{{#name}}...{{/name}}`
 fn expand_section(name: &str, content: &str, vars: &Value, count: &mut usize) -> String {
     let mut output = String::new();
 
-    if let Some(resolved) = resolve_path(vars, name) {
-        match resolved {
-            Value::Array(items) => {
-                for item in items {
-                    let context = if let Value::Object(map) = item {
-                        let mut merged = map.clone();
-                        merged.insert("this".to_string(), item.clone());
-                        merged.insert(".".to_string(), item.clone());
-                        Value::Object(merged)
-                    } else {
-                        Value::Object({
-                            let mut m = serde_json::Map::new();
-                            m.insert("this".to_string(), item.clone());
-                            m.insert(".".to_string(), item.clone());
-                            m
-                        })
-                    };
-                    let mut sub_count = 0;
-                    let processed = process_all_blocks(content, &context, &mut sub_count);
-                    let (line, c) = replace_variables_in_str(&processed, &context);
-                    sub_count += c;
-
-                    if sub_count == 0 {
-                        *count += 1;
-                    } else {
-                        *count += sub_count;
-                    }
-                    output.push_str(&line);
-                }
-            }
-            val if is_truthy(val) => {
-                // Set context to the resolved value
-                let context = if let Value::Object(map) = val {
-                    let mut merged = map.clone();
-                    merged.insert("this".to_string(), val.clone());
-                    Value::Object(merged)
-                } else {
-                    // For scalars, merge into root context + override
-                    let mut m: serde_json::Map<String, Value> = serde_json::Map::new();
-                    if let Value::Object(root_map) = vars {
-                        for (k, v) in root_map {
-                            m.insert(k.clone(), v.clone());
-                        }
-                    }
-                    m.insert(name.to_string(), val.clone());
-                    m.insert("this".to_string(), val.clone());
-                    Value::Object(m)
-                };
-                let mut sub_count = 0;
-                let processed = process_all_blocks(content, &context, &mut sub_count);
-                let (line, c) = replace_variables_in_str(&processed, &context);
-                sub_count += c;
-
-                if sub_count == 0 {
-                    *count += 1;
-                } else {
-                    *count += sub_count;
-                }
+    match resolve_path(vars, name) {
+        Some(Value::Array(items)) => {
+            for item in items {
+                let context = build_item_context(item, None);
+                let line = render_block_body(content, &context, count);
                 output.push_str(&line);
             }
-            _ => {} // falsy → show nothing
         }
+        Some(val) => match is_truthy(val) {
+            true => {
+                let mut context = build_item_context(val, Some(vars));
+                match (&mut context, val.is_object()) {
+                    (Value::Object(m), false) => {
+                        m.insert(name.to_string(), val.clone());
+                    }
+                    _ => {}
+                }
+                let line = render_block_body(content, &context, count);
+                output.push_str(&line);
+            }
+            false => {}
+        },
+        None => {}
     }
 
     output
@@ -474,26 +343,55 @@ fn replace_variables(text: &str, vars: &Value, count: &mut usize) -> String {
     res
 }
 
-/// Replace {{variable}} patterns using dot-notation resolution.
+/// Replace {{variable}} patterns using dot-notation resolution without regex.
 fn replace_variables_in_str(text: &str, vars: &Value) -> (String, usize) {
-    let re = Regex::new(r"\{\{([\w.]+)\}\}").unwrap();
-    let mut count = 0;
+    let mut out = String::with_capacity(text.len());
+    let mut count = 0usize;
+    let mut pos = 0usize;
 
-    let result = re.replace_all(text, |caps: &regex::Captures| {
-        let path = &caps[1];
-        match resolve_path(vars, path) {
-            Some(val) => {
-                count += 1;
-                format_value(val)
+    while pos < text.len() {
+        match text[pos..].find("{{") {
+            Some(rel_open) => {
+                let open_idx = pos + rel_open;
+                out.push_str(&text[pos..open_idx]);
+                let after_open = open_idx + 2;
+                match text[after_open..].find("}}") {
+                    Some(rel_close) => {
+                        let close_idx = after_open + rel_close;
+                        let candidate = &text[after_open..close_idx];
+                        match is_ident_or_dot(candidate) {
+                            true => {
+                                match resolve_path(vars, candidate) {
+                                    Some(val) => {
+                                        count += 1;
+                                        out.push_str(&format_value(val));
+                                    }
+                                    None => {
+                                        out.push_str(&text[open_idx..close_idx + 2]);
+                                    }
+                                }
+                                pos = close_idx + 2;
+                            }
+                            false => {
+                                out.push_str("{{");
+                                pos = after_open;
+                            }
+                        }
+                    }
+                    None => {
+                        out.push_str(&text[open_idx..]);
+                        pos = text.len();
+                    }
+                }
             }
             None => {
-                // Keep the original placeholder if not found
-                format!("{{{{{}}}}}", path)
+                out.push_str(&text[pos..]);
+                break;
             }
         }
-    });
+    }
 
-    (result.to_string(), count)
+    (out, count)
 }
 
 #[cfg(test)]

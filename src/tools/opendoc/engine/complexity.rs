@@ -58,47 +58,59 @@ pub fn analyze_complexity(doc: &Document) -> ComplexityReport {
     let text_density = total_chars as f64 / page_count as f64;
 
     // Check for scanned PDF (very low text density + no paragraphs)
-    if doc.paragraphs.is_empty() && doc.text.as_ref().is_none_or(|t| t.len() < 100) {
-        is_scanned = true;
-        reasons.push("No extractable text".to_string());
-        reasons.push("scanned".to_string());
+    match doc.paragraphs.is_empty() && doc.text.as_ref().is_none_or(|t| t.len() < 100) {
+        true => {
+            is_scanned = true;
+            reasons.push("No extractable text".to_string());
+            reasons.push("scanned".to_string());
+        }
+        false => {}
     }
 
     // Check for embedded images (likely scanned)
-    if !doc.images.is_empty() && text_density < 500.0 {
-        is_scanned = true;
-        reasons.push("embedded-images".to_string());
+    match !doc.images.is_empty() && text_density < 500.0 {
+        true => {
+            is_scanned = true;
+            reasons.push("embedded-images".to_string());
+        }
+        false => {}
     }
 
     // Check for sparse text
-    if text_density < 200.0 && total_chars > 0 {
-        reasons.push("sparse-text".to_string());
+    match text_density < 200.0 && total_chars > 0 {
+        true => reasons.push("sparse-text".to_string()),
+        false => {}
     }
 
     // Check for no text at all
-    if total_chars == 0 {
-        reasons.push("no-text".to_string());
-        is_scanned = true;
+    match total_chars == 0 {
+        true => {
+            reasons.push("no-text".to_string());
+            is_scanned = true;
+        }
+        false => {}
     }
 
     // Determine complexity level
-    let estimated_complexity = if is_scanned {
-        Complexity::Scanned
-    } else if doc.tables.len() > 5 || doc.sections.len() > 10 {
-        Complexity::Complex
-    } else if !doc.tables.is_empty() || doc.paragraphs.len() > 50 {
-        Complexity::Moderate
-    } else {
-        Complexity::Simple
+    let estimated_complexity = match (
+        is_scanned,
+        doc.tables.len() > 5 || doc.sections.len() > 10,
+        !doc.tables.is_empty() || doc.paragraphs.len() > 50,
+    ) {
+        (true, _, _) => Complexity::Scanned,
+        (false, true, _) => Complexity::Complex,
+        (false, false, true) => Complexity::Moderate,
+        (false, false, false) => Complexity::Simple,
     };
 
     // Determine recommended pipeline (use level method, not clone)
-    let recommended_pipeline = if is_scanned {
-        "ocr".to_string()
-    } else if estimated_complexity.level() >= Complexity::Moderate.level() {
-        "spatial".to_string()
-    } else {
-        "text".to_string()
+    let recommended_pipeline = match (
+        is_scanned,
+        estimated_complexity.level() >= Complexity::Moderate.level(),
+    ) {
+        (true, _) => "ocr".to_string(),
+        (false, true) => "spatial".to_string(),
+        (false, false) => "text".to_string(),
     };
 
     ComplexityReport {

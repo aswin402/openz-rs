@@ -26,9 +26,12 @@ pub fn to_ir(file_path: &str) -> Result<Document, String> {
     let mut text_parts: Vec<String> = Vec::new();
 
     // Render header line
-    if !headers.is_empty() {
-        text_parts.push(format!("  {} |", headers.join(" | ")));
-        text_parts.push(format!("  {} |", vec!["---"; headers.len()].join(" | ")));
+    match headers.is_empty() {
+        false => {
+            text_parts.push(format!("  {} |", headers.join(" | ")));
+            text_parts.push(format!("  {} |", vec!["---"; headers.len()].join(" | ")));
+        }
+        true => {}
     }
 
     // Read data rows

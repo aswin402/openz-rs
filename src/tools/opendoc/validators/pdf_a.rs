@@ -17,8 +17,9 @@ pub fn validate_pdf_a(path: &Path) -> Result<PdfAValidationResult, lopdf::Error>
     let mut detected_level = None;
 
     // 1. Encryption check
-    if doc.is_encrypted() {
-        errors.push("Document is encrypted. Encryption is forbidden in PDF/A.".to_string());
+    match doc.is_encrypted() {
+        true => errors.push("Document is encrypted. Encryption is forbidden in PDF/A.".to_string()),
+        false => {}
     }
 
     // 2. Scan all objects
@@ -26,51 +27,47 @@ pub fn validate_pdf_a(path: &Path) -> Result<PdfAValidationResult, lopdf::Error>
     let mut has_output_intent = false;
 
     for object in doc.objects.values() {
-        if let Object::Dictionary(ref dict) = object {
-            // Check for /Type
-            if let Ok(type_name) = dict.get(b"Type") {
-                if type_name.as_name().ok() == Some(b"Catalog") {
-                    // Check for Metadata
-                    if dict.get(b"Metadata").is_ok() {
-                        has_metadata = true;
-                    }
-                    // Check for OutputIntents
-                    if let Ok(Object::Array(ref intents)) = dict.get(b"OutputIntents") {
-                        if !intents.is_empty() {
-                            has_output_intent = true;
-                        }
-                    }
-                } else if type_name.as_name().ok() == Some(b"Font") {
-                    // Check if it's embedded or a standard font
-                    let mut font_is_embedded = false;
+        let dict = match object {
+            Object::Dictionary(ref d) => d,
+            _ => continue,
+        };
 
-                    // Simple fonts can have /FontDescriptor which has /FontFile, /FontFile2, or /FontFile3
-                    if let Ok(descriptor_obj) = dict.get(b"FontDescriptor") {
-                        let descriptor = match descriptor_obj {
-                            Object::Reference(ref_id) => {
-                                doc.get_object(*ref_id).ok().and_then(|o| o.as_dict().ok())
-                            }
-                            Object::Dictionary(d) => Some(d),
-                            _ => None,
-                        };
-                        if let Some(d) = descriptor {
-                            if d.get(b"FontFile").is_ok()
-                                || d.get(b"FontFile2").is_ok()
-                                || d.get(b"FontFile3").is_ok()
-                            {
-                                font_is_embedded = true;
-                            }
+        // Check for /Type
+        match dict.get(b"Type").ok().and_then(|t| t.as_name().ok()) {
+            Some(b"Catalog") => {
+                has_metadata = has_metadata || dict.get(b"Metadata").is_ok();
+                has_output_intent = has_output_intent
+                    || match dict.get(b"OutputIntents") {
+                        Ok(Object::Array(ref intents)) => !intents.is_empty(),
+                        _ => false,
+                    };
+            }
+            Some(b"Font") => {
+                // Simple fonts can have /FontDescriptor which has /FontFile, /FontFile2, or /FontFile3
+                let descriptor_embedded = dict
+                    .get(b"FontDescriptor")
+                    .ok()
+                    .and_then(|descriptor_obj| match descriptor_obj {
+                        Object::Reference(ref_id) => {
+                            doc.get_object(*ref_id).ok().and_then(|o| o.as_dict().ok())
                         }
-                    }
+                        Object::Dictionary(d) => Some(d),
+                        _ => None,
+                    })
+                    .map(|d| {
+                        d.get(b"FontFile").is_ok()
+                            || d.get(b"FontFile2").is_ok()
+                            || d.get(b"FontFile3").is_ok()
+                    })
+                    .unwrap_or(false);
 
-                    // Type3 fonts are self-contained
-                    if let Ok(subtype) = dict.get(b"Subtype") {
-                        if subtype.as_name().ok() == Some(b"Type3") {
-                            font_is_embedded = true;
-                        }
-                    }
+                // Type3 fonts are self-contained
+                let is_type3 = dict.get(b"Subtype").ok().and_then(|s| s.as_name().ok())
+                    == Some(b"Type3");
 
-                    if !font_is_embedded {
+                match descriptor_embedded || is_type3 {
+                    true => {}
+                    false => {
                         let font_name = dict
                             .get(b"BaseFont")
                             .ok()
@@ -84,68 +81,92 @@ pub fn validate_pdf_a(path: &Path) -> Result<PdfAValidationResult, lopdf::Error>
                     }
                 }
             }
-
-            // Check for forbidden actions (/JS, /JavaScript, /Sound, /Movie, /Launch)
-            if let Ok(Object::Name(ref name)) = dict.get(b"S") {
-                if name == b"JavaScript" || name == b"JS" {
-                        errors.push(
-                            "JavaScript action detected. JavaScript is forbidden in PDF/A."
-                                .to_string(),
-                        );
-                    } else if name == b"Launch" {
-                        errors.push("Launch action detected. Launching external programs is forbidden in PDF/A.".to_string());
-                    } else if name == b"Sound" {
-                        errors.push(
-                            "Sound action detected. Audio/video content is forbidden in PDF/A."
-                                .to_string(),
-                        );
-                    } else if name == b"Movie" {
-                        errors.push(
-                            "Movie action detected. Audio/video content is forbidden in PDF/A."
-                                .to_string(),
-                        );
-                    }
-                }
-            }
+            _ => {}
         }
 
-    if !has_metadata {
-        errors.push(
-            "Metadata stream (XMP) is missing. PDF/A requires document-level XMP metadata."
-                .to_string(),
-        );
+        // Check for forbidden actions (/JS, /JavaScript, /Sound, /Movie, /Launch)
+        match dict.get(b"S") {
+            Ok(Object::Name(ref name)) => match name.as_slice() {
+                b"JavaScript" | b"JS" => errors.push(
+                    "JavaScript action detected. JavaScript is forbidden in PDF/A.".to_string(),
+                ),
+                b"Launch" => errors.push(
+                    "Launch action detected. Launching external programs is forbidden in PDF/A."
+                        .to_string(),
+                ),
+                b"Sound" => errors.push(
+                    "Sound action detected. Audio/video content is forbidden in PDF/A.".to_string(),
+                ),
+                b"Movie" => errors.push(
+                    "Movie action detected. Audio/video content is forbidden in PDF/A.".to_string(),
+                ),
+                _ => {}
+            },
+            _ => {}
+        }
     }
 
-    if !has_output_intent {
-        warnings.push("No OutputIntent specified. PDF/A requires Device-independent color spaces or an OutputIntent profile.".to_string());
+    // Re-check OutputIntents without a match guard
+    has_output_intent = doc.objects.values().any(|object| match object {
+        Object::Dictionary(ref dict) => {
+            dict.get(b"Type").ok().and_then(|t| t.as_name().ok()) == Some(b"Catalog")
+                && match dict.get(b"OutputIntents") {
+                    Ok(Object::Array(ref intents)) => !intents.is_empty(),
+                    _ => false,
+                }
+        }
+        _ => false,
+    });
+
+    match has_metadata {
+        true => {}
+        false => errors.push(
+            "Metadata stream (XMP) is missing. PDF/A requires document-level XMP metadata."
+                .to_string(),
+        ),
+    }
+
+    match has_output_intent {
+        true => {}
+        false => warnings.push("No OutputIntent specified. PDF/A requires Device-independent color spaces or an OutputIntent profile.".to_string()),
     }
 
     // Detect level claimed in XMP metadata
     for object in doc.objects.values() {
-        if let Object::Stream(ref stream) = object {
-            if let Ok(type_name) = stream.dict.get(b"Type") {
-                if type_name.as_name().ok() == Some(b"Metadata") {
-                    if let Ok(decompressed) = stream.decompressed_content() {
-                        let xml_str = String::from_utf8_lossy(&decompressed);
-                        if xml_str.contains("pdfaid:part") {
-                            let part = xml_str
-                                .split("pdfaid:part>")
-                                .nth(1)
-                                .and_then(|s| s.split('<').next())
-                                .unwrap_or("1")
-                                .trim();
-                            let conformance = xml_str
-                                .split("pdfaid:conformance>")
-                                .nth(1)
-                                .and_then(|s| s.split('<').next())
-                                .unwrap_or("B")
-                                .trim();
-                            detected_level =
-                                Some(format!("PDF/A-{}{}", part, conformance.to_uppercase()));
-                        }
+        let stream = match object {
+            Object::Stream(ref s) => s,
+            _ => continue,
+        };
+        let is_metadata = stream
+            .dict
+            .get(b"Type")
+            .ok()
+            .and_then(|t| t.as_name().ok())
+            == Some(b"Metadata");
+        match (is_metadata, stream.decompressed_content()) {
+            (true, Ok(decompressed)) => {
+                let xml_str = String::from_utf8_lossy(&decompressed);
+                match xml_str.contains("pdfaid:part") {
+                    true => {
+                        let part = xml_str
+                            .split("pdfaid:part>")
+                            .nth(1)
+                            .and_then(|s| s.split('<').next())
+                            .unwrap_or("1")
+                            .trim();
+                        let conformance = xml_str
+                            .split("pdfaid:conformance>")
+                            .nth(1)
+                            .and_then(|s| s.split('<').next())
+                            .unwrap_or("B")
+                            .trim();
+                        detected_level =
+                            Some(format!("PDF/A-{}{}", part, conformance.to_uppercase()));
                     }
+                    false => {}
                 }
             }
+            _ => {}
         }
     }
 

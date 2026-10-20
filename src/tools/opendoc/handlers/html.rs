@@ -17,20 +17,17 @@ pub fn to_ir(file_path: &str) -> Result<Document, String> {
 /// Convert HTML string content into IR
 pub fn html_to_ir(html: &str, path: Option<&str>) -> Result<Document, String> {
     let mut doc = Document::new("html");
-    if let Some(p) = path {
-        doc.path = Some(p.to_string());
-    }
+    doc.path = path.map(str::to_string);
 
     let document = Html::parse_document(html);
 
     // Try to get <title>
     let title_sel = Selector::parse("title").map_err(|e| format!("Selector error: {e}"))?;
-    if let Some(title_el) = document.select(&title_sel).next() {
-        let t = title_el.text().collect::<String>().trim().to_string();
-        if !t.is_empty() {
-            doc.metadata.title = Some(t);
-        }
-    }
+    doc.metadata.title = document
+        .select(&title_sel)
+        .next()
+        .map(|title_el| title_el.text().collect::<String>().trim().to_string())
+        .filter(|t| !t.is_empty());
 
     // Collect text snippets
     let mut text_parts: Vec<String> = Vec::new();
@@ -42,14 +39,17 @@ pub fn html_to_ir(html: &str, path: Option<&str>) -> Result<Document, String> {
         let tag_name = el.value().name();
         let level: u32 = tag_name[1..].parse().unwrap_or(1);
         let title = el.text().collect::<String>().trim().to_string();
-        if !title.is_empty() {
-            text_parts.push(format!("{}: {}", "#".repeat(level as usize), title));
-            doc.sections.push(Section {
-                title,
-                level,
-                index: doc.sections.len(),
-                content: vec![],
-            });
+        match title.is_empty() {
+            false => {
+                text_parts.push(format!("{}: {}", "#".repeat(level as usize), title));
+                doc.sections.push(Section {
+                    title,
+                    level,
+                    index: doc.sections.len(),
+                    content: vec![],
+                });
+            }
+            true => {}
         }
     }
 
@@ -57,22 +57,20 @@ pub fn html_to_ir(html: &str, path: Option<&str>) -> Result<Document, String> {
     let p_sel = Selector::parse("p, div, span, li").map_err(|e| format!("Selector error: {e}"))?;
     for el in document.select(&p_sel) {
         let text = el.text().collect::<String>().trim().to_string();
-        if !text.is_empty() {
-            // Check if this is a heading tag
-            let tag_name = el.value().name();
-            if tag_name.starts_with('h')
-                && tag_name.len() == 2
-                && tag_name.as_bytes()[1].is_ascii_digit()
-            {
-                continue; // already added as section
+        let tag_name = el.value().name();
+        let is_heading_tag = tag_name.starts_with('h')
+            && tag_name.len() == 2
+            && tag_name.as_bytes()[1].is_ascii_digit();
+        match !text.is_empty() && !is_heading_tag {
+            true => {
+                doc.paragraphs.push(Paragraph {
+                    text: text.clone(),
+                    is_heading: false,
+                    ..Paragraph::default()
+                });
+                text_parts.push(text);
             }
-
-            doc.paragraphs.push(Paragraph {
-                text: text.clone(),
-                is_heading: false,
-                ..Paragraph::default()
-            });
-            text_parts.push(text);
+            false => {}
         }
     }
 

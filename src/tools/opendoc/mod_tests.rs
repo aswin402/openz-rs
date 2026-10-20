@@ -200,54 +200,79 @@ fn test_all_opendoc_tool_parameters_schemas_conform_to_openapi() {
         let params = tool.parameters();
         let name = tool.name();
 
-        if params.get("$schema").is_some() {
-            schema_issues.push(format!("{}: contains '$schema' which should be stripped", name));
+        match params.get("$schema").is_some() {
+            true => schema_issues.push(format!(
+                "{}: contains '$schema' which should be stripped",
+                name
+            )),
+            false => {}
         }
 
-        if params.get("title").is_some() {
-            schema_issues.push(format!("{}: contains top-level 'title' which should be stripped", name));
+        match params.get("title").is_some() {
+            true => schema_issues.push(format!(
+                "{}: contains top-level 'title' which should be stripped",
+                name
+            )),
+            false => {}
         }
 
-        if params.get("type").and_then(|v| v.as_str()) != Some("object") {
-            schema_issues.push(format!("{}: missing top-level type: 'object'", name));
+        match params.get("type").and_then(|v| v.as_str()) != Some("object") {
+            true => schema_issues.push(format!("{}: missing top-level type: 'object'", name)),
+            false => {}
         }
 
-        if let Some(props) = params.get("properties").and_then(|v| v.as_object()) {
-            for (prop_name, prop_val) in props {
-                // Check for empty schema {}
-                if prop_val.as_object().map_or(false, |m| m.is_empty()) {
-                    schema_issues.push(format!("{}.{}: empty schema {{}}", name, prop_name));
-                }
+        match params.get("properties").and_then(|v| v.as_object()) {
+            Some(props) => {
+                for (prop_name, prop_val) in props {
+                    // Check for empty schema {}
+                    match prop_val.as_object().map_or(false, |m| m.is_empty()) {
+                        true => {
+                            schema_issues.push(format!("{}.{}: empty schema {{}}", name, prop_name))
+                        }
+                        false => {}
+                    }
 
-                // Check for missing type
-                let has_type = prop_val.get("type").is_some();
-                let has_ref = prop_val.get("$ref").is_some();
-                let has_any_of = prop_val.get("anyOf").is_some();
-                let has_one_of = prop_val.get("oneOf").is_some();
-                if !has_type && !has_ref && !has_any_of && !has_one_of {
-                    schema_issues.push(format!("{}.{}: missing 'type'", name, prop_name));
-                }
+                    // Check for missing type
+                    let has_type = prop_val.get("type").is_some();
+                    let has_ref = prop_val.get("$ref").is_some();
+                    let has_any_of = prop_val.get("anyOf").is_some();
+                    let has_one_of = prop_val.get("oneOf").is_some();
+                    match !has_type && !has_ref && !has_any_of && !has_one_of {
+                        true => {
+                            schema_issues.push(format!("{}.{}: missing 'type'", name, prop_name))
+                        }
+                        false => {}
+                    }
 
-                // Check for bare object type without properties or additionalProperties
-                let is_object_type = match prop_val.get("type") {
-                    Some(serde_json::Value::String(s)) => s == "object",
-                    Some(serde_json::Value::Array(arr)) => arr.iter().any(|v| v.as_str() == Some("object")),
-                    _ => false,
-                };
-                if is_object_type {
+                    // Check for bare object type without properties or additionalProperties
+                    let is_object_type = match prop_val.get("type") {
+                        Some(serde_json::Value::String(s)) => s == "object",
+                        Some(serde_json::Value::Array(arr)) => {
+                            arr.iter().any(|v| v.as_str() == Some("object"))
+                        }
+                        _ => false,
+                    };
                     let has_props = prop_val.get("properties").is_some();
                     let has_add_props = prop_val.get("additionalProperties").is_some();
-                    if !has_props && !has_add_props {
-                        schema_issues.push(format!("{}.{}: bare object type without properties or additionalProperties", name, prop_name));
+                    match is_object_type && !has_props && !has_add_props {
+                        true => schema_issues.push(format!(
+                            "{}.{}: bare object type without properties or additionalProperties",
+                            name, prop_name
+                        )),
+                        false => {}
                     }
                 }
             }
+            None => {}
         }
     }
 
-    if !schema_issues.is_empty() {
-        panic!("Found {} schema issue(s) across opendoc tools:\n{:#?}", schema_issues.len(), schema_issues);
-    }
+    assert!(
+        schema_issues.is_empty(),
+        "Found {} schema issue(s) across opendoc tools:\n{:#?}",
+        schema_issues.len(),
+        schema_issues
+    );
 }
 
 #[test]

@@ -51,15 +51,13 @@ impl Document {
 
     /// Get the document outline (headings / slide titles / sheet names)
     pub fn outline(&self) -> Vec<&str> {
-        let mut out = Vec::new();
-        for section in &self.sections {
-            out.push(section.title.as_str());
-        }
-        for p in &self.paragraphs {
-            if p.is_heading {
-                out.push(p.text.as_str());
-            }
-        }
+        let mut out: Vec<&str> = self.sections.iter().map(|s| s.title.as_str()).collect();
+        out.extend(
+            self.paragraphs
+                .iter()
+                .filter(|p| p.is_heading)
+                .map(|p| p.text.as_str()),
+        );
         out
     }
 
@@ -76,9 +74,7 @@ impl Document {
                 }
             }
         }
-        if let Some(text) = &self.text {
-            count += text.len() / 4;
-        }
+        count += self.text.as_ref().map_or(0, |text| text.len() / 4);
         count
     }
 
@@ -105,36 +101,47 @@ impl Document {
     /// Convert the universal document representation to Markdown format.
     pub fn to_markdown(&self) -> String {
         let mut md = String::new();
-        if !self.paragraphs.is_empty() || !self.tables.is_empty() {
-            for p in &self.paragraphs {
-                if p.is_heading {
-                    let level = "#".repeat(p.heading_level.max(1) as usize);
-                    md.push_str(&format!("{} {}\n\n", level, p.text));
-                } else {
-                    md.push_str(&format!("{}\n\n", p.text));
+        match !self.paragraphs.is_empty() || !self.tables.is_empty() {
+            true => {
+                for p in &self.paragraphs {
+                    match p.is_heading {
+                        true => {
+                            let level = "#".repeat(p.heading_level.max(1) as usize);
+                            md.push_str(&format!("{} {}\n\n", level, p.text));
+                        }
+                        false => {
+                            md.push_str(&format!("{}\n\n", p.text));
+                        }
+                    }
+                }
+                for table in &self.tables {
+                    match &table.caption {
+                        Some(cap) => md.push_str(&format!("*{}*\n\n", cap)),
+                        None => {}
+                    }
+                    match table.headers.is_empty() {
+                        false => {
+                            md.push_str("| ");
+                            md.push_str(&table.headers.join(" | "));
+                            md.push_str(" |\n");
+                            md.push_str("| ");
+                            md.push_str(&vec!["---"; table.headers.len()].join(" | "));
+                            md.push_str(" |\n");
+                        }
+                        true => {}
+                    }
+                    for row in &table.rows {
+                        md.push_str("| ");
+                        md.push_str(&row.join(" | "));
+                        md.push_str(" |\n");
+                    }
+                    md.push('\n');
                 }
             }
-            for table in &self.tables {
-                if let Some(ref cap) = table.caption {
-                    md.push_str(&format!("*{}*\n\n", cap));
-                }
-                if !table.headers.is_empty() {
-                    md.push_str("| ");
-                    md.push_str(&table.headers.join(" | "));
-                    md.push_str(" |\n");
-                    md.push_str("| ");
-                    md.push_str(&vec!["---"; table.headers.len()].join(" | "));
-                    md.push_str(" |\n");
-                }
-                for row in &table.rows {
-                    md.push_str("| ");
-                    md.push_str(&row.join(" | "));
-                    md.push_str(" |\n");
-                }
-                md.push('\n');
-            }
-        } else if let Some(ref raw) = self.text {
-            md.push_str(raw);
+            false => match &self.text {
+                Some(raw) => md.push_str(raw),
+                None => {}
+            },
         }
         md
     }

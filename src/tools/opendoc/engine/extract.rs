@@ -1,5 +1,4 @@
 use crate::tools::opendoc::ir::{Document, Paragraph};
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,18 +31,163 @@ pub struct TimelineTemplate {
     pub events: Vec<TimelineEvent>,
 }
 
+const MONTHS: &[&str] = &[
+    "january",
+    "february",
+    "march",
+    "april",
+    "may",
+    "june",
+    "july",
+    "august",
+    "september",
+    "october",
+    "november",
+    "december",
+    "jan",
+    "feb",
+    "mar",
+    "apr",
+    "jun",
+    "jul",
+    "aug",
+    "sep",
+    "oct",
+    "nov",
+    "dec",
+];
+
 fn get_effective_paragraphs(doc: &Document) -> Vec<Paragraph> {
-    if doc.paragraphs.is_empty() {
-        if let Some(ref raw) = doc.text {
-            raw.lines()
-                .filter(|line| !line.trim().is_empty())
-                .map(Paragraph::new)
-                .collect()
-        } else {
-            vec![]
+    match doc.paragraphs.is_empty() {
+        true => doc
+            .text
+            .as_ref()
+            .map(|raw| {
+                raw.lines()
+                    .filter(|line| !line.trim().is_empty())
+                    .map(Paragraph::new)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        false => doc.paragraphs.clone(),
+    }
+}
+
+fn is_numeric_date_token(tok: &str) -> bool {
+    let sep = ['-', '/', '.'];
+    let parts: Vec<&str> = tok.split(|c| sep.contains(&c)).collect();
+    match parts.as_slice() {
+        [a, b, c] => {
+            let all_digits = [a, b, c]
+                .iter()
+                .all(|p| !p.is_empty() && p.chars().all(|ch| ch.is_ascii_digit()));
+            let valid_lens = (a.len() == 4 && (1..=2).contains(&b.len()) && (1..=2).contains(&c.len()))
+                || ((1..=2).contains(&a.len())
+                    && (1..=2).contains(&b.len())
+                    && (2..=4).contains(&c.len()));
+            all_digits && valid_lens
         }
-    } else {
-        doc.paragraphs.clone()
+        _ => false,
+    }
+}
+
+fn is_month_word(w: &str) -> bool {
+    let lower = w.trim_matches(|c: char| !c.is_alphabetic()).to_lowercase();
+    MONTHS.contains(&lower.as_str())
+}
+
+fn is_day_token(w: &str) -> bool {
+    let clean = w.trim_end_matches(',');
+    (1..=2).contains(&clean.len()) && clean.chars().all(|c| c.is_ascii_digit())
+}
+
+fn is_year_token(w: &str) -> bool {
+    let clean = w.trim_end_matches(|c: char| !c.is_ascii_digit());
+    clean.len() == 4 && clean.chars().all(|c| c.is_ascii_digit())
+}
+
+fn find_date_in_text(text: &str) -> Option<String> {
+    let raw_tokens: Vec<&str> = text.split_whitespace().collect();
+    for (idx, &tok) in raw_tokens.iter().enumerate() {
+        let trimmed = tok.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+        match is_numeric_date_token(trimmed) {
+            true => return Some(trimmed.to_string()),
+            false => {}
+        }
+        match (
+            raw_tokens.get(idx),
+            raw_tokens.get(idx + 1),
+            raw_tokens.get(idx + 2),
+        ) {
+            (Some(&w0), Some(&w1), Some(&w2)) => {
+                let m_d_y = is_month_word(w0) && is_day_token(w1) && is_year_token(w2);
+                let d_m_y = is_day_token(w0) && is_month_word(w1) && is_year_token(w2);
+                match m_d_y || d_m_y {
+                    true => {
+                        let y_clean = w2.trim_end_matches(|c: char| !c.is_ascii_digit());
+                        return Some(format!("{} {} {}", w0, w1, y_clean));
+                    }
+                    false => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn find_after_any_ci<'a>(text: &'a str, triggers: &[&str]) -> Option<&'a str> {
+    let lower = text.to_lowercase();
+    triggers.iter().find_map(|trig| {
+        lower
+            .find(trig)
+            .map(|pos| &text[pos + trig.len()..])
+    })
+}
+
+fn strip_leading_prefixes_ci<'a>(mut s: &'a str, prefixes: &[&str]) -> &'a str {
+    let mut changed = true;
+    while changed {
+        changed = false;
+        let trimmed = s.trim_start();
+        let lower = trimmed.to_lowercase();
+        for p in prefixes {
+            match lower.starts_with(p) {
+                true => {
+                    s = &trimmed[p.len()..];
+                    changed = true;
+                    break;
+                }
+                false => {}
+            }
+        }
+    }
+    s.trim_start()
+}
+
+fn extract_clause_phrase(after: &str, allow_comma: bool) -> Option<String> {
+    let end = after
+        .find(|c: char| c == '.' || c == '\n' || (!allow_comma && c == ','))
+        .unwrap_or(after.len());
+    let candidate = after[..end].trim();
+    let starts_upper = candidate
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_uppercase());
+    (starts_upper && candidate.len() >= 2).then(|| candidate.to_string())
+}
+
+fn push_unique_party(parties: &mut Vec<String>, candidate: &str) {
+    let clean = candidate.trim().to_string();
+    let lower = clean.to_lowercase();
+    let valid = !clean.is_empty()
+        && clean.chars().next().is_some_and(|c| c.is_ascii_uppercase())
+        && !parties.contains(&clean)
+        && !lower.contains("agreement")
+        && !lower.contains("between");
+    match valid {
+        true => parties.push(clean),
+        false => {}
     }
 }
 
@@ -55,104 +199,100 @@ pub fn extract_legal(doc: &Document) -> LegalTemplate {
     let mut jurisdiction = None;
     let mut termination_clause = None;
 
-    // Compile regexes
-    let re_date = Regex::new(r"(?i)(effective date|agreement date|entered into on|date of this agreement)[^\n.]{0,30}\b(\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|[a-z]{3,10} \d{1,2},? \d{4}|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})\b").ok();
-    let re_gov_law = Regex::new(r"(?i)(governed by|laws of|governing law[^\n.]{0,20}be)\s+(?:the\s+)?(?:laws\s+of\s+)?(?:state\s+of\s+)?([A-Z][a-zA-Z\s]{2,20})").ok();
-    let re_jurisdiction = Regex::new(
-        r"(?i)(courts of|jurisdiction in|venue in|courts located in)\s+([A-Z][a-zA-Z\s,]{2,30})",
-    )
-    .ok();
-    let re_between = Regex::new(
-        r"(?i)between\s+([A-Z][A-Za-z0-9\s\.\-]{2,40}?)\s+and\s+([A-Z][A-Za-z0-9\s\.\-]{2,40})",
-    )
-    .ok();
-    let re_party = Regex::new(r#"\b([A-Z][A-Z0-9a-z\s,\.\-]{2,50})\s+(?:having|located|a\s+corporation|individual|("Party"))"#).ok();
+    let date_triggers = [
+        "effective date",
+        "agreement date",
+        "entered into on",
+        "date of this agreement",
+    ];
+    let law_triggers = ["governed by", "laws of", "governing law"];
+    let juris_triggers = [
+        "courts of",
+        "jurisdiction in",
+        "venue in",
+        "courts located in",
+    ];
 
-    // Scan paragraphs
     for p in get_effective_paragraphs(doc) {
         let text = &p.text;
 
-        // 1. Effective Date
-        if effective_date.is_none() {
-            if let Some(ref re) = re_date {
-                if let Some(cap) = re.captures(text) {
-                    effective_date = Some(cap.get(2).unwrap().as_str().trim().to_string());
-                }
+        match effective_date.is_none() {
+            true => {
+                effective_date =
+                    find_after_any_ci(text, &date_triggers).and_then(find_date_in_text);
             }
+            false => {}
         }
 
-        // 2. Governing Law
-        if governing_law.is_none() {
-            if let Some(ref re) = re_gov_law {
-                if let Some(cap) = re.captures(text) {
-                    governing_law = Some(cap.get(2).unwrap().as_str().trim().to_string());
-                }
+        match governing_law.is_none() {
+            true => {
+                governing_law = find_after_any_ci(text, &law_triggers)
+                    .map(|s| {
+                        strip_leading_prefixes_ci(
+                            s,
+                            &["shall be ", "be ", "the ", "laws of ", "state of "],
+                        )
+                    })
+                    .and_then(|s| extract_clause_phrase(s, false));
             }
+            false => {}
         }
 
-        // 3. Jurisdiction
-        if jurisdiction.is_none() {
-            if let Some(ref re) = re_jurisdiction {
-                if let Some(cap) = re.captures(text) {
-                    jurisdiction = Some(cap.get(2).unwrap().as_str().trim().to_string());
-                }
+        match jurisdiction.is_none() {
+            true => {
+                jurisdiction = find_after_any_ci(text, &juris_triggers)
+                    .and_then(|s| extract_clause_phrase(s.trim_start(), true));
             }
+            false => {}
         }
 
-        // 4. Parties (between X and Y)
-        if text.contains("between") || text.contains("among") || text.contains("by and between") {
-            // Look for 'between X and Y'
-            if let Some(ref re_between) = re_between {
-                if let Some(cap) = re_between.captures(text) {
-                    let p1 = cap.get(1).unwrap().as_str().trim().to_string();
-                    let p2 = cap.get(2).unwrap().as_str().trim().to_string();
-                    if !parties.contains(&p1) && !p1.to_lowercase().contains("agreement") {
-                        parties.push(p1);
+        match find_after_any_ci(text, &["by and between ", "between "]) {
+            Some(after_between) => {
+                let sentence_end = after_between.find('\n').unwrap_or(after_between.len());
+                let clause = after_between[..sentence_end].trim();
+                match clause.split_once(" and ") {
+                    Some((p1, p2)) => {
+                        push_unique_party(&mut parties, p1);
+                        push_unique_party(&mut parties, p2);
                     }
-                    if !parties.contains(&p2) && !p2.to_lowercase().contains("agreement") {
-                        parties.push(p2);
-                    }
+                    None => {}
                 }
             }
-
-            // Find capitalized entities followed by descriptions
-            if let Some(ref re) = re_party {
-                for cap in re.captures_iter(text) {
-                    let party_name = cap.get(1).unwrap().as_str().trim().to_string();
-                    if !parties.contains(&party_name)
-                        && !party_name.contains("agreement")
-                        && !party_name.contains("between")
-                    {
-                        parties.push(party_name);
-                    }
-                }
-            }
+            None => {}
         }
 
-        // 5. Termination Clause
-        if termination_clause.is_none()
+        match termination_clause.is_none()
             && (text.contains("terminate") || text.contains("termination"))
         {
-            termination_clause = Some(text.trim().to_string());
+            true => termination_clause = Some(text.trim().to_string()),
+            false => {}
         }
     }
 
-    // Default if not found in paragraphs: search raw text
-    if let Some(ref raw) = doc.text {
-        if effective_date.is_none() {
-            if let Some(ref re) = re_date {
-                if let Some(cap) = re.captures(raw) {
-                    effective_date = Some(cap.get(2).unwrap().as_str().trim().to_string());
+    match &doc.text {
+        Some(raw) => {
+            match effective_date.is_none() {
+                true => {
+                    effective_date =
+                        find_after_any_ci(raw, &date_triggers).and_then(find_date_in_text);
                 }
+                false => {}
+            }
+            match governing_law.is_none() {
+                true => {
+                    governing_law = find_after_any_ci(raw, &law_triggers)
+                        .map(|s| {
+                            strip_leading_prefixes_ci(
+                                s,
+                                &["shall be ", "be ", "the ", "laws of ", "state of "],
+                            )
+                        })
+                        .and_then(|s| extract_clause_phrase(s, false));
+                }
+                false => {}
             }
         }
-        if governing_law.is_none() {
-            if let Some(ref re) = re_gov_law {
-                if let Some(cap) = re.captures(raw) {
-                    governing_law = Some(cap.get(2).unwrap().as_str().trim().to_string());
-                }
-            }
-        }
+        None => {}
     }
 
     LegalTemplate {
@@ -173,139 +313,129 @@ fn parse_number(s: &str) -> Option<f64> {
     clean.parse::<f64>().ok()
 }
 
+fn detect_currency_in_str(s: &str) -> Option<String> {
+    match (
+        s.contains('$') || s.contains("USD"),
+        s.contains('€') || s.contains("EUR"),
+        s.contains('£') || s.contains("GBP"),
+    ) {
+        (true, _, _) => Some("USD".to_string()),
+        (false, true, _) => Some("EUR".to_string()),
+        (false, false, true) => Some("GBP".to_string()),
+        (false, false, false) => None,
+    }
+}
+
+fn extract_metric_after_triggers(text: &str, triggers: &[&str]) -> Option<f64> {
+    let after = find_after_any_ci(text, triggers)?;
+    let num_token = after
+        .split_whitespace()
+        .find(|tok| tok.chars().any(|c| c.is_ascii_digit()))?;
+    parse_number(num_token)
+}
+
+fn extract_fiscal_year_from_text(text: &str) -> Option<String> {
+    match find_after_any_ci(text, &["fiscal year "]) {
+        Some(after) => {
+            let digits: String = after
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            match digits.len() == 4 {
+                true => return Some(format!("fiscal year {}", digits)),
+                false => {}
+            }
+        }
+        None => {}
+    }
+    text.split_whitespace().find_map(|tok| {
+        let clean = tok.trim_matches(|c: char| !c.is_ascii_alphanumeric());
+        let upper = clean.to_uppercase();
+        match upper.strip_prefix("FY") {
+            Some(rest) => match (rest.len() == 2 || rest.len() == 4)
+                && rest.chars().all(|c| c.is_ascii_digit())
+            {
+                true => Some(clean.to_string()),
+                false => None,
+            },
+            None => None,
+        }
+    })
+}
+
 /// Extract financial data from a document.
 pub fn extract_financial(doc: &Document) -> FinancialTemplate {
-    let mut currency = None;
+    let paragraphs = get_effective_paragraphs(doc);
+    let currency = doc
+        .text
+        .as_deref()
+        .and_then(detect_currency_in_str)
+        .or_else(|| {
+            paragraphs
+                .iter()
+                .find_map(|p| detect_currency_in_str(&p.text))
+        })
+        .or_else(|| {
+            doc.tables
+                .iter()
+                .flat_map(|t| t.rows.iter())
+                .flat_map(|r| r.iter())
+                .find_map(|cell| detect_currency_in_str(cell))
+        });
+
     let mut fiscal_year = None;
     let mut revenue = None;
     let mut net_income = None;
     let mut total_assets = None;
     let mut total_liabilities = None;
 
-    // Currency heuristics
-    if let Some(ref text) = doc.text {
-        if text.contains('$') || text.contains("USD") {
-            currency = Some("USD".to_string());
-        } else if text.contains('€') || text.contains("EUR") {
-            currency = Some("EUR".to_string());
-        } else if text.contains('£') || text.contains("GBP") {
-            currency = Some("GBP".to_string());
-        }
-    }
-    if currency.is_none() {
-        for p in get_effective_paragraphs(doc) {
-            if p.text.contains('$') {
-                currency = Some("USD".to_string());
-                break;
-            }
-        }
-    }
-    if currency.is_none() {
-        for table in &doc.tables {
-            for row in &table.rows {
-                for cell in row {
-                    if cell.contains('$') || cell.contains("USD") {
-                        currency = Some("USD".to_string());
-                        break;
-                    } else if cell.contains('€') || cell.contains("EUR") {
-                        currency = Some("EUR".to_string());
-                        break;
-                    } else if cell.contains('£') || cell.contains("GBP") {
-                        currency = Some("GBP".to_string());
-                        break;
-                    }
-                }
-                if currency.is_some() {
-                    break;
-                }
-            }
-            if currency.is_some() {
-                break;
-            }
-        }
-    }
-
     // Search tables first (highly structured)
     for table in &doc.tables {
         for row in &table.rows {
-            if row.len() < 2 {
-                continue;
-            }
-            let label = row[0].to_lowercase();
-            let val_str = &row[1];
+            match row.as_slice() {
+                [first, val_str, ..] => {
+                    let label = first.to_lowercase();
+                    let is_rev = label.contains("revenue")
+                        || label.contains("total sales")
+                        || label.contains("turnover");
+                    let is_net = label.contains("net income") || label.contains("net profit");
+                    let is_assets = label.contains("total assets")
+                        || (label.contains("assets") && !label.contains("liabilities"));
+                    let is_liab =
+                        label.contains("total liabilities") || label.contains("liabilities");
 
-            if label.contains("revenue")
-                || label.contains("total sales")
-                || label.contains("turnover")
-            {
-                if revenue.is_none() {
-                    revenue = parse_number(val_str);
+                    match (is_rev, is_net, is_assets, is_liab) {
+                        (true, _, _, _) => revenue = revenue.or_else(|| parse_number(val_str)),
+                        (false, true, _, _) => {
+                            net_income = net_income.or_else(|| parse_number(val_str))
+                        }
+                        (false, false, true, _) => {
+                            total_assets = total_assets.or_else(|| parse_number(val_str))
+                        }
+                        (false, false, false, true) => {
+                            total_liabilities =
+                                total_liabilities.or_else(|| parse_number(val_str))
+                        }
+                        _ => {}
+                    }
                 }
-            } else if label.contains("net income") || label.contains("net profit") {
-                if net_income.is_none() {
-                    net_income = parse_number(val_str);
-                }
-            } else if label.contains("total assets")
-                || (label.contains("assets") && !label.contains("liabilities"))
-            {
-                if total_assets.is_none() {
-                    total_assets = parse_number(val_str);
-                }
-            } else if (label.contains("total liabilities") || label.contains("liabilities"))
-                && total_liabilities.is_none()
-            {
-                total_liabilities = parse_number(val_str);
+                _ => {}
             }
         }
     }
 
-    // Fallback: regex search text
-    let re_rev =
-        Regex::new(r"(?i)(revenue|sales|turnover)[^\d\n.]{0,20}\$?\s*([\d,]+(?:\.\d+)?)").ok();
-    let re_net =
-        Regex::new(r"(?i)(net income|net profit)[^\d\n.]{0,20}\$?\s*([\d,]+(?:\.\d+)?)").ok();
-    let re_assets = Regex::new(r"(?i)(total assets)[^\d\n.]{0,20}\$?\s*([\d,]+(?:\.\d+)?)").ok();
-    let re_liab = Regex::new(r"(?i)(total liabilities)[^\d\n.]{0,20}\$?\s*([\d,]+(?:\.\d+)?)").ok();
-    let re_fy = Regex::new(r"(?i)\b(FY\d{4}|FY\s*\d{2}|fiscal year \d{4})\b").ok();
-
-    for p in get_effective_paragraphs(doc) {
+    // Fallback: deterministic text search
+    for p in paragraphs {
         let text = &p.text;
-
-        if fiscal_year.is_none() {
-            if let Some(ref re) = re_fy {
-                if let Some(cap) = re.captures(text) {
-                    fiscal_year = Some(cap.get(1).unwrap().as_str().to_string());
-                }
-            }
-        }
-        if revenue.is_none() {
-            if let Some(ref re) = re_rev {
-                if let Some(cap) = re.captures(text) {
-                    revenue = parse_number(cap.get(2).unwrap().as_str());
-                }
-            }
-        }
-        if net_income.is_none() {
-            if let Some(ref re) = re_net {
-                if let Some(cap) = re.captures(text) {
-                    net_income = parse_number(cap.get(2).unwrap().as_str());
-                }
-            }
-        }
-        if total_assets.is_none() {
-            if let Some(ref re) = re_assets {
-                if let Some(cap) = re.captures(text) {
-                    total_assets = parse_number(cap.get(2).unwrap().as_str());
-                }
-            }
-        }
-        if total_liabilities.is_none() {
-            if let Some(ref re) = re_liab {
-                if let Some(cap) = re.captures(text) {
-                    total_liabilities = parse_number(cap.get(2).unwrap().as_str());
-                }
-            }
-        }
+        fiscal_year = fiscal_year.or_else(|| extract_fiscal_year_from_text(text));
+        revenue = revenue
+            .or_else(|| extract_metric_after_triggers(text, &["revenue", "sales", "turnover"]));
+        net_income = net_income
+            .or_else(|| extract_metric_after_triggers(text, &["net income", "net profit"]));
+        total_assets =
+            total_assets.or_else(|| extract_metric_after_triggers(text, &["total assets"]));
+        total_liabilities = total_liabilities
+            .or_else(|| extract_metric_after_triggers(text, &["total liabilities"]));
     }
 
     FinancialTemplate {
@@ -322,25 +452,17 @@ pub fn extract_financial(doc: &Document) -> FinancialTemplate {
 pub fn extract_timeline(doc: &Document) -> TimelineTemplate {
     let mut events = Vec::new();
 
-    // Regex matching common date formats:
-    // 1. YYYY-MM-DD or YYYY/MM/DD
-    // 2. Month DD, YYYY
-    // 3. DD Month YYYY
-    let re_date = Regex::new(r"\b(\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2},?\s+\d{4}|\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{4})\b").unwrap();
-
     for p in get_effective_paragraphs(doc) {
         let text = &p.text;
-        if let Some(cap) = re_date.captures(text) {
-            let date_str = cap.get(1).unwrap().as_str().to_string();
-            // Take the paragraph text as description, minus the date if clean
-            events.push(TimelineEvent {
+        match find_date_in_text(text) {
+            Some(date_str) => events.push(TimelineEvent {
                 date: date_str,
                 description: text.trim().to_string(),
-            });
+            }),
+            None => {}
         }
     }
 
-    // Sort events by date string length or simple alphabetical sort as fallback
     events.sort_by(|a, b| a.date.cmp(&b.date));
 
     TimelineTemplate { events }

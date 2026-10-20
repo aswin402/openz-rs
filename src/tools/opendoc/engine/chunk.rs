@@ -28,6 +28,15 @@ pub fn estimate_tokens(text: &str) -> usize {
     text.len() / 4 + 1
 }
 
+fn join_paragraphs(paragraphs: &[Paragraph]) -> String {
+    let mut full_text = String::new();
+    for p in paragraphs {
+        full_text.push_str(&p.text);
+        full_text.push('\n');
+    }
+    full_text
+}
+
 /// Splits text recursively by character boundaries (paragraphs, sentences, words).
 pub fn recursive_split(
     text: &str,
@@ -36,13 +45,16 @@ pub fn recursive_split(
     heading: &str,
     chunks: &mut Vec<Chunk>,
 ) {
-    if estimate_tokens(text) <= max_tokens {
-        chunks.push(Chunk {
-            text: text.to_string(),
-            heading: heading.to_string(),
-            index: chunks.len(),
-        });
-        return;
+    match estimate_tokens(text) <= max_tokens {
+        true => {
+            chunks.push(Chunk {
+                text: text.to_string(),
+                heading: heading.to_string(),
+                index: chunks.len(),
+            });
+            return;
+        }
+        false => {}
     }
 
     // Try splitting by double newline, newline, sentences, then spaces.
@@ -51,68 +63,78 @@ pub fn recursive_split(
 
     for sep in &split_seps {
         let parts: Vec<&str> = text.split(sep).collect();
-        if parts.len() > 1 {
-            let mut current_chunk = String::new();
-            let mut current_tokens = 0;
+        match parts.len() > 1 {
+            true => {
+                let mut current_chunk = String::new();
+                let mut current_tokens = 0;
 
-            for part in parts {
-                let part_text = if current_chunk.is_empty() {
-                    part.to_string()
-                } else {
-                    format!("{}{}", sep, part)
-                };
+                for part in parts {
+                    let part_text = match current_chunk.is_empty() {
+                        true => part.to_string(),
+                        false => format!("{}{}", sep, part),
+                    };
 
-                let part_tokens = estimate_tokens(&part_text);
-                if current_tokens + part_tokens > max_tokens && !current_chunk.is_empty() {
-                    chunks.push(Chunk {
-                        text: current_chunk.clone(),
+                    let part_tokens = estimate_tokens(&part_text);
+                    match current_tokens + part_tokens > max_tokens && !current_chunk.is_empty() {
+                        true => {
+                            chunks.push(Chunk {
+                                text: current_chunk.clone(),
+                                heading: heading.to_string(),
+                                index: chunks.len(),
+                            });
+
+                            // Keep overlap text
+                            let words: Vec<&str> = current_chunk.split_whitespace().collect();
+                            let overlap_count = words.len().min(overlap);
+                            current_chunk = words[words.len() - overlap_count..].join(" ");
+                            current_tokens = estimate_tokens(&current_chunk);
+                        }
+                        false => {}
+                    }
+
+                    match current_chunk.is_empty() {
+                        true => current_chunk.push_str(part),
+                        false => {
+                            current_chunk.push_str(sep);
+                            current_chunk.push_str(part);
+                        }
+                    }
+                    current_tokens += part_tokens;
+                }
+
+                match current_chunk.is_empty() {
+                    false => chunks.push(Chunk {
+                        text: current_chunk,
                         heading: heading.to_string(),
                         index: chunks.len(),
-                    });
-
-                    // Keep overlap text
-                    let words: Vec<&str> = current_chunk.split_whitespace().collect();
-                    let overlap_count = words.len().min(overlap);
-                    current_chunk = words[words.len() - overlap_count..].join(" ");
-                    current_tokens = estimate_tokens(&current_chunk);
+                    }),
+                    true => {}
                 }
-
-                if current_chunk.is_empty() {
-                    current_chunk.push_str(part);
-                } else {
-                    current_chunk.push_str(sep);
-                    current_chunk.push_str(part);
-                }
-                current_tokens += part_tokens;
+                split_done = true;
+                break;
             }
-
-            if !current_chunk.is_empty() {
-                chunks.push(Chunk {
-                    text: current_chunk,
-                    heading: heading.to_string(),
-                    index: chunks.len(),
-                });
-            }
-            split_done = true;
-            break;
+            false => {}
         }
     }
 
-    // Fallback: if we can't split by separators, hard split by character slices
-    if !split_done {
-        let char_limit = max_tokens * 4;
-        let chars = text.chars().collect::<Vec<char>>();
-        let mut pos = 0;
-        while pos < chars.len() {
-            let end = (pos + char_limit).min(chars.len());
-            let chunk_str: String = chars[pos..end].iter().collect();
-            chunks.push(Chunk {
-                text: chunk_str,
-                heading: heading.to_string(),
-                index: chunks.len(),
-            });
-            pos += char_limit - (overlap * 4).min(char_limit - 4).max(4);
+    // Fallback: when we cannot split by separators, hard split by character slices
+    match split_done {
+        false => {
+            let char_limit = max_tokens * 4;
+            let chars = text.chars().collect::<Vec<char>>();
+            let mut pos = 0;
+            while pos < chars.len() {
+                let end = (pos + char_limit).min(chars.len());
+                let chunk_str: String = chars[pos..end].iter().collect();
+                chunks.push(Chunk {
+                    text: chunk_str,
+                    heading: heading.to_string(),
+                    index: chunks.len(),
+                });
+                pos += char_limit - (overlap * 4).min(char_limit - 4).max(4);
+            }
         }
+        true => {}
     }
 }
 
@@ -135,36 +157,41 @@ pub fn chunk_document(
             let mut i = 0;
             while i < doc.paragraphs.len() {
                 let p = &doc.paragraphs[i];
-                if p.is_heading {
-                    current_heading = p.text.clone();
+                match p.is_heading {
+                    true => current_heading = p.text.clone(),
+                    false => {}
                 }
 
                 let p_tokens = estimate_tokens(&p.text) + 1;
-                if current_tokens + p_tokens > max_tokens && !current_chunk.is_empty() {
-                    chunks.push(Chunk {
-                        text: current_chunk.trim_end().to_string(),
-                        heading: current_heading.clone(),
-                        index: chunks.len(),
-                    });
+                match current_tokens + p_tokens > max_tokens && !current_chunk.is_empty() {
+                    true => {
+                        chunks.push(Chunk {
+                            text: current_chunk.trim_end().to_string(),
+                            heading: current_heading.clone(),
+                            index: chunks.len(),
+                        });
 
-                    // Backtrack to implement paragraph overlap
-                    if overlap > 0 && !p_indices.is_empty() {
-                        let mut back_tokens = 0;
-                        let mut back_idx = p_indices.len();
-                        while back_idx > 0 && back_tokens < overlap {
-                            back_idx -= 1;
-                            let p_back: &Paragraph = &doc.paragraphs[p_indices[back_idx]];
-                            back_tokens += estimate_tokens(&p_back.text) + 1;
+                        // Backtrack to implement paragraph overlap
+                        match overlap > 0 && !p_indices.is_empty() {
+                            true => {
+                                let mut back_tokens = 0;
+                                let mut back_idx = p_indices.len();
+                                while back_idx > 0 && back_tokens < overlap {
+                                    back_idx -= 1;
+                                    let p_back: &Paragraph = &doc.paragraphs[p_indices[back_idx]];
+                                    back_tokens += estimate_tokens(&p_back.text) + 1;
+                                }
+                                i = p_indices[back_idx] + 1;
+                            }
+                            false => i += 1,
                         }
-                        i = p_indices[back_idx] + 1;
-                    } else {
-                        i += 1;
-                    }
 
-                    current_chunk.clear();
-                    current_tokens = 0;
-                    p_indices.clear();
-                    continue;
+                        current_chunk.clear();
+                        current_tokens = 0;
+                        p_indices.clear();
+                        continue;
+                    }
+                    false => {}
                 }
 
                 current_chunk.push_str(&p.text);
@@ -174,12 +201,13 @@ pub fn chunk_document(
                 i += 1;
             }
 
-            if !current_chunk.is_empty() {
-                chunks.push(Chunk {
+            match current_chunk.is_empty() {
+                false => chunks.push(Chunk {
                     text: current_chunk.trim_end().to_string(),
                     heading: current_heading,
                     index: chunks.len(),
-                });
+                }),
+                true => {}
             }
         }
         ChunkingStrategy::Heading => {
@@ -187,64 +215,61 @@ pub fn chunk_document(
             let mut current_heading = "Header".to_string();
 
             for p in &doc.paragraphs {
-                if p.is_heading {
-                    if !current_section.is_empty() {
-                        recursive_split(
-                            &current_section,
-                            max_tokens,
-                            overlap,
-                            &current_heading,
-                            &mut chunks,
-                        );
-                        current_section.clear();
+                match p.is_heading {
+                    true => {
+                        match current_section.is_empty() {
+                            false => {
+                                recursive_split(
+                                    &current_section,
+                                    max_tokens,
+                                    overlap,
+                                    &current_heading,
+                                    &mut chunks,
+                                );
+                                current_section.clear();
+                            }
+                            true => {}
+                        }
+                        current_heading = p.text.clone();
                     }
-                    current_heading = p.text.clone();
+                    false => {}
                 }
                 current_section.push_str(&p.text);
                 current_section.push('\n');
             }
 
-            if !current_section.is_empty() {
-                recursive_split(
+            match current_section.is_empty() {
+                false => recursive_split(
                     &current_section,
                     max_tokens,
                     overlap,
                     &current_heading,
                     &mut chunks,
-                );
+                ),
+                true => {}
             }
         }
         ChunkingStrategy::Recursive => {
-            let mut full_text = String::new();
-            for p in &doc.paragraphs {
-                full_text.push_str(&p.text);
-                full_text.push('\n');
-            }
+            let full_text = join_paragraphs(&doc.paragraphs);
             recursive_split(&full_text, max_tokens, overlap, "Document", &mut chunks);
         }
-        ChunkingStrategy::Page => {
-            if !doc.sections.is_empty() {
+        ChunkingStrategy::Page => match doc.sections.is_empty() {
+            false => {
                 for s in &doc.sections {
-                    let mut section_text = String::new();
-                    section_text.push_str(&format!("Section: {}\n", s.title));
-                    for p in &s.content {
-                        section_text.push_str(&p.text);
-                        section_text.push('\n');
-                    }
-                    if section_text.trim().is_empty() {
-                        continue;
+                    let mut section_text = format!("Section: {}\n", s.title);
+                    section_text.push_str(&join_paragraphs(&s.content));
+                    match section_text.trim().is_empty() {
+                        true => continue,
+                        false => {}
                     }
                     recursive_split(&section_text, max_tokens, overlap, &s.title, &mut chunks);
                 }
-            } else {
-                let mut full_text = String::new();
-                for p in &doc.paragraphs {
-                    full_text.push_str(&p.text);
-                    full_text.push('\n');
-                }
+            }
+            true => {
+                let full_text = join_paragraphs(&doc.paragraphs);
                 recursive_split(&full_text, max_tokens, overlap, "Page", &mut chunks);
             }
-        }
+        },
     }
 
     chunks

@@ -1,7 +1,18 @@
 [package]
 name = "openz"
-version = "0.0.274"
+version = "0.0.275"
 edition = "2021"
+
+[lib]
+name = "openz"
+path = "src/lib.rs"
+bench = false
+
+[[bin]]
+name = "openz"
+path = "src/main.rs"
+test = false
+bench = false
 
 
 [workspace]
@@ -142,7 +153,7 @@ debug = false
 [profile.release-balanced]
 inherits = "release"
 opt-level = 2           # Faster to compile than full release while still optimized for daily local updates
-codegen-units = 4       # More parallel codegen than full release; moderate RAM use with -j 2
+codegen-units = 2       # Capped at 2 LLVM codegen threads to prevent laptop CPU/RAM spikes during local updates
 lto = false             # Avoid ThinLTO linker memory/time spikes during local updates
 strip = true
 debug = false
@@ -158,14 +169,14 @@ debug = false
 [profile.dev]
 opt-level = 0
 debug = 0               # Disable debug symbols to eliminate multi-gigabyte linker RAM exhaustion
-codegen-units = 16      # Split into 16 smaller units so LLVM does not hold all crates in one 5GB module
+codegen-units = 2       # Cap LLVM codegen threads to 2 per rustc invocation to prevent laptop CPU/RAM spikes
 incremental = false     # Disable incremental compilation bloat to stop rustc from loading gigabytes of graph into RAM
 strip = true            # Strip symbols to eliminate massive linker RAM consumption
 
 [profile.test]
 opt-level = 0
 debug = 0               # Disable debug symbols to eliminate test linker memory spikes
-codegen-units = 16      # Split test compilation into smaller units to prevent OOM
+codegen-units = 2       # Cap LLVM codegen threads to 2 per test compilation to prevent laptop lag/OOM
 incremental = false     # Disable incremental compilation bloat to stop test memory spikes
 strip = true            # Strip symbols from test binaries to eliminate linker RAM exhaustion
 

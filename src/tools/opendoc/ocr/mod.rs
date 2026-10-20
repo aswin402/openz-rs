@@ -6,6 +6,40 @@ mod ocr_impl {
     use std::path::Path;
     use std::process::Command;
 
+    fn run_tesseract_to_string(
+        input_path: &Path,
+        out_base: &Path,
+        txt_path: &Path,
+        lang: &str,
+        temp_dir: &Path,
+        err_prefix: &str,
+    ) -> Result<String, String> {
+        let output = Command::new("tesseract")
+            .arg(input_path)
+            .arg(out_base)
+            .arg("-l")
+            .arg(lang)
+            .output();
+
+        match output {
+            Ok(out) => match out.status.success() {
+                true => Ok(fs::read_to_string(txt_path).unwrap_or_default()),
+                false => {
+                    let _ = fs::remove_dir_all(temp_dir);
+                    Err(format!(
+                        "{}: {}",
+                        err_prefix,
+                        String::from_utf8_lossy(&out.stderr)
+                    ))
+                }
+            },
+            Err(e) => {
+                let _ = fs::remove_dir_all(temp_dir);
+                Err(format!("Tesseract execution error: {}", e))
+            }
+        }
+    }
+
     pub fn is_ocr_available() -> bool {
         Command::new("which")
             .arg("tesseract")
@@ -20,32 +54,36 @@ mod ocr_impl {
             Err(_) => return vec!["eng".to_string()],
         };
 
-        let mut langs = Vec::new();
-        let mut lines = output.lines();
-        let _ = lines.next(); // Skip header
-        for line in lines {
-            let trimmed = line.trim();
-            if !trimmed.is_empty() {
-                langs.push(trimmed.to_string());
-            }
-        }
-        if langs.is_empty() {
-            langs.push("eng".to_string());
+        let mut langs: Vec<String> = output
+            .lines()
+            .skip(1)
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+            .collect();
+        match langs.is_empty() {
+            true => langs.push("eng".to_string()),
+            false => {}
         }
         langs
     }
 
     pub fn ocr_document(file_path: &str, language: Option<&str>) -> Result<Document, String> {
-        if !is_ocr_available() {
-            return Err(
-                "tesseract CLI not found. Please install tesseract-ocr on your system.".to_string(),
-            );
+        match is_ocr_available() {
+            false => {
+                return Err(
+                    "tesseract CLI not found. Please install tesseract-ocr on your system."
+                        .to_string(),
+                );
+            }
+            true => {}
         }
 
         let lang = language.unwrap_or("eng");
         let path = Path::new(file_path);
-        if !path.exists() {
-            return Err(format!("File not found: {}", file_path));
+        match path.exists() {
+            false => return Err(format!("File not found: {}", file_path)),
+            true => {}
         }
 
         let ext = path
@@ -65,135 +103,118 @@ mod ocr_impl {
                 .unwrap()
                 .as_nanos()
         ));
-        if let Err(e) = fs::create_dir_all(&temp_dir) {
-            return Err(format!("Failed to create temp directory: {}", e));
-        }
+        fs::create_dir_all(&temp_dir)
+            .map_err(|e| format!("Failed to create temp directory: {}", e))?;
 
         let mut extracted_text = String::new();
 
-        if ext == "pdf" {
-            let pdftoppm_ok = Command::new("which")
-                .arg("pdftoppm")
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false);
+        match ext.as_str() {
+            "pdf" => {
+                let pdftoppm_ok = Command::new("which")
+                    .arg("pdftoppm")
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false);
 
-            if !pdftoppm_ok {
-                let _ = fs::remove_dir_all(&temp_dir);
-                return Err("pdftoppm (poppler-utils) not found. Required for PDF OCR.".to_string());
-            }
-
-            let img_prefix = temp_dir.join("page");
-            let output = Command::new("pdftoppm")
-                .arg("-png")
-                .arg("-r")
-                .arg("150")
-                .arg(file_path)
-                .arg(&img_prefix)
-                .output();
-
-            match output {
-                Ok(out) if out.status.success() => {}
-                Ok(out) => {
-                    let _ = fs::remove_dir_all(&temp_dir);
-                    return Err(format!(
-                        "pdftoppm failed: {}",
-                        String::from_utf8_lossy(&out.stderr)
-                    ));
-                }
-                Err(e) => {
-                    let _ = fs::remove_dir_all(&temp_dir);
-                    return Err(format!("pdftoppm execution error: {}", e));
-                }
-            }
-
-            let mut entries = Vec::new();
-            if let Ok(read_dir) = fs::read_dir(&temp_dir) {
-                for entry in read_dir.flatten() {
-                    let p = entry.path();
-                    if p.is_file() {
-                        if let Some(fname) = p.file_name().and_then(|f| f.to_str()) {
-                            if fname.starts_with("page-") && fname.ends_with(".png") {
-                                entries.push(p);
-                            }
-                        }
+                match pdftoppm_ok {
+                    false => {
+                        let _ = fs::remove_dir_all(&temp_dir);
+                        return Err(
+                            "pdftoppm (poppler-utils) not found. Required for PDF OCR.".to_string(),
+                        );
                     }
+                    true => {}
                 }
-            }
 
-            entries.sort_by_key(|p| {
-                let fname = p.file_name().and_then(|f| f.to_str()).unwrap_or("");
-                let num_str: String = fname.chars().filter(|c| c.is_ascii_digit()).collect();
-                num_str.parse::<u32>().unwrap_or(0)
-            });
-
-            if entries.is_empty() {
-                let _ = fs::remove_dir_all(&temp_dir);
-                return Err("No pages were rendered from the PDF.".to_string());
-            }
-
-            for (idx, page_path) in entries.iter().enumerate() {
-                let out_base = temp_dir.join(format!("text-{}", idx));
-                let output = Command::new("tesseract")
-                    .arg(page_path)
-                    .arg(&out_base)
-                    .arg("-l")
-                    .arg(lang)
+                let img_prefix = temp_dir.join("page");
+                let output = Command::new("pdftoppm")
+                    .arg("-png")
+                    .arg("-r")
+                    .arg("150")
+                    .arg(file_path)
+                    .arg(&img_prefix)
                     .output();
 
                 match output {
-                    Ok(out) if out.status.success() => {
-                        let txt_path = temp_dir.join(format!("text-{}.txt", idx));
-                        if let Ok(content) = fs::read_to_string(&txt_path) {
-                            extracted_text.push_str(&content);
-                            extracted_text.push_str("\n\n--- Page Break ---\n\n");
+                    Ok(out) => match out.status.success() {
+                        true => {}
+                        false => {
+                            let _ = fs::remove_dir_all(&temp_dir);
+                            return Err(format!(
+                                "pdftoppm failed: {}",
+                                String::from_utf8_lossy(&out.stderr)
+                            ));
                         }
-                    }
-                    Ok(out) => {
-                        let _ = fs::remove_dir_all(&temp_dir);
-                        return Err(format!(
-                            "Tesseract failed on page {}: {}",
-                            idx + 1,
-                            String::from_utf8_lossy(&out.stderr)
-                        ));
-                    }
+                    },
                     Err(e) => {
                         let _ = fs::remove_dir_all(&temp_dir);
-                        return Err(format!("Tesseract execution error: {}", e));
+                        return Err(format!("pdftoppm execution error: {}", e));
                     }
                 }
-            }
-        } else if ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "bmp" || ext == "tiff" {
-            let out_base = temp_dir.join("text");
-            let output = Command::new("tesseract")
-                .arg(file_path)
-                .arg(&out_base)
-                .arg("-l")
-                .arg(lang)
-                .output();
 
-            match output {
-                Ok(out) if out.status.success() => {
-                    let txt_path = temp_dir.join("text.txt");
-                    if let Ok(content) = fs::read_to_string(&txt_path) {
-                        extracted_text.push_str(&content);
+                let mut entries: Vec<_> = match fs::read_dir(&temp_dir) {
+                    Ok(read_dir) => read_dir
+                        .flatten()
+                        .map(|entry| entry.path())
+                        .filter(|p| {
+                            p.is_file()
+                                && p.file_name()
+                                    .and_then(|f| f.to_str())
+                                    .map(|fname| {
+                                        fname.starts_with("page-") && fname.ends_with(".png")
+                                    })
+                                    .unwrap_or(false)
+                        })
+                        .collect(),
+                    Err(_) => Vec::new(),
+                };
+
+                entries.sort_by_key(|p| {
+                    let fname = p.file_name().and_then(|f| f.to_str()).unwrap_or("");
+                    let num_str: String = fname.chars().filter(|c| c.is_ascii_digit()).collect();
+                    num_str.parse::<u32>().unwrap_or(0)
+                });
+
+                match entries.is_empty() {
+                    true => {
+                        let _ = fs::remove_dir_all(&temp_dir);
+                        return Err("No pages were rendered from the PDF.".to_string());
                     }
+                    false => {}
                 }
-                Ok(out) => {
-                    let _ = fs::remove_dir_all(&temp_dir);
-                    return Err(format!(
-                        "Tesseract failed: {}",
-                        String::from_utf8_lossy(&out.stderr)
-                    ));
-                }
-                Err(e) => {
-                    let _ = fs::remove_dir_all(&temp_dir);
-                    return Err(format!("Tesseract execution error: {}", e));
+
+                for (idx, page_path) in entries.iter().enumerate() {
+                    let out_base = temp_dir.join(format!("text-{}", idx));
+                    let txt_path = temp_dir.join(format!("text-{}.txt", idx));
+                    let content = run_tesseract_to_string(
+                        page_path,
+                        &out_base,
+                        &txt_path,
+                        lang,
+                        &temp_dir,
+                        &format!("Tesseract failed on page {}", idx + 1),
+                    )?;
+                    extracted_text.push_str(&content);
+                    extracted_text.push_str("\n\n--- Page Break ---\n\n");
                 }
             }
-        } else {
-            let _ = fs::remove_dir_all(&temp_dir);
-            return Err(format!("Unsupported file format for OCR: {}. Only PDF and images (PNG, JPG, BMP, TIFF) are supported.", ext));
+            "png" | "jpg" | "jpeg" | "bmp" | "tiff" => {
+                let out_base = temp_dir.join("text");
+                let txt_path = temp_dir.join("text.txt");
+                let content = run_tesseract_to_string(
+                    path,
+                    &out_base,
+                    &txt_path,
+                    lang,
+                    &temp_dir,
+                    "Tesseract failed",
+                )?;
+                extracted_text.push_str(&content);
+            }
+            _ => {
+                let _ = fs::remove_dir_all(&temp_dir);
+                return Err(format!("Unsupported file format for OCR: {}. Only PDF and images (PNG, JPG, BMP, TIFF) are supported.", ext));
+            }
         }
 
         let _ = fs::remove_dir_all(&temp_dir);
@@ -201,15 +222,16 @@ mod ocr_impl {
         let mut text_buf = String::new();
         for line in extracted_text.lines() {
             let trimmed = line.trim();
-            if !trimmed.is_empty() {
-                doc.paragraphs.push(Paragraph::new(trimmed));
-                text_buf.push_str(trimmed);
-                text_buf.push('\n');
+            match trimmed.is_empty() {
+                false => {
+                    doc.paragraphs.push(Paragraph::new(trimmed));
+                    text_buf.push_str(trimmed);
+                    text_buf.push('\n');
+                }
+                true => {}
             }
         }
-        if !text_buf.is_empty() {
-            doc.text = Some(text_buf);
-        }
+        doc.text = (!text_buf.is_empty()).then_some(text_buf);
 
         Ok(doc)
     }
@@ -264,8 +286,9 @@ mod tests {
     #[cfg(feature = "ocr")]
     fn test_ocr_image_lifecycle() {
         use super::*;
-        if !is_ocr_available() {
-            return;
+        match is_ocr_available() {
+            false => return,
+            true => {}
         }
 
         let dir = std::env::temp_dir();
@@ -294,8 +317,9 @@ mod tests {
         std::fs::write(p, &bmp_data).unwrap();
 
         let res = ocr_document(p, None);
-        if let Err(ref e) = res {
-            println!("OCR TEST ERROR: {}", e);
+        match &res {
+            Err(e) => println!("OCR TEST ERROR: {}", e),
+            Ok(_) => {}
         }
         assert!(res.is_ok());
 

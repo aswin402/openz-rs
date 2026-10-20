@@ -25,29 +25,26 @@ pub fn to_ir(file_path: &str) -> Result<Document, String> {
             .map(|row| row.iter().map(cell_to_string).collect())
             .collect();
 
-        if rows.is_empty() {
-            continue;
+        match rows.split_first() {
+            None => {}
+            Some((first_row, rest_rows)) => {
+                let table = Table {
+                    headers: first_row.clone(),
+                    rows: rest_rows.to_vec(),
+                    caption: Some(sheet_name.clone()),
+                };
+
+                let section = Section {
+                    title: sheet_name.clone(),
+                    level: 0,
+                    index: doc.tables.len(),
+                    content: vec![],
+                };
+
+                doc.tables.push(table);
+                doc.sections.push(section);
+            }
         }
-
-        // First row as headers
-        let headers = rows[0].clone();
-        let data_rows = rows[1..].to_vec();
-
-        let table = Table {
-            headers,
-            rows: data_rows,
-            caption: Some(sheet_name.clone()),
-        };
-
-        let section = Section {
-            title: sheet_name.clone(),
-            level: 0,
-            index: doc.tables.len(),
-            content: vec![],
-        };
-
-        doc.tables.push(table);
-        doc.sections.push(section);
     }
 
     // Build a text representation for the full document
@@ -55,21 +52,28 @@ pub fn to_ir(file_path: &str) -> Result<Document, String> {
     for (i, sheet_name) in sheet_names.iter().enumerate() {
         text_parts.push(format!("# Sheet: {sheet_name}"));
 
-        if let Some(table) = doc.tables.get(i) {
-            // Header row
-            if !table.headers.is_empty() {
-                let rendered: Vec<&str> = table.headers.iter().map(|s| s.as_str()).collect();
-                text_parts.push(format!("  {} |", rendered.join(" | ")));
-                text_parts.push(format!(
-                    "  {} |",
-                    vec!["---"; table.headers.len()].join(" | ")
-                ));
+        match doc.tables.get(i) {
+            Some(table) => {
+                // Header row
+                match table.headers.is_empty() {
+                    false => {
+                        let rendered: Vec<&str> =
+                            table.headers.iter().map(|s| s.as_str()).collect();
+                        text_parts.push(format!("  {} |", rendered.join(" | ")));
+                        text_parts.push(format!(
+                            "  {} |",
+                            vec!["---"; table.headers.len()].join(" | ")
+                        ));
+                    }
+                    true => {}
+                }
+                // Data rows
+                for row in &table.rows {
+                    let rendered: Vec<&str> = row.iter().map(|s| s.as_str()).collect();
+                    text_parts.push(format!("  {} |", rendered.join(" | ")));
+                }
             }
-            // Data rows
-            for row in &table.rows {
-                let rendered: Vec<&str> = row.iter().map(|s| s.as_str()).collect();
-                text_parts.push(format!("  {} |", rendered.join(" | ")));
-            }
+            None => {}
         }
         text_parts.push(String::new());
     }
@@ -85,13 +89,10 @@ pub fn to_ir(file_path: &str) -> Result<Document, String> {
 fn cell_to_string(cell: &Data) -> String {
     match cell {
         Data::String(s) => s.clone(),
-        Data::Float(f) => {
-            if f.fract() == 0.0 {
-                format!("{}", *f as i64)
-            } else {
-                f.to_string()
-            }
-        }
+        Data::Float(f) => match f.fract() == 0.0 {
+            true => format!("{}", *f as i64),
+            false => f.to_string(),
+        },
         Data::Int(i) => i.to_string(),
         Data::Bool(b) => b.to_string(),
         Data::DateTime(_) => cell.to_string(),
@@ -99,6 +100,25 @@ fn cell_to_string(cell: &Data) -> String {
         Data::DurationIso(_) => cell.to_string(),
         Data::Error(e) => format!("#ERROR:{e}"),
         _ => String::new(),
+    }
+}
+
+fn write_cell_typed(
+    sheet: &mut rust_xlsxwriter::Worksheet,
+    row: u32,
+    col: u16,
+    cell: &str,
+    support_formula_and_bool: bool,
+) -> Result<(), rust_xlsxwriter::XlsxError> {
+    match (support_formula_and_bool, cell.starts_with('=')) {
+        (true, true) => sheet.write_formula(row, col, cell).map(|_| ()),
+        _ => match cell.parse::<f64>() {
+            Ok(num) => sheet.write_number(row, col, num).map(|_| ()),
+            Err(_) => match (support_formula_and_bool, cell.parse::<bool>()) {
+                (true, Ok(b)) => sheet.write_boolean(row, col, b).map(|_| ()),
+                _ => sheet.write_string(row, col, cell).map(|_| ()),
+            },
+        },
     }
 }
 
@@ -110,8 +130,11 @@ pub fn create_xlsx(file_path: &str, sheets: &[XlsxSheet]) -> String {
 
     for sheet_input in sheets {
         let sheet = workbook.add_worksheet();
-        if let Some(name) = &sheet_input.name {
-            sheet.set_name(name).unwrap();
+        match &sheet_input.name {
+            Some(name) => {
+                sheet.set_name(name).unwrap();
+            }
+            None => {}
         }
 
         // Write headers
@@ -122,16 +145,7 @@ pub fn create_xlsx(file_path: &str, sheets: &[XlsxSheet]) -> String {
         // Write data rows
         for (row_idx, row) in sheet_input.data.iter().enumerate() {
             for (col_idx, cell) in row.iter().enumerate() {
-                // Try number first, fall back to string
-                if let Ok(num) = cell.parse::<f64>() {
-                    sheet
-                        .write_number(row_idx as u32 + 1, col_idx as u16, num)
-                        .unwrap();
-                } else {
-                    sheet
-                        .write_string(row_idx as u32 + 1, col_idx as u16, cell)
-                        .unwrap();
-                }
+                write_cell_typed(sheet, row_idx as u32 + 1, col_idx as u16, cell, false).unwrap();
             }
         }
     }
@@ -154,53 +168,53 @@ pub fn from_ir(doc: &crate::tools::opendoc::ir::Document, file_path: &str) -> Re
 
     let mut workbook = Workbook::new();
 
-    if !doc.tables.is_empty() {
-        for (t_idx, table) in doc.tables.iter().enumerate() {
-            let sheet_name = table
-                .caption
-                .clone()
-                .unwrap_or_else(|| format!("Sheet{}", t_idx + 1));
-            let sheet = workbook.add_worksheet();
-            sheet.set_name(&sheet_name).map_err(|e| e.to_string())?;
+    match (!doc.tables.is_empty(), !doc.sections.is_empty()) {
+        (true, _) => {
+            for (t_idx, table) in doc.tables.iter().enumerate() {
+                let sheet_name = table
+                    .caption
+                    .clone()
+                    .unwrap_or_else(|| format!("Sheet{}", t_idx + 1));
+                let sheet = workbook.add_worksheet();
+                sheet.set_name(&sheet_name).map_err(|e| e.to_string())?;
 
-            // Headers
-            for (col, header) in table.headers.iter().enumerate() {
-                sheet
-                    .write_string(0, col as u16, header)
-                    .map_err(|e| e.to_string())?;
-            }
+                // Headers
+                for (col, header) in table.headers.iter().enumerate() {
+                    sheet
+                        .write_string(0, col as u16, header)
+                        .map_err(|e| e.to_string())?;
+                }
 
-            // Data rows
-            for (row_idx, row) in table.rows.iter().enumerate() {
-                for (col_idx, cell) in row.iter().enumerate() {
-                    if let Ok(num) = cell.parse::<f64>() {
-                        sheet
-                            .write_number(row_idx as u32 + 1, col_idx as u16, num)
-                            .map_err(|e| e.to_string())?;
-                    } else {
-                        sheet
-                            .write_string(row_idx as u32 + 1, col_idx as u16, cell)
+                // Data rows
+                for (row_idx, row) in table.rows.iter().enumerate() {
+                    for (col_idx, cell) in row.iter().enumerate() {
+                        write_cell_typed(sheet, row_idx as u32 + 1, col_idx as u16, cell, false)
                             .map_err(|e| e.to_string())?;
                     }
                 }
             }
         }
-    } else if !doc.sections.is_empty() {
-        for section in doc.sections.iter() {
-            let sheet = workbook.add_worksheet();
-            sheet.set_name(&section.title).map_err(|e| e.to_string())?;
-            sheet
-                .write_string(0, 0, &section.title)
-                .map_err(|e| e.to_string())?;
-        }
-    } else {
-        let sheet = workbook.add_worksheet();
-        sheet.set_name("Sheet1").map_err(|e| e.to_string())?;
-        if let Some(ref text) = doc.text {
-            for (i, line) in text.lines().enumerate() {
+        (false, true) => {
+            for section in doc.sections.iter() {
+                let sheet = workbook.add_worksheet();
+                sheet.set_name(&section.title).map_err(|e| e.to_string())?;
                 sheet
-                    .write_string(i as u32, 0, line)
+                    .write_string(0, 0, &section.title)
                     .map_err(|e| e.to_string())?;
+            }
+        }
+        (false, false) => {
+            let sheet = workbook.add_worksheet();
+            sheet.set_name("Sheet1").map_err(|e| e.to_string())?;
+            match doc.text {
+                Some(ref text) => {
+                    for (i, line) in text.lines().enumerate() {
+                        sheet
+                            .write_string(i as u32, 0, line)
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
+                None => {}
             }
         }
     }
@@ -257,8 +271,11 @@ pub fn edit_xlsx(request: &XlsxEditRequest) -> Result<String, String> {
 
         for (r, row) in grid.iter_mut().enumerate().take(row_count) {
             for (c, cell) in row.iter_mut().enumerate().take(col_count) {
-                if let Some(val) = range.get_value((r as u32, c as u32)) {
-                    *cell = cell_to_string(val);
+                match range.get_value((r as u32, c as u32)) {
+                    Some(val) => {
+                        *cell = cell_to_string(val);
+                    }
+                    None => {}
                 }
             }
         }
@@ -269,49 +286,67 @@ pub fn edit_xlsx(request: &XlsxEditRequest) -> Result<String, String> {
     drop(workbook);
 
     // 4. Apply any added sheets
-    if let Some(ref new_sheets) = request.add_sheets {
-        for name in new_sheets {
-            if !sheets_data.iter().any(|(s, _)| s == name) {
-                sheets_data.push((name.clone(), vec![vec![String::new(); 1]; 1]));
+    match request.add_sheets {
+        Some(ref new_sheets) => {
+            for name in new_sheets {
+                match sheets_data.iter().any(|(s, _)| s == name) {
+                    false => {
+                        sheets_data.push((name.clone(), vec![vec![String::new(); 1]; 1]));
+                    }
+                    true => {}
+                }
             }
         }
+        None => {}
     }
 
     // 5. Apply cell updates
-    if let Some(ref updates) = request.cell_updates {
-        for update in updates {
-            // Find sheet or create it if not exists
-            let sheet_idx = match sheets_data
-                .iter()
-                .position(|(s, _)| s == &update.sheet_name)
-            {
-                Some(idx) => idx,
-                None => {
-                    sheets_data.push((update.sheet_name.clone(), vec![vec![String::new(); 1]; 1]));
-                    sheets_data.len() - 1
+    match request.cell_updates {
+        Some(ref updates) => {
+            for update in updates {
+                // Find sheet or create it if not exists
+                let sheet_idx = match sheets_data
+                    .iter()
+                    .position(|(s, _)| s == &update.sheet_name)
+                {
+                    Some(idx) => idx,
+                    None => {
+                        sheets_data.push((
+                            update.sheet_name.clone(),
+                            vec![vec![String::new(); 1]; 1],
+                        ));
+                        sheets_data.len() - 1
+                    }
+                };
+
+                let grid = &mut sheets_data[sheet_idx].1;
+
+                // Resize grid if row or col is out of bounds
+                let target_rows = (update.row + 1) as usize;
+                let target_cols = (update.col + 1) as usize;
+
+                match target_rows > grid.len() {
+                    true => {
+                        let current_cols = grid.first().map(|r| r.len()).unwrap_or(1);
+                        grid.resize(target_rows, vec![String::new(); current_cols]);
+                    }
+                    false => {}
                 }
-            };
 
-            let grid = &mut sheets_data[sheet_idx].1;
-
-            // Resize grid if row or col is out of bounds
-            let target_rows = (update.row + 1) as usize;
-            let target_cols = (update.col + 1) as usize;
-
-            if target_rows > grid.len() {
-                let current_cols = if grid.is_empty() { 1 } else { grid[0].len() };
-                grid.resize(target_rows, vec![String::new(); current_cols]);
-            }
-
-            let current_cols = grid[0].len();
-            if target_cols > current_cols {
-                for r in grid.iter_mut() {
-                    r.resize(target_cols, String::new());
+                let current_cols = grid[0].len();
+                match target_cols > current_cols {
+                    true => {
+                        for r in grid.iter_mut() {
+                            r.resize(target_cols, String::new());
+                        }
+                    }
+                    false => {}
                 }
-            }
 
-            grid[update.row as usize][update.col as usize] = update.value.clone();
+                grid[update.row as usize][update.col as usize] = update.value.clone();
+            }
         }
+        None => {}
     }
 
     // 6. Save/Write everything back using rust_xlsxwriter
@@ -322,19 +357,11 @@ pub fn edit_xlsx(request: &XlsxEditRequest) -> Result<String, String> {
 
         for (r, row_vec) in grid.iter().enumerate() {
             for (c, cell_val) in row_vec.iter().enumerate() {
-                if cell_val.is_empty() {
-                    continue;
-                }
-
-                // Write formulas, numbers, booleans, or strings
-                if cell_val.starts_with('=') {
-                    let _ = sheet.write_formula(r as u32, c as u16, cell_val.as_str());
-                } else if let Ok(num) = cell_val.parse::<f64>() {
-                    let _ = sheet.write_number(r as u32, c as u16, num);
-                } else if let Ok(b) = cell_val.parse::<bool>() {
-                    let _ = sheet.write_boolean(r as u32, c as u16, b);
-                } else {
-                    let _ = sheet.write_string(r as u32, c as u16, cell_val);
+                match cell_val.is_empty() {
+                    true => {}
+                    false => {
+                        let _ = write_cell_typed(sheet, r as u32, c as u16, cell_val, true);
+                    }
                 }
             }
         }

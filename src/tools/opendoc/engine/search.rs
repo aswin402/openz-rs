@@ -1,111 +1,136 @@
 use crate::tools::opendoc::ir::Document;
 
+fn push_if_match(
+    results: &mut Vec<SearchResult>,
+    matched: bool,
+    paragraph_index: Option<usize>,
+    text: &str,
+    is_heading: bool,
+    match_type: &str,
+    location: String,
+) {
+    match matched {
+        true => results.push(SearchResult {
+            paragraph_index,
+            text: text.to_string(),
+            is_heading,
+            match_type: match_type.to_string(),
+            location,
+        }),
+        false => {}
+    }
+}
+
 /// Search document content for a pattern
-pub fn search_document(doc: &Document, query: &str, use_regex: bool) -> Vec<SearchResult> {
+pub fn search_document(doc: &Document, query: &str, use_search_pattern: bool) -> Vec<SearchResult> {
     let mut results = Vec::new();
 
-    let pattern: Box<dyn Fn(&str) -> bool> = if use_regex {
-        match regex::RegexBuilder::new(query)
-            .size_limit(1_000_000)
-            .build()
-        {
-            Ok(re) => Box::new(move |text: &str| re.is_match(text)),
-            Err(_) => return results,
+    let pattern: Box<dyn Fn(&str) -> bool> = match use_search_pattern {
+        true => {
+            match super::replace::is_pattern_match(query, "") {
+                Ok(_) => {}
+                Err(_) => return results,
+            }
+            let q = query.to_string();
+            Box::new(move |text: &str| {
+                super::replace::is_pattern_match(&q, text).unwrap_or(false)
+            })
         }
-    } else {
-        let q = query.to_lowercase();
-        Box::new(move |text: &str| text.to_lowercase().contains(&q))
+        false => {
+            let q = query.to_lowercase();
+            Box::new(move |text: &str| text.to_lowercase().contains(&q))
+        }
     };
 
     // 1. Search raw text
-    if let Some(ref raw_text) = doc.text {
-        for (i, line) in raw_text.lines().enumerate() {
-            if pattern(line) {
-                results.push(SearchResult {
-                    paragraph_index: None,
-                    text: line.to_string(),
-                    is_heading: false,
-                    match_type: "raw_text".to_string(),
-                    location: format!("line {}", i + 1),
-                });
+    match &doc.text {
+        Some(raw_text) => {
+            for (i, line) in raw_text.lines().enumerate() {
+                push_if_match(
+                    &mut results,
+                    pattern(line),
+                    None,
+                    line,
+                    false,
+                    "raw_text",
+                    format!("line {}", i + 1),
+                );
             }
         }
+        None => {}
     }
 
     // 2. Search paragraphs
     for (i, p) in doc.paragraphs.iter().enumerate() {
-        if pattern(&p.text) {
-            results.push(SearchResult {
-                paragraph_index: Some(i),
-                text: p.text.clone(),
-                is_heading: p.is_heading,
-                match_type: if p.is_heading {
-                    "heading".to_string()
-                } else {
-                    "paragraph".to_string()
-                },
-                location: if p.is_heading {
-                    format!("heading {}", p.heading_level)
-                } else {
-                    format!("paragraph {}", i + 1)
-                },
-            });
-        }
+        let (match_type, location) = match p.is_heading {
+            true => ("heading", format!("heading {}", p.heading_level)),
+            false => ("paragraph", format!("paragraph {}", i + 1)),
+        };
+        push_if_match(
+            &mut results,
+            pattern(&p.text),
+            Some(i),
+            &p.text,
+            p.is_heading,
+            match_type,
+            location,
+        );
     }
 
     // 3. Search sections
     for (i, sec) in doc.sections.iter().enumerate() {
-        if pattern(&sec.title) {
-            results.push(SearchResult {
-                paragraph_index: None,
-                text: sec.title.clone(),
-                is_heading: true,
-                match_type: "section_title".to_string(),
-                location: format!("section {} ('{}')", i + 1, sec.title),
-            });
-        }
+        push_if_match(
+            &mut results,
+            pattern(&sec.title),
+            None,
+            &sec.title,
+            true,
+            "section_title",
+            format!("section {} ('{}')", i + 1, sec.title),
+        );
     }
 
     // 4. Search tables (headers and rows)
     for (t_idx, table) in doc.tables.iter().enumerate() {
-        if let Some(ref cap) = table.caption {
-            if pattern(cap) {
-                results.push(SearchResult {
-                    paragraph_index: None,
-                    text: cap.clone(),
-                    is_heading: false,
-                    match_type: "table_caption".to_string(),
-                    location: format!("table {} caption", t_idx + 1),
-                });
-            }
+        match &table.caption {
+            Some(cap) => push_if_match(
+                &mut results,
+                pattern(cap),
+                None,
+                cap,
+                false,
+                "table_caption",
+                format!("table {} caption", t_idx + 1),
+            ),
+            None => {}
         }
         for (h_idx, header) in table.headers.iter().enumerate() {
-            if pattern(header) {
-                results.push(SearchResult {
-                    paragraph_index: None,
-                    text: header.clone(),
-                    is_heading: false,
-                    match_type: "table_header".to_string(),
-                    location: format!("table {}, header column {}", t_idx + 1, h_idx + 1),
-                });
-            }
+            push_if_match(
+                &mut results,
+                pattern(header),
+                None,
+                header,
+                false,
+                "table_header",
+                format!("table {}, header column {}", t_idx + 1, h_idx + 1),
+            );
         }
         for (r_idx, row) in table.rows.iter().enumerate() {
             for (c_idx, cell) in row.iter().enumerate() {
-                if pattern(cell) {
-                    results.push(SearchResult {
-                        paragraph_index: None,
-                        text: cell.clone(),
-                        is_heading: false,
-                        match_type: "table_cell".to_string(),
-                        location: format!(
-                            "table {}, row {}, column {}",
-                            t_idx + 1,
-                            r_idx + 1,
-                            c_idx + 1
-                        ),
-                    });
-                }
+                push_if_match(
+                    &mut results,
+                    pattern(cell),
+                    None,
+                    cell,
+                    false,
+                    "table_cell",
+                    format!(
+                        "table {}, row {}, column {}",
+                        t_idx + 1,
+                        r_idx + 1,
+                        c_idx + 1
+                    ),
+                );
             }
         }
     }

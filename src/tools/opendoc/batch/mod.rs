@@ -28,23 +28,27 @@ fn walk_dir(
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_dir() {
-            if recursive {
-                if let Ok(mut sub_files) = walk_dir(&path, pattern, recursive) {
-                    files.append(&mut sub_files);
+        match path.is_dir() {
+            true => match recursive {
+                true => match walk_dir(&path, pattern, recursive) {
+                    Ok(mut sub_files) => files.append(&mut sub_files),
+                    Err(_) => {}
+                },
+                false => {}
+            },
+            false => {
+                let matches = match target_ext.is_empty() {
+                    true => path.extension().is_some(),
+                    false => path
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .map(|ext| ext.eq_ignore_ascii_case(target_ext))
+                        .unwrap_or(false),
+                };
+                match matches {
+                    true => files.push(path),
+                    false => {}
                 }
-            }
-        } else {
-            let matches = if target_ext.is_empty() {
-                path.extension().is_some()
-            } else {
-                path.extension()
-                    .and_then(|e| e.to_str())
-                    .map(|ext| ext.eq_ignore_ascii_case(target_ext))
-                    .unwrap_or(false)
-            };
-            if matches {
-                files.push(path);
             }
         }
     }
@@ -128,14 +132,9 @@ pub fn batch_convert_extended(
             .collect::<Vec<BatchResult>>()
     };
 
-    if let Some(limit) = concurrency {
-        if let Ok(pool) = rayon::ThreadPoolBuilder::new().num_threads(limit).build() {
-            pool.install(run_map)
-        } else {
-            run_map()
-        }
-    } else {
-        run_map()
+    match concurrency.and_then(|limit| rayon::ThreadPoolBuilder::new().num_threads(limit).build().ok()) {
+        Some(pool) => pool.install(run_map),
+        None => run_map(),
     }
 }
 

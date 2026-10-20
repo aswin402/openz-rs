@@ -35,21 +35,42 @@ fn extract_zip_to_dir(zip_path: &Path, target_dir: &Path) -> Result<(), String> 
             None => continue,
         };
 
-        if file.is_dir() {
-            fs::create_dir_all(&outpath).map_err(|e| format!("Failed to create folder: {e}"))?;
-        } else {
-            if let Some(p) = outpath.parent() {
-                if !p.exists() {
-                    fs::create_dir_all(p).map_err(|e| format!("Failed to create folder: {e}"))?;
-                }
+        match file.is_dir() {
+            true => {
+                fs::create_dir_all(&outpath).map_err(|e| format!("Failed to create folder: {e}"))?;
             }
-            let mut outfile = fs::File::create(&outpath)
-                .map_err(|e| format!("Failed to create output file: {e}"))?;
-            std::io::copy(&mut file, &mut outfile)
-                .map_err(|e| format!("Failed to write output file: {e}"))?;
+            false => {
+                match outpath.parent().filter(|p| !p.exists()) {
+                    Some(p) => {
+                        fs::create_dir_all(p)
+                            .map_err(|e| format!("Failed to create folder: {e}"))?;
+                    }
+                    None => {}
+                }
+                let mut outfile = fs::File::create(&outpath)
+                    .map_err(|e| format!("Failed to create output file: {e}"))?;
+                std::io::copy(&mut file, &mut outfile)
+                    .map_err(|e| format!("Failed to write output file: {e}"))?;
+            }
         }
     }
     Ok(())
+}
+
+/// Recursively list all files in a directory.
+fn list_files_recursive(dir: &Path, list: &mut Vec<PathBuf>) {
+    match fs::read_dir(dir) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                match path.is_dir() {
+                    true => list_files_recursive(&path, list),
+                    false => list.push(path),
+                }
+            }
+        }
+        Err(_) => {}
+    }
 }
 
 /// Recursively extract nested zip files.
@@ -63,31 +84,22 @@ fn extract_recursive(zip_path: &Path, target_dir: &Path) -> Result<(), String> {
 
     while found_zip {
         found_zip = false;
-        let mut zips_to_process = Vec::new();
-
-        fn find_zips(dir: &Path, list: &mut Vec<PathBuf>) {
-            if let Ok(entries) = fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_dir() {
-                        find_zips(&path, list);
-                    } else if path
-                        .extension()
-                        .and_then(|s| s.to_str())
-                        .map(|s| s.eq_ignore_ascii_case("zip"))
-                        .unwrap_or(false)
-                    {
-                        list.push(path);
-                    }
-                }
-            }
-        }
-
-        find_zips(target_dir, &mut zips_to_process);
+        let mut all_files = Vec::new();
+        list_files_recursive(target_dir, &mut all_files);
+        let zips_to_process: Vec<PathBuf> = all_files
+            .into_iter()
+            .filter(|path| {
+                path.extension()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.eq_ignore_ascii_case("zip"))
+                    .unwrap_or(false)
+            })
+            .collect();
 
         for zip_file in zips_to_process {
-            if processed_zips.contains(&zip_file) {
-                continue;
+            match processed_zips.contains(&zip_file) {
+                true => continue,
+                false => {}
             }
             processed_zips.insert(zip_file.clone());
 
@@ -95,31 +107,18 @@ fn extract_recursive(zip_path: &Path, target_dir: &Path) -> Result<(), String> {
             let parent = zip_file.parent().unwrap_or(target_dir);
             let nested_out = parent.join(format!("{}_extracted", stem));
 
-            if let Err(e) = extract_zip_to_dir(&zip_file, &nested_out) {
-                tracing::warn!("Failed to extract nested zip {:?}: {}", zip_file, e);
-            } else {
-                let _ = fs::remove_file(&zip_file);
-                found_zip = true;
-                break;
+            match extract_zip_to_dir(&zip_file, &nested_out) {
+                Err(e) => tracing::warn!("Failed to extract nested zip {:?}: {}", zip_file, e),
+                Ok(()) => {
+                    let _ = fs::remove_file(&zip_file);
+                    found_zip = true;
+                    break;
+                }
             }
         }
     }
 
     Ok(())
-}
-
-/// Recursively list all files in a directory.
-fn list_files_recursive(dir: &Path, list: &mut Vec<PathBuf>) {
-    if let Ok(entries) = fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                list_files_recursive(&path, list);
-            } else {
-                list.push(path);
-            }
-        }
-    }
 }
 
 /// Generate the structured Markdown report of all extracted and parsed files.
@@ -153,34 +152,41 @@ fn generate_digest_report(
             .size_bytes
             .map(|s| format!("{} bytes", s))
             .unwrap_or_else(|| "-".to_string());
-        if f.status == "success" {
-            report.push_str(&format!(
+        match f.status.as_str() {
+            "success" => report.push_str(&format!(
                 "| `{}` | `{}` | ✅ Success | {} |\n",
                 f.path, f.format, size_str
-            ));
-        } else {
-            let err_msg = f.error.as_deref().unwrap_or("Unknown error");
-            report.push_str(&format!(
-                "| `{}` | `{}` | ❌ Failed | {} |\n",
-                f.path, f.format, err_msg
-            ));
+            )),
+            _ => {
+                let err_msg = f.error.as_deref().unwrap_or("Unknown error");
+                report.push_str(&format!(
+                    "| `{}` | `{}` | ❌ Failed | {} |\n",
+                    f.path, f.format, err_msg
+                ));
+            }
         }
     }
     report.push_str("\n---\n\n");
 
-    if !file_contents.is_empty() {
-        report.push_str("## Document Contents\n\n");
-        for (rel_path, content) in file_contents {
-            let anchor = rel_path
-                .to_lowercase()
-                .chars()
-                .map(|c| if c.is_alphanumeric() { c } else { '-' })
-                .collect::<String>();
-            report.push_str(&format!("### File: {}\n", rel_path));
-            report.push_str(&format!("<a name=\"{}\"></a>\n\n", anchor));
-            report.push_str(content);
-            report.push_str("\n\n---\n\n");
+    match file_contents.is_empty() {
+        false => {
+            report.push_str("## Document Contents\n\n");
+            for (rel_path, content) in file_contents {
+                let anchor = rel_path
+                    .to_lowercase()
+                    .chars()
+                    .map(|c| match c.is_alphanumeric() {
+                        true => c,
+                        false => '-',
+                    })
+                    .collect::<String>();
+                report.push_str(&format!("### File: {}\n", rel_path));
+                report.push_str(&format!("<a name=\"{}\"></a>\n\n", anchor));
+                report.push_str(content);
+                report.push_str("\n\n---\n\n");
+            }
         }
+        true => {}
     }
 
     report
@@ -193,8 +199,9 @@ pub fn process_archive_digest(
     output_dir: Option<&str>,
 ) -> Result<ArchiveDigestResult, String> {
     let archive_file_path = Path::new(archive_path);
-    if !archive_file_path.exists() {
-        return Err(format!("Archive file not found: {}", archive_path));
+    match archive_file_path.exists() {
+        false => return Err(format!("Archive file not found: {}", archive_path)),
+        true => {}
     }
 
     let archive_name = archive_file_path
@@ -217,9 +224,12 @@ pub fn process_archive_digest(
         }
     };
 
-    if !target_dir.exists() {
-        fs::create_dir_all(&target_dir)
-            .map_err(|e| format!("Failed to create output directory: {e}"))?;
+    match target_dir.exists() {
+        false => {
+            fs::create_dir_all(&target_dir)
+                .map_err(|e| format!("Failed to create output directory: {e}"))?;
+        }
+        true => {}
     }
 
     // 1. Recursively extract all nested zip files
@@ -242,11 +252,6 @@ pub fn process_archive_digest(
 
         // Skip hidden files, system files, or markdown digests/directories
         let filename = file_path.file_name().unwrap_or_default().to_string_lossy();
-        if filename.starts_with('.') || filename == "digest.md" {
-            continue;
-        }
-
-        // Supported document formats
         let is_doc = matches!(
             ext.as_str(),
             "docx"
@@ -264,9 +269,9 @@ pub fn process_archive_digest(
                 | "txt"
                 | "text"
         );
-
-        if !is_doc {
-            continue;
+        match filename.starts_with('.') || filename == "digest.md" || !is_doc {
+            true => continue,
+            false => {}
         }
 
         // Relative path to include in the report

@@ -2,6 +2,35 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+fn cleanup_temp_pdf(ext: &str, temp_pdf_dir: &Path) {
+    match ext {
+        "pdf" => {}
+        _ => {
+            let _ = fs::remove_dir_all(temp_pdf_dir);
+        }
+    }
+}
+
+fn collect_rendered_pngs(target_dir: &Path, prefix_str: &str, rendered_files: &mut Vec<String>) {
+    match fs::read_dir(target_dir) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                match (path.is_file(), path.file_name().and_then(|f| f.to_str())) {
+                    (true, Some(fname)) => {
+                        match fname.starts_with(prefix_str) && fname.ends_with(".png") {
+                            true => rendered_files.push(path.to_string_lossy().to_string()),
+                            false => {}
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Err(_) => {}
+    }
+}
+
 /// Render pages of a PDF, image, or office document (DOCX, PPTX, XLSX, HTML) into PNG screenshots.
 /// For Office/HTML documents, it first converts to a temporary PDF via LibreOffice headless.
 pub fn render_document_pages(
@@ -11,8 +40,9 @@ pub fn render_document_pages(
     pages: Option<Vec<u32>>,
 ) -> Result<Vec<String>, String> {
     let source_path = Path::new(file_path);
-    if !source_path.exists() {
-        return Err(format!("File not found: {}", file_path));
+    match source_path.exists() {
+        true => {}
+        false => return Err(format!("File not found: {}", file_path)),
     }
 
     let ext = source_path
@@ -22,18 +52,25 @@ pub fn render_document_pages(
         .to_lowercase();
 
     let target_dir = Path::new(output_dir);
-    if !target_dir.exists() {
-        fs::create_dir_all(target_dir)
-            .map_err(|e| format!("Failed to create output directory: {}", e))?;
+    match target_dir.exists() {
+        true => {}
+        false => {
+            fs::create_dir_all(target_dir)
+                .map_err(|e| format!("Failed to create output directory: {}", e))?;
+        }
     }
 
     let dpi_val = dpi.unwrap_or(150);
 
     // If it's already an image, copy it and return its path
-    if ext == "png" || ext == "jpg" || ext == "jpeg" || ext == "bmp" || ext == "tiff" {
-        let dest_path = target_dir.join(source_path.file_name().unwrap());
-        fs::copy(source_path, &dest_path).map_err(|e| format!("Failed to copy image: {}", e))?;
-        return Ok(vec![dest_path.to_string_lossy().to_string()]);
+    match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "bmp" | "tiff" => {
+            let dest_path = target_dir.join(source_path.file_name().unwrap());
+            fs::copy(source_path, &dest_path)
+                .map_err(|e| format!("Failed to copy image: {}", e))?;
+            return Ok(vec![dest_path.to_string_lossy().to_string()]);
+        }
+        _ => {}
     }
 
     // Determine the PDF representation path.
@@ -47,54 +84,52 @@ pub fn render_document_pages(
             .as_nanos()
     ));
 
-    let pdf_path = if ext == "pdf" {
-        source_path.to_path_buf()
-    } else if ext == "docx"
-        || ext == "doc"
-        || ext == "pptx"
-        || ext == "ppt"
-        || ext == "xlsx"
-        || ext == "xls"
-        || ext == "html"
-        || ext == "htm"
-    {
-        // Convert to PDF via LibreOffice headless
-        fs::create_dir_all(&temp_pdf_dir)
-            .map_err(|e| format!("Failed to create temp PDF directory: {}", e))?;
+    let pdf_path = match ext.as_str() {
+        "pdf" => source_path.to_path_buf(),
+        "docx" | "doc" | "pptx" | "ppt" | "xlsx" | "xls" | "html" | "htm" => {
+            // Convert to PDF via LibreOffice headless
+            fs::create_dir_all(&temp_pdf_dir)
+                .map_err(|e| format!("Failed to create temp PDF directory: {}", e))?;
 
-        let output = Command::new("soffice")
-            .arg("--headless")
-            .arg("--convert-to")
-            .arg("pdf")
-            .arg("--outdir")
-            .arg(&temp_pdf_dir)
-            .arg(file_path)
-            .output();
+            let output = Command::new("soffice")
+                .arg("--headless")
+                .arg("--convert-to")
+                .arg("pdf")
+                .arg("--outdir")
+                .arg(&temp_pdf_dir)
+                .arg(file_path)
+                .output();
 
-        match output {
-            Ok(out) if out.status.success() => {
-                let file_stem = source_path.file_stem().unwrap().to_str().unwrap();
-                let generated_pdf = temp_pdf_dir.join(format!("{}.pdf", file_stem));
-                if !generated_pdf.exists() {
+            match output {
+                Ok(out) => match out.status.success() {
+                    true => {
+                        let file_stem = source_path.file_stem().unwrap().to_str().unwrap();
+                        let generated_pdf = temp_pdf_dir.join(format!("{}.pdf", file_stem));
+                        match generated_pdf.exists() {
+                            true => generated_pdf,
+                            false => {
+                                let _ = fs::remove_dir_all(&temp_pdf_dir);
+                                return Err(
+                                    "soffice completed but output PDF was not found.".to_string()
+                                );
+                            }
+                        }
+                    }
+                    false => {
+                        let _ = fs::remove_dir_all(&temp_pdf_dir);
+                        return Err(format!(
+                            "LibreOffice conversion failed: {}",
+                            String::from_utf8_lossy(&out.stderr)
+                        ));
+                    }
+                },
+                Err(e) => {
                     let _ = fs::remove_dir_all(&temp_pdf_dir);
-                    return Err("soffice completed but output PDF was not found.".to_string());
+                    return Err(format!("soffice execution error: {}", e));
                 }
-                generated_pdf
-            }
-            Ok(out) => {
-                let _ = fs::remove_dir_all(&temp_pdf_dir);
-                return Err(format!(
-                    "LibreOffice conversion failed: {}",
-                    String::from_utf8_lossy(&out.stderr)
-                ));
-            }
-            Err(e) => {
-                let _ = fs::remove_dir_all(&temp_pdf_dir);
-                return Err(format!("soffice execution error: {}", e));
             }
         }
-    } else {
-        return Err(format!("Unsupported format for rendering: {}", ext));
+        _ => return Err(format!("Unsupported format for rendering: {}", ext)),
     };
 
     // Render PDF pages to PNG using pdftoppm
@@ -106,98 +141,72 @@ pub fn render_document_pages(
 
     let mut rendered_files = Vec::new();
 
-    if let Some(ref page_nums) = pages {
-        for &p in page_nums {
-            let single_prefix = target_dir.join(format!("{}_page_{}", file_stem, p));
-            let output = Command::new("pdftoppm")
-                .arg("-png")
-                .arg("-r")
-                .arg(dpi_val.to_string())
-                .arg("-f")
-                .arg(p.to_string())
-                .arg("-l")
-                .arg(p.to_string())
-                .arg(&pdf_path)
-                .arg(&single_prefix)
-                .output();
+    match pages {
+        Some(ref page_nums) => {
+            for &p in page_nums {
+                let single_prefix = target_dir.join(format!("{}_page_{}", file_stem, p));
+                let output = Command::new("pdftoppm")
+                    .arg("-png")
+                    .arg("-r")
+                    .arg(dpi_val.to_string())
+                    .arg("-f")
+                    .arg(p.to_string())
+                    .arg("-l")
+                    .arg(p.to_string())
+                    .arg(&pdf_path)
+                    .arg(&single_prefix)
+                    .output();
 
-            match output {
-                Ok(out) if out.status.success() => {
-                    if let Ok(entries) = fs::read_dir(target_dir) {
-                        for entry in entries.flatten() {
-                            let path = entry.path();
-                            if path.is_file() {
-                                if let Some(fname) = path.file_name().and_then(|f| f.to_str()) {
-                                    if fname.starts_with(&format!("{}_page_{}-", file_stem, p))
-                                        && fname.ends_with(".png")
-                                    {
-                                        rendered_files.push(path.to_string_lossy().to_string());
-                                    }
-                                }
-                            }
+                match output {
+                    Ok(out) => match out.status.success() {
+                        true => {
+                            let prefix_str = format!("{}_page_{}-", file_stem, p);
+                            collect_rendered_pngs(target_dir, &prefix_str, &mut rendered_files);
                         }
+                        false => {
+                            cleanup_temp_pdf(&ext, &temp_pdf_dir);
+                            return Err(format!(
+                                "pdftoppm failed on page {}: {}",
+                                p,
+                                String::from_utf8_lossy(&out.stderr)
+                            ));
+                        }
+                    },
+                    Err(e) => {
+                        cleanup_temp_pdf(&ext, &temp_pdf_dir);
+                        return Err(format!("pdftoppm execution error: {}", e));
                     }
-                }
-                Ok(out) => {
-                    if ext != "pdf" {
-                        let _ = fs::remove_dir_all(&temp_pdf_dir);
-                    }
-                    return Err(format!(
-                        "pdftoppm failed on page {}: {}",
-                        p,
-                        String::from_utf8_lossy(&out.stderr)
-                    ));
-                }
-                Err(e) => {
-                    if ext != "pdf" {
-                        let _ = fs::remove_dir_all(&temp_pdf_dir);
-                    }
-                    return Err(format!("pdftoppm execution error: {}", e));
                 }
             }
         }
-    } else {
-        // Render all pages
-        let output = cmd.arg(&pdf_path).arg(&img_prefix).output();
+        None => {
+            // Render all pages
+            let output = cmd.arg(&pdf_path).arg(&img_prefix).output();
 
-        match output {
-            Ok(out) if out.status.success() => {
-                if let Ok(entries) = fs::read_dir(target_dir) {
-                    let prefix_str = format!("{}_page-", file_stem);
-                    for entry in entries.flatten() {
-                        let path = entry.path();
-                        if path.is_file() {
-                            if let Some(fname) = path.file_name().and_then(|f| f.to_str()) {
-                                if fname.starts_with(&prefix_str) && fname.ends_with(".png") {
-                                    rendered_files.push(path.to_string_lossy().to_string());
-                                }
-                            }
-                        }
+            match output {
+                Ok(out) => match out.status.success() {
+                    true => {
+                        let prefix_str = format!("{}_page-", file_stem);
+                        collect_rendered_pngs(target_dir, &prefix_str, &mut rendered_files);
                     }
+                    false => {
+                        cleanup_temp_pdf(&ext, &temp_pdf_dir);
+                        return Err(format!(
+                            "pdftoppm failed: {}",
+                            String::from_utf8_lossy(&out.stderr)
+                        ));
+                    }
+                },
+                Err(e) => {
+                    cleanup_temp_pdf(&ext, &temp_pdf_dir);
+                    return Err(format!("pdftoppm execution error: {}", e));
                 }
-            }
-            Ok(out) => {
-                if ext != "pdf" {
-                    let _ = fs::remove_dir_all(&temp_pdf_dir);
-                }
-                return Err(format!(
-                    "pdftoppm failed: {}",
-                    String::from_utf8_lossy(&out.stderr)
-                ));
-            }
-            Err(e) => {
-                if ext != "pdf" {
-                    let _ = fs::remove_dir_all(&temp_pdf_dir);
-                }
-                return Err(format!("pdftoppm execution error: {}", e));
             }
         }
     }
 
     // Clean up temporary PDF directory if it was created
-    if ext != "pdf" {
-        let _ = fs::remove_dir_all(&temp_pdf_dir);
-    }
+    cleanup_temp_pdf(&ext, &temp_pdf_dir);
 
     // Sort files numerically to guarantee correct page order in response
     rendered_files.sort_by_key(|f| {
@@ -211,6 +220,7 @@ pub fn render_document_pages(
 
     Ok(rendered_files)
 }
+
 
 #[cfg(test)]
 mod tests {
