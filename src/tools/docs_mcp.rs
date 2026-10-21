@@ -80,13 +80,6 @@ pub fn init_docs_db(db_path: &Path) -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
-/// Helper to get a SQLite connection for the runtime `docs.db`.
-pub fn get_docs_db_conn() -> Result<Connection, rusqlite::Error> {
-    let db_path = crate::config::loader::runtime_db_path("docs.db");
-    init_docs_db(&db_path)?;
-    Connection::open(db_path)
-}
-
 /// Native documentation service providing docset queries and Rust crate doc retrieval.
 #[derive(Clone, Debug)]
 pub struct DocsService {

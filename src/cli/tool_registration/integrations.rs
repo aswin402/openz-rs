@@ -45,10 +45,6 @@ pub(crate) fn register_lazy_mcp_tools(registry: &ToolRegistry, config: &Config) 
                         &mcp_config_clone.args,
                     )
                     .await?;
-                    match name_clone.as_str() {
-                        "memory" => crate::tools::mcp::set_memory_mcp_client(mcp_client.clone()),
-                        _ => {}
-                    }
                     let tools = mcp_client.list_tools().await?;
                     Ok::<_, anyhow::Error>(tools)
                 })
@@ -77,7 +73,6 @@ pub(crate) fn register_lazy_mcp_tools(registry: &ToolRegistry, config: &Config) 
                                         name: t_name.to_string(),
                                         description: desc.to_string(),
                                         parameters: params,
-                                        is_memory_server: name_clone == "memory",
                                     };
                                     registry_bg.register(std::sync::Arc::new(wrapper));
                                     count += 1;

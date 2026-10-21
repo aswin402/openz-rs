@@ -319,6 +319,171 @@ pub(crate) fn find_ancestor_http_href(element: &scraper::ElementRef<'_>) -> Opti
     None
 }
 
+pub(crate) fn parse_container_or_heading_results<F, G>(
+    html_body: &str,
+    max_results: usize,
+    source: &str,
+    container_selector: &str,
+    title_selector: &str,
+    snippet_selector_strs: &[&str],
+    extract_container_url: F,
+    normalize_fallback_url: G,
+) -> Vec<SearchResult>
+where
+    F: Fn(&scraper::ElementRef<'_>, &scraper::ElementRef<'_>, &scraper::Selector) -> Option<String>,
+    G: Fn(String) -> String,
+{
+    let document = scraper::Html::parse_document(html_body);
+    let container_sel = scraper::Selector::parse(container_selector).unwrap();
+    let containers: Vec<_> = document.select(&container_sel).collect();
+    let title_sel = scraper::Selector::parse(title_selector).unwrap();
+
+    match containers.is_empty() {
+        false => {
+            let link_sel = scraper::Selector::parse("a[href]").unwrap();
+            let snippet_selectors: Vec<_> = snippet_selector_strs
+                .iter()
+                .map(|s| scraper::Selector::parse(s).unwrap())
+                .collect();
+
+            containers
+                .into_iter()
+                .filter_map(|container| {
+                    let title_el = container.select(&title_sel).next()?;
+                    let title = title_el
+                        .text()
+                        .collect::<Vec<_>>()
+                        .join("")
+                        .trim()
+                        .to_string();
+                    match title.is_empty() {
+                        true => return None,
+                        false => {}
+                    }
+                    let url = extract_container_url(&container, &title_el, &link_sel)?;
+                    let snippet =
+                        extract_container_snippet(&container, &snippet_selectors, &title);
+                    Some(SearchResult {
+                        title,
+                        url,
+                        snippet,
+                        source: source.to_string(),
+                    })
+                })
+                .take(max_results)
+                .collect()
+        }
+        true => document
+            .select(&title_sel)
+            .filter_map(|heading_el| {
+                let title = heading_el
+                    .text()
+                    .collect::<Vec<_>>()
+                    .join("")
+                    .trim()
+                    .to_string();
+                match title.is_empty() {
+                    true => None,
+                    false => {
+                        let url = find_ancestor_http_href(&heading_el)?;
+                        Some(SearchResult {
+                            title,
+                            url: normalize_fallback_url(url),
+                            snippet: String::new(),
+                            source: source.to_string(),
+                        })
+                    }
+                }
+            })
+            .take(max_results)
+            .collect(),
+    }
+}
+
+pub(crate) async fn execute_html_search_with_headless_fallback(
+    backend_label: &str,
+    request: reqwest::RequestBuilder,
+    #[cfg_attr(not(feature = "js-rendering"), allow(unused_variables))]
+    fallback_base_url: &str,
+    query: &SearchQuery,
+    #[cfg_attr(not(feature = "js-rendering"), allow(unused_variables))]
+    headless_browser: &Option<crate::tools::searchxyz::core::crawler::headless::HeadlessBrowser>,
+    parse_fn: fn(&str, usize) -> Vec<SearchResult>,
+) -> Result<Vec<SearchResult>, SearchXyzError> {
+    let mut results = Vec::new();
+    #[cfg(feature = "js-rendering")]
+    let mut http_failed = false;
+
+    match request.send().await {
+        Ok(resp) => match resp.status().is_success() {
+            true => match resp.text().await {
+                Ok(html_body) => {
+                    results = parse_fn(&html_body, query.max_results);
+                }
+                Err(_) => {
+                    #[cfg(feature = "js-rendering")]
+                    {
+                        http_failed = true;
+                    }
+                }
+            },
+            false => {
+                #[cfg(feature = "js-rendering")]
+                {
+                    http_failed = true;
+                }
+                tracing::warn!(
+                    "{} HTTP request returned status {}",
+                    backend_label,
+                    resp.status()
+                );
+            }
+        },
+        Err(e) => {
+            #[cfg(feature = "js-rendering")]
+            {
+                http_failed = true;
+            }
+            tracing::warn!("{} HTTP request failed: {:?}", backend_label, e);
+        }
+    }
+
+    #[cfg(feature = "js-rendering")]
+    match (http_failed || results.is_empty(), headless_browser) {
+        (true, Some(headless)) => {
+            let mut url_parsed = url::Url::parse(fallback_base_url).unwrap();
+            url_parsed.query_pairs_mut().append_pair("q", &query.query);
+            let search_url = url_parsed.to_string();
+
+            tracing::info!(
+                url = %search_url,
+                "{} raw HTTP blocked or empty, falling back to headless browser",
+                backend_label
+            );
+            match headless.fetch_html(&search_url).await {
+                Ok(html_body) => {
+                    results = parse_fn(&html_body, query.max_results);
+                }
+                Err(e) => {
+                    tracing::error!("{} headless fallback failed: {:?}", backend_label, e);
+                }
+            }
+        }
+        _ => {}
+    }
+
+    match results.is_empty() {
+        true => tracing::warn!(
+            query = %query.query,
+            "{} returned no parsable results",
+            backend_label
+        ),
+        false => {}
+    }
+
+    Ok(results)
+}
+
 fn rank_results(query: &SearchQuery, mut results: Vec<SearchResult>) -> Vec<SearchResult> {
     let model = RankingModel::from_results(query, &results);
     results.sort_by(|a, b| {

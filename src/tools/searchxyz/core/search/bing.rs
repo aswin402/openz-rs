@@ -2,7 +2,6 @@ use async_trait::async_trait;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
 use base64::Engine;
 use reqwest::Client;
-use scraper::{Html, Selector};
 
 use super::{SearchBackend, SearchQuery, SearchResult};
 use crate::tools::searchxyz::core::crawler::fingerprint::HeaderGenerator;
@@ -65,81 +64,24 @@ impl BingBackend {
     }
 
     fn parse_results(html_body: &str, max_results: usize) -> Vec<SearchResult> {
-        let document = Html::parse_document(html_body);
-
-        let container_sel = Selector::parse("li.b_algo").unwrap();
-        let containers: Vec<_> = document.select(&container_sel).collect();
-        let title_sel = Selector::parse("h2").unwrap();
-
-        match containers.is_empty() {
-            false => {
-                let link_sel = Selector::parse("a[href]").unwrap();
-                let snippet_selectors = vec![
-                    Selector::parse(".b_caption p").unwrap(),
-                    Selector::parse(".b_caption").unwrap(),
-                    Selector::parse(".b_snippet").unwrap(),
-                    Selector::parse("p").unwrap(),
-                ];
-
-                containers
-                    .into_iter()
-                    .filter_map(|container| {
-                        let title_el = container.select(&title_sel).next()?;
-                        let title = title_el
-                            .text()
-                            .collect::<Vec<_>>()
-                            .join("")
-                            .trim()
-                            .to_string();
-                        match title.is_empty() {
-                            true => return None,
-                            false => {}
-                        }
-
-                        let raw_url = title_el
-                            .select(&link_sel)
-                            .next()
-                            .or_else(|| container.select(&link_sel).next())
-                            .and_then(|el| el.value().attr("href"))
-                            .filter(|href| href.starts_with("http"))?;
-
-                        let url = unwrap_bing_redirect(raw_url);
-                        let snippet = super::extract_container_snippet(
-                            &container,
-                            &snippet_selectors,
-                            &title,
-                        );
-
-                        Some(SearchResult {
-                            title,
-                            url,
-                            snippet,
-                            source: "bing".into(),
-                        })
-                    })
-                    .take(max_results)
-                    .collect()
-            }
-            true => document
-                .select(&title_sel)
-                .filter_map(|h2_el| {
-                    let title = h2_el.text().collect::<Vec<_>>().join("").trim().to_string();
-                    match title.is_empty() {
-                        true => None,
-                        false => {
-                            let url = super::find_ancestor_http_href(&h2_el)?;
-                            Some(SearchResult {
-                                title,
-                                url: unwrap_bing_redirect(&url),
-                                snippet: String::new(),
-                                source: "bing".into(),
-                            })
-                        }
-                    }
-                })
-                .take(max_results)
-                .collect(),
-        }
+        super::parse_container_or_heading_results(
+            html_body,
+            max_results,
+            "bing",
+            "li.b_algo",
+            "h2",
+            &[".b_caption p", ".b_caption", ".b_snippet", "p"],
+            |container, title_el, link_sel| {
+                let raw_url = title_el
+                    .select(link_sel)
+                    .next()
+                    .or_else(|| container.select(link_sel).next())
+                    .and_then(|el| el.value().attr("href"))
+                    .filter(|href| href.starts_with("http"))?;
+                Some(unwrap_bing_redirect(raw_url))
+            },
+            |url| unwrap_bing_redirect(&url),
+        )
     }
 }
 

@@ -92,73 +92,17 @@ impl SearchBackend for DuckDuckGoBackend {
 
     async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>, SearchXyzError> {
         let client = super::choose_proxy_client(&self.client, &self.clients);
-
-        let mut results = Vec::new();
-        #[cfg(feature = "js-rendering")]
-        let mut http_failed = false;
-
-        // Try raw HTTP form POST first
-        match client
+        let request = client
             .post("https://lite.duckduckgo.com/lite/")
-            .form(&[("q", &query.query)])
-            .send()
-            .await
-        {
-            Ok(resp) => match resp.status().is_success() {
-                true => match resp.text().await {
-                    Ok(html_body) => {
-                        results = Self::parse_results(&html_body, query.max_results);
-                    }
-                    Err(_) => {
-                        #[cfg(feature = "js-rendering")]
-                        {
-                            http_failed = true;
-                        }
-                    }
-                },
-                false => {
-                    #[cfg(feature = "js-rendering")]
-                    {
-                        http_failed = true;
-                    }
-                    tracing::warn!("DuckDuckGo HTTP request returned status {}", resp.status());
-                }
-            },
-            Err(e) => {
-                #[cfg(feature = "js-rendering")]
-                {
-                    http_failed = true;
-                }
-                tracing::warn!("DuckDuckGo HTTP request failed: {:?}", e);
-            }
-        }
-
-        // Fallback to headless browser if HTTP failed or returned no results (bot detection / captcha page)
-        #[cfg(feature = "js-rendering")]
-        match (http_failed || results.is_empty(), &self.headless_browser) {
-            (true, Some(headless)) => {
-                let mut url_parsed = url::Url::parse("https://lite.duckduckgo.com/lite/").unwrap();
-                url_parsed.query_pairs_mut().append_pair("q", &query.query);
-                let search_url = url_parsed.to_string();
-
-                tracing::info!(url = %search_url, "DuckDuckGo raw HTTP blocked or empty, falling back to headless browser");
-                match headless.fetch_html(&search_url).await {
-                    Ok(html_body) => {
-                        results = Self::parse_results(&html_body, query.max_results);
-                    }
-                    Err(e) => {
-                        tracing::error!("DuckDuckGo headless fallback failed: {:?}", e);
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        match results.is_empty() {
-            true => tracing::warn!(query = %query.query, "DuckDuckGo returned no parsable results"),
-            false => {}
-        }
-
-        Ok(results)
+            .form(&[("q", &query.query)]);
+        super::execute_html_search_with_headless_fallback(
+            "DuckDuckGo",
+            request,
+            "https://lite.duckduckgo.com/lite/",
+            query,
+            &self.headless_browser,
+            Self::parse_results,
+        )
+        .await
     }
 }

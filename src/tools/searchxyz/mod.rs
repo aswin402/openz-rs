@@ -1,4 +1,3 @@
-use anyhow::anyhow;
 use std::sync::{Arc, OnceLock};
 
 pub mod core;
@@ -276,10 +275,6 @@ pub fn get_server() -> &'static SearchXyzServer {
 
         SearchXyzServer::new(dispatcher, crawler, extractor, index, cache, graph, config)
     })
-}
-
-pub fn map_mcp_err(err: rmcp::ErrorData) -> anyhow::Error {
-    anyhow!("MCP Error {:?}: {}", err.code, err.message)
 }
 
 #[cfg(test)]

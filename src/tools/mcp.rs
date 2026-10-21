@@ -3,7 +3,6 @@ use anyhow::{anyhow, Result};
 use serde_json::Value;
 use std::process::Stdio;
 use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
 use std::sync::OnceLock;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
@@ -11,37 +10,10 @@ use tokio::sync::Mutex;
 
 pub use crate::channels::cli::mcp::get_mcp_stats;
 
-static MEMORY_MCP_CLIENT: OnceLock<StdMutex<Option<McpClient>>> = OnceLock::new();
-
 /// Cache of spawned MCP clients, keyed by "command:arg1 arg2 ...".
 /// Shared across McpClient::spawn() and LazyMcpToolWrapper.
 static SPAWNED_MCP_CLIENTS: OnceLock<Mutex<std::collections::HashMap<String, McpClient>>> =
     OnceLock::new();
-
-pub fn set_memory_mcp_client(client: McpClient) {
-    let cell = MEMORY_MCP_CLIENT.get_or_init(|| StdMutex::new(None));
-    match cell.lock() {
-        Ok(mut lock) => {
-            *lock = Some(client);
-        }
-        Err(_) => {}
-    }
-}
-
-pub fn get_memory_mcp_client() -> Option<McpClient> {
-    MEMORY_MCP_CLIENT
-        .get()
-        .and_then(|cell| cell.lock().ok().and_then(|lock| lock.clone()))
-}
-
-pub fn clear_memory_mcp_client() {
-    match MEMORY_MCP_CLIENT.get().and_then(|cell| cell.lock().ok()) {
-        Some(mut lock) => {
-            *lock = None;
-        }
-        None => {}
-    }
-}
 
 pub async fn terminate_all_mcp_clients() {
     match SPAWNED_MCP_CLIENTS.get() {
@@ -54,7 +26,6 @@ pub async fn terminate_all_mcp_clients() {
         }
         None => {}
     }
-    clear_memory_mcp_client();
 }
 
 pub mod mcp_grpc {
@@ -403,8 +374,6 @@ pub struct LazyMcpToolWrapper {
     pub name: String,
     pub description: String,
     pub parameters: Value,
-    /// Whether this server was flagged as special (e.g. memory → set global client)
-    pub is_memory_server: bool,
 }
 
 #[async_trait::async_trait]
@@ -429,11 +398,6 @@ impl Tool for LazyMcpToolWrapper {
                 )
             })?;
 
-        match self.is_memory_server {
-            true => set_memory_mcp_client(client.clone()),
-            false => {}
-        }
-
         match client.call_tool(&self.name, arguments).await {
             Ok(result) => Ok(result),
             Err(e) => {
@@ -442,10 +406,6 @@ impl Tool for LazyMcpToolWrapper {
                     e
                 );
                 McpClient::invalidate(&self.command, &self.args).await;
-                match self.is_memory_server {
-                    true => clear_memory_mcp_client(),
-                    false => {}
-                }
                 let client = McpClient::spawn(&self.command, &self.args)
                     .await
                     .map_err(|e2| {
@@ -454,10 +414,6 @@ impl Tool for LazyMcpToolWrapper {
                             self.server_name
                         )
                     })?;
-                match self.is_memory_server {
-                    true => set_memory_mcp_client(client.clone()),
-                    false => {}
-                }
                 client.call_tool(&self.name, arguments).await
             }
         }

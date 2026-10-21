@@ -145,7 +145,7 @@ async fn async_main() -> anyhow::Result<()> {
                 .with(tracing_subscriber::fmt::layer().with_writer(std::io::sink))
                 .init();
         }
-        None | Some("agent") => {
+        other => {
             let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
             let _ = openz::logs::LOG_TX.set(tx);
             tokio::spawn(openz::logs::init_db_writer(rx));
@@ -156,60 +156,47 @@ async fn async_main() -> anyhow::Result<()> {
                 .with_target(true)
                 .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
 
-            tracing_subscriber::registry()
-                .with(env_filter)
-                .with(file_layer)
-                .with(openz::logs::SqliteLogLayer)
-                .init();
-        }
-        Some("gateway") => {
-            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-            let _ = openz::logs::LOG_TX.set(tx);
-            tokio::spawn(openz::logs::init_db_writer(rx));
+            match other {
+                None | Some("agent") => {
+                    tracing_subscriber::registry()
+                        .with(env_filter)
+                        .with(file_layer)
+                        .with(openz::logs::SqliteLogLayer)
+                        .init();
+                }
+                Some("gateway") => {
+                    let console_layer = tracing_subscriber::fmt::layer()
+                        .event_format(GatewayFormatter)
+                        .with_writer(std::io::stdout);
 
-            let file_layer = tracing_subscriber::fmt::layer()
-                .with_writer(make_writer)
-                .with_ansi(false)
-                .with_target(true)
-                .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
+                    tracing_subscriber::registry()
+                        .with(env_filter)
+                        .with(file_layer)
+                        .with(console_layer)
+                        .with(openz::logs::SqliteLogLayer)
+                        .init();
+                }
+                Some(_) => {
+                    let stderr_secrets = log_secrets.clone();
+                    let stderr_layer = tracing_subscriber::fmt::layer()
+                        .with_writer(move || {
+                            openz::logs::SecretScrubWriter::new(
+                                std::io::stderr(),
+                                stderr_secrets.clone(),
+                            )
+                        })
+                        .with_ansi(true)
+                        .with_target(true)
+                        .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
 
-            let console_layer = tracing_subscriber::fmt::layer()
-                .event_format(GatewayFormatter)
-                .with_writer(std::io::stdout);
-
-            tracing_subscriber::registry()
-                .with(env_filter)
-                .with(file_layer)
-                .with(console_layer)
-                .with(openz::logs::SqliteLogLayer)
-                .init();
-        }
-        Some(_) => {
-            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-            let _ = openz::logs::LOG_TX.set(tx);
-            tokio::spawn(openz::logs::init_db_writer(rx));
-
-            let file_layer = tracing_subscriber::fmt::layer()
-                .with_writer(make_writer)
-                .with_ansi(false)
-                .with_target(true)
-                .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
-
-            let stderr_secrets = log_secrets.clone();
-            let stderr_layer = tracing_subscriber::fmt::layer()
-                .with_writer(move || {
-                    openz::logs::SecretScrubWriter::new(std::io::stderr(), stderr_secrets.clone())
-                })
-                .with_ansi(true)
-                .with_target(true)
-                .with_span_events(tracing_subscriber::fmt::format::FmtSpan::NONE);
-
-            tracing_subscriber::registry()
-                .with(env_filter)
-                .with(file_layer)
-                .with(stderr_layer)
-                .with(openz::logs::SqliteLogLayer)
-                .init();
+                    tracing_subscriber::registry()
+                        .with(env_filter)
+                        .with(file_layer)
+                        .with(stderr_layer)
+                        .with(openz::logs::SqliteLogLayer)
+                        .init();
+                }
+            }
         }
     }
 
@@ -329,30 +316,27 @@ struct GatewayVisitor {
     provider: String,
 }
 
-impl tracing::field::Visit for GatewayVisitor {
-    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        match field.name() {
-            "message" => self.message = value.to_string(),
-            "session" => self.session = value.to_string(),
-            "tool" => self.tool = value.to_string(),
-            "status" => self.status = value.to_string(),
-            "chat_id" => self.chat_id = value.to_string(),
-            "provider" => self.provider = value.to_string(),
+impl GatewayVisitor {
+    fn assign_string_field(&mut self, name: &str, value: String) {
+        match name {
+            "message" => self.message = value,
+            "session" => self.session = value,
+            "tool" => self.tool = value,
+            "status" => self.status = value,
+            "chat_id" => self.chat_id = value,
+            "provider" => self.provider = value,
             _ => {}
         }
     }
+}
+
+impl tracing::field::Visit for GatewayVisitor {
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        self.assign_string_field(field.name(), value.to_string());
+    }
 
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        let val_str = format!("{:?}", value);
-        match field.name() {
-            "message" => self.message = val_str,
-            "session" => self.session = val_str,
-            "tool" => self.tool = val_str,
-            "status" => self.status = val_str,
-            "chat_id" => self.chat_id = val_str,
-            "provider" => self.provider = val_str,
-            _ => {}
-        }
+        self.assign_string_field(field.name(), format!("{:?}", value));
     }
 
     fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {

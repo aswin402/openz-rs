@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use reqwest::Client;
-use scraper::{Html, Selector};
 
 use super::{SearchBackend, SearchQuery, SearchResult};
 use crate::tools::searchxyz::core::crawler::fingerprint::HeaderGenerator;
@@ -49,79 +48,27 @@ impl GoogleBackend {
     }
 
     fn parse_results(html_body: &str, max_results: usize) -> Vec<SearchResult> {
-        let document = Html::parse_document(html_body);
-
-        let container_sel =
-            Selector::parse("div.g, div.MjjYud, div[jscontroller][data-hveid][data-ved]").unwrap();
-        let containers: Vec<_> = document.select(&container_sel).collect();
-        let title_sel = Selector::parse("h3").unwrap();
-
-        match containers.is_empty() {
-            false => {
-                let link_sel = Selector::parse("a[href]").unwrap();
-                let snippet_selectors = vec![
-                    Selector::parse(".VwiC3b").unwrap(),
-                    Selector::parse(".yDAB2e").unwrap(),
-                    Selector::parse(".BNeawe").unwrap(),
-                    Selector::parse("div[style*='-webkit-line-clamp']").unwrap(),
-                ];
-
-                containers
-                    .into_iter()
-                    .filter_map(|container| {
-                        let title_el = container.select(&title_sel).next()?;
-                        let title = title_el
-                            .text()
-                            .collect::<Vec<_>>()
-                            .join("")
-                            .trim()
-                            .to_string();
-                        match title.is_empty() {
-                            true => return None,
-                            false => {}
-                        }
-
-                        let href = container
-                            .select(&link_sel)
-                            .next()
-                            .and_then(|el| el.value().attr("href"))?;
-                        let url = Self::parse_google_href(href)?;
-                        let snippet = super::extract_container_snippet(
-                            &container,
-                            &snippet_selectors,
-                            &title,
-                        );
-
-                        Some(SearchResult {
-                            title,
-                            url,
-                            snippet,
-                            source: "google".into(),
-                        })
-                    })
-                    .take(max_results)
-                    .collect()
-            }
-            true => document
-                .select(&title_sel)
-                .filter_map(|h3_el| {
-                    let title = h3_el.text().collect::<Vec<_>>().join("").trim().to_string();
-                    match title.is_empty() {
-                        true => None,
-                        false => {
-                            let url = super::find_ancestor_http_href(&h3_el)?;
-                            Some(SearchResult {
-                                title,
-                                url,
-                                snippet: String::new(),
-                                source: "google".into(),
-                            })
-                        }
-                    }
-                })
-                .take(max_results)
-                .collect(),
-        }
+        super::parse_container_or_heading_results(
+            html_body,
+            max_results,
+            "google",
+            "div.g, div.MjjYud, div[jscontroller][data-hveid][data-ved]",
+            "h3",
+            &[
+                ".VwiC3b",
+                ".yDAB2e",
+                ".BNeawe",
+                "div[style*='-webkit-line-clamp']",
+            ],
+            |container, _title_el, link_sel| {
+                let href = container
+                    .select(link_sel)
+                    .next()
+                    .and_then(|el| el.value().attr("href"))?;
+                Self::parse_google_href(href)
+            },
+            |url| url,
+        )
     }
 }
 
@@ -137,74 +84,19 @@ impl SearchBackend for GoogleBackend {
 
     async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>, SearchXyzError> {
         let client = super::choose_proxy_client(&self.client, &self.clients);
-
-        let mut results = Vec::new();
-        #[cfg(feature = "js-rendering")]
-        let mut http_failed = false;
-
-        match client
+        let request = client
             .get("https://www.google.com/search")
             .query(&[("q", &query.query)])
-            .headers(HeaderGenerator::random_headers())
-            .send()
-            .await
-        {
-            Ok(resp) => match resp.status().is_success() {
-                true => match resp.text().await {
-                    Ok(html_body) => {
-                        results = Self::parse_results(&html_body, query.max_results);
-                    }
-                    Err(_) => {
-                        #[cfg(feature = "js-rendering")]
-                        {
-                            http_failed = true;
-                        }
-                    }
-                },
-                false => {
-                    #[cfg(feature = "js-rendering")]
-                    {
-                        http_failed = true;
-                    }
-                    tracing::warn!("Google HTTP request returned status {}", resp.status());
-                }
-            },
-            Err(e) => {
-                #[cfg(feature = "js-rendering")]
-                {
-                    http_failed = true;
-                }
-                tracing::warn!("Google HTTP request failed: {:?}", e);
-            }
-        }
-
-        // Fallback to headless browser if raw HTTP failed or returned no organic results (bot detection / captcha page)
-        #[cfg(feature = "js-rendering")]
-        match (http_failed || results.is_empty(), &self.headless_browser) {
-            (true, Some(headless)) => {
-                let mut url_parsed = url::Url::parse("https://www.google.com/search").unwrap();
-                url_parsed.query_pairs_mut().append_pair("q", &query.query);
-                let search_url = url_parsed.to_string();
-
-                tracing::info!(url = %search_url, "Google raw HTTP blocked or empty, falling back to headless browser");
-                match headless.fetch_html(&search_url).await {
-                    Ok(html_body) => {
-                        results = Self::parse_results(&html_body, query.max_results);
-                    }
-                    Err(e) => {
-                        tracing::error!("Google headless fallback failed: {:?}", e);
-                    }
-                }
-            }
-            _ => {}
-        }
-
-        match results.is_empty() {
-            true => tracing::warn!(query = %query.query, "Google returned no parsable results"),
-            false => {}
-        }
-
-        Ok(results)
+            .headers(HeaderGenerator::random_headers());
+        super::execute_html_search_with_headless_fallback(
+            "Google",
+            request,
+            "https://www.google.com/search",
+            query,
+            &self.headless_browser,
+            Self::parse_results,
+        )
+        .await
     }
 }
 

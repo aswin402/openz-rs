@@ -34,10 +34,6 @@ pub async fn get_server() -> Result<&'static OpenMediaServer> {
     }
 }
 
-pub fn map_mcp_err(err: String) -> anyhow::Error {
-    anyhow!("MCP Error: {}", err)
-}
-
 macro_rules! define_openmedia_tool {
     ($struct_name:ident, $tool_name:expr, $description:expr, $request_type:ty, $server_method:ident) => {
         pub struct $struct_name;
