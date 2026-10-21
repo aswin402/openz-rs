@@ -245,15 +245,9 @@ pub fn send_inbox_message(session_id: &str, message: &str, sender: &str) -> anyh
         sender: sender.to_string(),
         timestamp: chrono::Utc::now().to_rfc3339(),
     };
-    let content = serde_json::to_string_pretty(&msg)?;
     let slug = inbox_slug(session_id);
     let filename = format!("inbox_{}_{}.json", slug, uuid::Uuid::new_v4());
-    let path = dir.join(&filename);
-    let temp_path = dir.join(format!("{}.tmp.{}", filename, uuid::Uuid::new_v4()));
-
-    fs::write(&temp_path, content)?;
-    fs::rename(temp_path, path)?;
-    Ok(())
+    crate::config::loader::save_pretty_json_atomic(&dir.join(filename), &msg)
 }
 
 pub fn pop_inbox_message(session_id: &str) -> Option<InboxMessage> {
@@ -395,14 +389,7 @@ pub fn session_preview_from_messages(messages: &[crate::session::Message]) -> St
 }
 
 pub fn upsert_active_tui_session(session: &ActiveTuiSession) -> anyhow::Result<()> {
-    let dir = active_tui_dir();
-    fs::create_dir_all(&dir)?;
-    let path = active_tui_path(&session.session_key);
-    let tmp_path = path.with_extension(format!("json.tmp.{}", uuid::Uuid::new_v4()));
-    let content = serde_json::to_string_pretty(session)?;
-    fs::write(&tmp_path, content)?;
-    fs::rename(tmp_path, path)?;
-    Ok(())
+    crate::config::loader::save_pretty_json_atomic(&active_tui_path(&session.session_key), session)
 }
 
 pub fn remove_active_tui_session(session_key: &str) {

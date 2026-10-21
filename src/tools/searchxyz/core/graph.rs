@@ -239,14 +239,7 @@ impl KnowledgeGraph {
 
     /// Save the graph to a JSON file.
     pub fn save_to_file(&self, path: &Path) -> Result<(), std::io::Error> {
-        match path.parent() {
-            Some(parent) => std::fs::create_dir_all(parent)?,
-            None => {}
-        }
-        let file = std::fs::File::create(path)?;
-        let writer = std::io::BufWriter::new(file);
-        serde_json::to_writer_pretty(writer, self)?;
-        Ok(())
+        crate::config::loader::save_pretty_json(path, self).map_err(std::io::Error::other)
     }
 }
 

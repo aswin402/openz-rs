@@ -19,7 +19,15 @@ struct Symbol {
     definition: String,
 }
 
-fn strip_keyword_with_space<'a>(input: &'a str, keyword: &str) -> Option<&'a str> {
+pub(crate) fn is_ident_start(ch: char) -> bool {
+    ch.is_ascii_alphabetic() || ch == '_'
+}
+
+pub(crate) fn is_ident_continue(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
+
+pub(crate) fn strip_keyword_with_space<'a>(input: &'a str, keyword: &str) -> Option<&'a str> {
     input.strip_prefix(keyword).and_then(|rest| {
         rest.chars()
             .next()
@@ -32,9 +40,7 @@ fn take_ident(input: &str, allow_angle_brackets: bool) -> Option<&str> {
     let len = input
         .char_indices()
         .take_while(|(_, ch)| {
-            ch.is_ascii_alphanumeric()
-                || *ch == '_'
-                || (allow_angle_brackets && matches!(*ch, '<' | '>'))
+            is_ident_continue(*ch) || (allow_angle_brackets && matches!(*ch, '<' | '>'))
         })
         .map(|(idx, ch)| idx + ch.len_utf8())
         .last()?;

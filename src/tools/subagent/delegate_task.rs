@@ -33,10 +33,6 @@ impl Tool for DelegateTaskTool {
         "Delegate a specific subtask or research item to a focused subagent. The subagent runs in an isolated workspace, executes tools to accomplish the goal, and returns a summary."
     }
 
-    fn metadata(&self) -> crate::tools::ToolMetadata {
-        super::subagent_tool_metadata("delegate_task")
-    }
-
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",

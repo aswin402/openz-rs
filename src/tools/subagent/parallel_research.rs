@@ -58,10 +58,6 @@ impl Tool for ParallelResearchTool {
         "Run multiple independent research or analysis tasks concurrently in parallel using focused read-only subagents, and return their combined summaries. Use this when you have independent files/topics/searches to analyze simultaneously."
     }
 
-    fn metadata(&self) -> crate::tools::ToolMetadata {
-        super::subagent_tool_metadata("parallel_research")
-    }
-
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",

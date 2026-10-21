@@ -602,13 +602,35 @@ pub fn load_json_or_default<T: Default + serde::de::DeserializeOwned>(
         .unwrap_or_default()
 }
 
-pub fn save_pretty_json<T: serde::Serialize>(path: &std::path::Path, value: &T) -> Result<()> {
+pub fn save_pretty_json<T: serde::Serialize + ?Sized>(
+    path: &std::path::Path,
+    value: &T,
+) -> Result<()> {
     match path.parent() {
         Some(parent) => fs::create_dir_all(parent)?,
         None => {}
     }
     fs::write(path, serde_json::to_string_pretty(value)?)?;
     Ok(())
+}
+
+pub fn save_pretty_json_atomic<T: serde::Serialize + ?Sized>(
+    path: &std::path::Path,
+    value: &T,
+) -> Result<()> {
+    match path.parent() {
+        Some(parent) => fs::create_dir_all(parent)?,
+        None => {}
+    }
+    let tmp_path = path.with_extension(format!("json.tmp.{}", uuid::Uuid::new_v4()));
+    fs::write(&tmp_path, serde_json::to_string_pretty(value)?)?;
+    match fs::rename(&tmp_path, path) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = fs::remove_file(&tmp_path);
+            Err(e.into())
+        }
+    }
 }
 
 #[cfg(test)]

@@ -196,12 +196,6 @@ pub fn load_profiles_uncached() -> Result<Vec<SubagentProfile>> {
 
 pub fn save_profiles(profiles: &[SubagentProfile]) -> Result<()> {
     let path = subagents_file_path();
-    match path.parent() {
-        Some(parent) => fs::create_dir_all(parent)?,
-        None => {}
-    }
-    let content = serde_json::to_string_pretty(profiles)?;
-    fs::write(&path, content)
-        .with_context(|| format!("Failed to write subagents to {:?}", path))?;
-    Ok(())
+    crate::config::loader::save_pretty_json(&path, profiles)
+        .with_context(|| format!("Failed to write subagents to {:?}", path))
 }

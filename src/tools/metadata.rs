@@ -459,7 +459,12 @@ fn tool_recommended_timeout(name: &str) -> Option<u64> {
     match super::tool_spec(name) {
         Some(def) => def.recommended_timeout_secs,
         None => match (
-            name.contains("browser") || name.contains("obscura"),
+            name.contains("browser")
+                || name.contains("obscura")
+                || matches!(
+                    name,
+                    "delegate_task" | "parallel_research" | "evaluator_optimizer_loop"
+                ),
             name.starts_with("opendoc_"),
             name.starts_with("mcp_"),
         ) {
@@ -554,7 +559,11 @@ fn infer_fallback_risk(
     let is_medium = uses_network
         || spawns_process
         || name.contains("create")
-        || name.contains("update");
+        || name.contains("update")
+        || matches!(
+            name,
+            "delegate_task" | "parallel_research" | "evaluator_optimizer_loop"
+        );
     match (is_high, is_medium) {
         (true, _) => ToolRisk::High,
         (false, true) => ToolRisk::Medium,

@@ -527,13 +527,7 @@ fn scan_and_index(
     Ok(count)
 }
 
-fn is_ident_start(ch: char) -> bool {
-    ch.is_ascii_alphabetic() || ch == '_'
-}
-
-fn is_ident_continue(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || ch == '_'
-}
+use crate::tools::outline::{is_ident_continue, is_ident_start, strip_keyword_with_space};
 
 fn read_identifier_prefix(input: &str) -> Option<&str> {
     let mut chars = input.char_indices();
@@ -575,11 +569,8 @@ fn strip_one_modifier(input: &str) -> Option<&str> {
     }
 
     for kw in ["public", "export", "const", "async", "unsafe"] {
-        match trimmed.strip_prefix(kw) {
-            Some(rest) => match rest.chars().next().is_some_and(char::is_whitespace) {
-                true => return Some(rest.trim_start()),
-                false => {}
-            },
+        match strip_keyword_with_space(trimmed, kw) {
+            Some(rest) => return Some(rest),
             None => {}
         }
     }
@@ -689,24 +680,20 @@ const KEYWORD_DECLARATIONS: &[(&str, &str, bool)] = &[
 fn parse_element_declaration(trimmed: &str) -> Option<(&'static str, String, String)> {
     let after_mods = strip_modifiers(trimmed);
     for &(kw, element_type, append_parens) in KEYWORD_DECLARATIONS {
-        match after_mods.strip_prefix(kw) {
-            Some(rest) => match rest.chars().next().is_some_and(char::is_whitespace) {
-                true => {
-                    let after_kw = rest.trim_start();
-                    let ident = read_identifier_prefix(after_kw)?;
-                    let end_offset = (ident.as_ptr() as usize)
-                        .saturating_sub(trimmed.as_ptr() as usize)
-                        .saturating_add(ident.len())
-                        .min(trimmed.len());
-                    let base_sig = &trimmed[..end_offset];
-                    let signature = match append_parens {
-                        true => format!("{}(...)", base_sig),
-                        false => base_sig.to_string(),
-                    };
-                    return Some((element_type, ident.to_string(), signature));
-                }
-                false => {}
-            },
+        match strip_keyword_with_space(after_mods, kw) {
+            Some(after_kw) => {
+                let ident = read_identifier_prefix(after_kw)?;
+                let end_offset = (ident.as_ptr() as usize)
+                    .saturating_sub(trimmed.as_ptr() as usize)
+                    .saturating_add(ident.len())
+                    .min(trimmed.len());
+                let base_sig = &trimmed[..end_offset];
+                let signature = match append_parens {
+                    true => format!("{}(...)", base_sig),
+                    false => base_sig.to_string(),
+                };
+                return Some((element_type, ident.to_string(), signature));
+            }
             None => {}
         }
     }

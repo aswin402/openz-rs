@@ -15,7 +15,6 @@ pub fn write_tui_marker_in_dir(
     model: &str,
     provider: &str,
 ) -> Result<()> {
-    std::fs::create_dir_all(dir)?;
     let payload = serde_json::json!({
         "pid": pid,
         "session_key": session_key,
@@ -23,11 +22,7 @@ pub fn write_tui_marker_in_dir(
         "provider": provider,
         "updated_at": chrono::Utc::now().to_rfc3339(),
     });
-    std::fs::write(
-        tui_marker_path_in_dir(dir, pid),
-        serde_json::to_string_pretty(&payload)?,
-    )?;
-    Ok(())
+    crate::config::loader::save_pretty_json(&tui_marker_path_in_dir(dir, pid), &payload)
 }
 
 pub fn remove_tui_marker_in_dir(dir: &std::path::Path, pid: u32) {

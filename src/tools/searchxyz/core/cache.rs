@@ -135,14 +135,8 @@ impl Cache {
             .filter_map(|(_, entry)| (!entry.is_expired()).then(|| entry.clone()))
             .collect();
 
-        match path.parent() {
-            Some(parent) => std::fs::create_dir_all(parent)?,
-            None => {}
-        }
-
-        let file = std::fs::File::create(path)?;
-        serde_json::to_writer_pretty(file, &entries)?;
-        Ok(())
+        crate::config::loader::save_pretty_json(path, &entries)
+            .map_err(|e| SearchXyzError::ConfigError(e.to_string()))
     }
 
     /// Retrieve a cached entry. Returns `None` if missing or expired.

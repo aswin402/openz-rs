@@ -533,5 +533,36 @@ impl TransitionSpec {
 }
 
 #[cfg(test)]
+pub(crate) fn test_text_assets() -> BTreeMap<String, Asset> {
+    let mut assets = BTreeMap::new();
+    assets.insert(
+        "t0".to_string(),
+        Asset::Text(TextAsset {
+            text: "hello".to_string(),
+            font_source: "assets/PlayfairDisplay.ttf".to_string(),
+            size_px: 48.0,
+            max_width_px: None,
+            color_rgba8: [255, 255, 255, 255],
+        }),
+    );
+    assets
+}
+
+#[cfg(test)]
+pub(crate) fn test_track(clips: Vec<Clip>) -> Track {
+    Track {
+        name: "main".to_string(),
+        z_base: 0,
+        layout_mode: LayoutMode::Absolute,
+        layout_gap_px: 0.0,
+        layout_padding: Edges::default(),
+        layout_align_x: LayoutAlignX::Start,
+        layout_align_y: LayoutAlignY::Start,
+        layout_grid_columns: default_layout_grid_columns(),
+        clips,
+    }
+}
+
+#[cfg(test)]
 #[path = "../tests/unit/composition/model.rs"]
 mod tests;

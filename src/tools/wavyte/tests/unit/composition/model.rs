@@ -2,17 +2,6 @@ use super::*;
 use crate::tools::wavyte::foundation::core::Vec2;
 
 fn basic_comp() -> Composition {
-    let mut assets = BTreeMap::new();
-    assets.insert(
-        "t0".to_string(),
-        Asset::Text(TextAsset {
-            text: "hello".to_string(),
-            font_source: "assets/PlayfairDisplay.ttf".to_string(),
-            size_px: 48.0,
-            max_width_px: None,
-            color_rgba8: [255, 255, 255, 255],
-        }),
-    );
     Composition {
         fps: Fps::new(30, 1).unwrap(),
         canvas: Canvas {
@@ -20,42 +9,32 @@ fn basic_comp() -> Composition {
             height: 1080,
         },
         duration: FrameIndex(60),
-        assets,
-        tracks: vec![Track {
-            name: "main".to_string(),
-            z_base: 0,
-            layout_mode: LayoutMode::Absolute,
-            layout_gap_px: 0.0,
-            layout_padding: Edges::default(),
-            layout_align_x: LayoutAlignX::Start,
-            layout_align_y: LayoutAlignY::Start,
-            layout_grid_columns: default_layout_grid_columns(),
-            clips: vec![Clip {
-                id: "c0".to_string(),
-                asset: "t0".to_string(),
-                range: FrameRange::new(FrameIndex(0), FrameIndex(60)).unwrap(),
-                props: ClipProps {
-                    transform: Anim::constant(Transform2D {
-                        translate: Vec2::new(10.0, 20.0),
-                        ..Transform2D::default()
-                    }),
-                    opacity: Anim::constant(1.0),
-                    blend: BlendMode::Normal,
-                },
-                z_offset: 0,
-                effects: vec![EffectInstance {
-                    kind: "noop".to_string(),
-                    params: serde_json::Value::Null,
-                }],
-                transition_in: Some(TransitionSpec {
-                    kind: "crossfade".to_string(),
-                    duration_frames: 10,
-                    ease: Ease::Linear,
-                    params: serde_json::Value::Null,
+        assets: test_text_assets(),
+        tracks: vec![test_track(vec![Clip {
+            id: "c0".to_string(),
+            asset: "t0".to_string(),
+            range: FrameRange::new(FrameIndex(0), FrameIndex(60)).unwrap(),
+            props: ClipProps {
+                transform: Anim::constant(Transform2D {
+                    translate: Vec2::new(10.0, 20.0),
+                    ..Transform2D::default()
                 }),
-                transition_out: None,
+                opacity: Anim::constant(1.0),
+                blend: BlendMode::Normal,
+            },
+            z_offset: 0,
+            effects: vec![EffectInstance {
+                kind: "noop".to_string(),
+                params: serde_json::Value::Null,
             }],
-        }],
+            transition_in: Some(TransitionSpec {
+                kind: "crossfade".to_string(),
+                duration_frames: 10,
+                ease: Ease::Linear,
+                params: serde_json::Value::Null,
+            }),
+            transition_out: None,
+        }])],
         seed: 123,
     }
 }

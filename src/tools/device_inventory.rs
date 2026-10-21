@@ -366,23 +366,8 @@ impl DeviceInventoryTool {
     }
 
     fn save_inventory(&self, inventory: &DeviceInventory) -> Result<()> {
-        match self.path.parent() {
-            Some(parent) => {
-                std::fs::create_dir_all(parent)
-                    .with_context(|| format!("Failed to create {}", parent.display()))?;
-            }
-            None => {}
-        }
-
-        let tmp_path = self
-            .path
-            .with_extension(format!("json.tmp.{}", uuid::Uuid::new_v4()));
-        let content = serde_json::to_string_pretty(inventory)?;
-        std::fs::write(&tmp_path, content)
-            .with_context(|| format!("Failed to write {}", tmp_path.display()))?;
-        std::fs::rename(&tmp_path, &self.path)
-            .with_context(|| format!("Failed to replace {}", self.path.display()))?;
-        Ok(())
+        crate::config::loader::save_pretty_json_atomic(&self.path, inventory)
+            .with_context(|| format!("Failed to save {}", self.path.display()))
     }
 
     fn list(&self, inventory: &DeviceInventory, arguments: &Value) -> Result<Value> {

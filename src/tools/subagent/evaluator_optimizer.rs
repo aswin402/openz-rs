@@ -29,10 +29,6 @@ impl Tool for EvaluatorOptimizerLoopTool {
         "Run a stateful draft-and-review cycle (reflection loop) between an optimizer subagent (e.g. coding_agent) and an evaluator subagent (e.g. reviewer) to generate high-quality outputs."
     }
 
-    fn metadata(&self) -> crate::tools::ToolMetadata {
-        super::subagent_tool_metadata(self.name())
-    }
-
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",

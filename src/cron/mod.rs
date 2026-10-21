@@ -240,14 +240,8 @@ pub fn load_jobs_raw() -> Result<Vec<CronJob>> {
 
 pub fn save_jobs_raw(jobs: &[CronJob]) -> Result<()> {
     let path = cron_file_path();
-    match path.parent() {
-        Some(parent) => fs::create_dir_all(parent)?,
-        None => {}
-    }
-    let content = serde_json::to_string_pretty(jobs)?;
-    fs::write(&path, content)
-        .with_context(|| format!("Failed to write cron jobs to {:?}", path))?;
-    Ok(())
+    crate::config::loader::save_pretty_json(&path, jobs)
+        .with_context(|| format!("Failed to write cron jobs to {:?}", path))
 }
 
 pub fn load_jobs() -> Result<Vec<CronJob>> {

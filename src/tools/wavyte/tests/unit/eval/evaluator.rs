@@ -2,27 +2,15 @@ use super::*;
 use crate::tools::wavyte::{
     animation::anim::Anim,
     animation::ease::Ease,
-    composition::model::{Asset, ClipProps, TextAsset, Track},
+    composition::model::{test_text_assets, test_track, ClipProps},
     foundation::core::{Canvas, Fps, Transform2D, Vec2},
 };
-use std::collections::BTreeMap;
 
 fn basic_comp(
     opacity: Anim<f64>,
     tr_in: Option<TransitionSpec>,
     tr_out: Option<TransitionSpec>,
 ) -> Composition {
-    let mut assets = BTreeMap::new();
-    assets.insert(
-        "t0".to_string(),
-        Asset::Text(TextAsset {
-            text: "hello".to_string(),
-            font_source: "assets/PlayfairDisplay.ttf".to_string(),
-            size_px: 48.0,
-            max_width_px: None,
-            color_rgba8: [255, 255, 255, 255],
-        }),
-    );
     Composition {
         fps: Fps::new(30, 1).unwrap(),
         canvas: Canvas {
@@ -30,34 +18,24 @@ fn basic_comp(
             height: 360,
         },
         duration: FrameIndex(20),
-        assets,
-        tracks: vec![Track {
-            name: "main".to_string(),
-            z_base: 0,
-            layout_mode: crate::tools::wavyte::LayoutMode::Absolute,
-            layout_gap_px: 0.0,
-            layout_padding: crate::tools::wavyte::Edges::default(),
-            layout_align_x: crate::tools::wavyte::LayoutAlignX::Start,
-            layout_align_y: crate::tools::wavyte::LayoutAlignY::Start,
-            layout_grid_columns: 2,
-            clips: vec![Clip {
-                id: "c0".to_string(),
-                asset: "t0".to_string(),
-                range: FrameRange::new(FrameIndex(5), FrameIndex(15)).unwrap(),
-                props: ClipProps {
-                    transform: Anim::constant(Transform2D {
-                        translate: Vec2::new(1.0, 2.0),
-                        ..Transform2D::default()
-                    }),
-                    opacity,
-                    blend: BlendMode::Normal,
-                },
-                z_offset: 0,
-                effects: vec![],
-                transition_in: tr_in,
-                transition_out: tr_out,
-            }],
-        }],
+        assets: test_text_assets(),
+        tracks: vec![test_track(vec![Clip {
+            id: "c0".to_string(),
+            asset: "t0".to_string(),
+            range: FrameRange::new(FrameIndex(5), FrameIndex(15)).unwrap(),
+            props: ClipProps {
+                transform: Anim::constant(Transform2D {
+                    translate: Vec2::new(1.0, 2.0),
+                    ..Transform2D::default()
+                }),
+                opacity,
+                blend: BlendMode::Normal,
+            },
+            z_offset: 0,
+            effects: vec![],
+            transition_in: tr_in,
+            transition_out: tr_out,
+        }])],
         seed: 1,
     }
 }

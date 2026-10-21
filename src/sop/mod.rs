@@ -82,13 +82,8 @@ pub fn initialize_sop_system() -> Result<()> {
     }
 
     let defs_path = sop_definitions_path();
-    let mut current_defs = match defs_path.exists() {
-        true => {
-            let content = fs::read_to_string(&defs_path)?;
-            serde_json::from_str::<Vec<SopDefinition>>(&content).unwrap_or_default()
-        }
-        false => Vec::new(),
-    };
+    let mut current_defs: Vec<SopDefinition> =
+        crate::config::loader::load_json_or_default(&defs_path);
 
     let defaults = get_default_sop_definitions();
     let mut updated = false;
@@ -103,10 +98,7 @@ pub fn initialize_sop_system() -> Result<()> {
     }
 
     match updated || !defs_path.exists() {
-        true => {
-            let content = serde_json::to_string_pretty(&current_defs)?;
-            fs::write(&defs_path, content)?;
-        }
+        true => crate::config::loader::save_pretty_json(&defs_path, &current_defs)?,
         false => {}
     }
 
@@ -205,9 +197,7 @@ pub fn save_definition(def: &SopDefinition) -> Result<()> {
     let mut defs = load_definitions().unwrap_or_default();
     defs.retain(|d| d.id != def.id);
     defs.push(def.clone());
-    let content = serde_json::to_string_pretty(&defs)?;
-    fs::write(sop_definitions_path(), content)?;
-    Ok(())
+    crate::config::loader::save_pretty_json(&sop_definitions_path(), &defs)
 }
 
 fn validated_instance_path(instance_id: &str) -> Result<PathBuf> {
@@ -236,9 +226,7 @@ pub fn load_instance(instance_id: &str) -> Result<SopInstance> {
 pub fn save_instance(inst: &SopInstance) -> Result<()> {
     initialize_sop_system()?;
     let path = validated_instance_path(&inst.id)?;
-    let content = serde_json::to_string_pretty(inst)?;
-    fs::write(&path, content)?;
-    Ok(())
+    crate::config::loader::save_pretty_json(&path, inst)
 }
 
 pub fn list_instances() -> Result<Vec<SopInstance>> {
