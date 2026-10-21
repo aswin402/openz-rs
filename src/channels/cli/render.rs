@@ -75,17 +75,13 @@ pub fn print_normal_line(line: &str) {
     let _ = std::io::stdout().flush();
 }
 
-fn clean_cell_text(text: &str) -> String {
-    shared_clean_cell_text(text, true)
-}
-
 pub fn render_table_lines(table_lines: &[&str]) -> Vec<String> {
     let headers: Vec<String> = table_lines
         .first()
         .map(|first| {
             split_row(first)
                 .into_iter()
-                .map(|h| clean_cell_text(&h))
+                .map(|h| shared_clean_cell_text(&h, true))
                 .collect()
         })
         .unwrap_or_default();

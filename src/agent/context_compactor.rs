@@ -166,33 +166,7 @@ pub fn compress_code(raw_code: &str) -> String {
     }
 }
 
-#[derive(Clone, Copy)]
-enum AnsiState {
-    Normal,
-    SeenEsc,
-    InCsi,
-}
-
-pub(crate) fn strip_ansi_escapes(raw_logs: &str) -> String {
-    let mut out = String::with_capacity(raw_logs.len());
-    raw_logs.chars().fold(AnsiState::Normal, |state, ch| match (state, ch) {
-        (AnsiState::Normal, '\x1B') => AnsiState::SeenEsc,
-        (AnsiState::Normal, c) => {
-            out.push(c);
-            AnsiState::Normal
-        }
-        (AnsiState::SeenEsc, '[') => AnsiState::InCsi,
-        (AnsiState::SeenEsc, c) => {
-            out.push(c);
-            AnsiState::Normal
-        }
-        (AnsiState::InCsi, c) => match c.is_ascii_alphabetic() {
-            true => AnsiState::Normal,
-            false => AnsiState::InCsi,
-        },
-    });
-    out
-}
+pub(crate) use crate::agent::style::strip_ansi_escapes;
 
 fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
     let needle_bytes = needle.as_bytes();

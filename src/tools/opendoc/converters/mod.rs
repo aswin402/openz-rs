@@ -368,20 +368,7 @@ fn xlsx_to_csv(source: &str, output: &str) -> Result<ConversionResult, Conversio
     })
 }
 
-fn escape_html(s: &str) -> String {
-    let mut escaped = String::new();
-    for c in s.chars() {
-        match c {
-            '<' => escaped.push_str("&lt;"),
-            '>' => escaped.push_str("&gt;"),
-            '&' => escaped.push_str("&amp;"),
-            '"' => escaped.push_str("&quot;"),
-            '\'' => escaped.push_str("&apos;"),
-            _ => escaped.push(c),
-        }
-    }
-    escaped
-}
+use crate::agent::style::escape_html;
 
 fn escape_csv(s: &str) -> String {
     match s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {

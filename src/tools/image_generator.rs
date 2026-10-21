@@ -90,20 +90,7 @@ pub(crate) async fn serve_local_html_file(mut raw_path: PathBuf) -> (String, Loc
     }
 }
 
-fn escape_html(text: &str) -> String {
-    let mut escaped = String::new();
-    for c in text.chars() {
-        match c {
-            '&' => escaped.push_str("&amp;"),
-            '<' => escaped.push_str("&lt;"),
-            '>' => escaped.push_str("&gt;"),
-            '"' => escaped.push_str("&quot;"),
-            '\'' => escaped.push_str("&#x27;"),
-            _ => escaped.push(c),
-        }
-    }
-    escaped
-}
+use crate::agent::style::escape_html;
 
 fn fill_stroke_attrs(fill: bool, color_str: &str) -> (&str, &str, u8) {
     match fill {

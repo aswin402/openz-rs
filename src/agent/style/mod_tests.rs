@@ -181,3 +181,24 @@ fn test_zero_regex_inline_tokenizer_and_rich_tool_outcomes() {
     );
     assert!(batch_summary.contains("batch: 3 tools (concurrent)"));
 }
+
+#[test]
+fn test_escape_xml_html_and_truncate_summary_text() {
+    assert_eq!(
+        escape_xml("<tag attr=\"val\" & 'quote'>"),
+        "&lt;tag attr=&quot;val&quot; &amp; &apos;quote&apos;&gt;"
+    );
+    assert_eq!(
+        escape_html("<b>5 & 6</b>"),
+        "&lt;b&gt;5 &amp; 6&lt;/b&gt;"
+    );
+    assert_eq!(truncate_summary_text("short", 10, "..."), "short");
+    assert_eq!(
+        truncate_summary_text("abcdefghijklmnopqrstuvwxyz", 8, "..."),
+        "abcde..."
+    );
+    assert_eq!(
+        truncate_summary_text("abcdefghijklmnopqrstuvwxyz", 6, "…"),
+        "abcde…"
+    );
+}

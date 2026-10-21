@@ -24,9 +24,7 @@ impl std::str::FromStr for ChunkingStrategy {
 }
 
 /// Estimates token count based on standard English text heuristics (4 chars = 1 token).
-pub fn estimate_tokens(text: &str) -> usize {
-    text.len() / 4 + 1
-}
+pub use crate::tools::headroom::estimate_tokens;
 
 fn join_paragraphs(paragraphs: &[Paragraph]) -> String {
     let mut full_text = String::new();

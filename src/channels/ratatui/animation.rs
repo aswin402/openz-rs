@@ -206,13 +206,6 @@ fn classify_tool_category(tool_lower: &str) -> ToolCategory {
         .unwrap_or(ToolCategory::Working)
 }
 
-fn truncate_summary_text(s: &str) -> String {
-    match s.len() > 36 {
-        true => format!("{}…", &s[..35]),
-        false => s.to_string(),
-    }
-}
-
 impl AgentActivity {
     /// Classifies a tool call and its arguments into an activity
     pub fn from_tool_call(tool: &str, args_str: &str) -> Self {
@@ -311,19 +304,12 @@ impl AgentActivity {
         }
 
         // 1. Try JSON parsing
-        match serde_json::from_str::<serde_json::Value>(trimmed) {
-            Ok(v) => {
-                for key in keys {
-                    match v.get(*key).and_then(|val| val.as_str()).map(str::trim) {
-                        Some(s) => match s.is_empty() {
-                            false => return truncate_summary_text(s),
-                            true => {}
-                        },
-                        None => {}
-                    }
-                }
-            }
-            Err(_) => {}
+        match serde_json::from_str::<serde_json::Value>(trimmed)
+            .ok()
+            .and_then(|v| crate::tools::arguments::extract_trimmed_str(&v, keys))
+        {
+            Some(s) => return crate::agent::style::truncate_summary_text(&s, 36, "…"),
+            None => {}
         }
 
         // 2. Try parsing key: "value" from formatted strings
@@ -341,7 +327,7 @@ impl AgentActivity {
                     };
                     let clean = extracted.trim();
                     match clean.is_empty() {
-                        false => return truncate_summary_text(clean),
+                        false => return crate::agent::style::truncate_summary_text(clean, 36, "…"),
                         true => {}
                     }
                 }
@@ -355,7 +341,7 @@ impl AgentActivity {
                 Some(end_quote) => {
                     let clean = &stripped[..end_quote];
                     match clean.is_empty() {
-                        false => return truncate_summary_text(clean),
+                        false => return crate::agent::style::truncate_summary_text(clean, 36, "…"),
                         true => {}
                     }
                 }
@@ -435,7 +421,7 @@ impl AgentActivity {
             .or_else(|| first_line.strip_prefix("Can you "))
             .unwrap_or(first_line);
 
-        truncate_summary_text(cleaned)
+        crate::agent::style::truncate_summary_text(cleaned, 36, "…")
     }
 }
 

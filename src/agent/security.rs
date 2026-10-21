@@ -838,13 +838,8 @@ async fn ask_telegram_approval(chat_id_str: &str, tool_name: &str, description: 
     crate::channels::telegram::register_approval(&req_id, tx);
 
     let send_url = telegram_api_url(&token, "sendMessage");
-    let escape_html = |s: &str| -> String {
-        s.replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-    };
-    let safe_tool_name = escape_html(tool_name);
-    let safe_description = escape_html(description);
+    let safe_tool_name = crate::agent::style::escape_html(tool_name);
+    let safe_description = crate::agent::style::escape_html(description);
 
     let text = format!(
         "⚠️ <b>SECURITY ALERT</b>\nOpenZ is requesting to execute a sensitive tool <code>{safe_tool_name}</code>:\n<pre>{safe_description}</pre>\nDo you approve this action?"

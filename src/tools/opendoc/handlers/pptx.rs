@@ -257,13 +257,7 @@ fn create_content_slide_xml(
     .into_bytes()
 }
 
-fn escape_xml(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
+use crate::agent::style::escape_xml;
 
 /// Create a new PowerPoint presentation and save to a file path.
 pub fn create_presentation(file_path: &str, _title: Option<&str>) -> String {

@@ -314,10 +314,35 @@ fn strip_list_bullet_prefix(trimmed: &str) -> &str {
         .unwrap_or(trimmed)
 }
 
-fn truncate_summary_text(summary: String, max_chars: usize) -> String {
+pub fn escape_xml(s: &str) -> String {
+    let mut escaped = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&apos;"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped
+}
+
+pub fn escape_html(s: &str) -> String {
+    escape_xml(s)
+}
+
+pub fn truncate_summary_text(summary: &str, max_chars: usize, suffix: &str) -> String {
     match summary.len() > max_chars {
-        true => format!("{}...", &summary[..max_chars.saturating_sub(3)]),
-        false => summary,
+        true => {
+            let cut = crate::tools::headroom::floor_char_boundary(
+                summary,
+                max_chars.saturating_sub(suffix.chars().count()),
+            );
+            format!("{}{suffix}", &summary[..cut])
+        }
+        false => summary.to_string(),
     }
 }
 
@@ -331,7 +356,7 @@ pub fn format_subagent_summary(content: &str) -> String {
         .map(|line| line.trim_matches('*').trim())
         .find(|line| !line.is_empty())
         .map(replace_with_em_dash)
-        .map(|summary| truncate_summary_text(summary, 80))
+        .map(|summary| truncate_summary_text(&summary, 80, "..."))
         .unwrap_or_else(|| "completed task".to_string())
 }
 
@@ -348,7 +373,7 @@ pub fn format_reasoning_summary(reasoning: &str) -> String {
         .map(|line| line.trim_matches('*').trim())
         .find(|line| !line.is_empty())
         .map(replace_with_em_dash)
-        .map(|summary| truncate_summary_text(summary, 100))
+        .map(|summary| truncate_summary_text(&summary, 100, "..."))
         .unwrap_or_else(|| "analyzing requirements".to_string())
 }
 

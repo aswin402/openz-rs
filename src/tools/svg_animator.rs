@@ -750,13 +750,7 @@ fn build_svg_document(args: &Value) -> Result<String> {
     Ok(svg)
 }
 
-fn escape_xml(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
+use crate::agent::style::escape_xml;
 
 #[async_trait::async_trait]
 impl Tool for SvgAnimatorTool {
