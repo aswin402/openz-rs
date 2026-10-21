@@ -1,5 +1,34 @@
+## [0.0.288] - 2026-10-21
+### v0.0.288 (Latest Release)
+
+#### Changed
+- **Consolidated JSON Config/Registry Persistence, Health Error Truncation, & Headroom Cache DB Path Resolution ([`src/config/loader.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/loader.rs), [`src/model_registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/model_registry.rs), [`src/subagents/health.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/health.rs), [`src/providers/model_prefs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/model_prefs.rs), [`src/tools/headroom/cache.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/cache.rs))**:
+  - **Shared JSON Persistence Helpers (`src/config/loader.rs`)**:
+    - Exported `pub fn load_json_or_default<T: Default + serde::de::DeserializeOwned>(path: &Path) -> T` and `pub fn save_pretty_json<T: serde::Serialize>(path: &Path, value: &T) -> Result<()>` in [`src/config/loader.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/loader.rs).
+    - Routed [`ModelRegistry::load`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/model_registry.rs) / [`ModelRegistry::save`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/model_registry.rs), [`SubagentHealthRegistry::load`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/health.rs) / [`SubagentHealthRegistry::save`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/health.rs), and [`load_model_prefs_at`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/model_prefs.rs) through the shared helpers.
+  - **Health Record Failure Truncation & Headroom DB Path Cleanup (`src/model_registry.rs`, `src/subagents/health.rs`, `src/tools/headroom/cache.rs`)**:
+    - Exported `truncate_health_error` in [`src/model_registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/model_registry.rs) and shared it across [`ModelHealthRecord::mark_failure`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/model_registry.rs) and [`SubagentHealthRecord::mark_failure`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/health.rs).
+    - Inlined the single-use `get_db_path` wrapper in [`src/tools/headroom/cache.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/cache.rs) via [`crate::config::loader::runtime_db_path("ccr_cache.db")`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/loader.rs).
+
+#### Documentation
+- **Synchronized Release Manifests**: Updated [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md), and [`CHANGELOG.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/CHANGELOG.md) to `0.0.288`.
+
+### Sources & Inspirations
+- **[Inspiration]**: Canonical JSON registry persistence and health tracking helpers.
+
+- **Ideas**:
+  - Eliminate duplicate JSON registry `load`/`save` helpers, health-error truncation helpers, and single-use DB path wrappers.
+- **Inspirations**:
+  - Shared config loader persistence primitives (`0` `if/else`, `0` `regex` across all 624 files).
+- **Sources & References**:
+  - [`src/config/loader.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/loader.rs), [`src/model_registry.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/model_registry.rs), [`src/subagents/health.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/subagents/health.rs), [`src/providers/model_prefs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/providers/model_prefs.rs), [`src/tools/headroom/cache.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/cache.rs)
+- **Details & Metrics**:
+  - Consolidated 7 duplicate persistence and health helpers across 5 files.
+- **Verification**:
+  - Verified with `just test-guard` (`2 passed; 0 failed` in `<0.4s`, `0` `if`/`else` and `0` `regex` across all 624 `.rs` files) and `just check openz` (`0` warnings).
+
 ## [0.0.287] - 2026-10-21
-### v0.0.287 (Latest Release)
+### v0.0.287
 
 #### Changed
 - **Consolidated Wavyte SplitMix64 Digest & `PreparedAssetStore` Test Helpers, Model Risk Tests, & OpenDoc Token Estimation ([`src/tools/wavyte/foundation/math.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/wavyte/foundation/math.rs), [`src/tools/wavyte/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/wavyte/mod.rs), [`src/tools/wavyte/assets/store.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/wavyte/assets/store.rs), [`src/tools/wavyte/tests/eval_snapshot.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/wavyte/tests/eval_snapshot.rs), [`src/tools/wavyte/tests/render_cpu.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/wavyte/tests/render_cpu.rs), [`src/tools/wavyte/tests/render_cpu_svg.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/wavyte/tests/render_cpu_svg.rs), [`src/tools/wavyte/tests/unit/compile/plan.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/wavyte/tests/unit/compile/plan.rs), [`src/channels/tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/tests.rs), [`src/tools/opendoc/ir/document.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/ir/document.rs))**:

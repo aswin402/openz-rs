@@ -7,7 +7,6 @@ use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::time::SystemTime;
@@ -18,17 +17,13 @@ static CCR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 // ─── DB path & connection ───────────────────────────────────────
 
-fn get_db_path() -> PathBuf {
-    crate::config::loader::runtime_db_path("ccr_cache.db")
-}
-
 pub fn get_cache_connection() -> Result<std::sync::MutexGuard<'static, Connection>> {
     static DB: OnceLock<std::sync::Mutex<Connection>> = OnceLock::new();
     match DB.get() {
         Some(mtx) => return mtx.lock().map_err(|e| anyhow!("Cache lock error: {}", e)),
         None => {}
     }
-    let path = get_db_path();
+    let path = crate::config::loader::runtime_db_path("ccr_cache.db");
     match path.parent() {
         Some(parent) => {
             let _ = std::fs::create_dir_all(parent);

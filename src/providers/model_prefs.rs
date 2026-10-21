@@ -28,10 +28,7 @@ pub fn load_model_prefs() -> ModelPrefs {
 }
 
 pub fn load_model_prefs_at(dir: &std::path::Path) -> ModelPrefs {
-    std::fs::read_to_string(model_prefs_path_at(dir))
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default()
+    crate::config::loader::load_json_or_default(&model_prefs_path_at(dir))
 }
 
 pub fn save_model_prefs(prefs: &ModelPrefs) -> anyhow::Result<()> {

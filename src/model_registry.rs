@@ -60,8 +60,12 @@ impl ModelHealthRecord {
     pub fn mark_failure(&mut self, error: &str) {
         self.last_checked = chrono::Utc::now().to_rfc3339();
         self.failure_count = self.failure_count.saturating_add(1);
-        self.last_error = Some(error.chars().take(500).collect());
+        self.last_error = Some(truncate_health_error(error));
     }
+}
+
+pub(crate) fn truncate_health_error(error: &str) -> String {
+    error.chars().take(500).collect()
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -79,22 +83,11 @@ impl ModelRegistry {
     }
 
     pub fn load() -> Self {
-        let path = Self::path();
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|raw| serde_json::from_str(&raw).ok())
-            .unwrap_or_default()
+        crate::config::loader::load_json_or_default(&Self::path())
     }
 
     pub fn save(&self) -> Result<()> {
-        let path = Self::path();
-        match path.parent() {
-            Some(parent) => std::fs::create_dir_all(parent)?,
-            None => {}
-        }
-        let raw = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, raw)?;
-        Ok(())
+        crate::config::loader::save_pretty_json(&Self::path(), self)
     }
 
     pub fn get(&self, provider: &str, model: &str) -> Option<&ModelHealthRecord> {

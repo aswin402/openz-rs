@@ -3,7 +3,6 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::PathBuf;
 
 pub const MAX_SUBAGENT_FALLBACKS: usize = 3;
@@ -25,7 +24,7 @@ impl SubagentHealthRecord {
 
     pub fn mark_failure(&mut self, error: &str) {
         self.failure_count = self.failure_count.saturating_add(1);
-        self.last_error = Some(error.chars().take(500).collect());
+        self.last_error = Some(crate::model_registry::truncate_health_error(error));
         self.updated_at = Some(chrono::Utc::now().to_rfc3339());
     }
 }
@@ -41,20 +40,11 @@ impl SubagentHealthRegistry {
     }
 
     pub fn load() -> Self {
-        fs::read_to_string(Self::path())
-            .ok()
-            .and_then(|raw| serde_json::from_str(&raw).ok())
-            .unwrap_or_default()
+        crate::config::loader::load_json_or_default(&Self::path())
     }
 
     pub fn save(&self) -> Result<()> {
-        let path = Self::path();
-        match path.parent() {
-            Some(parent) => fs::create_dir_all(parent)?,
-            None => {}
-        }
-        fs::write(path, serde_json::to_string_pretty(self)?)?;
-        Ok(())
+        crate::config::loader::save_pretty_json(&Self::path(), self)
     }
 
     pub fn get(&self, profile: &str) -> Option<&SubagentHealthRecord> {

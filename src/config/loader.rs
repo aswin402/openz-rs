@@ -593,6 +593,24 @@ pub fn save_config_to_path(path: &Path, config: &Config) -> Result<()> {
     Ok(())
 }
 
+pub fn load_json_or_default<T: Default + serde::de::DeserializeOwned>(
+    path: &std::path::Path,
+) -> T {
+    fs::read_to_string(path)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+pub fn save_pretty_json<T: serde::Serialize>(path: &std::path::Path, value: &T) -> Result<()> {
+    match path.parent() {
+        Some(parent) => fs::create_dir_all(parent)?,
+        None => {}
+    }
+    fs::write(path, serde_json::to_string_pretty(value)?)?;
+    Ok(())
+}
+
 #[cfg(test)]
 pub(crate) struct TestConfigDirLock;
 
