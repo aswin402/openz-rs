@@ -35,6 +35,26 @@ impl Fnv1a64 {
     }
 }
 
+pub(crate) fn write_u8_pair(a: &mut Fnv1a64, b: &mut Fnv1a64, v: u8) {
+    a.write_u8(v);
+    b.write_u8(v);
+}
+
+pub(crate) fn write_u64_pair(a: &mut Fnv1a64, b: &mut Fnv1a64, v: u64) {
+    a.write_u64(v);
+    b.write_u64(v);
+}
+
+pub(crate) fn write_i64_pair(a: &mut Fnv1a64, b: &mut Fnv1a64, v: i64) {
+    write_u64_pair(a, b, v as u64);
+}
+
+pub(crate) fn write_str_pair(a: &mut Fnv1a64, b: &mut Fnv1a64, s: &str) {
+    write_u64_pair(a, b, s.len() as u64);
+    a.write_bytes(s.as_bytes());
+    b.write_bytes(s.as_bytes());
+}
+
 pub(crate) fn mul_div255_u16(x: u16, y: u16) -> u16 {
     (((u32::from(x) * u32::from(y)) + 127) / 255) as u16
 }

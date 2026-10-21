@@ -7,75 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 
-use crate::tools::web::is_safe_ip;
-
-/// Validate URL to prevent SSRF — resolves DNS to catch rebinding attacks.
-async fn validate_url(url: &str) -> Result<()> {
-    let parsed = reqwest::Url::parse(url).map_err(|e| anyhow!("Invalid URL: {}", e))?;
-    let host = parsed
-        .host_str()
-        .ok_or_else(|| anyhow!("URL has no host"))?
-        .to_lowercase();
-
-    match parsed.scheme() {
-        "http" | "https" => {}
-        other => {
-            return Err(anyhow!(
-                "SSRF blocked: only http/https URLs are allowed (got '{}')",
-                other
-            ));
-        }
-    }
-
-    match host.as_str() {
-        "169.254.169.254" | "metadata.google.internal" => {
-            return Err(anyhow!(
-                "SSRF blocked: cloud metadata endpoints are not allowed"
-            ));
-        }
-        _ => {}
-    }
-
-    let unsafe_host_ip = host
-        .parse::<std::net::IpAddr>()
-        .ok()
-        .is_some_and(|ip| !is_safe_ip(&ip));
-    match unsafe_host_ip {
-        true => {
-            return Err(anyhow!(
-                "SSRF blocked: private/reserved IP addresses are not allowed"
-            ));
-        }
-        false => {}
-    }
-
-    // DNS resolution check — prevents rebinding attacks
-    let resolved: Vec<_> = match tokio::net::lookup_host(format!("{}:0", host)).await {
-        Ok(iter) => iter.map(|addr| addr.ip()).collect(),
-        Err(_) => Vec::new(),
-    };
-
-    for ip in &resolved {
-        match is_safe_ip(ip) {
-            true => {}
-            false => {
-                return Err(anyhow!(
-                    "SSRF blocked: hostname '{}' resolved to private/reserved IP {}",
-                    host,
-                    ip
-                ));
-            }
-        }
-    }
-
-    match resolved.is_empty() {
-        true => Err(anyhow!(
-            "SSRF blocked: hostname '{}' could not be resolved",
-            host
-        )),
-        false => Ok(()),
-    }
-}
+use crate::tools::web::validate_url;
 
 pub struct CrawlSiteTool;
 

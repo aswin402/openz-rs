@@ -343,14 +343,14 @@ fn flatten_to_opaque_rgba8(
 
                 let (r, g, b) = match src_is_premul {
                     true => (
-                        s[0] as u16 + mul_div255(bg_r, inv),
-                        s[1] as u16 + mul_div255(bg_g, inv),
-                        s[2] as u16 + mul_div255(bg_b, inv),
+                        s[0] as u16 + mul_div255_u16(bg_r, inv),
+                        s[1] as u16 + mul_div255_u16(bg_g, inv),
+                        s[2] as u16 + mul_div255_u16(bg_b, inv),
                     ),
                     false => (
-                        mul_div255(s[0] as u16, a) + mul_div255(bg_r, inv),
-                        mul_div255(s[1] as u16, a) + mul_div255(bg_g, inv),
-                        mul_div255(s[2] as u16, a) + mul_div255(bg_b, inv),
+                        mul_div255_u16(s[0] as u16, a) + mul_div255_u16(bg_r, inv),
+                        mul_div255_u16(s[1] as u16, a) + mul_div255_u16(bg_g, inv),
+                        mul_div255_u16(s[2] as u16, a) + mul_div255_u16(bg_b, inv),
                     ),
                 };
 
@@ -363,10 +363,6 @@ fn flatten_to_opaque_rgba8(
     }
 
     Ok(())
-}
-
-fn mul_div255(x: u16, y: u16) -> u16 {
-    mul_div255_u16(x, y)
 }
 
 #[cfg(test)]

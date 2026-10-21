@@ -3,7 +3,7 @@ use super::common::{
     kill_browser_on_cdp_port, request_new_cdp_tab, send_cdp_cmd, ACTION_ALIASES, SCRIPT_ALIASES,
     URL_ALIASES,
 };
-use crate::tools::web::is_safe_ip;
+use crate::tools::web::validate_url;
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
@@ -284,59 +284,6 @@ impl Tool for ObscuraBrowserTool {
             "output": output
         }))
     }
-}
-
-async fn validate_url(url: &str) -> Result<()> {
-    let parsed = reqwest::Url::parse(url).map_err(|e| anyhow::anyhow!("Invalid URL: {}", e))?;
-    let host = parsed
-        .host_str()
-        .ok_or_else(|| anyhow::anyhow!("URL has no host"))?
-        .to_lowercase();
-
-    matches!(parsed.scheme(), "http" | "https")
-        .then_some(())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "SSRF blocked: only http/https URLs are allowed (got '{}')",
-                parsed.scheme()
-            )
-        })?;
-
-    (!matches!(
-        host.as_str(),
-        "169.254.169.254" | "metadata.google.internal"
-    ))
-    .then_some(())
-    .ok_or_else(|| anyhow::anyhow!("SSRF blocked: cloud metadata endpoints are not allowed"))?;
-
-    match host.parse::<std::net::IpAddr>() {
-        Ok(ip) => {
-            is_safe_ip(&ip).then_some(()).ok_or_else(|| {
-                anyhow::anyhow!("SSRF blocked: private/reserved IP addresses are not allowed")
-            })?;
-        }
-        Err(_) => {}
-    }
-
-    let resolved: Vec<_> = match tokio::net::lookup_host(format!("{}:0", host)).await {
-        Ok(iter) => iter.map(|addr| addr.ip()).collect(),
-        Err(_) => Vec::new(),
-    };
-
-    match resolved.iter().find(|ip| !is_safe_ip(ip)) {
-        Some(unsafe_ip) => {
-            return Err(anyhow::anyhow!(
-                "SSRF blocked: hostname '{}' resolved to private/reserved IP {}",
-                host,
-                unsafe_ip
-            ));
-        }
-        None => {}
-    }
-
-    (!resolved.is_empty()).then_some(()).ok_or_else(|| {
-        anyhow::anyhow!("SSRF blocked: hostname '{}' could not be resolved", host)
-    })
 }
 
 #[cfg(test)]

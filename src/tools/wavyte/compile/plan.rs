@@ -8,7 +8,9 @@ use crate::tools::wavyte::{
     eval::EvaluatedGraph,
     foundation::core::{Affine, BezPath, Canvas, Rgba8Premul},
     foundation::error::WavyteResult,
-    foundation::math::Fnv1a64,
+    foundation::math::{
+        Fnv1a64, write_i64_pair, write_str_pair, write_u8_pair, write_u64_pair,
+    },
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -603,26 +605,6 @@ fn hash_json_value_pair(a: &mut Fnv1a64, b: &mut Fnv1a64, v: &serde_json::Value)
             }
         }
     }
-}
-
-fn write_u8_pair(a: &mut Fnv1a64, b: &mut Fnv1a64, v: u8) {
-    a.write_u8(v);
-    b.write_u8(v);
-}
-
-fn write_u64_pair(a: &mut Fnv1a64, b: &mut Fnv1a64, v: u64) {
-    a.write_u64(v);
-    b.write_u64(v);
-}
-
-fn write_i64_pair(a: &mut Fnv1a64, b: &mut Fnv1a64, v: i64) {
-    write_u64_pair(a, b, v as u64);
-}
-
-fn write_str_pair(a: &mut Fnv1a64, b: &mut Fnv1a64, s: &str) {
-    write_u64_pair(a, b, s.len() as u64);
-    a.write_bytes(s.as_bytes());
-    b.write_bytes(s.as_bytes());
 }
 
 #[cfg(test)]

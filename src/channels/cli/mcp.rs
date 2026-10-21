@@ -42,10 +42,6 @@ pub fn queue_notification(msg: &str) {
     }
 }
 
-pub fn send_notification(msg: &str) {
-    queue_notification(msg);
-}
-
 pub fn is_mcp_done() -> bool {
     MCP_DONE.load(std::sync::atomic::Ordering::Relaxed)
 }

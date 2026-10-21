@@ -1,7 +1,7 @@
 use super::theme::Theme;
 pub(crate) use crate::agent::style::markdown::{
-    compute_table_column_widths, is_divider_row, is_table_row, split_row, text_display_width,
-    tokenize_inline_markdown, wrap_display_text, InlineSegment,
+    clean_cell_text, compute_table_column_widths, is_divider_row, is_table_row, split_row,
+    text_display_width, tokenize_inline_markdown, wrap_display_text, InlineSegment,
 };
 use ratatui::{
     style::{Modifier, Style},
@@ -9,10 +9,6 @@ use ratatui::{
 };
 
 // ── Markdown Table Parsing and Rendering ─────────────────────────────────────
-
-pub(crate) fn clean_cell_text(text: &str) -> String {
-    crate::agent::style::markdown::clean_cell_text(text, false)
-}
 
 #[allow(dead_code)]
 pub(crate) fn wrap_cell_text(text: &str, max_width: usize) -> Vec<String> {
@@ -37,7 +33,7 @@ pub(crate) fn render_markdown_table_to_lines(
 
     let headers: Vec<String> = split_row(table_lines[0])
         .into_iter()
-        .map(|h| clean_cell_text(&h))
+        .map(|h| clean_cell_text(&h, false))
         .collect();
     let num_cols = headers.len();
     match num_cols == 0 {
@@ -54,7 +50,7 @@ pub(crate) fn render_markdown_table_to_lines(
     for &line in &table_lines[2..] {
         let mut cells: Vec<String> = split_row(line)
             .into_iter()
-            .map(|c| clean_cell_text(&c))
+            .map(|c| clean_cell_text(&c, false))
             .collect();
         while cells.len() < num_cols {
             cells.push(String::new());

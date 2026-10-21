@@ -89,6 +89,6 @@ fn test_markdown_cell_split_and_clean() {
     assert_eq!(cells[0], "Col A");
     assert_eq!(cells[1], "Col B | Escaped");
 
-    let cleaned = clean_cell_text(" | **Cell Title** | ");
+    let cleaned = clean_cell_text(" | **Cell Title** | ", false);
     assert_eq!(cleaned, "**Cell Title**");
 }

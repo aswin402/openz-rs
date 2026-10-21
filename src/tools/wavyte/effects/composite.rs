@@ -10,18 +10,18 @@ pub fn over(dst: PremulRgba8, src: PremulRgba8, opacity: f32) -> PremulRgba8 {
         true => dst,
         false => {
             let op = ((opacity * 255.0).round() as i32).clamp(0, 255) as u16;
-            let sa = mul_div255(u16::from(src[3]), op);
+            let sa = mul_div255_u8(u16::from(src[3]), op);
             match sa == 0 {
                 true => dst,
                 false => {
                     let inv = 255u16 - u16::from(sa);
 
                     let mut out = [0u8; 4];
-                    out[3] = add_sat_u8(sa, mul_div255(u16::from(dst[3]), inv));
+                    out[3] = add_sat_u8(sa, mul_div255_u8(u16::from(dst[3]), inv));
 
                     for i in 0..3 {
-                        let sc = mul_div255(u16::from(src[i]), op);
-                        let dc = mul_div255(u16::from(dst[i]), inv);
+                        let sc = mul_div255_u8(u16::from(src[i]), op);
+                        let dc = mul_div255_u8(u16::from(dst[i]), inv);
                         out[i] = add_sat_u8(sc, dc);
                     }
                     out
@@ -38,8 +38,8 @@ pub fn crossfade(a: PremulRgba8, b: PremulRgba8, t: f32) -> PremulRgba8 {
 
     let mut out = [0u8; 4];
     for i in 0..4 {
-        let av = mul_div255(u16::from(a[i]), it);
-        let bv = mul_div255(u16::from(b[i]), tt);
+        let av = mul_div255_u8(u16::from(a[i]), it);
+        let bv = mul_div255_u8(u16::from(b[i]), tt);
         out[i] = add_sat_u8(av, bv);
     }
     out
@@ -158,10 +158,6 @@ pub struct WipeParams {
     pub t: f32,
     pub dir: WipeDir,
     pub soft_edge: f32,
-}
-
-fn mul_div255(x: u16, y: u16) -> u8 {
-    mul_div255_u8(x, y)
 }
 
 fn add_sat_u8(a: u8, b: u8) -> u8 {

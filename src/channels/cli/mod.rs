@@ -11,7 +11,7 @@ pub mod render;
 // Re-export mcp progress bar functions/states
 pub use mcp::{
     increment_mcp_failed, increment_mcp_loaded, init_mcp_progress, queue_notification,
-    send_notification, set_mcp_done, set_mcp_status,
+    queue_notification as send_notification, set_mcp_done, set_mcp_status,
 };
 
 // Re-export render custom limit and streaming renderer
