@@ -37,6 +37,25 @@ pub fn is_stop_command(text: &str) -> bool {
     )
 }
 
+pub fn enabled_lower_label(flag: bool) -> &'static str {
+    match flag {
+        true => "enabled",
+        false => "disabled",
+    }
+}
+
+pub fn format_stop_server_response(target: &str) -> String {
+    let target = target.trim();
+    match target.is_empty() {
+        true => "Usage: /stop-server <id|all>".to_string(),
+        false => match crate::shutdown::stop_registered_child(target) {
+            Ok(0) => "No matching background server found.".to_string(),
+            Ok(count) => format!("✓ Stopped {count} background server(s)."),
+            Err(e) => format!("✕ Failed to stop server: {e}"),
+        },
+    }
+}
+
 pub use crate::providers::model_prefs::{
     load_model_prefs, record_recent_model, save_model_prefs, toggle_favorite_model, ModelPrefs,
     ModelRef,

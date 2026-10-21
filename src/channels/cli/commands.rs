@@ -129,12 +129,7 @@ fn enabled_label(flag: bool) -> &'static str {
     }
 }
 
-fn enabled_lower_label(flag: bool) -> &'static str {
-    match flag {
-        true => "enabled",
-        false => "disabled",
-    }
-}
+use crate::channels::enabled_lower_label;
 
 fn current_suffix(flag: bool) -> &'static str {
     match flag {

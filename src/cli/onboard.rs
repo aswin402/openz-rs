@@ -7,13 +7,7 @@ use crate::config::provider_catalog;
 use crate::config::schema::{Config, ProviderConfig};
 use crate::println;
 
-fn non_empty_trimmed_or(input: &str, default: &str) -> String {
-    let trimmed = input.trim();
-    match trimmed.is_empty() {
-        true => default.to_string(),
-        false => trimmed.to_string(),
-    }
-}
+use super::configure::non_empty_trimmed_or;
 
 pub fn onboard_provider_names() -> Vec<&'static str> {
     provider_model_catalog()

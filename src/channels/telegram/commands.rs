@@ -95,18 +95,6 @@ fn format_servers_response() -> String {
     }
 }
 
-fn format_stop_server_response(trimmed: &str) -> String {
-    let target = trimmed.split_whitespace().nth(1).unwrap_or("").trim();
-    match target.is_empty() {
-        true => "Usage: /stop-server <id|all>".to_string(),
-        false => match crate::shutdown::stop_registered_child(target) {
-            Ok(0) => "No matching background server found.".to_string(),
-            Ok(count) => format!("✓ Stopped {} background server(s).", count),
-            Err(e) => format!("✕ Failed to stop server: {}", e),
-        },
-    }
-}
-
 async fn handle_resume_command(
     trimmed: &str,
     chat_id: i64,
@@ -345,11 +333,12 @@ pub(crate) async fn handle_command(
             return true;
         }
         "/stop-server" => {
+            let target = trimmed.split_whitespace().nth(1).unwrap_or("");
             spawn_telegram_msg(
                 client.clone(),
                 token.to_string(),
                 chat_id,
-                format_stop_server_response(trimmed),
+                crate::channels::format_stop_server_response(target),
             );
             return true;
         }

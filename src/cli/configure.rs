@@ -6,7 +6,7 @@ use crate::println;
 use anyhow::{anyhow, Result};
 use inquire::{Confirm, Password, PasswordDisplayMode, Text};
 
-fn non_empty_trimmed_or(input: &str, default: &str) -> String {
+pub(crate) fn non_empty_trimmed_or(input: &str, default: &str) -> String {
     let trimmed = input.trim();
     match trimmed.is_empty() {
         true => default.to_string(),
@@ -188,13 +188,7 @@ async fn handle_custom_provider_form(
     Ok(())
 }
 
-fn is_telegram_configured(config: &Config) -> bool {
-    config
-        .channels
-        .telegram
-        .as_ref()
-        .is_some_and(|tg| !tg.bot_token.is_empty())
-}
+use super::channels::{is_email_configured, is_telegram_configured};
 
 fn is_discord_configured(config: &Config) -> bool {
     config
@@ -210,14 +204,6 @@ fn is_whatsapp_configured(config: &Config) -> bool {
         .whatsapp
         .as_ref()
         .is_some_and(|wa| wa.enabled && !wa.api_key.trim().is_empty())
-}
-
-fn is_email_configured(config: &Config) -> bool {
-    config
-        .channels
-        .email
-        .as_ref()
-        .is_some_and(|em| em.enabled && !em.imap_server.is_empty() && !em.username.is_empty())
 }
 
 fn is_gateway_enabled(config: &Config) -> bool {

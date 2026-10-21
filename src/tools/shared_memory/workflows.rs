@@ -26,9 +26,7 @@ pub struct WorkflowCard {
     pub score: f64,
 }
 
-fn now_rfc3339() -> String {
-    chrono::Utc::now().to_rfc3339()
-}
+use super::now_rfc3339;
 
 use crate::tools::arguments::extract_trimmed_string_array as string_array;
 

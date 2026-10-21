@@ -94,12 +94,7 @@ fn enabled_title_label(flag: bool) -> &'static str {
     }
 }
 
-fn enabled_lower_label(flag: bool) -> &'static str {
-    match flag {
-        true => "enabled",
-        false => "disabled",
-    }
-}
+use crate::channels::enabled_lower_label;
 
 fn assistant_msg(text: impl Into<String>) -> SlashResult {
     SlashResult::Message(ChatMessage::simple("assistant", text.into()))

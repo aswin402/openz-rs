@@ -35,22 +35,16 @@ pub(crate) fn tool_arg_fingerprint(args: &serde_json::Value) -> Option<String> {
     read_scene_file_fingerprint(scene_file_arg_path(args)?)
 }
 
-pub(crate) fn tool_repetition_block_threshold(tool_name: &str, args: &serde_json::Value) -> usize {
-    crate::tools::metadata::tool_repetition_block_threshold(tool_name, args)
-}
-
-fn is_progress_sensitive_repeat(tool_name: &str, args: &serde_json::Value) -> bool {
-    crate::tools::metadata::is_progress_sensitive_repeat(tool_name, args)
-}
+pub(crate) use crate::tools::metadata::tool_repetition_block_threshold;
+use crate::tools::metadata::{
+    exact_arg_repeat_counts_without_result_signature, is_progress_sensitive_repeat,
+    is_state_changing_tool,
+};
 
 fn tool_call_id(call: &serde_json::Value) -> Option<&str> {
     call.get("id")
         .and_then(|v| v.as_str())
         .or_else(|| call.get("tool_call_id").and_then(|v| v.as_str()))
-}
-
-fn exact_arg_repeat_counts_without_result_signature(tool_name: &str) -> bool {
-    crate::tools::metadata::exact_arg_repeat_counts_without_result_signature(tool_name)
 }
 
 fn object_arg_value<'a>(
@@ -124,10 +118,6 @@ fn tool_args_match(
             _ => previous == current,
         },
     }
-}
-
-fn is_state_changing_tool(tool_name: &str) -> bool {
-    crate::tools::metadata::is_state_changing_tool(tool_name)
 }
 
 fn tool_result_signature(

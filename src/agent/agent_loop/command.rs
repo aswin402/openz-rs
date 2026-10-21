@@ -2,13 +2,7 @@ use super::{AgentLoop, TurnContext, TurnState};
 use crate::tools::subagent::{CancellationToken, DelegateTaskTool};
 use anyhow::Result;
 
-fn subagent_profile_name(session_key: &str) -> Option<&str> {
-    let parts_key: Vec<&str> = session_key.split(':').collect();
-    match parts_key.as_slice() {
-        ["subagent", profile, ..] => Some(*profile),
-        _ => None,
-    }
-}
+use super::build::subagent_profile_name;
 
 fn handle_audit(ctx: &mut TurnContext<'_>) {
     ctx.final_content = match ctx.session.verify_hash_chain() {

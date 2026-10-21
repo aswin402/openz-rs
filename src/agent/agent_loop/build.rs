@@ -19,7 +19,7 @@ fn extract_metadata_section(
         .unwrap_or_default()
 }
 
-fn subagent_profile_name(session_key: &str) -> Option<&str> {
+pub(super) fn subagent_profile_name(session_key: &str) -> Option<&str> {
     let parts: Vec<&str> = session_key.split(':').collect();
     match parts.as_slice() {
         ["subagent", profile, ..] => Some(*profile),
@@ -495,16 +495,7 @@ fn runtime_tool_discipline_rules() -> &'static str {
             - Deliverables & Artifact Storage (OpenZ Vault): When the user requests the creation of a website, web application, script, document, image, video, presentation, or dataset, write the generated files into the OpenZ Vault under the appropriate category folder (websites, scripts, images, videos, documents, presentations, data, diagrams, templates, exports). If the user asks where their creations are or how to customize the vault, explain that the vault is located at the configured path, customizable in config.json under 'vault.path' or via the OPENZ_VAULT_DIR environment variable."
 }
 
-fn model_name_suggests_strong(model: &str) -> bool {
-    let m = model.to_lowercase();
-    m.contains("70b")
-        || m.contains("deepseek-v4")
-        || m.contains("claude")
-        || m.contains("gpt-4")
-        || m.contains("gpt-5")
-        || m.contains("minimax")
-        || (m.contains("nemotron") && m.contains("ultra"))
-}
+use crate::providers::risk::model_name_suggests_strong;
 
 fn is_weak_or_risky_model(model: &str) -> bool {
     (!model_name_suggests_strong(model)) && {

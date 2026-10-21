@@ -41,9 +41,7 @@ pub struct ResearchBrief {
     pub score: f64,
 }
 
-fn now_rfc3339() -> String {
-    chrono::Utc::now().to_rfc3339()
-}
+use super::now_rfc3339;
 
 fn default_source_stale_after_secs(kind: &str, requested: i64) -> i64 {
     match requested > 0 {

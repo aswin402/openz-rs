@@ -39,3 +39,7 @@ pub use workflows::{
     add_workflow_card, delete_workflow, get_workflow_by_name, record_workflow_run,
     search_workflow_cards, set_workflow_status, WorkflowCard, WorkflowMemoryTool,
 };
+
+pub(crate) fn now_rfc3339() -> String {
+    chrono::Utc::now().to_rfc3339()
+}

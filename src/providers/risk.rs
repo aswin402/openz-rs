@@ -7,7 +7,14 @@ pub struct ModelRisk {
     pub reasons: Vec<&'static str>,
 }
 
-const STRONG_MODEL_KEYWORDS: &[&str] = &["70b", "deepseek-v4", "claude", "gpt-4"];
+const STRONG_MODEL_KEYWORDS: &[&str] = &[
+    "70b",
+    "deepseek-v4",
+    "claude",
+    "gpt-4",
+    "gpt-5",
+    "minimax",
+];
 const SMALL_MODEL_KEYWORDS: &[&str] = &[
     "1b", "2b", "3b", "4b", "6b", "7b", "8b", "9b", "small", "mini", "lite",
 ];
@@ -20,7 +27,8 @@ const EXPERIMENTAL_MODEL_KEYWORDS: &[&str] = &[
     "hy3",
 ];
 
-fn model_name_suggests_strong(model_lc: &str) -> bool {
+pub fn model_name_suggests_strong(model: &str) -> bool {
+    let model_lc = model.to_lowercase();
     STRONG_MODEL_KEYWORDS
         .iter()
         .any(|needle| model_lc.contains(needle))

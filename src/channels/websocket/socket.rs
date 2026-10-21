@@ -316,16 +316,7 @@ fn format_background_servers_response() -> String {
     }
 }
 
-fn format_stop_server_response(target: &str) -> String {
-    match target.is_empty() {
-        true => "Usage: /stop-server <id|all>".to_string(),
-        false => match crate::shutdown::stop_registered_child(target) {
-            Ok(0) => "No matching background server found.".to_string(),
-            Ok(count) => format!("✓ Stopped {count} background server(s)."),
-            Err(e) => format!("✕ Failed to stop server: {e}"),
-        },
-    }
-}
+use crate::channels::format_stop_server_response;
 
 fn collect_message_session_overrides(envelope: &Value) -> serde_json::Map<String, Value> {
     let mut overrides = serde_json::Map::new();
