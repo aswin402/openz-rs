@@ -341,26 +341,6 @@ pub fn create_formatted_pdf(file_path: &str, text: &str, config: &PdfLayoutConfi
     }
 }
 
-/// Open a PDF and return metadata (page count, encryption status, PDF version).
-pub fn open_pdf(file_path: &str) -> String {
-    match Document::load(file_path) {
-        Ok(doc) => {
-            let pages = doc.get_pages();
-            let page_count = pages.len();
-            let is_encrypted = doc.is_encrypted();
-
-            serde_json::json!({
-                "path": file_path,
-                "pages": page_count,
-                "encrypted": is_encrypted,
-                "version": doc.version,
-            })
-            .to_string()
-        }
-        Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
-    }
-}
-
 /// Merge multiple PDF files into a single document with automatic object renumbering.
 pub fn merge_pdfs(sources: &[String], output: &str) -> String {
     let first_source = match sources.first() {

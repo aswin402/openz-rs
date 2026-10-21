@@ -62,10 +62,6 @@ struct ManagedChild {
     kill_process_group: bool,
 }
 
-pub fn register_child(child: std::process::Child) {
-    let _ = register_child_with_metadata(child, "external process", "process");
-}
-
 pub fn register_child_with_metadata(
     child: std::process::Child,
     command: impl Into<String>,

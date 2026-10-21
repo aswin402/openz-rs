@@ -69,12 +69,6 @@ pub fn format_markdown_line(line: &str) -> String {
     }
 }
 
-pub fn print_normal_line(line: &str) {
-    let formatted = format_markdown_line(line);
-    std::print!("{}\r\n", formatted);
-    let _ = std::io::stdout().flush();
-}
-
 pub fn render_table_lines(table_lines: &[&str]) -> Vec<String> {
     let headers: Vec<String> = table_lines
         .first()
@@ -190,13 +184,6 @@ pub fn render_table_lines(table_lines: &[&str]) -> Vec<String> {
             result_lines
         }
     }
-}
-
-pub fn render_table(table_lines: &[&str]) {
-    for line in render_table_lines(table_lines) {
-        std::print!("{}\r\n", line);
-    }
-    let _ = std::io::stdout().flush();
 }
 
 pub fn print_session_history(session: &crate::session::Session) {

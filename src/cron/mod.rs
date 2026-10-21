@@ -249,11 +249,6 @@ pub fn load_jobs() -> Result<Vec<CronJob>> {
     load_jobs_raw()
 }
 
-pub fn save_jobs(jobs: &[CronJob]) -> Result<()> {
-    let _lock = acquire_cron_lock();
-    save_jobs_raw(jobs)
-}
-
 pub fn with_cron_jobs_mut<F, R>(f: F) -> Result<R>
 where
     F: FnOnce(&mut Vec<CronJob>) -> R,

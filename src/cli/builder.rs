@@ -5,14 +5,6 @@ use crate::session::SessionManager;
 use crate::tools::ToolRegistry;
 use anyhow::Result;
 
-pub fn get_provider_api_key(config: &Config, provider_name: &str) -> Option<String> {
-    let (key, _) = config.resolve_provider_config(provider_name);
-    match key.is_empty() {
-        true => None,
-        false => Some(key),
-    }
-}
-
 pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     let _ = crate::core::vault::ensure_vault_initialized(&config);
     let resolved =

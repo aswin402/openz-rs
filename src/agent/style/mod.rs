@@ -360,23 +360,6 @@ pub fn format_subagent_summary(content: &str) -> String {
         .unwrap_or_else(|| "completed task".to_string())
 }
 
-pub fn format_reasoning_summary(reasoning: &str) -> String {
-    reasoning
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .map(|line| {
-            line.strip_prefix("- ")
-                .or_else(|| line.strip_prefix("* "))
-                .unwrap_or(line)
-        })
-        .map(|line| line.trim_matches('*').trim())
-        .find(|line| !line.is_empty())
-        .map(replace_with_em_dash)
-        .map(|summary| truncate_summary_text(&summary, 100, "..."))
-        .unwrap_or_else(|| "analyzing requirements".to_string())
-}
-
 fn replace_with_em_dash(s: &str) -> String {
     s.replace(" - ", " \u{2014} ")
         .replace(" -- ", " \u{2014} ")

@@ -73,25 +73,6 @@ fn classify_vertical_menu_key(key_event: &KeyEvent) -> MenuAction {
     }
 }
 
-fn classify_horizontal_menu_key(key_event: &KeyEvent) -> MenuAction {
-    match key_event.kind == KeyEventKind::Release {
-        true => return MenuAction::Ignore,
-        false => {}
-    }
-    let ctrl = key_event.modifiers.contains(KeyModifiers::CONTROL);
-    match (key_event.code, ctrl) {
-        (KeyCode::Char('c'), true) => MenuAction::Interrupt,
-        (KeyCode::Left, _) | (KeyCode::Char('h'), false) => MenuAction::MovePrev,
-        (KeyCode::Right, _) | (KeyCode::Tab, _) | (KeyCode::Char('l'), false) => {
-            MenuAction::MoveNext
-        }
-        (KeyCode::Enter, _) => MenuAction::Confirm,
-        (KeyCode::Esc, _) | (KeyCode::Char('q'), false) => MenuAction::Cancel,
-        (KeyCode::Char(d @ '1'..='9'), false) => MenuAction::QuickSelect((d as usize) - ('1' as usize)),
-        _ => MenuAction::Ignore,
-    }
-}
-
 fn compute_menu_viewport(selected_idx: usize, total: usize, max_display: usize) -> (usize, usize) {
     let start_idx = match selected_idx >= max_display {
         true => selected_idx + 1 - max_display,
@@ -456,92 +437,6 @@ fn drain_pending_key_events() {
                 Err(_) => break,
             },
             _ => break,
-        }
-    }
-}
-
-pub fn select_menu_horizontal(options: &[String]) -> Result<Option<usize>> {
-    let mut stdout = stdout();
-    let _ = stdout.execute(crossterm::cursor::Hide);
-
-    enable_raw_mode()?;
-    drain_pending_key_events();
-    let mut selected = 0usize;
-    let num_options = options.len();
-
-    let mut draw_menu = |selected_idx: usize| -> Result<()> {
-        print!("\r\x1b[2K{}  L ", AURA_SLATE);
-
-        for (i, option) in options.iter().enumerate().take(num_options) {
-            match i > 0 {
-                true => print!("{}  ·  {}", AURA_SLATE, COLOR_RESET),
-                false => {}
-            }
-            match i == selected_idx {
-                true => print!(
-                    "{}{}{}▸ {}{}{}",
-                    RED_ORANGE, COLOR_BOLD, COLOR_RESET, COLOR_BOLD, option, COLOR_RESET
-                ),
-                false => print!("{}{}{}", LIGHT_WHITE, option, COLOR_RESET),
-            }
-        }
-        stdout.flush()?;
-        Ok(())
-    };
-
-    draw_menu(selected)?;
-
-    let finish_horizontal = |chosen: usize, stdout: &mut std::io::Stdout| -> Result<Option<usize>> {
-        let _ = stdout.execute(crossterm::cursor::Show);
-        print!("\r\x1b[2K");
-        let outcome = match chosen {
-            0 => format!("{}approved", AURA_GREEN),
-            1 => format!("{}approved & trusted", AURA_GREEN),
-            _ => format!("{}denied", AURA_ROSE),
-        };
-        print!("{}  L {}{}{}\r\n", AURA_SLATE, COLOR_RESET, outcome, COLOR_RESET);
-        let _ = stdout.flush();
-        disable_raw_mode()?;
-        Ok(Some(chosen))
-    };
-
-    loop {
-        match event::poll(std::time::Duration::from_millis(50))? {
-            true => match event::read()? {
-                Event::Key(key_event) => match classify_horizontal_menu_key(&key_event) {
-                    MenuAction::MovePrev => {
-                        selected = (selected + num_options - 1) % num_options;
-                        draw_menu(selected)?;
-                    }
-                    MenuAction::MoveNext => {
-                        selected = (selected + 1) % num_options;
-                        draw_menu(selected)?;
-                    }
-                    MenuAction::QuickSelect(idx) => match idx < num_options {
-                        true => return finish_horizontal(idx, &mut stdout),
-                        false => {}
-                    },
-                    MenuAction::Confirm => {
-                        return finish_horizontal(selected, &mut stdout);
-                    }
-                    MenuAction::Cancel => {
-                        let _ = stdout.execute(crossterm::cursor::Show);
-                        print!("\r\x1b[2K{}  L {}denied{}\r\n", AURA_SLATE, AURA_ROSE, COLOR_RESET);
-                        let _ = stdout.flush();
-                        disable_raw_mode()?;
-                        return Ok(None);
-                    }
-                    MenuAction::Interrupt => {
-                        let _ = stdout.execute(crossterm::cursor::Show);
-                        print!("\r\x1b[2K");
-                        disable_raw_mode()?;
-                        return Err(anyhow::anyhow!("Ctrl-C"));
-                    }
-                    MenuAction::Ignore => {}
-                },
-                _ => {}
-            },
-            false => {}
         }
     }
 }

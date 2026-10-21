@@ -27,6 +27,41 @@ pub fn apply_standard_pragmas_with_extra(conn: &Connection, extra_sql: &str) -> 
     }
 }
 
+/// Initialize (when unpopulated) and return a static `Mutex<Connection>` from a `OnceLock<Mutex<Connection>>`.
+pub fn get_or_init_db_mutex<I>(
+    cell: &'static std::sync::OnceLock<std::sync::Mutex<Connection>>,
+    init: I,
+) -> anyhow::Result<&'static std::sync::Mutex<Connection>>
+where
+    I: FnOnce() -> anyhow::Result<Connection>,
+{
+    match cell.get() {
+        Some(mtx) => Ok(mtx),
+        None => {
+            let conn = init()?;
+            Ok(cell.get_or_init(|| std::sync::Mutex::new(conn)))
+        }
+    }
+}
+
+/// Initialize (when unpopulated), lock a static `OnceLock<Mutex<Connection>>`, and invoke `f(&mut Connection)`.
+pub fn with_static_db<I, F, T>(
+    cell: &'static std::sync::OnceLock<std::sync::Mutex<Connection>>,
+    label: &str,
+    init: I,
+    f: F,
+) -> anyhow::Result<T>
+where
+    I: FnOnce() -> anyhow::Result<Connection>,
+    F: FnOnce(&mut Connection) -> anyhow::Result<T>,
+{
+    let mtx = get_or_init_db_mutex(cell, init)?;
+    let mut guard = mtx
+        .lock()
+        .map_err(|e| anyhow::anyhow!("{label} lock error: {e}"))?;
+    f(&mut guard)
+}
+
 #[cfg(test)]
 #[path = "sqlite_tests.rs"]
 mod tests;

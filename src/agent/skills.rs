@@ -951,13 +951,6 @@ pub fn archive_stale_skills() -> Result<()> {
     Ok(())
 }
 
-pub fn load_relevant_skills(
-    user_content: &str,
-    session_messages: &[crate::session::Message],
-) -> Result<Vec<Skill>> {
-    load_relevant_skills_with_profile(user_content, session_messages, None)
-}
-
 fn is_stop_word(w: &str) -> bool {
     matches!(
         w,

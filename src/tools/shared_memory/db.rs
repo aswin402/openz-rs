@@ -200,22 +200,7 @@ pub fn with_db<F, T>(f: F) -> Result<T>
 where
     F: FnOnce(&mut Connection) -> Result<T>,
 {
-    match db_static().get() {
-        Some(mtx) => {
-            let mut guard = mtx
-                .lock()
-                .map_err(|e| anyhow::anyhow!("Shared memory lock error: {}", e))?;
-            f(&mut guard)
-        }
-        None => {
-            let conn = init_db()?;
-            let mtx = db_static().get_or_init(|| Mutex::new(conn));
-            let mut guard = mtx
-                .lock()
-                .map_err(|e| anyhow::anyhow!("Shared memory lock error: {}", e))?;
-            f(&mut guard)
-        }
-    }
+    crate::core::sqlite::with_static_db(db_static(), "Shared memory", init_db, f)
 }
 
 fn canonical_or_lossy(dir: &std::path::Path) -> String {

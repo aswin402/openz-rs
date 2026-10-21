@@ -181,13 +181,7 @@ pub(crate) fn init_db() -> Result<Connection> {
 }
 
 pub(crate) fn db_mutex() -> Result<&'static Mutex<Connection>> {
-    match db_static().get() {
-        Some(mtx) => Ok(mtx),
-        None => {
-            let conn = init_db()?;
-            Ok(db_static().get_or_init(|| Mutex::new(conn)))
-        }
-    }
+    crate::core::sqlite::get_or_init_db_mutex(db_static(), init_db)
 }
 
 // ─── DB helpers ─────────────────────────────────────────────────
@@ -215,11 +209,7 @@ pub(crate) fn with_db<F, T>(f: F) -> Result<T>
 where
     F: FnOnce(&Connection) -> Result<T>,
 {
-    let mtx = db_mutex()?;
-    let guard = mtx
-        .lock()
-        .map_err(|e| anyhow!("Graph memory lock error: {}", e))?;
-    f(&guard)
+    crate::core::sqlite::with_static_db(db_static(), "Graph memory", init_db, |conn| f(conn))
 }
 
 // ─── Scope helpers ──────────────────────────────────────────────

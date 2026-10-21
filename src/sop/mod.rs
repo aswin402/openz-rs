@@ -192,14 +192,6 @@ pub fn validate_sop_definition(def: &SopDefinition) -> Result<()> {
     Ok(())
 }
 
-pub fn save_definition(def: &SopDefinition) -> Result<()> {
-    validate_sop_definition(def)?;
-    let mut defs = load_definitions().unwrap_or_default();
-    defs.retain(|d| d.id != def.id);
-    defs.push(def.clone());
-    crate::config::loader::save_pretty_json(&sop_definitions_path(), &defs)
-}
-
 fn validated_instance_path(instance_id: &str) -> Result<PathBuf> {
     let is_valid = (!instance_id.is_empty())
         && instance_id
