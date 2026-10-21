@@ -867,13 +867,7 @@ fn provider_def(provider_name: &str) -> Option<&'static ProviderDef> {
         .find(|def| def.canonical_name == canonical_name)
 }
 
-fn read_secret_file(path: &str) -> Option<String> {
-    let path = crate::config::loader::resolve_path(path);
-    std::fs::read_to_string(path)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
+use crate::core::secrets::read_secret_file;
 
 fn configured_key(provider: Option<&ProviderConfig>) -> Option<String> {
     provider.and_then(|p| {

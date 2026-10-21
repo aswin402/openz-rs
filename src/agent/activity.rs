@@ -355,21 +355,7 @@ fn active_tui_path(session_key: &str) -> PathBuf {
     active_tui_dir().join(format!("{slug}.json"))
 }
 
-fn process_is_alive(pid: u32) -> bool {
-    match pid {
-        0 => false,
-        _ => {
-            #[cfg(target_os = "linux")]
-            {
-                Path::new("/proc").join(pid.to_string()).exists()
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                true
-            }
-        }
-    }
-}
+use crate::core::process::process_is_alive;
 
 fn parse_rfc3339_utc(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     chrono::DateTime::parse_from_rfc3339(s)

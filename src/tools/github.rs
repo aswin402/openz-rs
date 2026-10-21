@@ -4,13 +4,7 @@ use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, USER_AGENT}
 use serde_json::Value;
 use std::env;
 
-fn read_secret_file(path: &str) -> Option<String> {
-    let path = crate::config::loader::resolve_path(path);
-    std::fs::read_to_string(path)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
+use crate::core::secrets::read_secret_file;
 
 pub(crate) fn configured_git_token(
     config: Option<&crate::config::schema::GitIntegrationConfig>,

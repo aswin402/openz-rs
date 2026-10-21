@@ -80,29 +80,11 @@ impl RuntimeResourceSnapshot {
     }
 }
 
-#[cfg(unix)]
 fn current_openz_free_disk_gb() -> Option<f64> {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStrExt;
-
     let path = crate::config::loader::runtime_data_dir();
     let _ = std::fs::create_dir_all(&path);
-    let c_path = CString::new(path.as_os_str().as_bytes()).ok()?;
-    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-    let rc = unsafe { libc::statvfs(c_path.as_ptr(), stat.as_mut_ptr()) };
-    match rc {
-        0 => {
-            let stat = unsafe { stat.assume_init() };
-            let bytes = stat.f_bavail as f64 * stat.f_frsize as f64;
-            Some(bytes / 1024.0 / 1024.0 / 1024.0)
-        }
-        _ => None,
-    }
-}
-
-#[cfg(not(unix))]
-fn current_openz_free_disk_gb() -> Option<f64> {
-    None
+    crate::core::process::available_bytes(&path)
+        .map(|bytes| bytes as f64 / 1024.0 / 1024.0 / 1024.0)
 }
 
 pub fn evaluate_artifact_write(

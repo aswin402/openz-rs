@@ -248,6 +248,15 @@ pub fn collect_all_environment_and_config_secrets(config: &serde_json::Value) ->
     secrets
 }
 
+/// Read and trim a non-empty secret value from a file path resolved via `config::loader::resolve_path`.
+pub fn read_secret_file(path: &str) -> Option<String> {
+    let path = crate::config::loader::resolve_path(path);
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 #[cfg(test)]
 #[path = "secrets_tests.rs"]
 mod tests;

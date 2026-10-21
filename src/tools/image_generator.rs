@@ -236,13 +236,7 @@ fn cleanup_temp_file(temp_file_path: &Option<PathBuf>) {
     }
 }
 
-fn ensure_parent_dir(output_path: &Path) -> Result<()> {
-    match output_path.parent() {
-        Some(parent) => fs::create_dir_all(parent)?,
-        None => {}
-    }
-    Ok(())
-}
+use crate::tools::wavyte::ensure_parent_dir;
 
 async fn try_openmedia_fallback(
     html_content: &str,

@@ -229,7 +229,7 @@ pub async fn heal_code_with_llm(
     Ok(strip_code_fence(&raw))
 }
 
-fn is_binary_file_extension(ext: &str) -> bool {
+pub fn is_binary_file_extension(ext: &str) -> bool {
     matches!(
         ext.to_ascii_lowercase().as_str(),
         "docx"
@@ -240,13 +240,39 @@ fn is_binary_file_extension(ext: &str) -> bool {
             | "png"
             | "jpg"
             | "jpeg"
+            | "gif"
+            | "ico"
             | "bin"
             | "exe"
+            | "dll"
             | "tar"
             | "gz"
+            | "7z"
+            | "rar"
             | "so"
             | "dylib"
+            | "db"
+            | "sqlite"
+            | "wasm"
+            | "woff"
+            | "woff2"
+            | "ttf"
+            | "eot"
+            | "mp4"
+            | "mp3"
+            | "wav"
+            | "avi"
+            | "mov"
+            | "out"
+            | "o"
+            | "a"
     )
+}
+
+pub fn has_binary_file_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|s| s.to_str())
+        .is_some_and(is_binary_file_extension)
 }
 
 /// Runs an iterative edit-and-compile reflection loop modifying `file_path`

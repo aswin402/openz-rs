@@ -618,7 +618,7 @@ impl SecurityGuard {
                     || CREDENTIAL_ARG_KEYS
                         .iter()
                         .any(|key| arguments.get(*key).is_some())
-                    || Self::contains_secret_material(arguments);
+                    || crate::core::secrets::contains_secret_material(arguments);
                 has_cred_action
                     || crate::tools::ToolMetadata::infer(tool_name).requires_risk_approval()
             }
@@ -632,16 +632,8 @@ impl SecurityGuard {
         }
     }
 
-    fn contains_secret_material(value: &Value) -> bool {
-        crate::core::secrets::contains_secret_material(value)
-    }
-
-    fn redacted_value(value: &Value) -> Value {
-        crate::core::secrets::redact_secrets_in_json(value)
-    }
-
     pub fn redacted_approval_arguments(arguments: &Value) -> Value {
-        Self::redacted_value(arguments)
+        crate::core::secrets::redact_secrets_in_json(arguments)
     }
 
     /// Formats a concise, human-readable summary of tool arguments for permission prompts.
@@ -733,7 +725,7 @@ impl SecurityGuard {
         ) {
             ("exec_command", Some(cmd), _) => format!("$ {cmd}"),
             ("manage_config", _, _) => {
-                let redacted = Self::redacted_value(arguments);
+                let redacted = crate::core::secrets::redact_secrets_in_json(arguments);
                 format!("Manage Config -> {redacted}")
             }
             (_, _, Some(action_label)) => {
@@ -741,7 +733,7 @@ impl SecurityGuard {
                 format!("{action_label} -> {path}")
             }
             _ => {
-                let redacted = Self::redacted_value(arguments);
+                let redacted = crate::core::secrets::redact_secrets_in_json(arguments);
                 Self::summarize_arguments(&redacted)
             }
         }

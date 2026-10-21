@@ -1,10 +1,8 @@
 use std::sync::{Arc, OnceLock};
 
 use super::storage::LogEntry;
-use crate::core::secrets::{
-    collect_all_environment_and_config_secrets,
-    redact_text_with_secrets as core_redact_text_with_secrets,
-};
+pub(crate) use crate::core::secrets::redact_text_with_secrets;
+use crate::core::secrets::collect_all_environment_and_config_secrets;
 
 pub static LOG_TX: OnceLock<tokio::sync::mpsc::UnboundedSender<LogEntry>> = OnceLock::new();
 
@@ -17,10 +15,6 @@ pub fn initialize_secret_redaction(config: &serde_json::Value) -> Arc<Vec<String
     let shared = Arc::new(secrets);
     let _ = LOG_SECRETS.set(shared.clone());
     shared
-}
-
-pub(crate) fn redact_text_with_secrets(text: &str, secrets: &[String]) -> String {
-    core_redact_text_with_secrets(text, secrets)
 }
 
 pub fn redact_sensitive_text(text: &str) -> String {

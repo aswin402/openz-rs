@@ -14,12 +14,6 @@ const SKIPPED_DIRS: &[&str] = &[
     "obj",
 ];
 
-const BINARY_EXTENSIONS: &[&str] = &[
-    "png", "jpg", "jpeg", "gif", "ico", "pdf", "zip", "tar", "gz", "7z", "rar", "exe", "dll", "so",
-    "dylib", "db", "sqlite", "wasm", "woff", "woff2", "ttf", "eot", "mp4", "mp3", "wav", "avi",
-    "mov", "bin", "out", "o", "a",
-];
-
 #[derive(Clone, Copy)]
 enum PatternAtom {
     Any,
@@ -177,13 +171,6 @@ impl GrepSearchTool {
             .unwrap_or(false)
     }
 
-    fn is_binary_file(path: &Path) -> bool {
-        path.extension()
-            .and_then(|s| s.to_str())
-            .map(|ext| BINARY_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
-            .unwrap_or(false)
-    }
-
     fn search_single_file(
         file_path: &Path,
         query: &str,
@@ -191,7 +178,10 @@ impl GrepSearchTool {
         results: &mut Vec<Value>,
         limit: usize,
     ) {
-        match (!Self::is_binary_file(file_path), fs::read_to_string(file_path)) {
+        match (
+            !crate::core::heal::has_binary_file_extension(file_path),
+            fs::read_to_string(file_path),
+        ) {
             (true, Ok(content)) => {
                 for (idx, line) in content.lines().enumerate() {
                     match results.len() < limit && line_matches_pattern(line, query, is_regex) {

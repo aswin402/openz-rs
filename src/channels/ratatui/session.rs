@@ -34,26 +34,7 @@ pub fn remove_tui_marker_in_dir(dir: &std::path::Path, pid: u32) {
     let _ = std::fs::remove_file(tui_marker_path_in_dir(dir, pid));
 }
 
-pub fn process_is_alive(pid: u32) -> bool {
-    match pid == std::process::id() {
-        true => return true,
-        false => {}
-    }
-    #[cfg(unix)]
-    {
-        match pid > i32::MAX as u32 {
-            true => false,
-            false => {
-                let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
-                result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-            }
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        false
-    }
-}
+pub use crate::core::process::process_is_alive;
 
 pub fn is_last_live_tui_in_dir(dir: &std::path::Path, current_pid: u32) -> bool {
     let entries = match std::fs::read_dir(dir) {

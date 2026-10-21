@@ -34,3 +34,11 @@ fn test_quote_shell_arg_handles_spaces_and_quotes() {
         }
     }
 }
+
+#[test]
+fn test_process_is_alive_and_available_bytes() {
+    assert!(!process_is_alive(0));
+    assert!(process_is_alive(std::process::id()));
+    let bytes = available_bytes(std::path::Path::new("."));
+    assert!(bytes.is_some_and(|b| b > 0));
+}

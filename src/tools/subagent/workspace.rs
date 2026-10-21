@@ -195,25 +195,7 @@ fn collect_worktree_candidates(worktrees_dir: &Path) -> Vec<WorktreeCandidate> {
     candidates
 }
 
-#[cfg(unix)]
-fn available_bytes(path: &Path) -> Option<u64> {
-    use std::os::unix::ffi::OsStrExt;
-    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
-    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
-    let rc = unsafe { libc::statvfs(c_path.as_ptr(), stat.as_mut_ptr()) };
-    match rc == 0 {
-        false => None,
-        true => {
-            let stat = unsafe { stat.assume_init() };
-            Some(stat.f_bavail.saturating_mul(stat.f_frsize))
-        }
-    }
-}
-
-#[cfg(not(unix))]
-fn available_bytes(_path: &Path) -> Option<u64> {
-    None
-}
+use crate::core::process::available_bytes;
 
 fn safely_remove_worktree_dir(path: &Path) {
     match path.exists() {
