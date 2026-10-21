@@ -3,9 +3,6 @@ use chrono::{DateTime, Utc};
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::OnceLock;
 
 // ─── Data types ──────────────────────────────────────────────────
 
@@ -317,14 +314,8 @@ impl ThoughtStore for SqliteThoughtStore {
     }
 }
 
-// ─── DB path helper ──────────────────────────────────────────────
-
-pub fn get_db_path() -> PathBuf {
-    crate::config::loader::runtime_db_path("thoughts.db")
-}
-
 pub(crate) fn open_thought_store() -> Box<dyn ThoughtStore> {
-    let db_path = get_db_path();
+    let db_path = crate::config::loader::runtime_db_path("thoughts.db");
     match db_path.parent() {
         Some(parent) => {
             let _ = std::fs::create_dir_all(parent);
@@ -338,17 +329,4 @@ pub(crate) fn open_thought_store() -> Box<dyn ThoughtStore> {
         },
         Err(_) => Box::new(MemoryThoughtStore::new()),
     }
-}
-
-// ─── Shared Database Lock and Store Accessors ────────────────────
-
-pub fn get_db_mutex() -> &'static tokio::sync::Mutex<()> {
-    static DB_MUTEX: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    DB_MUTEX.get_or_init(|| tokio::sync::Mutex::new(()))
-}
-
-static STORE: OnceLock<Arc<tokio::sync::Mutex<Box<dyn ThoughtStore>>>> = OnceLock::new();
-
-pub fn get_store() -> &'static Arc<tokio::sync::Mutex<Box<dyn ThoughtStore>>> {
-    STORE.get_or_init(|| Arc::new(tokio::sync::Mutex::new(open_thought_store())))
 }

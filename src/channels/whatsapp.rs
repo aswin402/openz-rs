@@ -58,7 +58,7 @@ impl WhatsAppChannel {
                 std::time::Duration::from_secs(5),
                 std::time::Duration::from_secs(15),
             ),
-            concurrency_limit: Arc::new(tokio::sync::Semaphore::new(5)),
+            concurrency_limit: crate::channels::channel_concurrency_semaphore(),
         }
     }
 }
@@ -259,45 +259,15 @@ async fn process_whatsapp_incoming_message(state: &WhatsAppState, from_str: Stri
     let phone_number_id = state.phone_number_id.clone();
     let client = state.client.clone();
 
-    match crate::channels::is_stop_command(&text) {
-        true => {
-            crate::shutdown::trigger_cli_cancel();
-            send_whatsapp_chunks(
-                &client,
-                &api_key,
-                &phone_number_id,
-                &from_str,
-                "▲ Stop requested. Active OpenZ turn interrupted.",
-            )
-            .await;
-            return;
-        }
-        false => {}
-    }
-
     let whatsapp_session_key = format!("whatsapp:{}", from_str);
-    match crate::channels::session_command_text_response(
+    match crate::channels::intercept_channel_text_command(
         &agent.session_manager,
         &whatsapp_session_key,
         &text,
+        "▲ Stop requested. Active OpenZ turn interrupted.",
     )
     .await
     {
-        Some(response_text) => {
-            send_whatsapp_chunks(
-                &client,
-                &api_key,
-                &phone_number_id,
-                &from_str,
-                &response_text,
-            )
-            .await;
-            return;
-        }
-        None => {}
-    }
-
-    match crate::channels::model_switch_text_response(&text) {
         Some(response_text) => {
             send_whatsapp_chunks(
                 &client,

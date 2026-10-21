@@ -34,7 +34,7 @@ impl TelegramChannel {
             bot_token,
             agent_loop,
             client: crate::core::http::http_client_with_timeout(Duration::from_secs(35)),
-            concurrency_limit: Arc::new(tokio::sync::Semaphore::new(5)),
+            concurrency_limit: crate::channels::channel_concurrency_semaphore(),
         }
     }
 }

@@ -37,6 +37,30 @@ pub fn is_stop_command(text: &str) -> bool {
     )
 }
 
+pub fn channel_concurrency_semaphore() -> std::sync::Arc<tokio::sync::Semaphore> {
+    std::sync::Arc::new(tokio::sync::Semaphore::new(5))
+}
+
+pub async fn intercept_channel_text_command(
+    session_manager: &crate::session::SessionManager,
+    session_key: &str,
+    text: &str,
+    stop_message: &str,
+) -> Option<String> {
+    match is_stop_command(text) {
+        true => {
+            crate::shutdown::trigger_cli_cancel();
+            return Some(stop_message.to_string());
+        }
+        false => {}
+    }
+    match session_command_text_response(session_manager, session_key, text).await {
+        Some(response_text) => return Some(response_text),
+        None => {}
+    }
+    model_switch_text_response(text)
+}
+
 pub fn enabled_lower_label(flag: bool) -> &'static str {
     match flag {
         true => "enabled",

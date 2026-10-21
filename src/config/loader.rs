@@ -634,31 +634,14 @@ pub fn save_pretty_json_atomic<T: serde::Serialize + ?Sized>(
 }
 
 #[cfg(test)]
-pub(crate) struct TestConfigDirLock;
+pub(crate) struct TestConfigDirLock(#[allow(dead_code)] crate::cron::FileLock);
 
 #[cfg(test)]
 impl TestConfigDirLock {
     pub(crate) fn acquire() -> Self {
-        let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
-        loop {
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&lock_path)
-            {
-                Ok(_) => break,
-                Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
-            }
-        }
-        Self
-    }
-}
-
-#[cfg(test)]
-impl Drop for TestConfigDirLock {
-    fn drop(&mut self) {
-        let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
-        let _ = std::fs::remove_file(lock_path);
+        Self(crate::cron::FileLock::acquire(
+            std::env::temp_dir().join("openz_test_config_dir.lock"),
+        ))
     }
 }
 

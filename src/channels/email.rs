@@ -3,7 +3,6 @@ use anyhow::{anyhow, Result};
 use lettre::transport::smtp::authentication::Credentials;
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use std::sync::Arc;
-use tokio::sync::Semaphore;
 
 pub struct EmailChannel {
     agent_loop: Arc<AgentLoop>,
@@ -145,7 +144,7 @@ async fn send_reply_and_log(
 
 fn spawn_single_email_task(
     agent_clone: Arc<AgentLoop>,
-    sem_clone: Arc<Semaphore>,
+    sem_clone: Arc<tokio::sync::Semaphore>,
     smtp_server: String,
     smtp_port: u16,
     user_clone: String,
@@ -161,30 +160,12 @@ fn spawn_single_email_task(
             false => format!("Re: {}", subject),
         };
 
-        match crate::channels::is_stop_command(&body) {
-            true => {
-                crate::shutdown::trigger_cli_cancel();
-                send_reply_and_log(
-                    &smtp_server,
-                    smtp_port,
-                    &user_clone,
-                    &pass_clone,
-                    &from,
-                    &reply_subject,
-                    "Stop requested. Active OpenZ turn interrupted.",
-                    "stop reply",
-                )
-                .await;
-                return;
-            }
-            false => {}
-        }
-
         let session_key = format!("email_{}", from);
-        match crate::channels::session_command_text_response(
+        match crate::channels::intercept_channel_text_command(
             &agent_clone.session_manager,
             &session_key,
             &body,
+            "Stop requested. Active OpenZ turn interrupted.",
         )
         .await
         {
@@ -197,25 +178,7 @@ fn spawn_single_email_task(
                     &from,
                     &reply_subject,
                     &response_text,
-                    "session-command reply",
-                )
-                .await;
-                return;
-            }
-            None => {}
-        }
-
-        match crate::channels::model_switch_text_response(&body) {
-            Some(response_text) => {
-                send_reply_and_log(
-                    &smtp_server,
-                    smtp_port,
-                    &user_clone,
-                    &pass_clone,
-                    &from,
-                    &reply_subject,
-                    &response_text,
-                    "model-switch reply",
+                    "command reply",
                 )
                 .await;
                 return;
@@ -301,7 +264,7 @@ impl super::Channel for EmailChannel {
         }
 
         let agent = self.agent_loop.clone();
-        let concurrency_limit = Arc::new(Semaphore::new(5));
+        let concurrency_limit = crate::channels::channel_concurrency_semaphore();
 
         let mut shutdown_rx = match crate::shutdown::receiver() {
             Some(rx) => rx,

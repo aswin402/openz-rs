@@ -3,7 +3,6 @@ use super::policy::{resolve_user_path, to_absolute_path};
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 // ─── Constants ───────────────────────────────────────────────────
@@ -102,106 +101,7 @@ fn resolve_nearest_existing_dir(absolute_path: &Path, cwd: &Path) -> PathBuf {
 
 // ─── TreeNode for summarize_codebase ────────────────────────────
 
-#[derive(Debug, Clone)]
-struct TreeNode {
-    name: String,
-    is_dir: bool,
-    line_count: usize,
-    files_count: usize,
-    children: BTreeMap<String, TreeNode>,
-}
-
-impl TreeNode {
-    fn insert(&mut self, parts: &[String], is_dir: bool, line_count: usize) {
-        match parts {
-            [] => {}
-            [only] => {
-                let child = self
-                    .children
-                    .entry(only.clone())
-                    .or_insert_with(|| TreeNode {
-                        name: only.clone(),
-                        is_dir,
-                        line_count: 0,
-                        files_count: 0,
-                        children: BTreeMap::new(),
-                    });
-                child.line_count = line_count;
-                child.files_count = 1;
-            }
-            [first, rest @ ..] => {
-                let child = self
-                    .children
-                    .entry(first.clone())
-                    .or_insert_with(|| TreeNode {
-                        name: first.clone(),
-                        is_dir: true,
-                        line_count: 0,
-                        files_count: 0,
-                        children: BTreeMap::new(),
-                    });
-                child.insert(rest, is_dir, line_count);
-            }
-        }
-    }
-
-    fn update_counts(&mut self) {
-        self.files_count = 0;
-        self.line_count = 0;
-        for child in self.children.values_mut() {
-            child.update_counts();
-            self.files_count += child.files_count;
-            self.line_count += child.line_count;
-        }
-    }
-
-    fn format_tree(&self, prefix: &str, is_last: bool, depth: usize, max_depth: usize) -> String {
-        match depth > max_depth {
-            true => {
-                return match self.files_count > 0 {
-                    true => format!(
-                        "{}└── {} ({} files, {} lines)\n",
-                        prefix, self.name, self.files_count, self.line_count
-                    ),
-                    false => String::new(),
-                };
-            }
-            false => {}
-        }
-        let connector = match is_last {
-            true => "└── ",
-            false => "├── ",
-        };
-        let mut result = format!("{}{}{}", prefix, connector, self.name);
-        match (self.is_dir, depth > 0) {
-            (false, true) => result.push_str(&format!(" ({} lines)", self.line_count)),
-            (true, true) => result.push('/'),
-            _ => {}
-        }
-        result.push('\n');
-
-        let child_prefix = match is_last {
-            true => format!("{}    ", prefix),
-            false => format!("{}│   ", prefix),
-        };
-        let children: Vec<&str> = self.children.keys().map(|k| k.as_str()).collect();
-        for (i, child_name) in children.iter().enumerate() {
-            match self.children.get(*child_name) {
-                Some(child) => {
-                    let is_last_child = i == children.len() - 1;
-                    result.push_str(&child.format_tree(
-                        &child_prefix,
-                        is_last_child,
-                        depth + 1,
-                        max_depth,
-                    ));
-                }
-                None => {}
-            }
-        }
-        result
-    }
-}
+use super::DirTreeNode;
 
 // ═══════════════════════════════════════════════════════════════════
 // Tool 1: ScopeContextTool
@@ -340,17 +240,7 @@ impl Tool for SummarizeCodebaseTool {
 
         let file_limit = 1000usize;
 
-        let mut tree_root = TreeNode {
-            name: resolved_root
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(".")
-                .to_string(),
-            is_dir: true,
-            line_count: 0,
-            files_count: 0,
-            children: BTreeMap::new(),
-        };
+        let mut tree_root = DirTreeNode::new_root(&resolved_root);
 
         let mut total_files = 0usize;
         let mut total_lines = 0usize;
@@ -414,11 +304,11 @@ impl Tool for SummarizeCodebaseTool {
 
                 match path.strip_prefix(&resolved_root) {
                     Ok(rel_path) => {
-                        let parts: Vec<String> = rel_path
-                            .components()
-                            .map(|c| c.as_os_str().to_string_lossy().into_owned())
-                            .collect();
-                        tree_root.insert(&parts, false, file_lines);
+                        tree_root.insert_rel_path(
+                            rel_path,
+                            file_lines,
+                            format!(" ({} lines)", file_lines),
+                        );
                     }
                     Err(_) => {}
                 }
@@ -435,7 +325,7 @@ impl Tool for SummarizeCodebaseTool {
         }
 
         tree_root.update_counts();
-        let tree_str = tree_root.format_tree("", true, 0, 3);
+        let tree_str = tree_root.format_tree("", true, 0, 3, true);
 
         let project_type = detect_project_type(&resolved_root);
         let mut breakdown: Vec<Value> = ext_counts

@@ -58,7 +58,7 @@ impl DiscordChannel {
             bot_token,
             agent_loop,
             client: crate::core::http::default_http_client(),
-            concurrency_limit: Arc::new(tokio::sync::Semaphore::new(5)),
+            concurrency_limit: crate::channels::channel_concurrency_semaphore(),
         }
     }
 }
@@ -93,37 +93,15 @@ async fn handle_discord_message_create(
         true => {}
     }
 
-    match crate::channels::is_stop_command(&payload.content) {
-        true => {
-            crate::shutdown::trigger_cli_cancel();
-            send_discord_chunks(
-                client,
-                bot_token,
-                &payload.channel_id,
-                "▲ Stop requested. Active OpenZ turn interrupted.",
-            )
-            .await;
-            return;
-        }
-        false => {}
-    }
-
     let discord_session_key = format!("discord:{}", payload.channel_id);
-    match crate::channels::session_command_text_response(
+    match crate::channels::intercept_channel_text_command(
         &agent_loop.session_manager,
         &discord_session_key,
         &payload.content,
+        "▲ Stop requested. Active OpenZ turn interrupted.",
     )
     .await
     {
-        Some(response_text) => {
-            send_discord_chunks(client, bot_token, &payload.channel_id, &response_text).await;
-            return;
-        }
-        None => {}
-    }
-
-    match crate::channels::model_switch_text_response(&payload.content) {
         Some(response_text) => {
             send_discord_chunks(client, bot_token, &payload.channel_id, &response_text).await;
             return;

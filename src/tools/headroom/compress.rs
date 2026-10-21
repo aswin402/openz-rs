@@ -11,7 +11,6 @@ use anyhow::{anyhow, Result};
 use chrono::Utc;
 use rusqlite::params;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 
@@ -51,116 +50,7 @@ pub struct DiffSummary {
     pub total_deletions: usize,
 }
 
-// ─── Tree structures for compress_directory ─────────────────────
-
-#[derive(Debug, Clone)]
-struct CompTreeFile {
-    #[allow(dead_code)]
-    ccr_id: String,
-    original_tokens: usize,
-    compressed_tokens: usize,
-    saved_pct: String,
-}
-
-#[derive(Debug, Clone)]
-struct CompTreeNode {
-    name: String,
-    is_dir: bool,
-    files_count: usize,
-    file_info: Option<CompTreeFile>,
-    children: BTreeMap<String, CompTreeNode>,
-}
-
-impl CompTreeNode {
-    fn insert(&mut self, parts: &[String], info: CompTreeFile) {
-        match parts {
-            [] => {}
-            [only] => {
-                let child = self
-                    .children
-                    .entry(only.clone())
-                    .or_insert_with(|| CompTreeNode {
-                        name: only.clone(),
-                        is_dir: false,
-                        files_count: 0,
-                        file_info: None,
-                        children: BTreeMap::new(),
-                    });
-                child.file_info = Some(info);
-                child.files_count = 1;
-            }
-            [first, rest @ ..] => {
-                let child = self
-                    .children
-                    .entry(first.clone())
-                    .or_insert_with(|| CompTreeNode {
-                        name: first.clone(),
-                        is_dir: true,
-                        files_count: 0,
-                        file_info: None,
-                        children: BTreeMap::new(),
-                    });
-                child.insert(rest, info);
-            }
-        }
-    }
-
-    fn update_counts(&mut self) {
-        self.files_count = 0;
-        for child in self.children.values_mut() {
-            child.update_counts();
-            self.files_count += child.files_count;
-        }
-        self.files_count += usize::from(self.file_info.is_some());
-    }
-
-    fn format_tree(&self, prefix: &str, is_last: bool, depth: usize, max_depth: usize) -> String {
-        match depth > max_depth {
-            true => {
-                return match self.files_count > 0 {
-                    true => format!("{}└── {} ({} files)\n", prefix, self.name, self.files_count),
-                    false => String::new(),
-                };
-            }
-            false => {}
-        }
-        let connector = match is_last {
-            true => "└── ",
-            false => "├── ",
-        };
-        let mut result = format!("{}{}{}", prefix, connector, self.name);
-        match (&self.file_info, self.is_dir && depth > 0) {
-            (Some(info), _) => result.push_str(&format!(
-                " [{} tokens -> {} tokens, saved {}]",
-                info.original_tokens, info.compressed_tokens, info.saved_pct
-            )),
-            (None, true) => result.push('/'),
-            (None, false) => {}
-        }
-        result.push('\n');
-
-        let child_prefix = match is_last {
-            true => format!("{}    ", prefix),
-            false => format!("{}│   ", prefix),
-        };
-        let children: Vec<&str> = self.children.keys().map(|k| k.as_str()).collect();
-        for (i, child_name) in children.iter().enumerate() {
-            match self.children.get(*child_name) {
-                Some(child) => {
-                    let is_last_child = i == children.len() - 1;
-                    result.push_str(&child.format_tree(
-                        &child_prefix,
-                        is_last_child,
-                        depth + 1,
-                        max_depth,
-                    ));
-                }
-                None => {}
-            }
-        }
-        result
-    }
-}
+use super::DirTreeNode;
 
 // ─── Helpers ─────────────────────────────────────────────────────
 
@@ -1478,17 +1368,7 @@ impl Tool for CompressDirectoryTool {
         let signatures_only = arguments["signatures_only"].as_bool().unwrap_or(false);
         let file_limit = 500usize;
 
-        let mut tree_root = CompTreeNode {
-            name: resolved_root
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(".")
-                .to_string(),
-            is_dir: true,
-            files_count: 0,
-            file_info: None,
-            children: BTreeMap::new(),
-        };
+        let mut tree_root = DirTreeNode::new_root(&resolved_root);
 
         let mut processed = 0usize;
         let mut walk_dir = vec![(resolved_root.clone(), 0usize)];
@@ -1564,7 +1444,7 @@ impl Tool for CompressDirectoryTool {
                 let compressed =
                     compress_by_type(&raw_text, content_type, threshold, signatures_only, ext);
 
-                let ccr_id = match is_preview {
+                let _ = match is_preview {
                     true => "PREVIEW".to_string(),
                     false => {
                         let id = cache_content(&raw_text)?;
@@ -1584,20 +1464,16 @@ impl Tool for CompressDirectoryTool {
                 let compressed_tokens = estimate_tokens(&compressed);
                 let saved_pct = format_saved_pct(original_tokens, compressed_tokens);
 
-                let file_info = CompTreeFile {
-                    ccr_id,
-                    original_tokens,
-                    compressed_tokens,
-                    saved_pct,
-                };
-
                 match path.strip_prefix(&resolved_root) {
                     Ok(rel_path) => {
-                        let parts: Vec<String> = rel_path
-                            .components()
-                            .map(|c| c.as_os_str().to_string_lossy().into_owned())
-                            .collect();
-                        tree_root.insert(&parts, file_info);
+                        tree_root.insert_rel_path(
+                            rel_path,
+                            0,
+                            format!(
+                                " [{} tokens -> {} tokens, saved {}]",
+                                original_tokens, compressed_tokens, saved_pct
+                            ),
+                        );
                     }
                     Err(_) => {}
                 }
@@ -1616,7 +1492,7 @@ impl Tool for CompressDirectoryTool {
         }
 
         tree_root.update_counts();
-        let tree_str = tree_root.format_tree("", true, 0, max_depth);
+        let tree_str = tree_root.format_tree("", true, 0, max_depth, false);
 
         let preview_label = match is_preview {
             true => " [PREVIEW - not cached]",
