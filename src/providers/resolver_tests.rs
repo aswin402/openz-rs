@@ -1,11 +1,5 @@
 use super::*;
-use std::sync::OnceLock;
-
-/// Serialize env-modifying tests to prevent race conditions from parallel execution.
-fn env_lock() -> &'static std::sync::Mutex<()> {
-    static ENV_LOCK: OnceLock<std::sync::Mutex<()>> = OnceLock::new();
-    ENV_LOCK.get_or_init(|| std::sync::Mutex::new(()))
-}
+use crate::config::schema::test_env_lock as env_lock;
 use crate::config::schema::{AgentDefaults, AgentsConfig, Config, ProviderConfig};
 
 fn config_with(provider: &str) -> Config {

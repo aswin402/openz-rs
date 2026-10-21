@@ -52,10 +52,8 @@ pub(super) fn compact_reasoning_summary(reasoning: &str) -> String {
     text
 }
 
-#[allow(dead_code)]
-pub(super) fn format_markdown_line(line: &str) -> String {
-    crate::channels::cli::render::format_markdown_line(line)
-}
+#[allow(unused_imports)]
+pub(super) use crate::channels::cli::render::format_markdown_line;
 
 pub(super) fn stream_content_chunk(
     text: &str,

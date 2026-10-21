@@ -1,11 +1,5 @@
+use super::test_env_lock as env_lock;
 use super::*;
-use std::sync::{Mutex, OnceLock};
-
-
-fn env_lock() -> &'static Mutex<()> {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-}
 
 fn blank_config() -> Config {
     Config {

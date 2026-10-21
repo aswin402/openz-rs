@@ -27,6 +27,7 @@ pub(crate) use crate::tools::arguments::{
 
 #[cfg(test)]
 pub(crate) struct TestEnvLock {
+    _guard: crate::config::loader::TestConfigDirLock,
     previous_config_dir: Option<String>,
     temp_dir: std::path::PathBuf,
 }
@@ -34,23 +35,14 @@ pub(crate) struct TestEnvLock {
 #[cfg(test)]
 impl TestEnvLock {
     pub(crate) fn acquire(prefix: &str) -> Self {
-        let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
-        loop {
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&lock_path)
-            {
-                Ok(_) => break,
-                Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
-            }
-        }
+        let _guard = crate::config::loader::TestConfigDirLock::acquire();
         let previous_config_dir = std::env::var("OPENZ_CONFIG_DIR").ok();
         let temp_dir = std::env::temp_dir().join(format!("{}_{}", prefix, uuid::Uuid::new_v4()));
         let _ = std::fs::remove_dir_all(&temp_dir);
         std::fs::create_dir_all(&temp_dir).unwrap();
         std::env::set_var("OPENZ_CONFIG_DIR", &temp_dir);
         Self {
+            _guard,
             previous_config_dir,
             temp_dir,
         }
@@ -69,7 +61,5 @@ impl Drop for TestEnvLock {
             None => std::env::remove_var("OPENZ_CONFIG_DIR"),
         }
         let _ = std::fs::remove_dir_all(&self.temp_dir);
-        let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
-        let _ = std::fs::remove_file(lock_path);
     }
 }

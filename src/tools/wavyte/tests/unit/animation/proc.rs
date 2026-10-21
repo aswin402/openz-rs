@@ -1,14 +1,4 @@
 use super::*;
-use crate::tools::wavyte::foundation::core::{Fps, FrameIndex};
-
-fn ctx(frame: u64, seed: u64) -> SampleCtx {
-    SampleCtx {
-        frame: FrameIndex(frame),
-        fps: Fps::new(30, 1).unwrap(),
-        clip_local: FrameIndex(frame),
-        seed,
-    }
-}
 
 #[test]
 fn rng_is_deterministic() {
@@ -26,14 +16,14 @@ fn noise_is_bounded_and_deterministic() {
         freq_hz: 1.0,
         offset: 0.5,
     }));
-    let v0 = proc.sample(ctx(0, 7)).unwrap();
-    let v1 = proc.sample(ctx(1, 7)).unwrap();
+    let v0 = proc.sample(SampleCtx::test_ctx_with_seed(0, 7)).unwrap();
+    let v1 = proc.sample(SampleCtx::test_ctx_with_seed(1, 7)).unwrap();
     assert_ne!(v0, v1);
     for v in [v0, v1] {
         assert!(v >= -1.5);
         assert!(v <= 2.5);
     }
-    assert_eq!(v0, proc.sample(ctx(0, 7)).unwrap());
+    assert_eq!(v0, proc.sample(SampleCtx::test_ctx_with_seed(0, 7)).unwrap());
 }
 
 #[test]
@@ -44,10 +34,10 @@ fn envelope_basic_boundaries() {
         sustain: 0.25,
         release: 10,
     }));
-    assert_eq!(proc.sample(ctx(0, 0)).unwrap(), 0.0);
-    assert!((proc.sample(ctx(10, 0)).unwrap() - 1.0).abs() < 1e-9);
-    let at_sustain = proc.sample(ctx(20, 0)).unwrap();
+    assert_eq!(proc.sample(SampleCtx::test_ctx(0)).unwrap(), 0.0);
+    assert!((proc.sample(SampleCtx::test_ctx(10)).unwrap() - 1.0).abs() < 1e-9);
+    let at_sustain = proc.sample(SampleCtx::test_ctx(20)).unwrap();
     assert!((at_sustain - 0.25).abs() < 1e-9);
-    let released = proc.sample(ctx(30, 0)).unwrap();
+    let released = proc.sample(SampleCtx::test_ctx(30)).unwrap();
     assert!((released - 0.0).abs() < 1e-9);
 }

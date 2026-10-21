@@ -1,14 +1,4 @@
 use super::*;
-use crate::tools::wavyte::foundation::core::Fps;
-
-fn ctx(frame: u64) -> SampleCtx {
-    SampleCtx {
-        frame: FrameIndex(frame),
-        fps: Fps::new(30, 1).unwrap(),
-        clip_local: FrameIndex(frame),
-        seed: 0,
-    }
-}
 
 #[test]
 fn keyframes_hold_is_constant_between_keys() {
@@ -28,8 +18,8 @@ fn keyframes_hold_is_constant_between_keys() {
         mode: InterpMode::Hold,
         default: None,
     });
-    assert_eq!(anim.sample(ctx(5)).unwrap(), 1.0);
-    assert_eq!(anim.sample(ctx(10)).unwrap(), 3.0);
+    assert_eq!(anim.sample(SampleCtx::test_ctx(5)).unwrap(), 1.0);
+    assert_eq!(anim.sample(SampleCtx::test_ctx(10)).unwrap(), 3.0);
 }
 
 #[test]
@@ -50,7 +40,7 @@ fn keyframes_linear_interpolates() {
         mode: InterpMode::Linear,
         default: None,
     });
-    assert_eq!(anim.sample(ctx(5)).unwrap(), 5.0);
+    assert_eq!(anim.sample(SampleCtx::test_ctx(5)).unwrap(), 5.0);
 }
 
 #[test]
@@ -75,6 +65,6 @@ fn expr_reverse_maps_frames() {
         inner: Box::new(inner),
         duration: 10,
     });
-    assert_eq!(rev.sample(ctx(0)).unwrap(), 9.0);
-    assert_eq!(rev.sample(ctx(9)).unwrap(), 0.0);
+    assert_eq!(rev.sample(SampleCtx::test_ctx(0)).unwrap(), 9.0);
+    assert_eq!(rev.sample(SampleCtx::test_ctx(9)).unwrap(), 0.0);
 }

@@ -21,6 +21,22 @@ pub struct SampleCtx {
     pub seed: u64, // deterministic seed for procs
 }
 
+#[cfg(test)]
+impl SampleCtx {
+    pub(crate) fn test_ctx(frame: u64) -> Self {
+        Self::test_ctx_with_seed(frame, 0)
+    }
+
+    pub(crate) fn test_ctx_with_seed(frame: u64, seed: u64) -> Self {
+        Self {
+            frame: FrameIndex(frame),
+            fps: crate::tools::wavyte::foundation::core::Fps::new(30, 1).unwrap(),
+            clip_local: FrameIndex(frame),
+            seed,
+        }
+    }
+}
+
 /// Interpolation contract for animation value types.
 pub trait Lerp: Sized {
     /// Interpolate from `a` to `b` with normalized factor `t` in `[0, 1]`.

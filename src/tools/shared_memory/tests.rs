@@ -1,36 +1,9 @@
 use super::*;
+use crate::config::loader::TestConfigDirLock as TestLock;
 use crate::tools::Tool;
 use anyhow::Result;
 use serde_json::json;
 use std::sync::Arc;
-
-struct TestLock;
-
-impl TestLock {
-    fn acquire() -> Self {
-        let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
-        loop {
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&lock_path)
-            {
-                Ok(_) => break,
-                Err(_) => {
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                }
-            }
-        }
-        TestLock
-    }
-}
-
-impl Drop for TestLock {
-    fn drop(&mut self) {
-        let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
-        let _ = std::fs::remove_file(lock_path);
-    }
-}
 
 #[tokio::test]
 async fn test_shared_memory_workflow() -> Result<()> {

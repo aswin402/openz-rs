@@ -1,35 +1,10 @@
 use super::*;
+use crate::config::loader::TestConfigDirLock as TestEnvLock;
 use crate::tools::graph_memory::{test_lock, with_db};
 use crate::tools::memory_extra::{coordinator, facts, search, working};
 use crate::tools::Tool;
 use rusqlite::params;
 use serde_json::json;
-
-struct TestEnvLock;
-
-impl TestEnvLock {
-    fn acquire() -> Self {
-        let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
-        loop {
-            match std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&lock_path)
-            {
-                Ok(_) => break,
-                Err(_) => std::thread::sleep(std::time::Duration::from_millis(50)),
-            }
-        }
-        TestEnvLock
-    }
-}
-
-impl Drop for TestEnvLock {
-    fn drop(&mut self) {
-        let lock_path = std::env::temp_dir().join("openz_test_config_dir.lock");
-        let _ = std::fs::remove_file(lock_path);
-    }
-}
 
 #[tokio::test]
 async fn test_extract_facts() {
