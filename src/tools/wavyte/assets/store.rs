@@ -246,6 +246,10 @@ impl PreparedAssetStore {
         Ok(out)
     }
 
+    pub fn prepare_for_test(comp: &model::Composition) -> Self {
+        Self::prepare(comp, ".").expect("prepare asset store for test composition")
+    }
+
     /// Return root directory used when resolving relative asset paths.
     pub fn root(&self) -> &Path {
         &self.root

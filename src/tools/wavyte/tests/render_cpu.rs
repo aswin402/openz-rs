@@ -4,30 +4,8 @@ mod cpu {
     use wavyte::{
         Anim, Asset, BackendKind, BlendMode, Canvas, Clip, ClipProps, Composition, FrameIndex,
         FrameRange, PathAsset, PreparedAssetStore, RenderSettings, Track, Transform2D,
-        create_backend, render_frame,
+        create_backend, digest_u64, render_frame,
     };
-
-    fn mix64(mut z: u64) -> u64 {
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    }
-
-    fn digest_u64(bytes: &[u8]) -> u64 {
-        let mut state = 0x9E37_79B9_7F4A_7C15u64;
-        for chunk in bytes.chunks(8) {
-            let mut v = 0u64;
-            for (i, &b) in chunk.iter().enumerate() {
-                v |= (b as u64) << (i * 8);
-            }
-            state = mix64(state ^ v);
-        }
-        state
-    }
-
-    fn store_for(comp: &Composition) -> PreparedAssetStore {
-        PreparedAssetStore::prepare(comp, ".").unwrap()
-    }
 
     fn simple_path_comp() -> Composition {
         let mut assets = BTreeMap::new();
@@ -159,7 +137,7 @@ mod cpu {
             clear_rgba: Some([0, 0, 0, 255]),
         };
         let mut backend = create_backend(BackendKind::Cpu, &settings).unwrap();
-        let assets = store_for(&comp);
+        let assets = PreparedAssetStore::prepare_for_test(&comp);
 
         let a = render_frame(&comp, FrameIndex(0), backend.as_mut(), &assets).unwrap();
         let b = render_frame(&comp, FrameIndex(0), backend.as_mut(), &assets).unwrap();
@@ -179,7 +157,7 @@ mod cpu {
             clear_rgba: Some([0, 0, 0, 255]),
         };
         let mut backend = create_backend(BackendKind::Cpu, &settings).unwrap();
-        let assets = store_for(&comp);
+        let assets = PreparedAssetStore::prepare_for_test(&comp);
 
         let frame = render_frame(&comp, FrameIndex(0), backend.as_mut(), &assets).unwrap();
         assert_eq!(frame.width, 64);

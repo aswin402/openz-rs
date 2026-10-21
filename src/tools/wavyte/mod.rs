@@ -79,6 +79,7 @@ pub use foundation::core::{
     Vec2,
 };
 pub use foundation::error::{WavyteError, WavyteResult};
+pub use foundation::math::{digest_u64, mix64};
 pub use layout::solver::{LayoutOffsets, resolve_layout_offsets};
 pub use render::backend::{BackendKind, FrameRGBA, RenderBackend, RenderSettings, create_backend};
 pub use render::cpu::CpuBackend;

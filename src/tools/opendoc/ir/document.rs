@@ -63,18 +63,19 @@ impl Document {
 
     /// Estimate token count for LLM context window planning
     pub fn estimate_tokens(&self) -> usize {
+        use crate::tools::headroom::estimate_tokens;
         let mut count = 0usize;
         for p in &self.paragraphs {
-            count += p.text.len() / 4; // ~4 chars per token
+            count += estimate_tokens(&p.text);
         }
         for t in &self.tables {
             for row in &t.rows {
                 for cell in row {
-                    count += cell.len() / 4;
+                    count += estimate_tokens(cell);
                 }
             }
         }
-        count += self.text.as_ref().map_or(0, |text| text.len() / 4);
+        count += self.text.as_deref().map_or(0, estimate_tokens);
         count
     }
 

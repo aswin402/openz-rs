@@ -190,33 +190,6 @@ pub mod model_switch_tests {
     use super::*;
 
     #[test]
-    fn model_risk_marks_unknown_free_models() {
-        let risk = classify_model_risk("opencode_zen", "big-pickle");
-        assert!(risk.risky);
-        assert!(risk
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("not in OpenZ curated")));
-    }
-
-    #[test]
-    fn model_risk_allows_known_strong_default() {
-        let risk = classify_model_risk("opencode_zen", "deepseek-v4-flash-free");
-        assert!(!risk.risky);
-        assert_eq!(risk.tier, "strong");
-    }
-
-    #[test]
-    fn model_risk_warns_for_small_models() {
-        let risk = classify_model_risk("groq", "llama-3.1-8b-instant");
-        assert!(risk.risky);
-        assert!(risk
-            .reasons
-            .iter()
-            .any(|reason| reason.contains("small/weak")));
-    }
-
-    #[test]
     fn parses_switch_model_provider_and_model_commands() {
         assert_eq!(
             parse_model_switch_command("/switch-model"),

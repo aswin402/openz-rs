@@ -52,10 +52,6 @@ fn parse_transition_cache_key_is_order_insensitive_for_object_params() {
     assert_eq!(cache.transition_cache.values().next().unwrap().len(), 1);
 }
 
-fn store_for(comp: &Composition) -> PreparedAssetStore {
-    PreparedAssetStore::prepare(comp, ".").expect("prepare asset store for test composition")
-}
-
 #[test]
 fn compile_path_emits_fillpath_without_asset_cache() {
     let mut assets = BTreeMap::new();
@@ -107,7 +103,7 @@ fn compile_path_emits_fillpath_without_asset_cache() {
     };
 
     let eval = Evaluator::eval_frame(&comp, FrameIndex(1)).unwrap();
-    let store = store_for(&comp);
+    let store = PreparedAssetStore::prepare_for_test(&comp);
     let plan = compile_frame(&comp, &eval, &store).unwrap();
     let scene = match &plan.passes[0] {
         Pass::Scene(scene) => scene,
@@ -177,7 +173,7 @@ fn compile_applies_inline_effects_to_opacity_and_transform() {
     };
 
     let eval = Evaluator::eval_frame(&comp, FrameIndex(0)).unwrap();
-    let store = store_for(&comp);
+    let store = PreparedAssetStore::prepare_for_test(&comp);
     let plan = compile_frame(&comp, &eval, &store).unwrap();
     let scene = match &plan.passes[0] {
         Pass::Scene(scene) => scene,
@@ -245,7 +241,7 @@ fn compile_emits_offscreen_blur_pass_and_composites_blurred_surface() {
     };
 
     let eval = Evaluator::eval_frame(&comp, FrameIndex(0)).unwrap();
-    let store = store_for(&comp);
+    let store = PreparedAssetStore::prepare_for_test(&comp);
     let plan = compile_frame(&comp, &eval, &store).unwrap();
 
     assert_eq!(plan.surfaces.len(), 3);
@@ -356,7 +352,7 @@ fn compile_pairs_crossfade_into_single_composite_op() {
     };
 
     let eval = Evaluator::eval_frame(&comp, FrameIndex(8)).unwrap();
-    let store = store_for(&comp);
+    let store = PreparedAssetStore::prepare_for_test(&comp);
     let plan = compile_frame(&comp, &eval, &store).unwrap();
     let p = match plan.passes.last().unwrap() {
         Pass::Composite(p) => p,
@@ -443,7 +439,7 @@ fn compile_pairs_wipe_into_single_composite_op() {
     };
 
     let eval = Evaluator::eval_frame(&comp, FrameIndex(8)).unwrap();
-    let store = store_for(&comp);
+    let store = PreparedAssetStore::prepare_for_test(&comp);
     let plan = compile_frame(&comp, &eval, &store).unwrap();
     let p = match plan.passes.last().unwrap() {
         Pass::Composite(p) => p,
@@ -544,7 +540,7 @@ fn compile_does_not_pair_transitions_when_progress_is_not_aligned() {
     };
 
     let eval = Evaluator::eval_frame(&comp, FrameIndex(8)).unwrap();
-    let store = store_for(&comp);
+    let store = PreparedAssetStore::prepare_for_test(&comp);
     let plan = compile_frame(&comp, &eval, &store).unwrap();
     let p = match plan.passes.last().unwrap() {
         Pass::Composite(p) => p,
