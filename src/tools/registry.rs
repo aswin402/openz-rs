@@ -3,7 +3,7 @@
 //! Owns [`ToolRegistry`], tool name normalization, alias indexing, dynamic subagent
 //! resolution, capability policy enforcement, and route analysis.
 
-use super::{all_tool_specs, normalize_tool_name, tool_spec, Tool, ToolMetadata};
+use super::{normalize_tool_name, tool_spec, Tool, ToolMetadata};
 use crate::config::schema::Config;
 use crate::providers::LLMProvider;
 use crate::session::SessionManager;
@@ -352,17 +352,6 @@ impl ToolRegistry {
         self.clear_route_cache();
     }
 
-    pub fn request_tool_scope_for_prompt(&self, prompt: &str) {
-        let selected_domains = routing::select_domains_for_prompt(prompt);
-        let static_tools = self.read_tools();
-        let explicit_tools = routing::explicitly_requested_tool_names(prompt, &static_tools);
-        drop(static_tools);
-        self.request_tool_scope(
-            explicit_tools,
-            selected_domains.into_iter().map(|d| d.to_string()),
-        );
-    }
-
     pub fn current_turn_scope(&self) -> (Vec<String>, Vec<String>) {
         self.pending_scope
             .lock()
@@ -407,8 +396,7 @@ impl ToolRegistry {
     }
 
     fn tool_allowed_by_active_policy(&self, name: &str) -> bool {
-        let policy = self.capability_policy.lock().ok().and_then(|g| g.clone());
-        policy
+        self.active_capability_policy()
             .as_ref()
             .map(|policy| crate::tools::orchestrator::tool_allowed_by_policy(name, policy))
             .unwrap_or(true)
@@ -437,19 +425,6 @@ impl ToolRegistry {
         self.capability_policy.lock().ok().and_then(|g| g.clone())
     }
 
-    pub fn active_tool_capabilities(&self) -> Vec<String> {
-        const CAPABILITY_PROBES: &[(&str, &str)] = &[
-            ("exec_command", "terminal_execution"),
-            ("write_file", "filesystem_mutations"),
-            ("web_search", "live_network_research"),
-        ];
-        CAPABILITY_PROBES
-            .iter()
-            .filter(|(tool, _)| self.tool_allowed_by_active_policy(tool))
-            .map(|(_, capability)| (*capability).to_string())
-            .collect()
-    }
-
     fn collect_parent_tools_excluding(&self, excluded: &[&str]) -> Vec<Arc<dyn Tool>> {
         self.read_tools()
             .values()
@@ -462,40 +437,6 @@ impl ToolRegistry {
     pub fn register(&self, tool: Arc<dyn Tool>) {
         let mut tools = self.write_tools();
         let _ = insert_unique_tool(&mut tools, tool).then(|| self.clear_route_cache());
-    }
-
-    pub fn register_all<I>(&self, tools: I)
-    where
-        I: IntoIterator<Item = Arc<dyn Tool>>,
-    {
-        for tool in tools {
-            self.register(tool);
-        }
-    }
-
-    pub fn register_canonical_static_defs(&self) {
-        let mut tools = self.write_tools();
-        for spec in all_tool_specs() {
-            let canonical_name = spec.name;
-            match tools.contains_key(canonical_name) {
-                true => continue,
-                false => {}
-            }
-            let existing_key = tools
-                .keys()
-                .find(|k| {
-                    k.eq_ignore_ascii_case(canonical_name)
-                        || spec
-                            .aliases
-                            .iter()
-                            .any(|&a| a.eq_ignore_ascii_case(k.as_str()))
-                })
-                .cloned();
-            let _ = existing_key.and_then(|key| tools.remove(&key)).map(|tool| {
-                tools.insert(canonical_name.to_string(), tool);
-            });
-        }
-        self.clear_route_cache();
     }
 
     pub fn tool_names(&self) -> Vec<String> {
@@ -965,10 +906,6 @@ impl ToolRegistry {
             "Tool Router selected {}/{} tools: {} · dropped {}",
             route.selected_count, total, domains, route.dropped_count
         )
-    }
-
-    pub fn to_openai_format(&self) -> Vec<serde_json::Value> {
-        self.to_openai_format_for_prompt("")
     }
 
     fn tool_allowed_for_active_subagent(&self, name: &str) -> bool {

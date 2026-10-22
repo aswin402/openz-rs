@@ -1,5 +1,4 @@
 use super::error::{OpenMediaError, Result};
-use super::hardware::HardwareInfo;
 use super::progress::ProgressReporter;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
@@ -137,11 +136,6 @@ impl ModelRegistry {
         }
     }
 
-    /// Select the best diffusion model given hardware constraints
-    pub fn select_best_diffusion(&self, _hardware: &HardwareInfo) -> Option<&ModelInfo> {
-        None
-    }
-
     /// Download a model by its ID
     pub async fn download_model(
         &self,
@@ -167,7 +161,7 @@ impl ModelRegistry {
 
         let tmp_path = dest_path.with_extension("download");
 
-        let client = reqwest::Client::new();
+        let client = crate::core::http::default_http_client();
         let mut response =
             client
                 .get(url)
@@ -218,13 +212,5 @@ impl ModelRegistry {
         progress.complete(&format!("Successfully downloaded {}", model.name));
 
         Ok(dest_path.clone())
-    }
-
-    /// Verify a model's checksum
-    pub async fn verify_model(&self, id: &str) -> Result<bool> {
-        let model = self
-            .get(id)
-            .ok_or_else(|| OpenMediaError::ModelNotFound(id.to_string()))?;
-        Ok(model.path.exists())
     }
 }

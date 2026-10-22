@@ -1,4 +1,4 @@
-use crate::tools::openmedia::core::{ImageOutput, OpenMediaError, Result, SvgOutput};
+use crate::tools::openmedia::core::{ImageOutput, OpenMediaError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -313,46 +313,6 @@ impl<'a> GroupBuilder<'a> {
     }
 }
 
-pub struct GradientBuilder<'a> {
-    builder: &'a mut SvgBuilder,
-    id: String,
-    is_radial: bool,
-    stops: Vec<GradientStop>,
-}
-
-impl<'a> GradientBuilder<'a> {
-    pub fn stop(mut self, offset: &str, color: &str) -> Self {
-        self.stops.push(GradientStop {
-            offset: offset.to_string(),
-            color: color.to_string(),
-            opacity: None,
-        });
-        self
-    }
-
-    pub fn finish(self) -> &'a mut SvgBuilder {
-        let def = match self.is_radial {
-            true => SvgDef::RadialGradient {
-                id: self.id,
-                cx: "50%".to_string(),
-                cy: "50%".to_string(),
-                r: "50%".to_string(),
-                stops: self.stops,
-            },
-            false => SvgDef::LinearGradient {
-                id: self.id,
-                x1: "0%".to_string(),
-                y1: "0%".to_string(),
-                x2: "100%".to_string(),
-                y2: "0%".to_string(),
-                stops: self.stops,
-            },
-        };
-        self.builder.defs.push(def);
-        self.builder
-    }
-}
-
 fn append_gradient_stops(svg: &mut String, stops: &[GradientStop]) {
     for stop in stops {
         let opacity_attr = stop
@@ -436,26 +396,6 @@ impl SvgBuilder {
             builder: self,
             elements: Vec::new(),
             attrs: Attributes::new(),
-        }
-    }
-
-    /// Define a linear gradient
-    pub fn linear_gradient(&mut self, id: &str) -> GradientBuilder<'_> {
-        GradientBuilder {
-            builder: self,
-            id: id.to_string(),
-            is_radial: false,
-            stops: Vec::new(),
-        }
-    }
-
-    /// Define a radial gradient
-    pub fn radial_gradient(&mut self, id: &str) -> GradientBuilder<'_> {
-        GradientBuilder {
-            builder: self,
-            id: id.to_string(),
-            is_radial: true,
-            stops: Vec::new(),
         }
     }
 
@@ -676,23 +616,6 @@ impl SvgBuilder {
         svg.push_str("</svg>");
         svg
     }
-
-    /// Build and write to a file
-    pub fn build_to_file(self, path: &std::path::Path) -> Result<SvgOutput> {
-        let width = self.width;
-        let height = self.height;
-        let content = self.build();
-        std::fs::write(path, &content)?;
-        let file_size = content.len() as u64;
-        Ok(SvgOutput {
-            path: path.to_path_buf(),
-            width,
-            height,
-            content: Some(content),
-            file_size,
-            generation_id: uuid::Uuid::now_v7().to_string(),
-        })
-    }
 }
 
 /// Chart type selection
@@ -753,27 +676,6 @@ impl ChartTheme {
                 "#f5b461".into(),
                 "#61c0bf".into(),
                 "#bbbbbb".into(),
-            ],
-            font_family: "Inter, sans-serif".into(),
-            font_size: 14.0,
-        }
-    }
-
-    pub fn light() -> Self {
-        Self {
-            background: "#ffffff".into(),
-            text_color: "#333333".into(),
-            grid_color: "#e0e0e0".into(),
-            axis_color: "#999999".into(),
-            palette: vec![
-                "#2563eb".into(),
-                "#dc2626".into(),
-                "#16a34a".into(),
-                "#9333ea".into(),
-                "#ea580c".into(),
-                "#0891b2".into(),
-                "#4f46e5".into(),
-                "#64748b".into(),
             ],
             font_family: "Inter, sans-serif".into(),
             font_size: 14.0,

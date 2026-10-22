@@ -110,34 +110,5 @@ pub enum OpenMediaError {
     Internal(String),
 }
 
-impl OpenMediaError {
-    /// Convert to MCP error code
-    pub fn mcp_error_code(&self) -> i32 {
-        match self {
-            Self::ModelNotFound(_) => 1001,
-            Self::ModelLoadFailed { .. } | Self::ChecksumMismatch { .. } => 1002,
-            Self::InferenceError { .. } => 1003,
-            Self::BackendUnavailable(_) | Self::OutOfMemory { .. } => 1004,
-            Self::RenderingError { .. } => 2001,
-            Self::EncodingError(_) => 2002,
-            Self::FfmpegNotFound => 2003,
-            Self::ChromeNotFound => 2004,
-            Self::InvalidSvgInput(_) => 3001,
-            Self::ChartDataError(_) => 3002,
-            Self::DiagramLayoutError(_) => 3003,
-            Self::GpuError(_) | Self::ShaderError { .. } => 4001,
-            Self::ImageDecodeError(_) => 4002,
-            Self::ImageEncodeError { .. } => 4003,
-            Self::ScoringError(_) => 5001,
-            Self::DatabaseError(_) => 5002,
-            Self::OutputPathError { .. } => 6001,
-            Self::InputFileNotFound(_) => 6002,
-            Self::FileTooLarge { .. } => 6003,
-            Self::InvalidParameter { .. } => -32602,
-            _ => -32603,
-        }
-    }
-}
-
 /// Result type alias for OpenMedia operations
 pub type Result<T> = std::result::Result<T, OpenMediaError>;

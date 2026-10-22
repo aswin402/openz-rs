@@ -348,15 +348,6 @@ pub(crate) fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
 }
 
-#[allow(dead_code)]
-pub(crate) fn tool_selection_score(
-    name: &str,
-    metadata: &ToolMetadata,
-    selected_domains: &BTreeSet<&'static str>,
-) -> i32 {
-    tool_selection_score_with_bm25(name, metadata, selected_domains, 0.0)
-}
-
 pub(crate) fn tool_selection_score_with_bm25(
     name: &str,
     metadata: &ToolMetadata,
@@ -387,15 +378,6 @@ pub(crate) fn tool_selection_score_with_bm25(
 
     metadata.priority as i32 + core_bonus + domain_bonus + bm25_bonus - risk_penalty
         - approval_penalty
-}
-
-#[allow(dead_code)]
-pub(crate) fn tool_selection_reasons(
-    name: &str,
-    metadata: &ToolMetadata,
-    selected_domains: &BTreeSet<&'static str>,
-) -> Vec<&'static str> {
-    tool_selection_reasons_with_bm25(name, metadata, selected_domains, 0.0)
 }
 
 pub(crate) fn tool_selection_reasons_with_bm25(

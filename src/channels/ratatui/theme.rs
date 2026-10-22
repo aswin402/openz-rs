@@ -1,7 +1,7 @@
 //! OpenZ Ratatui Theme — Aura Dark + Red-Orange Brand Palette
 //! Ported and enhanced with Dalton Menezes' official Aura Theme specifications
 
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::Color;
 
 /// Complete Aura Dark + Red-Orange OpenZ Theme
 #[derive(Debug, Clone)]
@@ -56,135 +56,9 @@ impl Theme {
         }
     }
 
-    /// Official OpenZ Aura Soft Dark Theme
-    pub fn aura_soft_dark() -> Self {
-        Self {
-            bg_primary: Color::Rgb(18, 16, 22),  // #121016
-            bg_elevated: Color::Rgb(28, 26, 36), // #1c1a24
-            bg_input: Color::Rgb(36, 33, 49),    // #242131
-            brand_accent: Color::Rgb(255, 85, 0),
-            brand_white: Color::Rgb(240, 240, 240),
-            success: Color::Rgb(97, 255, 202),
-            destructive: Color::Rgb(255, 103, 103),
-            warning: Color::Rgb(255, 202, 133),
-            highlight: Color::Rgb(246, 148, 255),
-            info: Color::Rgb(130, 226, 255),
-            text_primary: Color::Rgb(237, 236, 238),
-            muted: Color::Rgb(110, 110, 125),
-            border: Color::Rgb(50, 45, 75),
-        }
-    }
-
-    /// Fallback 256-color palette
-    pub fn ansi_256() -> Self {
-        Self {
-            bg_primary: Color::Indexed(234),
-            bg_elevated: Color::Indexed(235),
-            bg_input: Color::Indexed(236),
-            brand_accent: Color::Indexed(202), // Vibrant Orange
-            brand_white: Color::Indexed(255),  // Pure White
-            success: Color::Indexed(84),       // Mint
-            destructive: Color::Indexed(203),  // Coral Red
-            warning: Color::Indexed(215),      // Warm Orange
-            highlight: Color::Indexed(213),    // Pink
-            info: Color::Indexed(117),         // Cyan
-            text_primary: Color::White,
-            muted: Color::Indexed(244),
-            border: Color::Indexed(239),
-        }
-    }
-
     pub fn default_theme() -> Self {
         Self::aura_dark()
     }
-}
-
-// ── Semantic Style Helpers ──────────────────────────────────────────────────
-
-pub fn user_prefix_style() -> Style {
-    Style::default().fg(RED_ORANGE).add_modifier(Modifier::BOLD)
-}
-
-pub fn user_text_style() -> Style {
-    Style::default()
-        .fg(Color::White)
-        .add_modifier(Modifier::BOLD)
-}
-
-pub fn assistant_text_style() -> Style {
-    Style::default().fg(FOREGROUND)
-}
-
-pub fn thinking_bullet_style() -> Style {
-    Style::default().fg(RED_ORANGE)
-}
-
-pub fn thinking_time_style() -> Style {
-    Style::default().fg(AURA_GOLD).add_modifier(Modifier::BOLD)
-}
-
-pub fn reasoning_style() -> Style {
-    Style::default().fg(AURA_SLATE)
-}
-
-pub fn tool_bullet_style() -> Style {
-    Style::default().fg(RED_ORANGE)
-}
-
-pub fn tool_name_style() -> Style {
-    Style::default()
-        .fg(LIGHT_WHITE)
-        .add_modifier(Modifier::BOLD)
-}
-
-pub fn tool_details_style() -> Style {
-    Style::default().fg(AURA_GOLD)
-}
-
-pub fn success_style() -> Style {
-    Style::default().fg(AURA_GREEN)
-}
-
-pub fn error_style() -> Style {
-    Style::default().fg(AURA_ROSE)
-}
-
-pub fn divider_style() -> Style {
-    Style::default().fg(Color::Rgb(61, 55, 94))
-}
-
-pub fn input_prefix_style() -> Style {
-    Style::default().fg(RED_ORANGE).add_modifier(Modifier::BOLD)
-}
-
-pub fn placeholder_style() -> Style {
-    Style::default().fg(AURA_SLATE)
-}
-
-pub fn status_bar_style() -> Style {
-    Style::default().fg(AURA_SLATE)
-}
-
-pub fn status_accent_style() -> Style {
-    Style::default().fg(AURA_BLUE)
-}
-
-pub fn heading_style() -> Style {
-    Style::default()
-        .fg(HEADING_BLUE)
-        .add_modifier(Modifier::BOLD)
-}
-
-pub fn code_style() -> Style {
-    Style::default().fg(AURA_GREEN)
-}
-
-pub fn bold_style() -> Style {
-    Style::default().fg(FOREGROUND).add_modifier(Modifier::BOLD)
-}
-
-pub fn list_marker_style() -> Style {
-    Style::default().fg(RED_ORANGE)
 }
 
 pub const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];

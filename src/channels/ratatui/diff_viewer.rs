@@ -34,18 +34,6 @@ fn classify_diff_line(raw_line: &str) -> DiffLineKind<'_> {
 pub struct DiffViewer;
 
 impl DiffViewer {
-    /// Generates colored `Line` elements for a unified diff between old and new text.
-    pub fn render_diff(
-        old_text: &str,
-        new_text: &str,
-        theme: &Theme,
-        max_lines: usize,
-    ) -> Vec<Line<'static>> {
-        let patch = diffy::create_patch(old_text, new_text);
-        let patch_str = patch.to_string();
-        Self::render_patch_str(&patch_str, theme, max_lines)
-    }
-
     /// Renders an existing unified patch / diff string into colored Ratatui Lines
     pub fn render_patch_str(
         patch_str: &str,

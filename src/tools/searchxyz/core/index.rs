@@ -120,7 +120,7 @@ impl EmbeddingGenerator {
     pub fn new(
         config: &crate::tools::searchxyz::core::config::EmbeddingConfig,
     ) -> Result<Self, SearchXyzError> {
-        let client = reqwest::Client::new();
+        let client = crate::core::http::default_http_client().clone();
         match config.provider.to_lowercase().as_str() {
             "local" => {
                 let model_enum = match config.model.as_str() {

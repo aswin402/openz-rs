@@ -220,17 +220,4 @@ impl HardwareInfo {
             chrome_version: None,
         }
     }
-
-    /// Select the best compute backend for a given model and operation
-    pub fn select_backend(&self, _model_format: &str, preferred: ComputeBackend) -> ComputeBackend {
-        match preferred {
-            ComputeBackend::Auto => ComputeBackend::CpuOnly,
-            other => other,
-        }
-    }
-
-    /// Estimate max image resolution achievable with current hardware
-    pub fn max_resolution_for_model(&self, _model_id: &str) -> (u32, u32) {
-        (1024, 1024)
-    }
 }
