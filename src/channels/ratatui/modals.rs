@@ -540,7 +540,7 @@ pub fn render_command_catalog(
             format!(
                 "{:>width$}",
                 count_badge,
-                width = (v_chunks[0].width as usize).saturating_sub(filter.len() + 8)
+                width = (v_chunks[0].width as usize).saturating_sub(filter.chars().count() + 8)
             ),
             Style::default().fg(theme.muted),
         ),

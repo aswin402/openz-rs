@@ -390,11 +390,14 @@ pub fn read_line_raw(
 
         match event::read()? {
             Event::Paste(text) => {
-                let cleaned_text = text.replace('\r', "").replace('\n', " ");
-                for c in cleaned_text.chars() {
-                    state.typed_input.insert(state.cursor_idx, c);
-                    state.cursor_idx += 1;
-                }
+                let pasted_chars: Vec<char> =
+                    crate::channels::ratatui::app::RatatuiApp::sanitize_paste_text(&text)
+                        .chars()
+                        .collect();
+                let paste_len = pasted_chars.len();
+                let idx = state.cursor_idx.min(state.typed_input.len());
+                state.typed_input.splice(idx..idx, pasted_chars);
+                state.cursor_idx = idx + paste_len;
                 state.history_index = None;
                 state.selected_index = None;
                 state.refresh_terminal_width();
@@ -438,13 +441,29 @@ pub fn read_line_raw(
                                 }
                             }
                             Err(e) => {
-                                super::render::clear_input_rendering(state.lines_printed);
-                                print!(
-                                    "{}✕ Error: No image found in clipboard: {}{}\r\n",
-                                    ERROR_RED, e, COLOR_RESET
-                                );
-                                state.lines_printed = 1;
-                                super::render::LAST_CURSOR_LINE.store(0, Ordering::Relaxed);
+                                match arboard::Clipboard::new().and_then(|mut cb| cb.get_text()) {
+                                    Ok(clip_text) => {
+                                        let pasted_chars: Vec<char> =
+                                            crate::channels::ratatui::app::RatatuiApp::sanitize_paste_text(&clip_text)
+                                                .chars()
+                                                .collect();
+                                        let paste_len = pasted_chars.len();
+                                        let idx = state.cursor_idx.min(state.typed_input.len());
+                                        state.typed_input.splice(idx..idx, pasted_chars);
+                                        state.cursor_idx = idx + paste_len;
+                                        state.selected_index = None;
+                                    }
+                                    Err(_) => {
+                                        super::render::clear_input_rendering(state.lines_printed);
+                                        print!(
+                                            "{}✕ Error: No image or text found in clipboard: {}{}\r\n",
+                                            ERROR_RED, e, COLOR_RESET
+                                        );
+                                        state.lines_printed = 1;
+                                        super::render::LAST_CURSOR_LINE
+                                            .store(0, Ordering::Relaxed);
+                                    }
+                                }
                             }
                         }
                         state.refresh_terminal_width();

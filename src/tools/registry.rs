@@ -113,7 +113,7 @@ pub(crate) fn static_tool_drift(
         .collect();
 
     let mut report = StaticToolDriftReport {
-        missing_registered: all_tool_specs()
+        missing_registered: super::all_tool_specs()
             .iter()
             .filter(|spec| !registered_curated_names.contains(spec.name))
             .map(|spec| spec.name.to_string())

@@ -314,11 +314,112 @@ struct RatatuiGuard;
 
 impl Drop for RatatuiGuard {
     fn drop(&mut self) {
+        let _ = stdout().execute(crossterm::event::DisableBracketedPaste);
         let _ = stdout().execute(LeaveAlternateScreen);
         let _ = disable_raw_mode();
         let _ = stdout().execute(crossterm::cursor::Show);
         IS_RATATUI_ACTIVE.store(false, Ordering::SeqCst);
         set_active_ratatui_session_key(None);
+    }
+}
+
+static RATATUI_PANIC_HOOK_ONCE: std::sync::Once = std::sync::Once::new();
+
+fn install_ratatui_panic_hook() {
+    RATATUI_PANIC_HOOK_ONCE.call_once(|| {
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            match IS_RATATUI_ACTIVE.swap(false, Ordering::SeqCst) {
+                true => {
+                    let _ = stdout().execute(crossterm::event::DisableBracketedPaste);
+                    let _ = stdout().execute(LeaveAlternateScreen);
+                    let _ = disable_raw_mode();
+                    let _ = stdout().execute(crossterm::cursor::Show);
+                    set_active_ratatui_session_key(None);
+                }
+                false => {}
+            }
+            default_hook(info);
+        }));
+    });
+}
+
+pub fn handle_paste_into_app(app: &mut RatatuiApp, raw_paste: &str) {
+    match app.modal.is_active() {
+        true => match &mut app.modal {
+            ModalState::CommandCatalog { filter, .. } => {
+                let single_line: String = RatatuiApp::sanitize_paste_text(raw_paste)
+                    .chars()
+                    .map(|ch| match ch {
+                        '\n' => ' ',
+                        other => other,
+                    })
+                    .collect();
+                filter.push_str(single_line.trim());
+                app.modal.update_command_catalog_filter();
+            }
+            ModalState::ModelSelect {
+                filter,
+                loading: false,
+                ..
+            } => {
+                let single_line: String = RatatuiApp::sanitize_paste_text(raw_paste)
+                    .chars()
+                    .map(|ch| match ch {
+                        '\n' => ' ',
+                        other => other,
+                    })
+                    .collect();
+                filter.push_str(single_line.trim());
+                app.modal.update_model_filter();
+            }
+            _ => {}
+        },
+        false => {
+            app.insert_pasted_text(raw_paste);
+        }
+    }
+}
+
+pub fn coalesce_unbracketed_paste_batch(events: Vec<Event>, modal_active: bool) -> Vec<Event> {
+    match (modal_active, events.len() >= 2) {
+        (false, true) => {
+            let mut coalesced = String::new();
+            let mut all_paste_like = true;
+            let mut has_enter = false;
+
+            for ev in &events {
+                match ev {
+                    Event::Key(key) => {
+                        let is_press = matches!(key.kind, KeyEventKind::Press);
+                        let has_ctrl_or_alt = key
+                            .modifiers
+                            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+                        match (is_press, has_ctrl_or_alt, key.code) {
+                            (true, false, KeyCode::Char(c)) => coalesced.push(c),
+                            (true, false, KeyCode::Tab) => coalesced.push('\t'),
+                            (true, false, KeyCode::Enter) => {
+                                has_enter = true;
+                                coalesced.push('\n');
+                            }
+                            _ => {
+                                all_paste_like = false;
+                            }
+                        }
+                    }
+                    _ => {
+                        all_paste_like = false;
+                    }
+                }
+            }
+
+            let is_burst_paste = all_paste_like && (events.len() >= 8 || has_enter);
+            match is_burst_paste {
+                true => vec![Event::Paste(coalesced)],
+                false => events,
+            }
+        }
+        _ => events,
     }
 }
 
@@ -436,9 +537,11 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     crate::cli::set_silent_mode(true);
     spawn_background_channels(&config, agent_loop.clone());
 
+    install_ratatui_panic_hook();
     enable_raw_mode()?;
     let mut stdout = stdout();
     stdout.execute(EnterAlternateScreen)?;
+    stdout.execute(crossterm::event::EnableBracketedPaste)?;
     stdout.execute(crossterm::cursor::Show)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
@@ -620,70 +723,99 @@ pub async fn handle_ratatui_tui() -> Result<()> {
 
         match event::poll(Duration::from_millis(TICK_MS))? {
             false => {}
-            true => match event::read()? {
-                Event::Mouse(mouse) => match (app.modal.is_active(), mouse.kind) {
-                    (false, MouseEventKind::ScrollUp) => app.scroll_up(SCROLL_STEP),
-                    (false, MouseEventKind::ScrollDown) => app.scroll_down(SCROLL_STEP),
-                    _ => {}
-                },
-                Event::Key(key) => match key.kind {
-                    KeyEventKind::Press => {
-                        let is_ctrl_c = key.modifiers.contains(KeyModifiers::CONTROL)
-                            && key.code == KeyCode::Char('c');
-                        match is_ctrl_c {
-                            true => match (&app.modal, app.modal.is_active(), app.is_thinking) {
-                                (ModalState::ExitConfirm { .. }, _, _) => break,
-                                (ModalState::SecurityApproval { tx, .. }, _, _) => {
-                                    send_approval_decision(tx, false);
-                                    app.modal = ModalState::None;
-                                    continue;
-                                }
-                                (_, true, _) => {
-                                    app.modal = ModalState::None;
-                                    continue;
-                                }
-                                (_, false, true) => {
-                                    match current_turn_handle.take() {
-                                        Some(handle) => handle.abort(),
-                                        None => {}
-                                    }
-                                    crate::shutdown::trigger_cli_cancel();
-                                    app.is_thinking = false;
-                                    app.work_start = None;
-                                    app.messages.push(ChatMessage::notice(
-                                        "Turn cancelled by user.".to_string(),
-                                    ));
-                                    continue;
-                                }
-                                (_, false, false) => {
-                                    app.modal = ModalState::ExitConfirm { selected_yes: false };
-                                    continue;
-                                }
-                            },
-                            false => {}
-                        }
+            true => {
+                let mut raw_events = vec![event::read()?];
+                while raw_events.len() < 4096 && event::poll(Duration::ZERO)? {
+                    raw_events.push(event::read()?);
+                }
+                let batch_events =
+                    coalesce_unbracketed_paste_batch(raw_events, app.modal.is_active());
 
-                        // ── 1. Modal Key Interception ───────────────────────────
-                        match app.modal.is_active() {
-                            true => {
-                                match &mut app.modal {
-                                    ModalState::ExitConfirm { selected_yes } => match key.code {
-                                        KeyCode::Left
-                                        | KeyCode::Right
-                                        | KeyCode::Tab
-                                        | KeyCode::BackTab => {
-                                            *selected_yes = !*selected_yes;
+                for ev in batch_events {
+                    match ev {
+                        Event::Paste(pasted_text) => {
+                            handle_paste_into_app(&mut app, &pasted_text);
+                        }
+                        Event::Mouse(mouse) => match (app.modal.is_active(), mouse.kind) {
+                            (false, MouseEventKind::ScrollUp) => app.scroll_up(SCROLL_STEP),
+                            (false, MouseEventKind::ScrollDown) => app.scroll_down(SCROLL_STEP),
+                            _ => {}
+                        },
+                        Event::Key(key) => match key.kind {
+                            KeyEventKind::Press => {
+                                let is_ctrl_c = key.modifiers.contains(KeyModifiers::CONTROL)
+                                    && key.code == KeyCode::Char('c');
+                                match is_ctrl_c {
+                                    true => {
+                                        match (&app.modal, app.modal.is_active(), app.is_thinking)
+                                        {
+                                            (ModalState::ExitConfirm { .. }, _, _) => {
+                                                app.should_exit = true;
+                                                break;
+                                            }
+                                            (ModalState::SecurityApproval { tx, .. }, _, _) => {
+                                                send_approval_decision(tx, false);
+                                                app.modal = ModalState::None;
+                                                continue;
+                                            }
+                                            (_, true, _) => {
+                                                app.modal = ModalState::None;
+                                                continue;
+                                            }
+                                            (_, false, true) => {
+                                                match current_turn_handle.take() {
+                                                    Some(handle) => handle.abort(),
+                                                    None => {}
+                                                }
+                                                crate::shutdown::trigger_cli_cancel();
+                                                app.is_thinking = false;
+                                                app.work_start = None;
+                                                app.messages.push(ChatMessage::notice(
+                                                    "Turn cancelled by user.".to_string(),
+                                                ));
+                                                continue;
+                                            }
+                                            (_, false, false) => {
+                                                app.modal =
+                                                    ModalState::ExitConfirm { selected_yes: false };
+                                                continue;
+                                            }
                                         }
-                                        KeyCode::Char('y') | KeyCode::Char('Y') => break,
-                                        KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                                            app.modal = ModalState::None;
-                                        }
-                                        KeyCode::Enter => match *selected_yes {
-                                            true => break,
-                                            false => app.modal = ModalState::None,
-                                        },
-                                        _ => {}
-                                    },
+                                    }
+                                    false => {}
+                                }
+
+                                // ── 1. Modal Key Interception ───────────────────────────
+                                match app.modal.is_active() {
+                                    true => {
+                                        match &mut app.modal {
+                                            ModalState::ExitConfirm { selected_yes } => {
+                                                match key.code {
+                                                    KeyCode::Left
+                                                    | KeyCode::Right
+                                                    | KeyCode::Tab
+                                                    | KeyCode::BackTab => {
+                                                        *selected_yes = !*selected_yes;
+                                                    }
+                                                    KeyCode::Char('y') | KeyCode::Char('Y') => {
+                                                        app.should_exit = true;
+                                                        break;
+                                                    }
+                                                    KeyCode::Char('n')
+                                                    | KeyCode::Char('N')
+                                                    | KeyCode::Esc => {
+                                                        app.modal = ModalState::None;
+                                                    }
+                                                    KeyCode::Enter => match *selected_yes {
+                                                        true => {
+                                                            app.should_exit = true;
+                                                            break;
+                                                        }
+                                                        false => app.modal = ModalState::None,
+                                                    },
+                                                    _ => {}
+                                                }
+                                            }
                                     ModalState::CommandCatalog {
                                         filtered_indices,
                                         selected_index,
@@ -1254,12 +1386,18 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                 (true, 'd') => app.scroll_down(SCROLL_HALF),
                                 (true, 'b') => app.scroll_up(SCROLL_PAGE),
                                 (true, 'f') => app.scroll_down(SCROLL_PAGE),
+                                (true, 'v') | (true, 'V') => {
+                                    match arboard::Clipboard::new()
+                                        .and_then(|mut cb| cb.get_text())
+                                    {
+                                        Ok(clip_text) => {
+                                            handle_paste_into_app(&mut app, &clip_text);
+                                        }
+                                        Err(_) => {}
+                                    }
+                                }
                                 _ => {
-                                    app.typed_input.insert(app.cursor_idx, c);
-                                    app.cursor_idx += 1;
-                                    app.selected_index = None;
-                                    app.slash_selected_idx = 0;
-                                    app.history_idx = None;
+                                    app.insert_char(c);
                                 }
                             },
                             KeyCode::Left => {
@@ -1290,18 +1428,23 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                 }
                             }
                             KeyCode::Backspace => {
-                                match app.cursor_idx > 0 {
+                                app.delete_char_before_cursor();
+                            }
+                            KeyCode::Delete => {
+                                app.delete_char_at_cursor();
+                            }
+                            KeyCode::Enter => {
+                                let insert_newline = key
+                                    .modifiers
+                                    .intersects(KeyModifiers::SHIFT | KeyModifiers::ALT);
+                                match insert_newline {
                                     true => {
-                                        app.typed_input.remove(app.cursor_idx - 1);
-                                        app.cursor_idx -= 1;
+                                        app.insert_char('\n');
+                                        continue;
                                     }
                                     false => {}
                                 }
-                                app.selected_index = None;
-                                app.slash_selected_idx = 0;
-                                app.history_idx = None;
-                            }
-                            KeyCode::Enter => {
+
                                 let typed_raw: String = app.typed_input.iter().collect();
                                 let input_str = match (
                                     app.has_active_slash_query(),
@@ -1323,9 +1466,8 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     true => {}
                                     false => {
                                         app.prompt_history.push(input_str.clone());
-                                        let is_slash = trimmed.starts_with('/')
-                                            || trimmed == "exit"
-                                            || trimmed == "quit";
+                                        let is_slash =
+                                            RatatuiApp::is_slash_command_input(trimmed);
 
                                         match (is_slash, app.is_thinking) {
                                             (true, _) => {
@@ -1390,7 +1532,10 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                             }
                                                         }
                                                     }
-                                                    commands::SlashResult::Exit => break,
+                                                    commands::SlashResult::Exit => {
+                                                        app.should_exit = true;
+                                                        break;
+                                                    }
                                                     commands::SlashResult::Unhandled => {
                                                         app.messages.push(ChatMessage::simple(
                                                             "user",
@@ -1461,7 +1606,9 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                     _ => {}
                 },
                 _ => {}
-            },
+            }
+                }
+            }
         }
 
         match app.should_exit {

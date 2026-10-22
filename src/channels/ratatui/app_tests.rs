@@ -659,5 +659,107 @@ fn test_render_timeline_running_tool_displays_animated_spinner_and_verb() {
     assert!(content.contains("researching..."), "Expected buffer to contain contextual verb 'researching...', got: {}", content);
 }
 
+#[test]
+fn test_long_utf8_paste_renders_without_panic() {
+    use crate::channels::ratatui::ui::render_ratatui_ui;
+    use ratatui::backend::TestBackend;
+    use ratatui::Terminal;
+
+    let pasted_prompt = "Build a complete, production-ready AI Agent App that acts as a multi-step autonomous assistant — capable of planning • executing ’quoting’ “smart quotes” … emojis 🚀✨🔥 and CJK 日本語テスト across multiple lines:\n• Planning & breaking down complex user goals into subtasks\n• Executing tools — web search, code execution, file read/write, API calls\n• Maintaining short-term & long-term memory across conversations";
+
+    for (width, height) in [(48u16, 18u16), (80u16, 24u16), (120u16, 36u16)] {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let mut app = RatatuiApp::new(
+            "glm-5.1:cloud".into(),
+            "ollama".into(),
+            "cli:test-paste".into(),
+        );
+
+        // 1. Test on Welcome screen (empty timeline)
+        app.insert_pasted_text(pasted_prompt);
+        assert_eq!(app.cursor_idx, app.typed_input.len());
+        terminal
+            .draw(|f| {
+                render_ratatui_ui(f, &mut app);
+            })
+            .unwrap();
+
+        // 2. Test with cursor at every character offset in the multi-byte UTF-8 buffer
+        for pos in [0usize, 1, 15, 47, 48, 49, 75, 118, app.typed_input.len() / 2] {
+            app.cursor_idx = pos.min(app.typed_input.len());
+            terminal
+                .draw(|f| {
+                    render_ratatui_ui(f, &mut app);
+                })
+                .unwrap();
+        }
+
+        // 3. Test on active conversation timeline
+        app.messages
+            .push(ChatMessage::simple("user", "Initial message".into()));
+        app.cursor_idx = app.typed_input.len();
+        terminal
+            .draw(|f| {
+                render_ratatui_ui(f, &mut app);
+            })
+            .unwrap();
+    }
+}
+
+#[test]
+fn test_paste_insertion_and_unbracketed_burst_coalescing() {
+    use crate::channels::ratatui::{coalesce_unbracketed_paste_batch, handle_paste_into_app};
+    use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+
+    let mut app = RatatuiApp::new(
+        "test-model".into(),
+        "test-provider".into(),
+        "cli:test".into(),
+    );
+
+    handle_paste_into_app(&mut app, "line 1\r\nline 2\tindented");
+    let current: String = app.typed_input.iter().collect();
+    assert_eq!(current, "line 1\nline 2    indented");
+    assert_eq!(app.cursor_idx, app.typed_input.len());
+
+    // Coalesce an unbracketed multi-line paste burst containing Enter so it never auto-submits
+    let burst = vec![
+        Event::Key(KeyEvent::new_with_kind(
+            KeyCode::Char('h'),
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        )),
+        Event::Key(KeyEvent::new_with_kind(
+            KeyCode::Char('i'),
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        )),
+        Event::Key(KeyEvent::new_with_kind(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        )),
+        Event::Key(KeyEvent::new_with_kind(
+            KeyCode::Char('2'),
+            KeyModifiers::NONE,
+            KeyEventKind::Press,
+        )),
+    ];
+    let coalesced = coalesce_unbracketed_paste_batch(burst, false);
+    assert_eq!(coalesced.len(), 1);
+    assert_eq!(coalesced[0], Event::Paste("hi\n2".to_string()));
+
+    // Pasted file paths and multi-line inputs starting with '/' are not treated as slash commands
+    assert!(RatatuiApp::is_slash_command_input("/help"));
+    assert!(RatatuiApp::is_slash_command_input("/model gpt-4o"));
+    assert!(!RatatuiApp::is_slash_command_input(
+        "/home/aswin/project/src/main.rs"
+    ));
+    assert!(!RatatuiApp::is_slash_command_input("/help\nsecond line"));
+}
+
+
 
 

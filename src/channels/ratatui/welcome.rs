@@ -30,6 +30,12 @@ pub fn render_welcome_screen(frame: &mut Frame, app: &RatatuiApp, area: Rect) {
         false => 2,
     };
 
+    // ── 2. Centered Input Dock ──────────────────────────────────────────────
+    let input_width = (area.width * 65 / 100)
+        .clamp(42, 76)
+        .min(area.width.saturating_sub(4));
+    let dock_height = super::ui::compute_input_dock_height(app, input_width);
+
     // Vertical layout hierarchy: Centered Banner/Details -> Centered Input Dock -> Bottom Bar
     let vert_chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -37,7 +43,7 @@ pub fn render_welcome_screen(frame: &mut Frame, app: &RatatuiApp, area: Rect) {
             Constraint::Min(1),              // 0: Top spacer
             Constraint::Length(logo_height), // 1: Brand logo banner + version
             Constraint::Length(1),           // 2: Spacer
-            Constraint::Length(3),           // 3: Centered Dynamic Input Dock
+            Constraint::Length(dock_height), // 3: Centered Dynamic Input Dock
             Constraint::Min(1),              // 4: Bottom spacer
             Constraint::Length(1),           // 5: Bottom Edge Bar
         ])
@@ -90,10 +96,6 @@ pub fn render_welcome_screen(frame: &mut Frame, app: &RatatuiApp, area: Rect) {
     let logo_para = Paragraph::new(logo_lines).alignment(Alignment::Center);
     frame.render_widget(logo_para, vert_chunks[1]);
 
-    // ── 2. Centered Input Dock ──────────────────────────────────────────────
-    let input_width = (vert_chunks[3].width * 65 / 100)
-        .clamp(42, 76)
-        .min(vert_chunks[3].width.saturating_sub(4));
     let input_x = vert_chunks[3].x + (vert_chunks[3].width.saturating_sub(input_width)) / 2;
     let centered_input_rect = Rect {
         x: input_x,

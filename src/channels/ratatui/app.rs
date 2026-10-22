@@ -1104,22 +1104,120 @@ impl RatatuiApp {
         cached_branch
     }
 
-    pub fn matching_slash_commands(&self) -> Vec<(String, String)> {
-        let input_str: String = self.typed_input.iter().collect();
-        match input_str.starts_with('/') {
-            false => Vec::new(),
-            true => SLASH_COMMANDS
-                .iter()
-                .copied()
-                .filter(|(cmd, _)| cmd.starts_with(&input_str))
-                .map(|(cmd, desc)| (cmd.to_string(), desc.to_string()))
-                .collect(),
+    pub fn sanitize_paste_text(raw: &str) -> String {
+        let normalized = raw.replace("\r\n", "\n").replace('\r', "\n");
+        let trimmed_trailing_newlines = normalized.trim_end_matches('\n');
+        let mut out = String::with_capacity(trimmed_trailing_newlines.len());
+        for c in trimmed_trailing_newlines.chars() {
+            match c {
+                '\n' => out.push('\n'),
+                '\t' => out.push_str("    "),
+                other => match other.is_control() {
+                    true => {}
+                    false => out.push(other),
+                },
+            }
+        }
+        out
+    }
+
+    pub fn insert_pasted_text(&mut self, raw: &str) {
+        let sanitized = Self::sanitize_paste_text(raw);
+        let chars: Vec<char> = sanitized.chars().collect();
+        match chars.is_empty() {
+            true => {}
+            false => {
+                let idx = self.cursor_idx.min(self.typed_input.len());
+                let count = chars.len();
+                self.typed_input.splice(idx..idx, chars);
+                self.cursor_idx = idx + count;
+                self.selected_index = None;
+                self.slash_selected_idx = 0;
+                self.history_idx = None;
+            }
         }
     }
 
-    /// Checks whether the user is typing a slash command (starts with '/' and hasn't started typing arguments)
+    pub fn insert_char(&mut self, c: char) {
+        match c == '\n' || !c.is_control() {
+            false => {}
+            true => {
+                let idx = self.cursor_idx.min(self.typed_input.len());
+                self.typed_input.insert(idx, c);
+                self.cursor_idx = idx + 1;
+                self.selected_index = None;
+                self.slash_selected_idx = 0;
+                self.history_idx = None;
+            }
+        }
+    }
+
+    pub fn delete_char_before_cursor(&mut self) {
+        let idx = self.cursor_idx.min(self.typed_input.len());
+        match idx > 0 {
+            true => {
+                self.typed_input.remove(idx - 1);
+                self.cursor_idx = idx - 1;
+            }
+            false => {}
+        }
+        self.selected_index = None;
+        self.slash_selected_idx = 0;
+        self.history_idx = None;
+    }
+
+    pub fn delete_char_at_cursor(&mut self) {
+        let idx = self.cursor_idx.min(self.typed_input.len());
+        match idx < self.typed_input.len() {
+            true => {
+                self.typed_input.remove(idx);
+                self.selected_index = None;
+                self.slash_selected_idx = 0;
+                self.history_idx = None;
+            }
+            false => {}
+        }
+    }
+
+    pub fn is_slash_command_input(trimmed: &str) -> bool {
+        match trimmed.contains('\n') {
+            true => false,
+            false => match trimmed == "exit" || trimmed == "quit" {
+                true => true,
+                false => match trimmed.strip_prefix('/') {
+                    Some(rest) => {
+                        let cmd_token = rest.split_whitespace().next().unwrap_or("");
+                        !cmd_token.is_empty() && !cmd_token.contains('/')
+                    }
+                    None => false,
+                },
+            },
+        }
+    }
+
+    pub fn matching_slash_commands(&self) -> Vec<(String, String)> {
+        match self.has_active_slash_query() {
+            false => Vec::new(),
+            true => {
+                let input_str: String = self.typed_input.iter().collect();
+                SLASH_COMMANDS
+                    .iter()
+                    .copied()
+                    .filter(|(cmd, _)| cmd.starts_with(&input_str))
+                    .map(|(cmd, desc)| (cmd.to_string(), desc.to_string()))
+                    .collect()
+            }
+        }
+    }
+
+    /// Checks whether the user is typing a slash command (starts with '/' and hasn't started typing arguments or paths)
     pub fn has_active_slash_query(&self) -> bool {
-        self.typed_input.first() == Some(&'/') && !self.typed_input.contains(&' ')
+        self.typed_input.first() == Some(&'/')
+            && !self
+                .typed_input
+                .iter()
+                .skip(1)
+                .any(|&c| c.is_whitespace() || c == '/')
     }
 
     /// Extract query text without leading slash

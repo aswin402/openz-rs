@@ -33,17 +33,18 @@ pub fn render_ratatui_ui(f: &mut Frame, app: &mut RatatuiApp) {
         false => {}
     }
 
-    // Layout: Conversation Timeline (flex) -> Live Activity (3 or 0) -> Elevated Input Dock (3) -> Spacer (1) -> Bottom Status Bar (1)
+    // Layout: Conversation Timeline (flex) -> Live Activity (3 or 0) -> Elevated Input Dock (3..=8) -> Spacer (1) -> Bottom Status Bar (1)
     let activity_height = match app.is_thinking {
         true => 3,
         false => 0,
     };
+    let dock_height = compute_input_dock_height(app, f.area().width);
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(4),                  // 0: Conversation Timeline
             Constraint::Length(activity_height), // 1: Live Activity Indicator
-            Constraint::Length(3),               // 2: Elevated Input Dock
+            Constraint::Length(dock_height),     // 2: Elevated Input Dock
             Constraint::Length(1),               // 3: Spacer below input dock
             Constraint::Length(1),               // 4: Minimal Bottom Status Line
         ])
@@ -115,6 +116,78 @@ fn render_overlays(f: &mut Frame, app: &RatatuiApp) {
 
 // ── Shared Input Dock (used by both Zen Welcome Screen & Active Timeline) ───
 
+pub(crate) const MAX_INPUT_DOCK_INNER_LINES: usize = 6;
+
+pub(crate) fn wrap_input_chars_with_cursor(
+    typed_input: &[char],
+    cursor_idx: usize,
+    max_line_width: usize,
+) -> (Vec<String>, usize, usize) {
+    let safe_width = max_line_width.max(1);
+    let clamped_cursor = cursor_idx.min(typed_input.len());
+
+    let mut lines: Vec<String> = Vec::new();
+    let mut cur_line = String::new();
+    let mut cur_width: usize = 0;
+    let mut cursor_line: usize = 0;
+    let mut cursor_col: usize = 0;
+
+    for (idx, &raw_c) in typed_input.iter().enumerate() {
+        (idx == clamped_cursor).then(|| {
+            cursor_line = lines.len();
+            cursor_col = cur_width;
+        });
+
+        match raw_c == '\n' {
+            true => {
+                lines.push(std::mem::take(&mut cur_line));
+                cur_width = 0;
+            }
+            false => {
+                let c = match raw_c.is_control() {
+                    true => ' ',
+                    false => raw_c,
+                };
+                let cw = crate::agent::style::markdown::char_display_width(c)
+                    .max(1)
+                    .min(safe_width);
+                let should_wrap = cur_width + cw > safe_width && !cur_line.is_empty();
+                should_wrap.then(|| {
+                    lines.push(std::mem::take(&mut cur_line));
+                    cur_width = 0;
+                    (idx == clamped_cursor).then(|| {
+                        cursor_line = lines.len();
+                        cursor_col = 0;
+                    });
+                });
+                cur_line.push(c);
+                cur_width += cw;
+            }
+        }
+    }
+
+    (clamped_cursor == typed_input.len()).then(|| {
+        cursor_line = lines.len();
+        cursor_col = cur_width.min(safe_width);
+    });
+
+    lines.push(cur_line);
+    (lines, cursor_line, cursor_col)
+}
+
+pub(crate) fn compute_input_dock_height(app: &RatatuiApp, dock_width: u16) -> u16 {
+    match app.typed_input.is_empty() {
+        true => 3,
+        false => {
+            let max_line_width = dock_width.saturating_sub(5).max(1) as usize;
+            let (lines, _, _) =
+                wrap_input_chars_with_cursor(&app.typed_input, app.cursor_idx, max_line_width);
+            let inner_rows = lines.len().clamp(1, MAX_INPUT_DOCK_INNER_LINES);
+            (inner_rows as u16) + 2
+        }
+    }
+}
+
 pub(crate) fn render_input_dock_with_placeholder(
     f: &mut Frame,
     app: &RatatuiApp,
@@ -132,52 +205,73 @@ pub(crate) fn render_input_dock_with_placeholder(
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let max_width = inner.width.saturating_sub(3).max(1) as usize;
+    match inner.width == 0 || inner.height == 0 {
+        true => return,
+        false => {}
+    }
 
-    let (line, cursor_col) = match app.typed_input.is_empty() {
-        true => (
-            Line::from(vec![
-                Span::styled(
-                    "› ",
-                    Style::default()
-                        .fg(theme.brand_accent)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(placeholder.to_string(), Style::default().fg(theme.muted)),
-            ]),
-            2,
-        ),
-        false => {
-            let input_str: String = app.typed_input.iter().collect();
-            let display = match input_str.len() > max_width {
-                true => {
-                    let start = input_str.len().saturating_sub(max_width);
-                    format!("…{}", &input_str[start..])
-                }
-                false => input_str,
-            };
-            let visible_len = app.typed_input.len().min(max_width);
-            let offset = match app.typed_input.len() > max_width {
-                true => visible_len,
-                false => app.cursor_idx,
-            };
+    let max_width = inner.width.saturating_sub(3).max(1) as usize;
+    let visible_rows = (inner.height as usize).max(1);
+
+    let (rendered_lines, cursor_row, cursor_col) = match app.typed_input.is_empty() {
+        true => {
+            let placeholder_display: String = placeholder.chars().take(max_width).collect();
             (
-                Line::from(vec![
+                vec![Line::from(vec![
                     Span::styled(
                         "› ",
                         Style::default()
                             .fg(theme.brand_accent)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(display, Style::default().fg(theme.brand_white)),
-                ]),
-                2 + offset,
+                    Span::styled(placeholder_display, Style::default().fg(theme.muted)),
+                ])],
+                0usize,
+                2usize,
             )
+        }
+        false => {
+            let (wrapped_lines, c_line, c_col) =
+                wrap_input_chars_with_cursor(&app.typed_input, app.cursor_idx, max_width);
+            let scroll_top = super::modals::compute_scroll_offset(c_line, visible_rows);
+            let lines: Vec<Line<'static>> = wrapped_lines
+                .into_iter()
+                .enumerate()
+                .skip(scroll_top)
+                .take(visible_rows)
+                .map(|(line_idx, text)| {
+                    let prefix_span = match line_idx == 0 {
+                        true => Span::styled(
+                            "› ",
+                            Style::default()
+                                .fg(theme.brand_accent)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        false => Span::styled("· ", Style::default().fg(theme.muted)),
+                    };
+                    Line::from(vec![
+                        prefix_span,
+                        Span::styled(text, Style::default().fg(theme.brand_white)),
+                    ])
+                })
+                .collect();
+            let visible_cursor_row = c_line
+                .saturating_sub(scroll_top)
+                .min(visible_rows.saturating_sub(1));
+            (lines, visible_cursor_row, 2 + c_col)
         }
     };
 
-    f.render_widget(Paragraph::new(line), inner);
-    f.set_cursor_position((inner.x + cursor_col as u16, inner.y));
+    f.render_widget(Paragraph::new(rendered_lines), inner);
+    let cursor_x = inner
+        .x
+        .saturating_add(cursor_col as u16)
+        .min(inner.x + inner.width.saturating_sub(1));
+    let cursor_y = inner
+        .y
+        .saturating_add(cursor_row as u16)
+        .min(inner.y + inner.height.saturating_sub(1));
+    f.set_cursor_position((cursor_x, cursor_y));
 }
 
 // ── Floating Spotlight Slash Command Palette ─────────────────────────────────
@@ -250,10 +344,11 @@ fn render_slash_palette(f: &mut Frame, app: &RatatuiApp, area: Rect) {
         .split(inner_area);
 
     // 1. Search Query Row
-    let typed_text: String = app.typed_input.iter().collect();
+    let max_query_chars = (chunks[0].width as usize).saturating_sub(6).max(1);
+    let typed_text: String = app.typed_input.iter().take(max_query_chars).collect();
     let query_display = match typed_text.is_empty() {
-        true => "/",
-        false => typed_text.as_str(),
+        true => "/".to_string(),
+        false => typed_text,
     };
     let search_line = Line::from(vec![
         Span::styled(

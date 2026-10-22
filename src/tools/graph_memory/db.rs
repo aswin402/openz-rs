@@ -1,7 +1,5 @@
 use anyhow::{anyhow, Result};
 use rusqlite::Connection;
-#[cfg(test)]
-use serde_json::Value;
 use std::sync::{Mutex, OnceLock};
 
 // ─── Constants ───────────────────────────────────────────────────

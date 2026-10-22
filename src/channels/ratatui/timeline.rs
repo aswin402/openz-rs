@@ -825,32 +825,9 @@ pub(crate) fn render_timeline(f: &mut Frame, app: &mut RatatuiApp, area: Rect) {
 }
 
 fn split_line_into_chunks(line: &str, max_width: usize) -> Vec<String> {
-    match line.len() <= max_width {
-        true => return vec![line.to_string()],
-        false => {}
+    let wrapped = crate::agent::style::markdown::wrap_display_text(line, max_width);
+    match wrapped.is_empty() {
+        true => vec![line.to_string()],
+        false => wrapped,
     }
-    let mut chunks = Vec::new();
-    let mut current = String::new();
-    for word in line.split_whitespace() {
-        match (current.is_empty(), current.len() + 1 + word.len() <= max_width) {
-            (true, _) => current.push_str(word),
-            (false, true) => {
-                current.push(' ');
-                current.push_str(word);
-            }
-            (false, false) => {
-                chunks.push(current);
-                current = word.to_string();
-            }
-        }
-    }
-    match current.is_empty() {
-        false => chunks.push(current),
-        true => {}
-    }
-    match chunks.is_empty() {
-        true => chunks.push(line.to_string()),
-        false => {}
-    }
-    chunks
 }

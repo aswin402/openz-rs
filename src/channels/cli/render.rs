@@ -359,10 +359,8 @@ pub fn print_session_history(session: &crate::session::Session) {
                                 .get("name")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("Tool");
-                            let summary = match content.len() > 100 {
-                                true => format!("{}...", &content[..100]),
-                                false => content.to_string(),
-                            };
+                            let summary =
+                                crate::agent::style::truncate_summary_text(content, 100, "...");
                             println!(
                                 "{}{}{}✓ {}: {}{}",
                                 AURA_SLATE, leaf_prefix, AURA_GREEN, name, summary, COLOR_RESET
@@ -666,7 +664,7 @@ pub fn render_box(
     session_key: &str,
     typed_input: &str,
     cursor_idx: usize,
-    _viewport_start: &mut usize,
+    viewport_start: &mut usize,
     selected_index: Option<usize>,
     autocomplete_visible: bool,
     width: usize,
@@ -809,13 +807,34 @@ pub fn render_box(
     });
 
     input_lines.push(current_chars);
-    LAST_CURSOR_LINE.store(cursor_line_idx, Ordering::Relaxed);
+    let max_visible_lines = 6usize;
+    let total_input_lines = input_lines.len().max(1);
+    *viewport_start = match cursor_line_idx < *viewport_start {
+        true => cursor_line_idx,
+        false => match cursor_line_idx >= *viewport_start + max_visible_lines {
+            true => cursor_line_idx + 1 - max_visible_lines,
+            false => (*viewport_start).min(total_input_lines.saturating_sub(max_visible_lines)),
+        },
+    };
+    let viewport_end = (*viewport_start + max_visible_lines).min(total_input_lines);
+    let visible_cursor_line = cursor_line_idx.saturating_sub(*viewport_start);
+    LAST_CURSOR_LINE.store(visible_cursor_line, Ordering::Relaxed);
 
     let mut new_lines_printed: usize = 0;
-    for (line_idx, line_content) in input_lines.iter().enumerate() {
-        let (lead, prefix_str) = match line_idx == 0 {
-            true => ("", "> "),
-            false => ("\r\n\x1b[2K", "- "),
+    for (vis_idx, (line_idx, line_content)) in input_lines
+        .iter()
+        .enumerate()
+        .skip(*viewport_start)
+        .take(viewport_end.saturating_sub(*viewport_start))
+        .enumerate()
+    {
+        let lead = match vis_idx == 0 {
+            true => "",
+            false => "\r\n\x1b[2K",
+        };
+        let prefix_str = match line_idx == 0 {
+            true => "> ",
+            false => "- ",
         };
         std::print!(
             "{}{}{}{}{}",
@@ -900,7 +919,7 @@ pub fn render_box(
         new_lines_printed += 2;
     });
 
-    let up_lines = new_lines_printed.saturating_sub(1 + cursor_line_idx);
+    let up_lines = new_lines_printed.saturating_sub(1 + visible_cursor_line);
     let cursor_col = 3 + cursor_col_offset;
 
     match up_lines > 0 {

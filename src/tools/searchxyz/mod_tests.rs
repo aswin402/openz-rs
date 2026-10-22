@@ -1,4 +1,5 @@
 use super::*;
+use crate::tools::arguments::coerce_number_value;
 use crate::tools::Tool;
 
 #[test]
