@@ -117,16 +117,7 @@ pub fn render_welcome_screen(frame: &mut Frame, app: &RatatuiApp, area: Rect) {
         Span::styled(app.cwd_display.clone(), Style::default().fg(theme.info)),
     ];
 
-    match RatatuiApp::get_git_branch(&app.workspace_root) {
-        Some(branch) => {
-            left_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
-            left_spans.push(Span::styled(
-                format!("git:{}", branch),
-                Style::default().fg(theme.success),
-            ));
-        }
-        None => {}
-    }
+    super::ui::push_git_branch_spans(&mut left_spans, &app.workspace_root, &theme);
 
     let (mcp_loaded, _, _) = crate::tools::mcp::get_mcp_stats();
     match mcp_loaded > 0 {

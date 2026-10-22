@@ -3,8 +3,8 @@
 use serde_json::Value;
 
 pub(crate) async fn mcp_servers_event(config: &crate::config::schema::Config) -> Value {
-    let (loaded, failed, _total) = crate::channels::cli::mcp::get_mcp_stats();
-    let mcp_done = crate::channels::cli::mcp::is_mcp_done();
+    let (loaded, failed, _total) = crate::tools::mcp::get_mcp_stats();
+    let mcp_done = crate::tools::mcp::is_mcp_done();
     let mut servers = Vec::new();
     for (name, server_cfg) in &config.mcp_servers {
         let status = match (server_cfg.enabled, mcp_done) {

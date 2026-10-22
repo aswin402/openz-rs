@@ -102,7 +102,7 @@ async fn stream_provider_response(
     start_time: std::time::Instant,
     content_streaming_started: &mut bool,
     reasoning_printed: &mut bool,
-    markdown_streamer: &mut crate::channels::cli::render::StreamingMarkdownRenderer,
+    markdown_streamer: &mut crate::agent::style::StreamingMarkdownRenderer,
 ) -> Result<crate::providers::LLMResponse> {
     let mut stream = loop_ref
         .chat_stream_with_fallback(
@@ -808,7 +808,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         let mut content_streaming_started = false;
         let mut reasoning_printed = false;
         let mut markdown_streamer =
-            crate::channels::cli::render::StreamingMarkdownRenderer::new(
+            crate::agent::style::StreamingMarkdownRenderer::new(
                 crate::agent::style::spinner::is_silent(),
             );
 

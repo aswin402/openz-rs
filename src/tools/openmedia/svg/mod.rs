@@ -1033,18 +1033,7 @@ pub fn rasterize(
 
     // Demultiply alpha for formats other than PNG (or always for general image saving)
     let mut pixels = pixmap.data().to_vec();
-    for chunk in pixels.chunks_exact_mut(4) {
-        let a = chunk[3];
-        match a > 0 && a < 255 {
-            true => {
-                let alpha_factor = 255.0 / a as f32;
-                chunk[0] = (chunk[0] as f32 * alpha_factor).min(255.0) as u8;
-                chunk[1] = (chunk[1] as f32 * alpha_factor).min(255.0) as u8;
-                chunk[2] = (chunk[2] as f32 * alpha_factor).min(255.0) as u8;
-            }
-            false => {}
-        }
-    }
+    unpremultiply_rgba8(&mut pixels);
 
     // Save output based on format
     let clean_format = format.to_lowercase();
@@ -1116,6 +1105,21 @@ pub fn rasterize(
         backend_used: "resvg".to_string(),
         generation_time,
     })
+}
+
+pub(crate) fn unpremultiply_rgba8(pixels: &mut [u8]) {
+    for chunk in pixels.chunks_exact_mut(4) {
+        let a = chunk[3];
+        match a > 0 && a < 255 {
+            true => {
+                let alpha_factor = 255.0 / a as f32;
+                chunk[0] = (chunk[0] as f32 * alpha_factor).min(255.0) as u8;
+                chunk[1] = (chunk[1] as f32 * alpha_factor).min(255.0) as u8;
+                chunk[2] = (chunk[2] as f32 * alpha_factor).min(255.0) as u8;
+            }
+            false => {}
+        }
+    }
 }
 
 /// Render a Mermaid diagram into SVG XML content natively

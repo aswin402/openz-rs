@@ -31,7 +31,7 @@ pub fn start_scheduler(config: Config) -> tokio::task::JoinHandle<()> {
 
             match tick_scheduler(&config).await {
                 Ok(()) => {}
-                Err(e) => crate::channels::cli::send_notification(&format!(
+                Err(e) => crate::channels::send_notification(&format!(
                     "Error in cron scheduler tick: {e}"
                 )),
             }
@@ -289,7 +289,7 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
                                 &job_clone.notify_on,
                                 &CronJobStatus::Success,
                             ) {
-                                true => crate::channels::cli::send_notification(&format!(
+                                true => crate::channels::send_notification(&format!(
                                     "Cron Job {} completed successfully.",
                                     job_clone.id
                                 )),
@@ -310,7 +310,7 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
                                 &job_clone.notify_on,
                                 &CronJobStatus::Failed,
                             ) {
-                                true => crate::channels::cli::send_notification(&format!(
+                                true => crate::channels::send_notification(&format!(
                                     "Error running Cron Job {}: {}",
                                     job_clone.id, e
                                 )),
@@ -343,7 +343,7 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
                         &job_clone.notify_on,
                         &CronJobStatus::Failed,
                     ) {
-                        true => crate::channels::cli::send_notification(&format!(
+                        true => crate::channels::send_notification(&format!(
                             "Error running Cron Job {}: {}",
                             job_clone.id, e
                         )),

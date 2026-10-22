@@ -21,6 +21,41 @@ pub struct CognitiveMemoryEntry {
     pub decay_rate: f32,
 }
 
+pub(crate) fn load_cognitive_memory_entries(
+    conn: &Connection,
+    limit: Option<usize>,
+) -> Result<Vec<CognitiveMemoryEntry>> {
+    let sql = match limit {
+        Some(n) => format!("SELECT id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate FROM cognitive_memory LIMIT {n}"),
+        None => "SELECT id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate FROM cognitive_memory".to_string(),
+    };
+    let mut stmt = conn.prepare(&sql)?;
+    let mapped = stmt.query_map([], |row| {
+        let embedding_str: String = row.get(2)?;
+        let tags_str: String = row.get(5)?;
+        let embedding: Vec<f32> = serde_json::from_str(&embedding_str).unwrap_or_default();
+        let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
+
+        Ok(CognitiveMemoryEntry {
+            id: row.get(0)?,
+            text: row.get(1)?,
+            embedding,
+            timestamp: row.get(3)?,
+            workspace: row.get(4)?,
+            tags,
+            importance: row.get(6)?,
+            last_accessed: row.get(7)?,
+            access_count: row.get(8)?,
+            decay_rate: row.get(9)?,
+        })
+    })?;
+    let mut collected = Vec::new();
+    for item in mapped {
+        collected.push(item?);
+    }
+    Ok(collected)
+}
+
 pub fn prune_decayed_memories(conn: &Connection) -> Result<usize> {
     let mut stmt =
         conn.prepare("SELECT id, importance, last_accessed, decay_rate FROM cognitive_memory")?;
@@ -230,34 +265,7 @@ impl Tool for RecallMemoryTool {
         let current_ws = get_current_workspace();
 
         let _lock = get_db_mutex().lock().await;
-        let entries = with_db(|conn| {
-            let mut stmt = conn.prepare("SELECT id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate FROM cognitive_memory LIMIT 1000")?;
-            let mapped = stmt.query_map([], |row| {
-                let embedding_str: String = row.get(2)?;
-                let tags_str: String = row.get(5)?;
-                let embedding: Vec<f32> = serde_json::from_str(&embedding_str).unwrap_or_default();
-                let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
-
-                Ok(CognitiveMemoryEntry {
-                    id: row.get(0)?,
-                    text: row.get(1)?,
-                    embedding,
-                    timestamp: row.get(3)?,
-                    workspace: row.get(4)?,
-                    tags,
-                    importance: row.get(6)?,
-                    last_accessed: row.get(7)?,
-                    access_count: row.get(8)?,
-                    decay_rate: row.get(9)?,
-                })
-            })?;
-
-            let mut collected = Vec::new();
-            for item in mapped {
-                collected.push(item?);
-            }
-            Ok(collected)
-        })?;
+        let entries = with_db(|conn| load_cognitive_memory_entries(conn, Some(1000)))?;
 
         let now = chrono::Utc::now();
         let mut scored_results = Vec::new();

@@ -147,7 +147,7 @@ async fn recover_from_reasoning_only_response(
     start_time: std::time::Instant,
     reasoning_printed: &mut bool,
     content_streaming_started: &mut bool,
-    markdown_streamer: &mut crate::channels::cli::render::StreamingMarkdownRenderer,
+    markdown_streamer: &mut crate::agent::style::StreamingMarkdownRenderer,
 ) -> Result<()> {
     let _ = (!crate::agent::style::spinner::is_silent()).then(|| {
         print!("\r\x1b[2K");
@@ -343,7 +343,7 @@ pub(super) async fn normalize_response(
     start_time: std::time::Instant,
     reasoning_printed: &mut bool,
     content_streaming_started: &mut bool,
-    markdown_streamer: &mut crate::channels::cli::render::StreamingMarkdownRenderer,
+    markdown_streamer: &mut crate::agent::style::StreamingMarkdownRenderer,
 ) -> Result<crate::providers::LLMResponse> {
     match resp.finish_reason == "length" {
         true => {

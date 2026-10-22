@@ -364,7 +364,6 @@ pub fn secure_compare(a: &str, b: &str) -> bool {
     constant_time_eq(&hash_a, &hash_b)
 }
 
-pub mod cli;
 pub mod discord;
 pub mod email;
 pub mod model_catalog;
@@ -376,7 +375,6 @@ pub mod transport;
 pub mod websocket;
 pub mod whatsapp;
 
-pub use cli::CliChannel;
 pub use discord::DiscordChannel;
 pub use email::EmailChannel;
 pub use model_catalog::{
@@ -411,55 +409,64 @@ pub fn get_active_ws_senders() -> &'static Mutex<WsSendersMap> {
 }
 
 pub fn send_notification(msg: &str) {
-    // 1. Immediately output/queue to CLI (synchronously so it prints immediately in terminal)
-    crate::channels::cli::queue_notification(msg);
+    crate::channels::ratatui::send_ratatui_turn_event(
+        crate::channels::ratatui::TurnEvent::SingleMessage(
+            crate::channels::ratatui::app::ChatMessage::notice(msg.to_string()),
+        ),
+    );
 
-    // 2. Broadcast to other active channels in the background
-    let msg_str = msg.to_string();
-    tokio::spawn(async move {
-        let ws_senders = match get_active_ws_senders().lock() {
-            Ok(senders) => senders
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect::<Vec<_>>(),
-            Err(_) => Vec::new(),
-        };
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            let msg_str = msg.to_string();
+            handle.spawn(async move {
+                let ws_senders = match get_active_ws_senders().lock() {
+                    Ok(senders) => senders
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone()))
+                        .collect::<Vec<_>>(),
+                    Err(_) => Vec::new(),
+                };
 
-        let evt = crate::channels::websocket::protocol::notification(msg_str.clone());
-        match serde_json::to_string(&evt) {
-            Ok(evt_str) => {
-                for (id, tx) in ws_senders {
-                    match tx.send(Message::Text(evt_str.clone())).await {
-                        Ok(()) => {}
-                        Err(_) => match get_active_ws_senders().lock() {
-                            Ok(mut senders) => {
-                                senders.remove(&id);
+                let evt = crate::channels::websocket::protocol::notification(msg_str.clone());
+                match serde_json::to_string(&evt) {
+                    Ok(evt_str) => {
+                        for (id, tx) in ws_senders {
+                            match tx.send(Message::Text(evt_str.clone())).await {
+                                Ok(()) => {}
+                                Err(_) => match get_active_ws_senders().lock() {
+                                    Ok(mut senders) => {
+                                        senders.remove(&id);
+                                    }
+                                    Err(_) => {}
+                                },
                             }
-                            Err(_) => {}
-                        },
+                        }
                     }
+                    Err(_) => {}
                 }
-            }
-            Err(_) => {}
-        }
 
-        match crate::config::loader::load_config() {
-            Ok(config) => {
-                let sessions_dir = crate::config::loader::sessions_dir();
-                let client = crate::core::http::custom_http_client(
-                    SHUTDOWN_HTTP_TIMEOUT,
-                    SHUTDOWN_HTTP_TIMEOUT,
-                );
+                match crate::config::loader::load_config() {
+                    Ok(config) => {
+                        let sessions_dir = crate::config::loader::sessions_dir();
+                        let client = crate::core::http::custom_http_client(
+                            SHUTDOWN_HTTP_TIMEOUT,
+                            SHUTDOWN_HTTP_TIMEOUT,
+                        );
 
-                for request in
-                    build_external_notification_requests(&config, &sessions_dir, &msg_str)
-                {
-                    send_external_notification(&client, &request).await;
+                        for request in build_external_notification_requests(
+                            &config,
+                            &sessions_dir,
+                            &msg_str,
+                        ) {
+                            send_external_notification(&client, &request).await;
+                        }
+                    }
+                    Err(_) => {}
                 }
-            }
-            Err(_) => {}
+            });
         }
-    });
+        Err(_) => {}
+    }
 }
 
 #[cfg(test)]

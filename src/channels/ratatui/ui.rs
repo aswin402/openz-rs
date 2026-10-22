@@ -454,7 +454,7 @@ fn render_slash_palette(f: &mut Frame, app: &RatatuiApp, area: Rect) {
 fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
     let theme = &app.theme;
     let (mcp_loaded, mcp_failed, _mcp_total) = crate::tools::mcp::get_mcp_stats();
-    let mcp_done = crate::channels::cli::mcp::is_mcp_done();
+    let mcp_done = crate::tools::mcp::is_mcp_done();
 
     let provider_model = match app.model.starts_with(&app.provider) {
         true => app.model.clone(),
@@ -473,16 +473,7 @@ fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
         Span::styled(app.cwd_display.clone(), Style::default().fg(theme.info)),
     ];
 
-    match RatatuiApp::get_git_branch(&app.workspace_root) {
-        Some(branch) => {
-            left_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
-            left_spans.push(Span::styled(
-                format!("git:{}", branch),
-                Style::default().fg(theme.success),
-            ));
-        }
-        None => {}
-    }
+    push_git_branch_spans(&mut left_spans, &app.workspace_root, &theme);
 
     // MCP status indicator (clean & minimal)
     left_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
@@ -582,4 +573,21 @@ fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
         .block(Block::default().borders(Borders::NONE))
         .alignment(Alignment::Right);
     f.render_widget(right_p, status_chunks[1]);
+}
+
+pub(crate) fn push_git_branch_spans<'a>(
+    spans: &mut Vec<Span<'a>>,
+    workspace_root: &std::path::Path,
+    theme: &theme::Theme,
+) {
+    match RatatuiApp::get_git_branch(workspace_root) {
+        Some(branch) => {
+            spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
+            spans.push(Span::styled(
+                format!("git:{}", branch),
+                Style::default().fg(theme.success),
+            ));
+        }
+        None => {}
+    }
 }

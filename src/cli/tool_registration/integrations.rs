@@ -26,7 +26,7 @@ pub(crate) fn register_lazy_mcp_tools(registry: &ToolRegistry, config: &Config) 
 
     let _mcp_handle = tokio::spawn(async move {
         match silent {
-            false => crate::channels::cli::init_mcp_progress(num_configs),
+            false => crate::tools::mcp::init_mcp_progress(num_configs),
             true => {}
         }
 
@@ -53,7 +53,7 @@ pub(crate) fn register_lazy_mcp_tools(registry: &ToolRegistry, config: &Config) 
                 match result {
                     Ok(Ok(tools)) => {
                         match silent {
-                            false => crate::channels::cli::increment_mcp_loaded(),
+                            false => crate::tools::mcp::increment_mcp_loaded(),
                             true => {}
                         }
                         let mut count = 0;
@@ -84,7 +84,7 @@ pub(crate) fn register_lazy_mcp_tools(registry: &ToolRegistry, config: &Config) 
                     }
                     Ok(Err(e)) => {
                         match silent {
-                            false => crate::channels::cli::increment_mcp_failed(),
+                            false => crate::tools::mcp::increment_mcp_failed(),
                             true => {}
                         }
                         tracing::error!("Failed starting MCP server {}: {:?}", name_clone, e);
@@ -92,7 +92,7 @@ pub(crate) fn register_lazy_mcp_tools(registry: &ToolRegistry, config: &Config) 
                     }
                     Err(elapsed) => {
                         match silent {
-                            false => crate::channels::cli::increment_mcp_failed(),
+                            false => crate::tools::mcp::increment_mcp_failed(),
                             true => {}
                         }
                         tracing::error!(
@@ -125,8 +125,8 @@ pub(crate) fn register_lazy_mcp_tools(registry: &ToolRegistry, config: &Config) 
         // Update the status bar pill — the render loop reads these atomics every redraw
         match silent {
             false => {
-                crate::channels::cli::set_mcp_status(servers_loaded, servers_failed);
-                crate::channels::cli::set_mcp_done();
+                crate::tools::mcp::set_mcp_status(servers_loaded, servers_failed);
+                crate::tools::mcp::set_mcp_done();
             }
             true => {}
         }

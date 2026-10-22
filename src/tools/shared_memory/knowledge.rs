@@ -101,7 +101,7 @@ pub fn display_source_label(label: &str, uri: &str) -> String {
     }
 }
 
-fn source_label_from_uri(uri: &str) -> Option<String> {
+pub(crate) fn source_label_from_uri(uri: &str) -> Option<String> {
     reqwest::Url::parse(uri).ok().and_then(|parsed| {
         let host = parsed.host_str()?.trim_start_matches("www.");
         let parts = parsed

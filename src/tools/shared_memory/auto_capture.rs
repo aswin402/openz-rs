@@ -410,42 +410,10 @@ fn kind_for_url(url: &str) -> (&'static str, f64) {
 }
 
 fn label_for_url(url: &str) -> String {
-    reqwest::Url::parse(url)
-        .ok()
-        .and_then(|parsed| {
+    super::knowledge::source_label_from_uri(url)
+        .or_else(|| {
+            let parsed = reqwest::Url::parse(url).ok()?;
             let host = parsed.host_str()?.trim_start_matches("www.");
-            let parts = parsed
-                .path_segments()
-                .map(|segments| segments.collect::<Vec<_>>())
-                .unwrap_or_default();
-            match (host, parts.len() >= 2) {
-                ("github.com", true) => {
-                    let repo = format!("{}/{}", parts[0], parts[1]);
-                    return match parts.get(2).copied() {
-                        Some("issues") => parts
-                            .get(3)
-                            .map(|num| format!("{repo} issue #{num}"))
-                            .or_else(|| Some(format!("{repo} issues"))),
-                        Some("pull") => parts
-                            .get(3)
-                            .map(|num| format!("{repo} PR #{num}"))
-                            .or_else(|| Some(format!("{repo} pull requests"))),
-                        Some("blob" | "tree") => match parts.len() > 4 {
-                            true => Some(format!("{repo} {}", parts[4..].join("/"))),
-                            false => Some(repo),
-                        },
-                        _ => Some(repo),
-                    };
-                }
-                ("raw.githubusercontent.com", true) => {
-                    let repo = format!("{}/{}", parts[0], parts[1]);
-                    return match parts.len() > 3 {
-                        true => Some(format!("{repo} {}", parts[3..].join("/"))),
-                        false => Some(repo),
-                    };
-                }
-                _ => {}
-            }
             let path = parsed.path().trim_matches('/');
             match path.is_empty() {
                 true => Some(host.to_string()),

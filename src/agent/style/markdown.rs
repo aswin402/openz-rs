@@ -366,3 +366,335 @@ pub fn wrap_display_text(text: &str, max_width: usize) -> Vec<String> {
         }
     }
 }
+
+use super::colors::*;
+use std::io::Write;
+
+fn colorize_status_glyphs(text: &str) -> String {
+    text.replace('✔', &format!("{}✔{}", EMERALD_GREEN, COLOR_RESET))
+        .replace('✅', &format!("{}✅{}", EMERALD_GREEN, COLOR_RESET))
+        .replace('✓', &format!("{}✓{}", EMERALD_GREEN, COLOR_RESET))
+        .replace('✖', &format!("{}✖{}", ERROR_RED, COLOR_RESET))
+        .replace('❌', &format!("{}❌{}", ERROR_RED, COLOR_RESET))
+        .replace('✗', &format!("{}✗{}", ERROR_RED, COLOR_RESET))
+}
+
+fn format_cell_text(text: &str) -> String {
+    tokenize_inline_markdown(&colorize_status_glyphs(text))
+        .into_iter()
+        .map(|seg| match seg {
+            InlineSegment::Plain(s) => s,
+            InlineSegment::Bold(s) => format!("{}{}{}{}", RED_ORANGE, COLOR_BOLD, s, COLOR_RESET),
+            InlineSegment::Code(s) | InlineSegment::Italic(s) => {
+                format!("{}{}{}", LIGHT_BLUE, s, COLOR_RESET)
+            }
+        })
+        .collect::<Vec<String>>()
+        .join("")
+}
+
+pub fn format_markdown_line(line: &str) -> String {
+    let trimmed = line.trim();
+    let is_hr = trimmed.len() >= 3 && trimmed.chars().all(|c| c == '-');
+    let is_heading = line.trim_start().starts_with('#');
+    match (is_hr, is_heading) {
+        (true, _) => format!("{}──────{}", LIGHT_WHITE, COLOR_RESET),
+        (false, true) => format!("{}{}{}", HEADING_BLUE, line, COLOR_RESET),
+        (false, false) => format_cell_text(line),
+    }
+}
+
+pub fn render_table_lines(table_lines: &[&str]) -> Vec<String> {
+    let headers: Vec<String> = table_lines
+        .first()
+        .map(|first| {
+            split_row(first)
+                .into_iter()
+                .map(|h| clean_cell_text(&h, true))
+                .collect()
+        })
+        .unwrap_or_default();
+    let num_cols = headers.len();
+
+    match (table_lines.len() >= 2, num_cols > 0) {
+        (false, _) | (_, false) => table_lines.iter().map(|l| format_markdown_line(l)).collect(),
+        (true, true) => {
+            let data_rows: Vec<Vec<String>> = table_lines[2..]
+                .iter()
+                .map(|&line| {
+                    let mut cells = split_row(line);
+                    cells.resize(num_cols, String::new());
+                    cells
+                })
+                .collect();
+
+            let term_width = terminal_width_or_default(80);
+            let separator_overhead = 3 * (num_cols - 1);
+            let available_width = term_width
+                .saturating_sub(separator_overhead)
+                .saturating_sub(2);
+
+            let max_content_widths: Vec<usize> = (0..num_cols)
+                .map(|col| {
+                    data_rows
+                        .iter()
+                        .map(|row| text_display_width(&row[col]))
+                        .fold(text_display_width(&headers[col]), usize::max)
+                        .max(3)
+                })
+                .collect();
+
+            let col_widths = compute_table_column_widths(&max_content_widths, available_width, 10);
+
+            let divider_segments: Vec<String> = (0..num_cols)
+                .map(|col| {
+                    let extra_pad = match col == 0 || col == num_cols - 1 {
+                        true => 1,
+                        false => 2,
+                    };
+                    "─".repeat(col_widths[col] + extra_pad)
+                })
+                .collect();
+            let divider = divider_segments.join("┼");
+
+            let separator = format!(" {}│{} ", LIGHT_WHITE, COLOR_RESET);
+            let divider_colored = format!("{}{}{}", LIGHT_WHITE, divider, COLOR_RESET);
+
+            let header_cell_lines: Vec<Vec<String>> = (0..num_cols)
+                .map(|col| wrap_display_text(&headers[col], col_widths[col]))
+                .collect();
+            let max_header_lines = header_cell_lines
+                .iter()
+                .map(Vec::len)
+                .max()
+                .unwrap_or(1)
+                .max(1);
+
+            let mut result_lines = Vec::new();
+            for line_idx in 0..max_header_lines {
+                let header_line_parts: Vec<String> = (0..num_cols)
+                    .map(|col| {
+                        let text = header_cell_lines[col]
+                            .get(line_idx)
+                            .cloned()
+                            .unwrap_or_default();
+                        let visible_w = text_display_width(&text);
+                        let padding_len = col_widths[col].saturating_sub(visible_w);
+                        let formatted = format_cell_text(&text);
+                        format!(
+                            "{}{}{}{}{}",
+                            HEADING_BLUE,
+                            COLOR_BOLD,
+                            formatted,
+                            COLOR_RESET,
+                            " ".repeat(padding_len)
+                        )
+                    })
+                    .collect();
+                result_lines.push(header_line_parts.join(&separator));
+            }
+
+            result_lines.push(divider_colored);
+
+            for row in data_rows {
+                let cell_lines: Vec<Vec<String>> = (0..num_cols)
+                    .map(|col| wrap_display_text(&row[col], col_widths[col]))
+                    .collect();
+                let max_lines = cell_lines.iter().map(Vec::len).max().unwrap_or(1).max(1);
+
+                for line_idx in 0..max_lines {
+                    let row_line_parts: Vec<String> = (0..num_cols)
+                        .map(|col| {
+                            let text = cell_lines[col].get(line_idx).cloned().unwrap_or_default();
+                            let visible_w = text_display_width(&text);
+                            let padding_len = col_widths[col].saturating_sub(visible_w);
+                            let formatted = format_cell_text(&text);
+                            format!("{}{}", formatted, " ".repeat(padding_len))
+                        })
+                        .collect();
+                    result_lines.push(row_line_parts.join(&separator));
+                }
+            }
+
+            result_lines
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum StreamBlockState {
+    Normal,
+    CodeBlock,
+    PendingTable(String),
+    InTable(Vec<String>),
+}
+
+#[derive(Debug, Clone)]
+pub struct StreamingMarkdownRenderer {
+    current_line: String,
+    state: StreamBlockState,
+    silent: bool,
+    started: bool,
+    captured_lines: Option<Vec<String>>,
+}
+
+impl StreamingMarkdownRenderer {
+    pub fn new(silent: bool) -> Self {
+        Self {
+            current_line: String::new(),
+            state: StreamBlockState::Normal,
+            silent,
+            started: false,
+            captured_lines: None,
+        }
+    }
+
+    pub fn new_with_capture() -> Self {
+        Self {
+            current_line: String::new(),
+            state: StreamBlockState::Normal,
+            silent: true,
+            started: false,
+            captured_lines: Some(Vec::new()),
+        }
+    }
+
+    pub fn has_started(&self) -> bool {
+        self.started
+    }
+
+    pub fn current_buffer(&self) -> &str {
+        &self.current_line
+    }
+
+    pub fn captured(&self) -> &[String] {
+        self.captured_lines.as_deref().unwrap_or(&[])
+    }
+
+    pub fn push_chunk(&mut self, text: &str) {
+        let should_process = !(self.silent && self.captured_lines.is_none()) && !text.is_empty();
+        should_process.then(|| {
+            self.started = true;
+            for c in text.chars() {
+                match c {
+                    '\r' => {}
+                    '\n' => {
+                        let line = std::mem::take(&mut self.current_line);
+                        self.process_completed_line(line);
+                    }
+                    other => self.current_line.push(other),
+                }
+            }
+        });
+    }
+
+    fn process_completed_line(&mut self, line: String) {
+        let is_fence = line.trim_start().starts_with("```");
+        let is_div = is_divider_row(&line);
+        let is_row = is_table_row(&line);
+        let prev_state = std::mem::replace(&mut self.state, StreamBlockState::Normal);
+
+        match (prev_state, is_fence, is_div, is_row) {
+            (StreamBlockState::CodeBlock, true, _, _) => {
+                self.output_raw_line(&line);
+                self.state = StreamBlockState::Normal;
+            }
+            (StreamBlockState::CodeBlock, false, _, _) => {
+                self.output_raw_line(&line);
+                self.state = StreamBlockState::CodeBlock;
+            }
+            (StreamBlockState::Normal, true, _, _) => {
+                self.output_raw_line(&line);
+                self.state = StreamBlockState::CodeBlock;
+            }
+            (StreamBlockState::PendingTable(header), true, _, _) => {
+                self.output_line(&header);
+                self.output_raw_line(&line);
+                self.state = StreamBlockState::CodeBlock;
+            }
+            (StreamBlockState::InTable(rows), true, _, _) => {
+                self.emit_table_rows(&rows);
+                self.output_raw_line(&line);
+                self.state = StreamBlockState::CodeBlock;
+            }
+            (StreamBlockState::InTable(mut rows), false, _, true) => {
+                rows.push(line);
+                self.state = StreamBlockState::InTable(rows);
+            }
+            (StreamBlockState::InTable(rows), false, _, false) => {
+                self.emit_table_rows(&rows);
+                self.state = StreamBlockState::Normal;
+                self.process_completed_line(line);
+            }
+            (StreamBlockState::PendingTable(header), false, true, _) => {
+                self.state = StreamBlockState::InTable(vec![header, line]);
+            }
+            (StreamBlockState::PendingTable(header), false, false, true) => {
+                self.output_line(&header);
+                self.state = StreamBlockState::PendingTable(line);
+            }
+            (StreamBlockState::PendingTable(header), false, false, false) => {
+                self.output_line(&header);
+                self.output_line(&line);
+                self.state = StreamBlockState::Normal;
+            }
+            (StreamBlockState::Normal, false, _, true) => {
+                self.state = StreamBlockState::PendingTable(line);
+            }
+            (StreamBlockState::Normal, false, _, false) => {
+                self.output_line(&line);
+                self.state = StreamBlockState::Normal;
+            }
+        }
+    }
+
+    fn emit_table_rows(&mut self, rows: &[String]) {
+        (!rows.is_empty()).then(|| {
+            let refs: Vec<&str> = rows.iter().map(String::as_str).collect();
+            for rendered in render_table_lines(&refs) {
+                self.captured_lines
+                    .as_mut()
+                    .map(|cap| cap.push(rendered.clone()));
+                (!self.silent).then(|| {
+                    std::print!("{}\r\n", rendered);
+                });
+            }
+            (!self.silent).then(|| {
+                let _ = std::io::stdout().flush();
+            });
+        });
+    }
+
+    fn output_line(&mut self, line: &str) {
+        let formatted = format_markdown_line(line);
+        self.captured_lines
+            .as_mut()
+            .map(|cap| cap.push(formatted.clone()));
+        (!self.silent).then(|| {
+            std::print!("{}\r\n", formatted);
+            let _ = std::io::stdout().flush();
+        });
+    }
+
+    fn output_raw_line(&mut self, line: &str) {
+        self.captured_lines
+            .as_mut()
+            .map(|cap| cap.push(line.to_string()));
+        (!self.silent).then(|| {
+            std::print!("{}\r\n", line);
+            let _ = std::io::stdout().flush();
+        });
+    }
+
+    pub fn finish(&mut self) {
+        (!self.current_line.is_empty()).then(|| {
+            let line = std::mem::take(&mut self.current_line);
+            self.process_completed_line(line);
+        });
+        match std::mem::replace(&mut self.state, StreamBlockState::Normal) {
+            StreamBlockState::InTable(rows) => self.emit_table_rows(&rows),
+            StreamBlockState::PendingTable(header) => self.output_line(&header),
+            StreamBlockState::Normal | StreamBlockState::CodeBlock => {}
+        }
+    }
+}

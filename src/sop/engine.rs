@@ -80,7 +80,7 @@ pub async fn run_sop_instance_inner(
             }
             save_instance(&inst)?;
 
-            crate::channels::cli::send_notification(&format!(
+            crate::channels::send_notification(&format!(
                 "📋 [SOP: {}] Spawning Step {}/{} - '{}' in parallel...",
                 inst.id,
                 idx + 1,
@@ -94,7 +94,7 @@ pub async fn run_sop_instance_inner(
             let session_key = format!("sop:{}:{}", inst.id, idx);
 
             match simulate {
-                true => crate::channels::cli::send_notification(&format!(
+                true => crate::channels::send_notification(&format!(
                     "🔍 [SOP: {}] Simulated Prompt for '{}':\n---\n{}\n---",
                     inst.id, def_step.name, prompt
                 )),
@@ -165,7 +165,7 @@ pub async fn run_sop_instance_inner(
                                 serde_json::json!({ "output": run_res.content }),
                             );
 
-                            crate::channels::cli::send_notification(&format!(
+                            crate::channels::send_notification(&format!(
                                 "✅ [SOP: {}] Step '{}' completed!",
                                 inst.id, def_step.name
                             ));
@@ -183,7 +183,7 @@ pub async fn run_sop_instance_inner(
 
                             any_failed = true;
 
-                            crate::channels::cli::send_notification(&format!(
+                            crate::channels::send_notification(&format!(
                                 "❌ [SOP: {}] Step '{}' failed: {}",
                                 inst.id, def_step.name, e
                             ));
@@ -204,7 +204,7 @@ pub async fn run_sop_instance_inner(
             inst.completed_at = Some(Utc::now().to_rfc3339());
             save_instance(&inst)?;
 
-            crate::channels::cli::send_notification(&format!(
+            crate::channels::send_notification(&format!(
                 "✅ [SOP: {}] SOP completed successfully!",
                 inst.id
             ));
@@ -214,7 +214,7 @@ pub async fn run_sop_instance_inner(
             inst.status = SopStatus::Failed;
             save_instance(&inst)?;
 
-            crate::channels::cli::send_notification(&format!(
+            crate::channels::send_notification(&format!(
                 "❌ [SOP: {}] SOP failed to complete all steps.",
                 inst.id
             ));
@@ -306,7 +306,7 @@ pub async fn trigger_sop_simulation(
     let inst = create_sop_instance(&sop_id, "sim", initial_payload)?;
     let instance_id = inst.id;
 
-    crate::channels::cli::send_notification(&format!(
+    crate::channels::send_notification(&format!(
         "🔬 Starting dry-run simulation for SOP '{}' (Instance ID: {})...",
         sop_id, instance_id
     ));

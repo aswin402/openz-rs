@@ -193,8 +193,8 @@ fn codebase_enforces_zero_if_else_and_zero_regex() {
     rs_files.sort();
 
     assert!(
-        rs_files.len() >= 623,
-        "expected at least 623 Rust source files in src/, found {}",
+        rs_files.len() >= 615,
+        "expected at least 615 Rust source files in src/, found {}",
         rs_files.len()
     );
 

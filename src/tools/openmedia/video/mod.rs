@@ -414,18 +414,7 @@ impl FrameRenderer for SvgFrameRenderer {
         resvg::render(&tree, transform, &mut pixmap.as_mut());
 
         let mut pixels = pixmap.data().to_vec();
-        for chunk in pixels.chunks_exact_mut(4) {
-            let a = chunk[3];
-            match a > 0 && a < 255 {
-                true => {
-                    let alpha_factor = 255.0 / a as f32;
-                    chunk[0] = (chunk[0] as f32 * alpha_factor).min(255.0) as u8;
-                    chunk[1] = (chunk[1] as f32 * alpha_factor).min(255.0) as u8;
-                    chunk[2] = (chunk[2] as f32 * alpha_factor).min(255.0) as u8;
-                }
-                false => {}
-            }
-        }
+        crate::tools::openmedia::svg::unpremultiply_rgba8(&mut pixels);
 
         let buffer = image::ImageBuffer::from_raw(width, height, pixels)
             .ok_or_else(|| OpenMediaError::Internal("Failed to build RgbaImage".to_string()))?;

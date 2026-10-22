@@ -11,7 +11,7 @@ pub(crate) fn runtime_inventory_event(
 }
 
 pub(crate) fn slash_commands_event() -> Value {
-    let commands = crate::channels::cli::render::SLASH_COMMANDS
+    let commands = crate::channels::ratatui::app::SLASH_COMMANDS
         .iter()
         .map(|(cmd, desc)| super::super::protocol::slash_command(*cmd, *desc))
         .collect::<Vec<_>>();
@@ -19,7 +19,7 @@ pub(crate) fn slash_commands_event() -> Value {
 }
 
 pub(crate) fn status_event() -> Value {
-    let (loaded, failed, total) = crate::channels::cli::mcp::get_mcp_stats();
+    let (loaded, failed, total) = crate::tools::mcp::get_mcp_stats();
     super::super::protocol::gateway_status(loaded, failed, total)
 }
 

@@ -248,13 +248,13 @@ fn test_format_markdown_line_preserves_content() {
 
 #[test]
 fn test_stream_content_chunk_clears_buffer_on_newline() {
-    let mut streamer = crate::channels::cli::render::StreamingMarkdownRenderer::new(true);
+    let mut streamer = crate::agent::style::StreamingMarkdownRenderer::new(true);
     let mut started = false;
     stream_content_chunk("hello world", &mut streamer, &mut started);
     assert!(!started);
     assert_eq!(streamer.current_buffer(), "");
 
-    let mut streamer2 = crate::channels::cli::render::StreamingMarkdownRenderer::new(false);
+    let mut streamer2 = crate::agent::style::StreamingMarkdownRenderer::new(false);
     let mut started2 = false;
     stream_content_chunk("test chunk", &mut streamer2, &mut started2);
     assert!(started2);

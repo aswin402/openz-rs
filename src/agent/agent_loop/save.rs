@@ -771,7 +771,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                                 }
                                                 Ok(()) => {
                                                     tracing::info!(session = %session_key, "Self-improvement curator: updated USER.md preferences.");
-                                                    crate::channels::cli::send_notification(
+                                                    crate::channels::send_notification(
                                                         &format!(
                                                             "{}◇ [Self-Improvement] User profile preferences updated (~/.openz/USER.md).{}",
                                                             AURA_BLUE, COLOR_RESET
@@ -826,7 +826,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                                                             e
                                                                         );
                                                                         error_msg = Some(msg);
-                                                                        crate::channels::cli::send_notification(&format!(
+                                                                        crate::channels::send_notification(&format!(
                                                                             "{}▲ [Self-Improvement] Failed to save self-improvement memory: {}{}",
                                                                             AURA_GOLD, e, COLOR_RESET
                                                                         ));
@@ -834,7 +834,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                                                     Ok(()) => {
                                                                         memory_updated = true;
                                                                         tracing::info!(session = %session_key, "Self-improvement curator: updated session memory.");
-                                                                        crate::channels::cli::send_notification(&format!(
+                                                                        crate::channels::send_notification(&format!(
                                                                             "{}◇ [Self-Improvement] Memory updated based on recent conversation.{}",
                                                                             AURA_BLUE, COLOR_RESET
                                                                         ));
@@ -930,7 +930,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                                         skill.name, e
                                                     );
                                                     error_msg = Some(msg);
-                                                    crate::channels::cli::send_notification(
+                                                    crate::channels::send_notification(
                                                         &format!(
                                                             "{}▲ [Self-Improvement] Failed to save self-improvement skill '{}': {}{}",
                                                             AURA_GOLD, skill.name, e, COLOR_RESET
@@ -940,7 +940,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                                 Ok(()) => {
                                                     skills_saved.push(skill.name.clone());
                                                     tracing::info!(session = %session_key, skill = %skill.name, "Self-improvement curator: saved skill.");
-                                                    crate::channels::cli::send_notification(
+                                                    crate::channels::send_notification(
                                                         &format!(
                                                             "{}◇ [Self-Improvement] Skill '{}' synthesized & saved to ~/.openz/skills/.{}",
                                                             AURA_BLUE, skill.name, COLOR_RESET
@@ -974,7 +974,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                             .await
                                             {
                                                 Ok(saved) => {
-                                                    crate::channels::cli::send_notification(
+                                                    crate::channels::send_notification(
                                                         &format!(
                                                             "{}◇ [Knowledge] Source saved: {}{}",
                                                             AURA_BLUE, saved.label, COLOR_RESET
@@ -1012,7 +1012,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                             .await
                                             {
                                                 Ok(saved) => {
-                                                    crate::channels::cli::send_notification(
+                                                    crate::channels::send_notification(
                                                         &format!(
                                                             "{}◇ [Workflow] Workflow saved: {}{}",
                                                             AURA_BLUE, saved.name, COLOR_RESET

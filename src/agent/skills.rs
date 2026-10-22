@@ -932,7 +932,7 @@ pub fn archive_stale_skills() -> Result<()> {
 
                 let aura_blue = "\x1b[38;2;96;165;250m";
                 let color_reset = "\x1b[0m";
-                crate::channels::cli::send_notification(&format!(
+                crate::channels::send_notification(&format!(
                     "{}◇ [Self-Improvement] Skill '{}' archived to filesystem due to 30 days of database inactivity.{}",
                     aura_blue, name, color_reset
                 ));

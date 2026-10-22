@@ -69,7 +69,7 @@ fn handle_unix_sigint(sigint_count: &mut usize) -> bool {
     }
     match openz::shutdown::sigint_action(
         openz::shutdown::is_cli_active(),
-        openz::channels::cli::is_raw_input_active(),
+        openz::channels::ratatui::IS_RATATUI_ACTIVE.load(std::sync::atomic::Ordering::Relaxed),
     ) {
         openz::shutdown::SigintAction::CancelTurn => {
             openz::shutdown::trigger_cli_cancel();

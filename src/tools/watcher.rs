@@ -175,7 +175,7 @@ impl Tool for FileWatcherTool {
                         tokio::select! {
                             biased;
                             _ = shutdown_rx.recv() => {
-                                crate::channels::cli::send_notification("Watcher task shutdown signal received.");
+                                crate::channels::send_notification("Watcher task shutdown signal received.");
                                 break;
                             }
                             Some(_) = event_rx.recv() => {
@@ -183,7 +183,7 @@ impl Tool for FileWatcherTool {
                                 match now.duration_since(last_trigger) > debounce_duration {
                                     true => {
                                         last_trigger = now;
-                                        crate::channels::cli::send_notification(&format!("File watcher triggered: running '{}' in {:?}", cmd_clone, path_clone));
+                                        crate::channels::send_notification(&format!("File watcher triggered: running '{}' in {:?}", cmd_clone, path_clone));
 
                                         let cmd_parts: Vec<&str> = cmd_clone.split_whitespace().collect();
                                         match cmd_parts.split_first() {
@@ -195,7 +195,7 @@ impl Tool for FileWatcherTool {
                                                 match cmd.output().await {
                                                     Ok(output) => match output.status.success() {
                                                         true => {
-                                                            crate::channels::cli::send_notification("File watcher command succeeded.");
+                                                            crate::channels::send_notification("File watcher command succeeded.");
                                                         }
                                                         false => {
                                                             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -205,7 +205,7 @@ impl Tool for FileWatcherTool {
                                                                 false => stderr,
                                                             };
 
-                                                            crate::channels::cli::send_notification("File watcher command failed! Sending to OpenZ session...");
+                                                            crate::channels::send_notification("File watcher command failed! Sending to OpenZ session...");
                                                             let notification = format!(
                                                                 "⚠️ [File Watcher] Command '{}' failed after file modification in {:?}:\n\n```\n{}\n```\n\nPlease fix the errors above.",
                                                                 cmd_clone, path_clone, error_msg
@@ -214,7 +214,7 @@ impl Tool for FileWatcherTool {
                                                         }
                                                     },
                                                     Err(e) => {
-                                                        crate::channels::cli::send_notification(&format!("Failed to execute watch trigger command: {}", e));
+                                                        crate::channels::send_notification(&format!("Failed to execute watch trigger command: {}", e));
                                                     }
                                                 }
                                             }

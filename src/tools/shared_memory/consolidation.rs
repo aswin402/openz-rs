@@ -1,7 +1,7 @@
 use anyhow::Result;
 use rusqlite::params;
 
-use super::cognitive::CognitiveMemoryEntry;
+use super::cognitive::{CognitiveMemoryEntry, load_cognitive_memory_entries};
 use crate::memory::with_shared_db as with_db;
 use super::db::get_db_mutex;
 use super::embeddings::{cosine_similarity, get_embedding};
@@ -11,33 +11,8 @@ pub async fn consolidate_shared_memory(
 ) -> Result<()> {
     let _lock = get_db_mutex().lock().await;
 
-    let mut entries: Vec<CognitiveMemoryEntry> = with_db(|conn| {
-        let mut stmt = conn.prepare("SELECT id, text, embedding, timestamp, workspace, tags, importance, last_accessed, access_count, decay_rate FROM cognitive_memory")?;
-        let mapped = stmt.query_map([], |row| {
-            let embedding_str: String = row.get(2)?;
-            let tags_str: String = row.get(5)?;
-            let embedding: Vec<f32> = serde_json::from_str(&embedding_str).unwrap_or_default();
-            let tags: Vec<String> = serde_json::from_str(&tags_str).unwrap_or_default();
-
-            Ok(CognitiveMemoryEntry {
-                id: row.get(0)?,
-                text: row.get(1)?,
-                embedding,
-                timestamp: row.get(3)?,
-                workspace: row.get(4)?,
-                tags,
-                importance: row.get(6)?,
-                last_accessed: row.get(7)?,
-                access_count: row.get(8)?,
-                decay_rate: row.get(9)?,
-            })
-        })?;
-        let mut collected = Vec::new();
-        for item in mapped {
-            collected.push(item?);
-        }
-        Ok(collected)
-    })?;
+    let mut entries: Vec<CognitiveMemoryEntry> =
+        with_db(|conn| load_cognitive_memory_entries(conn, None))?;
 
     match entries.len() > 200 {
         true => {
@@ -185,7 +160,7 @@ pub async fn consolidate_shared_memory(
         true => {
             let aura_blue = "\x1b[38;2;96;165;250m";
             let color_reset = "\x1b[0m";
-            crate::channels::cli::send_notification(&format!(
+            crate::channels::send_notification(&format!(
                 "{}◇ [Memory-Curator] Consolidated {} duplicate/redundant shared memories.{}",
                 aura_blue, consolidated_count, color_reset
             ));

@@ -202,3 +202,40 @@ fn test_escape_xml_html_and_truncate_summary_text() {
         "abcde…"
     );
 }
+
+#[test]
+fn test_streaming_markdown_renderer_and_table_lines() {
+    let formatted = format_markdown_line("**hello** `world`");
+    assert!(formatted.contains("hello"));
+    assert!(formatted.contains("world"));
+    assert!(!formatted.contains("**"));
+    assert!(!formatted.contains('`'));
+
+    let heading = format_markdown_line("# OpenZ Engine");
+    assert!(heading.contains("OpenZ Engine"));
+
+    let hr = format_markdown_line("---");
+    assert!(hr.contains("──────"));
+
+    let table = ["| Name | Role |", "|---|---|", "| OpenZ | Agent |"];
+    let lines = render_table_lines(&table);
+    assert_eq!(lines.len(), 3);
+    assert!(lines[0].contains("Name") && lines[0].contains("Role"));
+    assert!(lines[1].contains('┼') && lines[1].contains('─'));
+    assert!(lines[2].contains("OpenZ") && lines[2].contains("Agent") && lines[2].contains('│'));
+
+    let mut streamer = StreamingMarkdownRenderer::new_with_capture();
+    streamer.push_chunk("Here is comparison:\n\n");
+    streamer.push_chunk("**OpenZ** | **Hermes Agent**\n");
+    streamer.push_chunk("---|---\n");
+    streamer.push_chunk("Rust | Python\n");
+    streamer.push_chunk("260 native tools | 70+ tools\n\n");
+    streamer.push_chunk("```rust\nlet x = a | b;\n```\n");
+    streamer.finish();
+
+    let captured = streamer.captured();
+    assert!(captured.iter().any(|l| l.contains("Here is comparison:")));
+    assert!(captured.iter().any(|l| l.contains('┼')));
+    assert!(captured.iter().any(|l| l.contains('│') && l.contains("Rust")));
+    assert!(captured.iter().any(|l| l.contains("let x = a | b;")));
+}

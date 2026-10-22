@@ -697,7 +697,7 @@ async fn retrieve_research_brief_context(session_key: &str, user_content: &str) 
                             "◇ Research brief matched: {} ({})",
                             best.topic, best.freshness
                         );
-                        crate::channels::cli::send_notification(&notice);
+                        crate::channels::send_notification(&notice);
                         crate::channels::websocket::publish_activity_notice(
                             session_key,
                             "research",
@@ -767,7 +767,7 @@ async fn retrieve_source_context(
                             &best.uri,
                         );
                         let notice = format!("◇ Sources matched: {} ({})", label, best.freshness);
-                        crate::channels::cli::send_notification(&notice);
+                        crate::channels::send_notification(&notice);
                         crate::channels::websocket::publish_activity_notice(
                             session_key,
                             "research",
@@ -872,7 +872,7 @@ async fn retrieve_workflow_context(
                 .filter(|best| should_emit_workflow_notice(seen_workflow_notices, &best.name))
                 .map(|best| {
                     let notice = format!("◇ Workflow matched: {}", best.name);
-                    crate::channels::cli::send_notification(&notice);
+                    crate::channels::send_notification(&notice);
                     crate::channels::websocket::publish_activity_notice(
                         session_key,
                         "workflow",

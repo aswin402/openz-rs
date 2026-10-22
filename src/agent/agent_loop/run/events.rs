@@ -53,11 +53,11 @@ pub(super) fn compact_reasoning_summary(reasoning: &str) -> String {
 }
 
 #[allow(unused_imports)]
-pub(super) use crate::channels::cli::render::format_markdown_line;
+pub(super) use crate::agent::style::format_markdown_line;
 
 pub(super) fn stream_content_chunk(
     text: &str,
-    streamer: &mut crate::channels::cli::render::StreamingMarkdownRenderer,
+    streamer: &mut crate::agent::style::StreamingMarkdownRenderer,
     content_streaming_started: &mut bool,
 ) {
     let should_stream =
@@ -91,7 +91,7 @@ pub(super) fn publish_auto_capture_notice(
         })
         .public_text(&output_visibility)
         .map(|notice| {
-            crate::channels::cli::send_notification(&notice);
+            crate::channels::send_notification(&notice);
             crate::channels::websocket::publish_activity_notice(
                 session_key,
                 "memory",
