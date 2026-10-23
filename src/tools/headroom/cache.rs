@@ -19,60 +19,58 @@ static CCR_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub fn get_cache_connection() -> Result<std::sync::MutexGuard<'static, Connection>> {
     static DB: OnceLock<std::sync::Mutex<Connection>> = OnceLock::new();
-    match DB.get() {
-        Some(mtx) => return mtx.lock().map_err(|e| anyhow!("Cache lock error: {}", e)),
-        None => {}
-    }
-    let path = crate::config::loader::runtime_db_path("ccr_cache.db");
-    match path.parent() {
-        Some(parent) => {
-            let _ = std::fs::create_dir_all(parent);
+    let mtx = crate::core::sqlite::get_or_init_db_mutex(&DB, || {
+        let path = crate::config::loader::runtime_db_path("ccr_cache.db");
+        match path.parent() {
+            Some(parent) => {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            None => {}
         }
-        None => {}
-    }
-    let conn = Connection::open(&path).map_err(|e| {
-        anyhow!(
-            "failed to open headroom cache database '{}': {}",
-            path.display(),
-            e
-        )
+        let conn = Connection::open(&path).map_err(|e| {
+            anyhow!(
+                "failed to open headroom cache database '{}': {}",
+                path.display(),
+                e
+            )
+        })?;
+        crate::core::sqlite::apply_standard_pragmas(&conn).map_err(|e| {
+            anyhow!(
+                "failed to configure headroom cache database '{}': {}",
+                path.display(),
+                e
+            )
+        })?;
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS cache_entries (
+                 ccr_id TEXT PRIMARY KEY,
+                 content TEXT NOT NULL,
+                 session TEXT,
+                 created_at TEXT NOT NULL,
+                 accessed_at TEXT NOT NULL,
+                 size_bytes INTEGER NOT NULL
+             );
+             CREATE TABLE IF NOT EXISTS compression_log (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 tool_name TEXT NOT NULL,
+                 original_size INTEGER NOT NULL,
+                 compressed_size INTEGER NOT NULL,
+                 original_tokens INTEGER NOT NULL,
+                 compressed_tokens INTEGER NOT NULL,
+                 content_type TEXT NOT NULL,
+                 model_hint TEXT,
+                 created_at TEXT NOT NULL
+             );
+             CREATE INDEX IF NOT EXISTS idx_cache_accessed ON cache_entries(accessed_at);
+             CREATE VIRTUAL TABLE IF NOT EXISTS cache_fts USING fts5(
+                 ccr_id UNINDEXED,
+                 content,
+                 tokenize = 'porter unicode61'
+             );",
+        )?;
+        let _ = conn.execute("ALTER TABLE cache_entries ADD COLUMN session TEXT", []);
+        Ok(conn)
     })?;
-    crate::core::sqlite::apply_standard_pragmas(&conn).map_err(|e| {
-        anyhow!(
-            "failed to configure headroom cache database '{}': {}",
-            path.display(),
-            e
-        )
-    })?;
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS cache_entries (
-             ccr_id TEXT PRIMARY KEY,
-             content TEXT NOT NULL,
-             session TEXT,
-             created_at TEXT NOT NULL,
-             accessed_at TEXT NOT NULL,
-             size_bytes INTEGER NOT NULL
-         );
-         CREATE TABLE IF NOT EXISTS compression_log (
-             id INTEGER PRIMARY KEY AUTOINCREMENT,
-             tool_name TEXT NOT NULL,
-             original_size INTEGER NOT NULL,
-             compressed_size INTEGER NOT NULL,
-             original_tokens INTEGER NOT NULL,
-             compressed_tokens INTEGER NOT NULL,
-             content_type TEXT NOT NULL,
-             model_hint TEXT,
-             created_at TEXT NOT NULL
-         );
-         CREATE INDEX IF NOT EXISTS idx_cache_accessed ON cache_entries(accessed_at);
-         CREATE VIRTUAL TABLE IF NOT EXISTS cache_fts USING fts5(
-             ccr_id UNINDEXED,
-             content,
-             tokenize = 'porter unicode61'
-         );",
-    )?;
-    let _ = conn.execute("ALTER TABLE cache_entries ADD COLUMN session TEXT", []);
-    let mtx = DB.get_or_init(|| std::sync::Mutex::new(conn));
     mtx.lock().map_err(|e| anyhow!("Cache lock error: {}", e))
 }
 

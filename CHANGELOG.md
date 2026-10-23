@@ -1,5 +1,32 @@
+## [0.0.305] - 2026-10-24
+### v0.0.305 (Latest Release)
+
+#### Changed
+- **Dependency-Aware Orchestrator Step Context Prioritization, Proportional Step Output Compaction, & Headroom CCR Caching ([`src/orchestrator/runtime.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/orchestrator/runtime.rs), [`src/tools/orchestrator.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/orchestrator.rs), [`src/tools/headroom/cache.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/cache.rs))**:
+  - Added [`format_prior_step_results_with_budget`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/orchestrator/runtime.rs) and [`build_step_prompt_with_budget`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/orchestrator/runtime.rs) in `src/orchestrator/runtime.rs` so multi-step Orchestrator workflows prioritize explicit `step.depends_on` outputs (`[Direct Dependency]`, 70% budget share) ahead of indirect ancestor steps (`[Ancestor Step]`, 30% budget share).
+  - Automatically compacts oversized prior step outputs via [`ContextCompactor::compress_tool_output_with_limit`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/context_compactor.rs) and caches the full step output in the Headroom CCR store (`[CCR: ccr_... — use retrieve_original or search_compressed for full step output]`).
+  - Wired [`SubagentStepExecutor::execute_step`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/orchestrator.rs) to resolve each step's active model and pass a proportional prior-context budget (`DynamicContextRegistry::resolve_prompt_budget_chars(step_model, &self.config) / 2`) into `build_step_prompt_with_budget`.
+  - Consolidated [`get_cache_connection`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/cache.rs) in `src/tools/headroom/cache.rs` onto [`crate::core::sqlite::get_or_init_db_mutex`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/sqlite.rs).
+
+#### Documentation
+- **Synchronized Release Manifests**: Updated [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md), and [`CHANGELOG.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/CHANGELOG.md) to `0.0.305`.
+
+### Sources & Inspirations
+- **[Inspiration]**: DAG dependency-aware context budgeting and Headroom CCR reversible step compaction in multi-agent orchestrations.
+
+- **Ideas**:
+  - Replace raw unbounded `prior_results.join("\n")` in Orchestrator step prompts with dependency-aware prioritization (`step.depends_on`), model-proportional step compaction (`DynamicContextRegistry` + `ContextCompactor`), and reversible Headroom CCR caching (`ccr_...`).
+- **Inspirations**:
+  - Headroom/Z-Context reversible context compaction and DAG-scoped multi-agent handoffs.
+- **Sources & References**:
+  - [`src/orchestrator/runtime.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/orchestrator/runtime.rs), [`src/orchestrator/runtime_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/orchestrator/runtime_tests.rs), [`src/tools/orchestrator.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/orchestrator.rs), [`src/tools/headroom/cache.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/headroom/cache.rs)
+- **Details & Metrics**:
+  - Updated 4 Rust modules (`src/orchestrator/runtime.rs`, `src/orchestrator/runtime_tests.rs`, `src/tools/orchestrator.rs`, `src/tools/headroom/cache.rs`) and added `step_prompt_prioritizes_direct_dependencies_and_compacts_large_outputs`.
+- **Verification**:
+  - Verified with `just test-guard`, `just check openz`, `just test-one step_prompt_prioritizes_direct_dependencies_and_compacts_large_outputs openz`, `just test-one builds_step_prompt_with_expected_output_and_prior_results openz`, and `just test-one test_native_tool_registration_names openz`.
+
 ## [0.0.304] - 2026-10-23
-### v0.0.304 (Latest Release)
+### v0.0.304
 
 #### Fixed
 - **Eliminated the Final 7 Raw Byte-Index String Slice Panic Hazards Across `src/` ([`src/tools/opendoc/handlers/pdf.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/opendoc/handlers/pdf.rs), [`src/tools/searchxyz/core/evidence.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/core/evidence.rs), [`src/tools/openmedia/improve/tokenizer.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/improve/tokenizer.rs), [`src/cli/logs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/logs.rs), [`src/logs/tui.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/logs/tui.rs), [`src/core/secrets.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/core/secrets.rs), [`src/channels/websocket/commands/observability.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/channels/websocket/commands/observability.rs))**:

@@ -806,3 +806,30 @@ async fn parallel_runtime_emits_failure_lifecycle_events() {
     };
     assert!(matched);
 }
+
+#[test]
+fn step_prompt_prioritizes_direct_dependencies_and_compacts_large_outputs() {
+    let step = WorkflowStep {
+        id: "synthesize".to_string(),
+        agent: "reviewer".to_string(),
+        goal: "Combine findings".to_string(),
+        depends_on: vec!["audit".to_string()],
+        expected_output: "final report".to_string(),
+        max_retries: 0,
+    };
+    let large_ancestor = format!("ancestor_step: {}", "line of detailed output\n".repeat(120));
+    let direct_dep = "audit: direct dependency findings".to_string();
+    let prompt = build_step_prompt_with_budget(
+        &step,
+        "Verify workflow context compaction",
+        &[large_ancestor, direct_dep],
+        1_200,
+    );
+
+    let direct_pos = prompt.find("[Direct Dependency] audit: direct dependency findings");
+    let ancestor_pos = prompt.find("[Ancestor Step] ancestor_step:");
+    assert!(direct_pos.is_some());
+    assert!(ancestor_pos.is_some());
+    assert!(direct_pos.unwrap() < ancestor_pos.unwrap());
+    assert!(prompt.contains("[CCR: ccr_"));
+}

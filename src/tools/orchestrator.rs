@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use crate::config::schema::Config;
 use crate::orchestrator::events::{WorkflowEvent, WorkflowEventSink};
-use crate::orchestrator::runtime::{build_step_prompt, StepExecutor, WorkflowRuntime};
+use crate::orchestrator::runtime::{
+    build_step_prompt_with_budget, StepExecutor, WorkflowRuntime,
+};
 use crate::orchestrator::spec::{CapabilityPolicy, WorkflowSpec, WorkflowStep};
 use crate::providers::LLMProvider;
 use crate::session::SessionManager;
@@ -230,7 +232,15 @@ impl StepExecutor for SubagentStepExecutor {
             }
         }
 
-        let prompt = build_step_prompt(step, &spec.goal, prior_results);
+        let step_model = profile
+            .model
+            .as_deref()
+            .unwrap_or(&self.config.agents.defaults.model);
+        let prior_budget = crate::providers::DynamicContextRegistry::resolve_prompt_budget_chars(
+            step_model,
+            &self.config,
+        ) / 2;
+        let prompt = build_step_prompt_with_budget(step, &spec.goal, prior_results, prior_budget);
         let step_policy =
             crate::grounding::step_execution_policy(&spec.goal, &step.goal, &step.agent);
         let effective_policy = apply_step_grounding_policy(effective_policy, &step_policy);

@@ -18,15 +18,152 @@ pub trait StepExecutor: Send + Sync + 'static {
     ) -> Result<String>;
 }
 
+pub const DEFAULT_STEP_PRIOR_CONTEXT_BUDGET_CHARS: usize = 16_000;
+
+struct ParsedPriorEntry<'a> {
+    header: Option<&'a str>,
+    body: &'a str,
+    is_primary: bool,
+}
+
+fn parse_prior_step_entry<'a>(
+    raw: &'a str,
+    idx: usize,
+    total: usize,
+    depends_on: &[String],
+) -> ParsedPriorEntry<'a> {
+    let (header, body) = match raw.find(": ") {
+        Some(pos) => (Some(&raw[..pos]), &raw[pos + 2..]),
+        None => (None, raw),
+    };
+    let step_id = header.and_then(|h| h.split_whitespace().last());
+    let is_primary = match !depends_on.is_empty() {
+        true => step_id.is_some_and(|id| depends_on.iter().any(|dep| dep == id)),
+        false => idx + 1 == total,
+    };
+    ParsedPriorEntry {
+        header,
+        body,
+        is_primary,
+    }
+}
+
+fn compact_step_entry_body(body: &str, max_chars: usize) -> String {
+    let effective_limit = max_chars.max(400);
+    let char_count = body.chars().count();
+    match char_count > effective_limit {
+        false => body.to_string(),
+        true => {
+            let compressed = crate::agent::context_compactor::compress_tool_output_with_limit(
+                "orchestrator_step",
+                body,
+                effective_limit,
+            );
+            let ccr_suffix = match crate::tools::headroom::cache::cache_content(body) {
+                Ok(ccr_id) => {
+                    let _ = crate::tools::headroom::cache::log_compression(
+                        "orchestrator_step",
+                        body.len(),
+                        compressed.len(),
+                        body.len() / 4,
+                        compressed.len() / 4,
+                        "workflow_step",
+                        None,
+                    );
+                    format!(
+                        " [CCR: {ccr_id} — use retrieve_original or search_compressed for full step output]"
+                    )
+                }
+                Err(_) => String::new(),
+            };
+            format!("{compressed}{ccr_suffix}")
+        }
+    }
+}
+
+pub fn format_prior_step_results_with_budget(
+    step: &WorkflowStep,
+    prior_results: &[String],
+    max_prior_chars: usize,
+) -> String {
+    match prior_results.is_empty() {
+        true => "No prior step results.".to_string(),
+        false => {
+            let total = prior_results.len();
+            let parsed: Vec<ParsedPriorEntry<'_>> = prior_results
+                .iter()
+                .enumerate()
+                .map(|(idx, raw)| parse_prior_step_entry(raw, idx, total, &step.depends_on))
+                .collect();
+            let primary_count = parsed.iter().filter(|e| e.is_primary).count().max(1);
+            let secondary_count = total.saturating_sub(primary_count);
+            let effective_budget = max_prior_chars.max(1_200);
+            let (primary_limit, secondary_limit) = match secondary_count == 0 {
+                true => (effective_budget / primary_count, effective_budget),
+                false => (
+                    ((effective_budget * 7) / 10) / primary_count,
+                    (((effective_budget * 3) / 10) / secondary_count).max(400),
+                ),
+            };
+            let has_explicit_deps = !step.depends_on.is_empty() && secondary_count > 0;
+            let render_entry = |entry: &ParsedPriorEntry<'_>| {
+                let limit = match entry.is_primary {
+                    true => primary_limit,
+                    false => secondary_limit,
+                };
+                let compacted = compact_step_entry_body(entry.body, limit);
+                let tag = match (has_explicit_deps, entry.is_primary) {
+                    (true, true) => "[Direct Dependency] ",
+                    (true, false) => "[Ancestor Step] ",
+                    (false, _) => "",
+                };
+                match entry.header {
+                    Some(h) => format!("{tag}{h}: {compacted}"),
+                    None => format!("{tag}{compacted}"),
+                }
+            };
+
+            match has_explicit_deps {
+                false => parsed.iter().map(render_entry).collect::<Vec<_>>().join("\n"),
+                true => {
+                    let mut ordered: Vec<String> = parsed
+                        .iter()
+                        .filter(|e| e.is_primary)
+                        .map(render_entry)
+                        .collect();
+                    ordered.extend(
+                        parsed
+                            .iter()
+                            .filter(|e| !e.is_primary)
+                            .map(render_entry),
+                    );
+                    ordered.join("\n")
+                }
+            }
+        }
+    }
+}
+
 pub fn build_step_prompt(
     step: &WorkflowStep,
     workflow_goal: &str,
     prior_results: &[String],
 ) -> String {
-    let prior = match prior_results.is_empty() {
-        true => "No prior step results.".to_string(),
-        false => prior_results.join("\n"),
-    };
+    build_step_prompt_with_budget(
+        step,
+        workflow_goal,
+        prior_results,
+        DEFAULT_STEP_PRIOR_CONTEXT_BUDGET_CHARS,
+    )
+}
+
+pub fn build_step_prompt_with_budget(
+    step: &WorkflowStep,
+    workflow_goal: &str,
+    prior_results: &[String],
+    max_prior_chars: usize,
+) -> String {
+    let prior = format_prior_step_results_with_budget(step, prior_results, max_prior_chars);
     let policy = crate::grounding::step_execution_policy(workflow_goal, &step.goal, &step.agent);
     let grounding_guidance = match (policy.require_sources, policy.allow_nested_delegation) {
         (true, _) => {
