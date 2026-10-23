@@ -28,6 +28,32 @@ pub struct DelegateProfileTool {
     pub capability_policy: Option<CapabilityPolicy>,
 }
 
+pub fn delegate_profile_parameters_schema() -> Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "goal": {
+                "type": "string",
+                "description": "The specific goal or task for this specialized subagent to accomplish."
+            },
+            "context": {
+                "type": "string",
+                "description": "Additional context or background details required for the task."
+            },
+            "json_schema": {
+                "type": "object",
+                "description": "Optional: A JSON Schema definition that this subagent's final output summary MUST strictly conform to.",
+                "additionalProperties": true
+            },
+            "timeout_secs": {
+                "type": "integer",
+                "description": "Optional timeout in seconds for the subagent execution. Overrides the default tool timeout. Use higher values for complex multi-step tasks and lower values for quick reviews."
+            }
+        },
+        "required": ["goal"]
+    })
+}
+
 #[async_trait::async_trait]
 impl Tool for DelegateProfileTool {
     fn name(&self) -> &str {
@@ -43,28 +69,7 @@ impl Tool for DelegateProfileTool {
     }
 
     fn parameters(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "goal": {
-                    "type": "string",
-                    "description": "The specific goal or task for this specialized subagent to accomplish."
-                },
-                "context": {
-                    "type": "string",
-                    "description": "Additional context or background details required for the task."
-                },
-                "json_schema": {
-                    "type": "object",
-                    "description": "Optional: A JSON Schema definition that this subagent's final output summary MUST strictly conform to."
-                },
-                "timeout_secs": {
-                    "type": "integer",
-                    "description": "Optional timeout in seconds for the subagent execution. Overrides the default tool timeout. Use higher values for complex multi-step tasks and lower values for quick reviews."
-                }
-            },
-            "required": ["goal"]
-        })
+        delegate_profile_parameters_schema()
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {

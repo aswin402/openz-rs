@@ -740,3 +740,62 @@ fn format_tool_description_deduplicates_routing_hints() {
     assert_eq!(formatted.matches("Example:").count(), 1);
 }
 
+#[tokio::test]
+async fn broad_domain_request_preserves_always_visible_sticky_and_explicit_tools() {
+    let config = Config::default();
+    let provider = Arc::new(crate::providers::openai::OpenAIProvider::new(
+        "test".to_string(),
+        "http://localhost".to_string(),
+        "test".to_string(),
+    ));
+    let sessions = SessionManager::new(
+        std::env::temp_dir().join(format!("openz_domain_priority_sessions_{}", uuid::Uuid::new_v4())),
+    );
+    let registry = ToolRegistry::new_with_context(config.clone(), provider.clone(), sessions.clone());
+    crate::cli::tools::register_all_tools(&registry, &config, provider, sessions).unwrap();
+
+    registry.record_tool_used("read_file");
+    registry.request_tool_scope(
+        vec!["opendoc_create_xlsx".to_string()],
+        vec!["media".to_string()],
+    );
+
+    let names = exposed_tool_names(&registry, "continue with the task");
+    assert!(names.contains(&"request_tool_scope".to_string()));
+    assert!(names.contains(&"tool_catalog".to_string()));
+    assert!(names.contains(&"openz_inventory".to_string()));
+    assert!(names.contains(&"read_file".to_string()));
+    assert!(names.contains(&"opendoc_create_xlsx".to_string()));
+}
+
+#[tokio::test]
+async fn dynamic_subagent_tool_schema_includes_json_schema_timeout_and_usage_hints() {
+    let config = Config::default();
+    let provider = Arc::new(crate::providers::openai::OpenAIProvider::new(
+        "test".to_string(),
+        "http://localhost".to_string(),
+        "test".to_string(),
+    ));
+    let sessions = SessionManager::new(
+        std::env::temp_dir().join(format!("openz_subagent_schema_sessions_{}", uuid::Uuid::new_v4())),
+    );
+    let registry = ToolRegistry::new_with_context(config.clone(), provider.clone(), sessions.clone());
+    crate::cli::tools::register_all_tools(&registry, &config, provider, sessions).unwrap();
+
+    let tools = registry.to_openai_format_for_prompt("delegate to coding_agent subagent");
+    let coding_agent = tools
+        .iter()
+        .find(|t| t["function"]["name"].as_str() == Some("coding_agent"))
+        .expect("coding_agent should be exposed for subagent prompt");
+
+    let desc = coding_agent["function"]["description"].as_str().unwrap_or("");
+    assert!(desc.contains("Use when:"));
+    let props = &coding_agent["function"]["parameters"]["properties"];
+    assert!(props.get("goal").is_some());
+    assert!(props.get("context").is_some());
+    assert!(props.get("json_schema").is_some());
+    assert!(props.get("timeout_secs").is_some());
+    assert_eq!(props["json_schema"]["additionalProperties"], serde_json::json!(true));
+}
+
+

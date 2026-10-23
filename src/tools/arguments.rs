@@ -100,21 +100,33 @@ pub fn normalize_tool_args(args: &serde_json::Value) -> serde_json::Value {
                 let should_insert_alias = alias != *key && !new_map.contains_key(&alias);
                 let _ = should_insert_alias.then(|| new_map.insert(alias, normalized_value));
             }
-            let fallback_path = (!new_map.contains_key("path"))
-                .then(|| {
-                    [
-                        "file_path",
-                        "target_file",
-                        "filepath",
-                        "absolute_path",
-                        "directory_path",
-                        "file",
-                    ]
-                    .into_iter()
-                    .find_map(|candidate| new_map.get(candidate).cloned())
-                })
-                .flatten();
-            let _ = fallback_path.map(|val| new_map.insert("path".to_string(), val));
+            fill_from_aliases(
+                &mut new_map,
+                "path",
+                &[
+                    "file_path",
+                    "target_path",
+                    "target_file",
+                    "filepath",
+                    "absolute_path",
+                    "directory_path",
+                    "file",
+                ],
+            );
+            fill_from_aliases(
+                &mut new_map,
+                "file_path",
+                &[
+                    "path",
+                    "target_path",
+                    "target_file",
+                    "filepath",
+                    "absolute_path",
+                    "file",
+                ],
+            );
+            fill_from_aliases(&mut new_map, "query", &["search_query", "q"]);
+            fill_from_aliases(&mut new_map, "url", &["uri", "target_url", "page_url"]);
             serde_json::Value::Object(new_map)
         }
         serde_json::Value::Array(values) => {

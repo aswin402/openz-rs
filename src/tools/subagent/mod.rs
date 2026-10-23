@@ -39,7 +39,7 @@ mod tests;
 
 pub use allowlist::*;
 pub use cancellation_token::CancellationToken;
-pub use delegate_profile::DelegateProfileTool;
+pub use delegate_profile::{delegate_profile_parameters_schema, DelegateProfileTool};
 pub use delegate_task::{cleanup_registered_worktrees, cleanup_stale_resources, DelegateTaskTool};
 pub use evaluator_optimizer::EvaluatorOptimizerLoopTool;
 pub use lifecycle::{

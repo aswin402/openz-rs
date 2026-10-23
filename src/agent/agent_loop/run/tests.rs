@@ -643,3 +643,50 @@ fn sibling_files_share_directory_scope_and_empty_scope_is_suppressed() {
         "content": "# AGENTS.md"
     })));
 }
+
+#[test]
+fn iteration_routing_prompt_evolves_with_assistant_reasoning_tools_and_errors() {
+    let mut extra = serde_json::Map::new();
+    extra.insert(
+        "reasoning_content".to_string(),
+        json!("Now I should inspect the sqlite database with db_inspector and run cargo check"),
+    );
+    let messages = vec![
+        crate::session::Message {
+            role: "user".to_string(),
+            content: "Fix the failing issue".to_string(),
+            timestamp: None,
+            extra: serde_json::Map::new(),
+        },
+        crate::session::Message {
+            role: "assistant".to_string(),
+            content: "Checking the repository layout first.".to_string(),
+            timestamp: None,
+            extra,
+        },
+    ];
+    let tools_used = vec!["read_file".to_string(), "grep_search".to_string()];
+    let turn_errors = vec!["sqlite table missing".to_string()];
+
+    let iter0 = super::turn::build_iteration_routing_prompt(
+        "Fix the failing issue",
+        &messages,
+        &tools_used,
+        &turn_errors,
+        0,
+    );
+    assert_eq!(iter0, "Fix the failing issue");
+
+    let iter1 = super::turn::build_iteration_routing_prompt(
+        "Fix the failing issue",
+        &messages,
+        &tools_used,
+        &turn_errors,
+        1,
+    );
+    assert!(iter1.contains("Fix the failing issue"));
+    assert!(iter1.contains("Checking the repository layout first."));
+    assert!(iter1.contains("db_inspector"));
+    assert!(iter1.contains("grep_search read_file"));
+    assert!(iter1.contains("sqlite table missing"));
+}

@@ -402,6 +402,12 @@ pub fn subagent_tool_metadata(name: &str) -> crate::tools::ToolMetadata {
     metadata.requires_approval = false;
     metadata.priority = 100;
     metadata.recommended_timeout_secs = Some(600);
+    let _ = metadata.when_to_use.is_empty().then(|| {
+        metadata.when_to_use = "Use for delegated specialist tasks and parallel work.";
+    });
+    let _ = metadata.when_not_to_use.is_empty().then(|| {
+        metadata.when_not_to_use = "Avoid for simple single-step local tool calls.";
+    });
     metadata
 }
 

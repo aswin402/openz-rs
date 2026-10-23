@@ -186,3 +186,26 @@ fn string_field_and_list_extractors_coerce_csv_arrays_and_scalars() {
         vec!["alpha".to_string(), "beta".to_string()]
     );
 }
+
+#[test]
+fn normalize_tool_args_cross_fills_path_file_path_query_and_url_aliases() {
+    let from_path = normalize_tool_args(&serde_json::json!({
+        "path": "src/lib.rs",
+        "search_query": "async runtime",
+        "uri": "https://example.com"
+    }));
+    assert_eq!(from_path["path"], "src/lib.rs");
+    assert_eq!(from_path["file_path"], "src/lib.rs");
+    assert_eq!(from_path["query"], "async runtime");
+    assert_eq!(from_path["url"], "https://example.com");
+
+    let from_target_path = normalize_tool_args(&serde_json::json!({
+        "target_path": "src/main.rs",
+        "q": "bm25",
+        "target_url": "https://openz.dev"
+    }));
+    assert_eq!(from_target_path["path"], "src/main.rs");
+    assert_eq!(from_target_path["file_path"], "src/main.rs");
+    assert_eq!(from_target_path["query"], "bm25");
+    assert_eq!(from_target_path["url"], "https://openz.dev");
+}

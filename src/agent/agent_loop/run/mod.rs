@@ -34,7 +34,7 @@ use self::response::normalize_response;
 use self::tool_pipeline::{
     execute_approved_tool, execute_auto_tool_call, prefetch_parallel_safe_batch, ApprovedToolExec,
 };
-use self::turn::{acquire_provider_turn_lock, RunContext};
+use self::turn::{acquire_provider_turn_lock, build_iteration_routing_prompt, RunContext};
 
 fn print_stream_reasoning(
     full_reasoning: &str,
@@ -873,11 +873,18 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             false => {}
         }
 
-        let tools_openai = loop_ref.tools.to_openai_format_for_prompt(ctx.user_content);
+        let routing_prompt = build_iteration_routing_prompt(
+            ctx.user_content,
+            &ctx.messages,
+            &ctx.tools_used,
+            &ctx.turn_errors,
+            run.iterations,
+        );
+        let tools_openai = loop_ref.tools.to_openai_format_for_prompt(&routing_prompt);
         let _ = (config.agents.defaults.show_tool_router_status
             && !crate::agent::style::spinner::is_silent())
         .then(|| {
-            let summary = loop_ref.tools.tool_router_status_line(ctx.user_content);
+            let summary = loop_ref.tools.tool_router_status_line(&routing_prompt);
             crate::tui_println!("{}◎ {}{}", AURA_PURPLE, summary, COLOR_RESET);
         });
 

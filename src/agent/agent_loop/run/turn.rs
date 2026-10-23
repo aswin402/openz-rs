@@ -46,6 +46,56 @@ impl RunContext {
     }
 }
 
+pub(super) fn build_iteration_routing_prompt(
+    user_content: &str,
+    messages: &[crate::session::Message],
+    tools_used: &[String],
+    turn_errors: &[String],
+    iteration: usize,
+) -> String {
+    match iteration == 0 {
+        true => user_content.to_string(),
+        false => {
+            let mut parts = vec![user_content.to_string()];
+            let latest_assistant = messages.iter().rev().find(|msg| msg.role == "assistant");
+            let _ = latest_assistant.map(|msg| {
+                let content_trimmed = msg.content.trim();
+                let _ = (!content_trimmed.is_empty()).then(|| {
+                    parts.push(content_trimmed.chars().take(400).collect::<String>());
+                });
+                let _ = msg
+                    .extra
+                    .get("reasoning_content")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|reasoning| {
+                        parts.push(reasoning.chars().take(400).collect::<String>());
+                    });
+            });
+            let recent_tools: Vec<&str> = tools_used
+                .iter()
+                .rev()
+                .take(6)
+                .map(String::as_str)
+                .collect();
+            let _ = (!recent_tools.is_empty()).then(|| {
+                parts.push(recent_tools.join(" "));
+            });
+            let recent_errors: Vec<String> = turn_errors
+                .iter()
+                .rev()
+                .take(2)
+                .map(|err| err.chars().take(240).collect::<String>())
+                .collect();
+            let _ = (!recent_errors.is_empty()).then(|| {
+                parts.push(recent_errors.join("\n"));
+            });
+            parts.join("\n")
+        }
+    }
+}
+
 fn provider_turn_lock_key(provider: &str, model: &str) -> Option<String> {
     let mode = std::env::var("OPENZ_PROVIDER_TURN_LOCK").ok();
     provider_turn_lock_key_for_mode(provider, model, mode.as_deref())

@@ -152,6 +152,25 @@ async fn test_tool_catalog_bm25_search_and_hot_mount() {
     let mounted = res["mounted_tools"].as_array().unwrap();
     assert!(mounted.iter().any(|v| v.as_str() == Some("read_file")));
 
+    let matched_tools = res["tools"].as_array().unwrap();
+    let read_entry = matched_tools
+        .iter()
+        .find(|t| t["name"].as_str() == Some("read_file"))
+        .expect("read_file should be in search results");
+    assert!(
+        read_entry.get("parameters").is_some(),
+        "Top search matches must automatically include JSON parameter schemas"
+    );
+
+    let alias_res = catalog
+        .call(&serde_json::json!({
+            "name": "grep_search"
+        }))
+        .await
+        .unwrap();
+    let alias_tools = alias_res["tools"].as_array().unwrap();
+    assert!(alias_tools.iter().any(|t| t["name"].as_str() == Some("grep_search")));
+
     // Verify hot-mounting in registry pending_scope:
     let (tools, _) = registry.current_turn_scope();
     assert!(tools.contains(&"read_file".to_string()));

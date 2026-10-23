@@ -277,15 +277,15 @@ impl Tool for ToolCatalogTool {
             None => (None, None),
         };
 
-        let query_str = arguments
-            .get("query")
-            .and_then(|v| v.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
+        let query_str = crate::tools::arguments::extract_trimmed_non_empty_str(
+            arguments,
+            &["query", "search", "tool", "name"],
+        );
         let mount =
             crate::tools::arguments::get_bool_arg(arguments, &["mount"], query_str.is_some());
-        let include_schema =
-            crate::tools::arguments::get_bool_arg(arguments, &["include_schema"], false);
+        let explicit_include_schema =
+            crate::tools::arguments::extract_bool_arg(arguments, &["include_schema"]);
+        let include_schema = explicit_include_schema.unwrap_or(false);
         let only_exposed =
             crate::tools::arguments::get_bool_arg(arguments, &["only_exposed"], false);
         let domain_filter = arguments
@@ -450,7 +450,7 @@ impl Tool for ToolCatalogTool {
             .iter()
             .filter(|entry| entry["exposed_to_model"].as_bool().unwrap_or(false))
             .count();
-        let entries: Vec<Value> = all_entries
+        let mut entries: Vec<Value> = all_entries
             .into_iter()
             .filter(|entry| {
                 let passes_query = query_str.is_none()
@@ -468,6 +468,18 @@ impl Tool for ToolCatalogTool {
                 passes_query && passes_exposed && passes_domain && passes_risk
             })
             .collect();
+
+        (explicit_include_schema.is_none() && query_str.is_some()).then(|| {
+            let static_tools = self.registry.read_tools();
+            for entry in entries.iter_mut().take(8) {
+                let _ = entry["name"]
+                    .as_str()
+                    .and_then(|name| static_tools.get(name))
+                    .map(|tool| {
+                        entry["parameters"] = tool.parameters();
+                    });
+            }
+        });
 
         let mut mounted_tools = batch_mounted_tools;
         let mut mounted_domains = Vec::new();

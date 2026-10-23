@@ -155,6 +155,13 @@ pub(crate) fn static_tool_drift(
 const STICKY_TOOL_TTL_TURNS: u8 = 2;
 const MAX_STICKY_TOOLS: usize = 8;
 
+fn is_pinned_meta_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "tool_catalog" | "openz_inventory" | "request_tool_scope"
+    )
+}
+
 pub(crate) fn format_tool_description(description: &str, metadata: &ToolMetadata) -> String {
     let lower_desc = description.to_ascii_lowercase();
     let mut parts = vec![description.to_string()];
@@ -274,7 +281,7 @@ impl ToolRegistry {
 
     pub fn record_tool_used(&self, requested: &str) {
         let canonical = self.resolve_canonical_name(requested);
-        let should_record = (!canonical.is_empty()) && (!routing::is_core_tool(&canonical));
+        let should_record = (!canonical.is_empty()) && (!is_pinned_meta_tool(&canonical));
         let _ = should_record.then(|| {
             let _ = self.sticky_tools.lock().map(|mut map| {
                 map.insert(canonical, STICKY_TOOL_TTL_TURNS);
@@ -320,7 +327,7 @@ impl ToolRegistry {
             .filter_map(|name| {
                 let canonical = self.resolve_canonical_name(&name);
                 let is_valid = (!canonical.is_empty())
-                    && (!routing::is_core_tool(&canonical))
+                    && (!is_pinned_meta_tool(&canonical))
                     && static_tools.contains_key(&canonical);
                 is_valid.then_some(canonical)
             })
@@ -789,6 +796,8 @@ impl ToolRegistry {
         let intent = crate::agent::agent_loop::intent::classify_turn_intent(prompt);
         let mut scope =
             crate::tools::scope::ToolScopeEngine::default().decide(&intent, max_visible);
+        let always_visible_set: HashSet<String> =
+            routing_cfg.always_visible_tools.iter().cloned().collect();
         scope
             .allowed_names
             .extend(routing_cfg.always_visible_tools);
@@ -812,7 +821,13 @@ impl ToolRegistry {
         }
         let selected_domains: Vec<String> = selected_domain_labels.into_iter().collect();
         let _static_names: HashSet<String> = static_tool_names.into_iter().collect();
-        let static_limit = scope.max_visible_tools;
+        let static_limit = match routing_cfg.enabled {
+            true => scope
+                .max_visible_tools
+                .saturating_add(pending_scope.tools.len())
+                .min(48),
+            false => scope.max_visible_tools,
+        };
 
         let mut entries: Vec<ToolRouteEntry> = static_tools
             .values()
@@ -820,6 +835,7 @@ impl ToolRegistry {
             .map(|tool| {
                 let metadata = tool.metadata();
                 let bm25 = bm25_scores.get(tool.name()).copied().unwrap_or(0.0);
+                let is_always_visible = always_visible_set.contains(tool.name());
                 let is_sticky = sticky_set.contains(tool.name());
                 let in_scope = !routing_cfg.enabled
                     || scope.allowed_names.contains(tool.name())
@@ -832,13 +848,22 @@ impl ToolRegistry {
                     &selected_domains_set,
                     bm25,
                 );
-                let explicitly_requested = explicit_names.contains(tool.name())
-                    || pending_scope.domains.contains(tool.metadata().domain);
-                let scope_bonus = match (explicitly_requested, is_sticky, in_scope) {
-                    (true, _, _) => 10_000,
-                    (false, true, _) => 250,
-                    (false, false, true) => 100,
-                    (false, false, false) => 0,
+                let direct_tool_requested = explicit_names.contains(tool.name());
+                let domain_requested = pending_scope.domains.contains(tool.metadata().domain);
+                let explicitly_requested = direct_tool_requested || domain_requested;
+                let scope_bonus = match (
+                    is_always_visible,
+                    direct_tool_requested,
+                    is_sticky,
+                    domain_requested,
+                    in_scope,
+                ) {
+                    (true, _, _, _, _) => 30_000,
+                    (false, true, _, _, _) => 20_000,
+                    (false, false, true, _, _) => 12_000,
+                    (false, false, false, true, _) => 10_000,
+                    (false, false, false, false, true) => 100,
+                    (false, false, false, false, false) => 0,
                 };
                 let selected_score = base_score.saturating_add(scope_bonus);
                 let matched_prompt_domain = selected_domains_set.contains(metadata.domain);
@@ -1099,26 +1124,15 @@ impl ToolRegistry {
                     .iter()
                     .filter(|tok| prompt_tokens.contains(*tok))
                     .count() as i32;
+                let profile_metadata =
+                    crate::tools::subagent::subagent_tool_metadata(&profile.name);
                 let score = direct_bonus + (token_overlap * 50);
                 let schema = serde_json::json!({
                     "type": "function",
                     "function": {
                         "name": profile.name,
-                        "description": profile.description,
-                        "parameters": serde_json::json!({
-                            "type": "object",
-                            "properties": {
-                                "goal": {
-                                    "type": "string",
-                                    "description": "The specific goal or task for this specialized subagent to accomplish."
-                                },
-                                "context": {
-                                    "type": "string",
-                                    "description": "Additional context or background details required for the task."
-                                }
-                            },
-                            "required": ["goal"]
-                        })
+                        "description": format_tool_description(&profile.description, &profile_metadata),
+                        "parameters": crate::tools::subagent::delegate_profile_parameters_schema()
                     }
                 });
                 (score, profile.name, schema)
