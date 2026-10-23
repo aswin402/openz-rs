@@ -1,5 +1,6 @@
 use crate::config::provider_catalog::{
-    environment_keys_for_provider, keyword_provider_candidates, provider_prefix_for_model,
+    environment_keys_for_provider, find_provider, keyword_provider_candidates,
+    provider_prefix_for_model,
 };
 use crate::config::schema::Config;
 use crate::providers::{anthropic::AnthropicProvider, openai::OpenAIProvider, LLMProvider};
@@ -14,8 +15,6 @@ pub struct ResolvedProvider {
     pub model: String,
     pub instance: Arc<dyn LLMProvider>,
 }
-
-const NO_KEY_REQUIRED_PROVIDERS: &[&str] = &["ollama", "ollama_local", "mivi"];
 
 const FALLBACK_MODEL_RULES: &[(&str, &[(&str, &str)], &str)] = &[
     (
@@ -36,34 +35,8 @@ const FALLBACK_MODEL_RULES: &[(&str, &[(&str, &str)], &str)] = &[
     ),
 ];
 
-const STRIPPABLE_MODEL_PREFIXES: &[&str] = &[
-    "openrouter/",
-    "ollama_local/",
-    "ollama/",
-    "anthropic/",
-    "openai/",
-    "mivi/",
-    "deepseek/",
-    "groq/",
-    "google_ai_studio/",
-    "google-ai-studio/",
-    "opencode_zen/",
-    "opencode-zen/",
-    "z.ai/",
-    "z_ai/",
-    "nvidia/",
-    "minimax/",
-    "mistral/",
-    "cerebres/",
-    "cerebras/",
-    "cohere/",
-    "llm7/",
-    "sambanova/",
-    "huggingface/",
-];
-
 fn provider_allows_empty_key(config: &Config, provider_name: &str) -> bool {
-    NO_KEY_REQUIRED_PROVIDERS.contains(&provider_name)
+    find_provider(provider_name).is_some_and(|descriptor| descriptor.local)
         || config.custom_provider_allows_empty_key(provider_name)
 }
 
@@ -118,14 +91,6 @@ fn auto_resolve_provider_and_model<'a>(config: &Config, model: &'a str) -> (Stri
 
     match model_lower == "mivi" {
         true => return ("mivi".to_string(), model),
-        false => {}
-    }
-    match model_lower.starts_with("mivi/") {
-        true => return ("mivi".to_string(), &model["mivi/".len()..]),
-        false => {}
-    }
-    match model_lower.starts_with("openrouter/") {
-        true => return ("openrouter".to_string(), &model["openrouter/".len()..]),
         false => {}
     }
     match model_lower.ends_with(":free")
@@ -203,17 +168,15 @@ fn normalize_provider_model_name(
     final_model: &str,
 ) -> String {
     let mut clean_model_str = final_model.to_string();
-    let clean_lower = clean_model_str.to_lowercase();
-
-    for prefix in STRIPPABLE_MODEL_PREFIXES {
-        let skip = final_provider_name == "openrouter" && *prefix != "openrouter/";
-        match !skip && clean_lower.starts_with(prefix) {
-            true => {
-                clean_model_str = clean_model_str[prefix.len()..].to_string();
-                break;
+    match provider_prefix_for_model(&clean_model_str) {
+        Some((_, prefix)) => {
+            let skip = final_provider_name == "openrouter" && prefix != "openrouter/";
+            match !skip {
+                true => clean_model_str = clean_model_str[prefix.len()..].to_string(),
+                false => {}
             }
-            false => {}
         }
+        None => {}
     }
 
     match config.is_custom_provider(final_provider_name) {

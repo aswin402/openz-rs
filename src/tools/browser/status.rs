@@ -108,13 +108,19 @@ fn status_value_to_backend_status(value: &Value, missing_text: &[&str]) -> Brows
         .iter()
         .any(|needle| error_or_message.contains(needle));
 
-    match (status, is_unhealthy, is_missing, !error_or_message.is_empty()) {
-        ("running", false, _, _) => BrowserBackendStatus::Running,
-        ("unhealthy", _, _, _) | ("running", true, _, _) => BrowserBackendStatus::Broken,
-        (_, _, true, _) => BrowserBackendStatus::Missing,
-        (_, _, false, true) => BrowserBackendStatus::Broken,
-        _ => BrowserBackendStatus::Stopped,
-    }
+    let rules: [(bool, BrowserBackendStatus); 4] = [
+        (status == "running" && !is_unhealthy, BrowserBackendStatus::Running),
+        (
+            status == "unhealthy" || (status == "running" && is_unhealthy),
+            BrowserBackendStatus::Broken,
+        ),
+        (is_missing, BrowserBackendStatus::Missing),
+        (!error_or_message.is_empty(), BrowserBackendStatus::Broken),
+    ];
+    rules
+        .into_iter()
+        .find_map(|(matched, state)| matched.then_some(state))
+        .unwrap_or(BrowserBackendStatus::Stopped)
 }
 
 pub struct InspectBrowsersTool;

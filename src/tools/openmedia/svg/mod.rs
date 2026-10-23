@@ -313,16 +313,25 @@ impl<'a> GroupBuilder<'a> {
     }
 }
 
+pub(crate) fn push_svg_gradient_stop(
+    svg: &mut String,
+    offset: &str,
+    color: &str,
+    opacity: Option<&str>,
+) {
+    let opacity_attr = opacity
+        .map(|o| format!(" stop-opacity=\"{}\"", o))
+        .unwrap_or_default();
+    svg.push_str(&format!(
+        "      <stop offset=\"{}\" stop-color=\"{}\"{} />\n",
+        offset, color, opacity_attr
+    ));
+}
+
 fn append_gradient_stops(svg: &mut String, stops: &[GradientStop]) {
     for stop in stops {
-        let opacity_attr = stop
-            .opacity
-            .map(|o| format!(" stop-opacity=\"{}\"", o))
-            .unwrap_or_default();
-        svg.push_str(&format!(
-            "      <stop offset=\"{}\" stop-color=\"{}\"{} />\n",
-            stop.offset, stop.color, opacity_attr
-        ));
+        let opacity_str = stop.opacity.map(|o| o.to_string());
+        push_svg_gradient_stop(svg, &stop.offset, &stop.color, opacity_str.as_deref());
     }
 }
 

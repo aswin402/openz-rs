@@ -519,10 +519,11 @@ fn append_gradient_stops(defs_content: &mut String, def: &Value) {
         let offset = stop.get("offset").and_then(|v| v.as_str()).unwrap_or("0%");
         let color = stop.get("color").and_then(|v| v.as_str()).unwrap_or("#000");
         let opacity = stop.get("opacity").and_then(|v| v.as_str()).unwrap_or("1");
-        let _ = writeln!(
+        crate::tools::openmedia::svg::push_svg_gradient_stop(
             defs_content,
-            "      <stop offset=\"{}\" style=\"stop-color:{};stop-opacity:{}\"/>",
-            offset, color, opacity
+            offset,
+            color,
+            Some(opacity),
         );
     }
 }

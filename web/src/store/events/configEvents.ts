@@ -19,7 +19,68 @@ function mergeProviders(
   return Array.from(byName.values());
 }
 
-export function registerConfigEvents({ set, get }: StoreEventContext) {
+function applyModelPrefsPatch(
+  set: StoreEventContext['set'],
+  payload: { recent_models?: unknown; favorite_models?: unknown },
+) {
+  if (Array.isArray(payload.recent_models)) {
+    set({ recentModels: payload.recent_models });
+  }
+  if (Array.isArray(payload.favorite_models)) {
+    set({ favoriteModels: payload.favorite_models });
+  }
+}
+
+function applyCapabilitiesAndDefaultsPatch(
+  { set, get }: StoreEventContext,
+  payload: {
+    capabilities?: unknown;
+    defaults?: {
+      model?: string;
+      provider?: string;
+      caveman_mode?: boolean;
+      streaming?: boolean;
+      max_tokens?: number;
+      temperature?: number;
+    };
+  },
+) {
+  if (payload.capabilities && typeof payload.capabilities === 'object') {
+    set({ capabilities: normalizeWebUiCapabilities(payload.capabilities as Record<string, unknown>) });
+  }
+  if (payload.defaults) {
+    set({
+      settings: payload.defaults as ReturnType<typeof get>['settings'],
+      activeModel: payload.defaults.model || get().activeModel,
+      activeProvider: payload.defaults.provider || get().activeProvider,
+      cavemanMode: !!payload.defaults.caveman_mode,
+      streamingMode: payload.defaults.streaming !== false,
+    });
+  }
+}
+
+function emitWorkspaceUpdateNotice(
+  set: StoreEventContext['set'],
+  scope: 'skills' | 'agents',
+  labelPrefix: string,
+  fallbackName: string,
+  payload: { status?: unknown; name?: unknown },
+) {
+  const status = typeof payload.status === 'string' ? payload.status : 'updated';
+  const name = typeof payload.name === 'string' ? payload.name : fallbackName;
+  set({
+    workspaceNotice: {
+      scope,
+      type: 'success',
+      message: `${labelPrefix} ${name} ${status}.`,
+      timestamp: Date.now(),
+    },
+  });
+}
+
+export function registerConfigEvents(ctx: StoreEventContext) {
+  const { set, get } = ctx;
+
   wsService.on('models_list', (payload) => {
     if (Array.isArray(payload.providers)) {
       set({
@@ -27,12 +88,7 @@ export function registerConfigEvents({ set, get }: StoreEventContext) {
         loadingModelProvider: null,
       });
     }
-    if (Array.isArray(payload.recent_models)) {
-      set({ recentModels: payload.recent_models });
-    }
-    if (Array.isArray(payload.favorite_models)) {
-      set({ favoriteModels: payload.favorite_models });
-    }
+    applyModelPrefsPatch(set, payload);
     if (payload.active_model) {
       set({ activeModel: payload.active_model });
     }
@@ -46,27 +102,11 @@ export function registerConfigEvents({ set, get }: StoreEventContext) {
   });
 
   wsService.on('model_prefs', (payload) => {
-    if (Array.isArray(payload.recent_models)) {
-      set({ recentModels: payload.recent_models });
-    }
-    if (Array.isArray(payload.favorite_models)) {
-      set({ favoriteModels: payload.favorite_models });
-    }
+    applyModelPrefsPatch(set, payload);
   });
 
   wsService.on('config_data', (payload) => {
-    if (payload.capabilities && typeof payload.capabilities === 'object') {
-      set({ capabilities: normalizeWebUiCapabilities(payload.capabilities) });
-    }
-    if (payload.defaults) {
-      set({
-        settings: payload.defaults,
-        activeModel: payload.defaults.model || get().activeModel,
-        activeProvider: payload.defaults.provider || get().activeProvider,
-        cavemanMode: !!payload.defaults.caveman_mode,
-        streamingMode: payload.defaults.streaming !== false,
-      });
-    }
+    applyCapabilitiesAndDefaultsPatch(ctx, payload);
     if (payload.providers) {
       set({ providersConfig: payload.providers });
     }
@@ -92,32 +132,26 @@ export function registerConfigEvents({ set, get }: StoreEventContext) {
     if (Array.isArray(payload.skills)) {
       set({ skills: payload.skills });
     }
-    const status = typeof payload.status === 'string' ? payload.status : 'updated';
-    const name = typeof payload.name === 'string' ? payload.name : 'skills';
-    set({ workspaceNotice: { scope: 'skills', type: 'success', message: `Skill ${name} ${status}.`, timestamp: Date.now() } });
+    emitWorkspaceUpdateNotice(set, 'skills', 'Skill', 'skills', payload);
   });
 
   wsService.on('subagents_updated', (payload) => {
     if (Array.isArray(payload.subagents)) {
       set({ subagents: payload.subagents });
     }
-    const status = typeof payload.status === 'string' ? payload.status : 'updated';
-    const name = typeof payload.name === 'string' ? payload.name : 'subagent';
-    set({ workspaceNotice: { scope: 'agents', type: 'success', message: `Subagent ${name} ${status}.`, timestamp: Date.now() } });
+    emitWorkspaceUpdateNotice(set, 'agents', 'Subagent', 'subagent', payload);
   });
 
   wsService.on('config_updated', (payload) => {
-    if (payload.capabilities && typeof payload.capabilities === 'object') {
-      set({ capabilities: normalizeWebUiCapabilities(payload.capabilities) });
-    }
+    applyCapabilitiesAndDefaultsPatch(ctx, payload);
     if (payload.defaults) {
       set({
-        settings: payload.defaults,
-        activeModel: payload.defaults.model || get().activeModel,
-        activeProvider: payload.defaults.provider || get().activeProvider,
-        cavemanMode: !!payload.defaults.caveman_mode,
-        streamingMode: payload.defaults.streaming !== false,
-        workspaceNotice: { scope: 'settings', type: 'success', message: 'Settings saved and refreshed from gateway.', timestamp: Date.now() },
+        workspaceNotice: {
+          scope: 'settings',
+          type: 'success',
+          message: 'Settings saved and refreshed from gateway.',
+          timestamp: Date.now(),
+        },
       });
     }
   });

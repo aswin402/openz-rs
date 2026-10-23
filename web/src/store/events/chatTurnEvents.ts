@@ -69,7 +69,50 @@ function attachActivityNotice(
   });
 }
 
-export function registerChatTurnEvents({ set, get }: StoreEventContext) {
+function appendStreamingAssistantDelta(
+  { set, get }: StoreEventContext,
+  payload: { chat_id?: string; turn_id?: string; content?: string },
+  field: 'content' | 'reasoningContent',
+) {
+  const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
+  if (!isTurnEventCurrent({ chat_id: chatId, turn_id: payload.turn_id }, get().activeTurnIds)) return;
+  const chunk = payload.content || '';
+  const chatMessages = get().messages[chatId] || [];
+  const lastMsg = chatMessages[chatMessages.length - 1];
+
+  if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
+    const updatedMsg: OpenZMessage =
+      field === 'content'
+        ? { ...lastMsg, content: lastMsg.content + chunk }
+        : { ...lastMsg, reasoningContent: (lastMsg.reasoningContent || '') + chunk };
+    set({
+      messages: {
+        ...get().messages,
+        [chatId]: [...chatMessages.slice(0, -1), updatedMsg],
+      },
+      ...(field === 'content' ? { isStreaming: true } : {}),
+    });
+    return;
+  }
+
+  const newMsg: OpenZMessage = {
+    id: newMsgId('msg'),
+    role: 'assistant',
+    content: field === 'content' ? chunk : '',
+    ...(field === 'reasoningContent' ? { reasoningContent: chunk } : {}),
+    timestamp: Date.now(),
+    isStreaming: true,
+    model: get().activeModel || undefined,
+  };
+  set({
+    messages: { ...get().messages, [chatId]: [...chatMessages, newMsg] },
+    isStreaming: true,
+  });
+}
+
+export function registerChatTurnEvents(ctx: StoreEventContext) {
+  const { set, get } = ctx;
+
   wsService.on('turn_started', (payload) => {
     const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
     const turnId = asString(payload.turn_id)?.trim();
@@ -83,71 +126,11 @@ export function registerChatTurnEvents({ set, get }: StoreEventContext) {
   });
 
   wsService.on('delta', (payload) => {
-    const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
-    if (!isTurnEventCurrent({ chat_id: chatId, turn_id: payload.turn_id }, get().activeTurnIds)) return;
-    const content = payload.content || '';
-    const chatMessages = get().messages[chatId] || [];
-    const lastMsg = chatMessages[chatMessages.length - 1];
-
-    if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
-      const updatedMsg: OpenZMessage = { ...lastMsg, content: lastMsg.content + content };
-      set({
-        messages: {
-          ...get().messages,
-          [chatId]: [...chatMessages.slice(0, -1), updatedMsg],
-        },
-        isStreaming: true,
-      });
-    } else {
-      const newMsg: OpenZMessage = {
-        id: newMsgId('msg'),
-        role: 'assistant',
-        content,
-        timestamp: Date.now(),
-        isStreaming: true,
-        model: get().activeModel || undefined,
-      };
-      set({
-        messages: { ...get().messages, [chatId]: [...chatMessages, newMsg] },
-        isStreaming: true,
-      });
-    }
+    appendStreamingAssistantDelta(ctx, payload, 'content');
   });
 
   wsService.on('reasoning_delta', (payload) => {
-    const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
-    if (!isTurnEventCurrent({ chat_id: chatId, turn_id: payload.turn_id }, get().activeTurnIds)) return;
-    const content = payload.content || '';
-    const chatMessages = get().messages[chatId] || [];
-    const lastMsg = chatMessages[chatMessages.length - 1];
-
-    if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
-      const updatedMsg: OpenZMessage = {
-        ...lastMsg,
-        reasoningContent: (lastMsg.reasoningContent || '') + content,
-      };
-      set({
-        messages: {
-          ...get().messages,
-          [chatId]: [...chatMessages.slice(0, -1), updatedMsg],
-        },
-      });
-    } else {
-      // Reasoning can arrive before any content delta — open a streaming message.
-      const newMsg: OpenZMessage = {
-        id: newMsgId('msg'),
-        role: 'assistant',
-        content: '',
-        timestamp: Date.now(),
-        isStreaming: true,
-        reasoningContent: content,
-        model: get().activeModel || undefined,
-      };
-      set({
-        messages: { ...get().messages, [chatId]: [...chatMessages, newMsg] },
-        isStreaming: true,
-      });
-    }
+    appendStreamingAssistantDelta(ctx, payload, 'reasoningContent');
   });
 
   wsService.on('activity_notice', (payload) => {

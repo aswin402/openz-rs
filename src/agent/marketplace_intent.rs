@@ -92,12 +92,15 @@ pub fn classify_marketplace_intent(text: &str) -> MarketplaceIntent {
     let ambiguous = mentions_agent_marketplace(&lower)
         && contains_any(&lower, AMBIGUOUS_MARKETPLACE_KEYWORDS);
 
-    match (buyer, seller, ambiguous) {
-        (true, false, _) => MarketplaceIntent::Buyer,
-        (false, true, _) => MarketplaceIntent::Seller,
-        (_, _, true) => MarketplaceIntent::AmbiguousBuySell,
-        _ => MarketplaceIntent::NotMarketplace,
-    }
+    let rules: [(bool, MarketplaceIntent); 3] = [
+        (buyer && !seller, MarketplaceIntent::Buyer),
+        (seller && !buyer, MarketplaceIntent::Seller),
+        (ambiguous, MarketplaceIntent::AmbiguousBuySell),
+    ];
+    rules
+        .into_iter()
+        .find_map(|(matched, intent)| matched.then_some(intent))
+        .unwrap_or(MarketplaceIntent::NotMarketplace)
 }
 
 fn is_engineering_or_explanatory_prompt(lower: &str) -> bool {
