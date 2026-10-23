@@ -20,6 +20,27 @@ fn request_tool_scope_returns_structured_scope_request() {
 }
 
 #[test]
+fn request_tool_scope_accepts_pack_aliases_and_expands_domains() {
+    let registry = crate::tools::ToolRegistry::new();
+    let tool = RequestToolScopeTool::new(registry.clone());
+    let result = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(tool.call(&serde_json::json!({
+            "rationale": "switch to web research and repo inspection",
+            "packs": "web_research, repo_read",
+            "tools": ["web_fetch"]
+        })))
+        .unwrap();
+
+    assert_eq!(result["status"], "scope_request_recorded");
+    let (tools, domains) = registry.current_turn_scope();
+    assert!(tools.contains(&"web_fetch".to_string()));
+    assert!(domains.contains(&"web".to_string()));
+    assert!(domains.contains(&"filesystem".to_string()));
+    assert!(domains.contains(&"code".to_string()));
+}
+
+#[test]
 fn test_optimize_tool_scope() {
     let registry = crate::tools::ToolRegistry::new();
     struct DummyTool;

@@ -305,4 +305,46 @@ fn test_modernized_subagent_native_tools_allowlists() {
     assert!(video_tools.contains(&"html_to_video"));
     assert!(video_tools.contains(&"create_animated_svg"));
     assert!(video_tools.contains(&"tool_catalog"));
+
+    let memory_tools =
+        static_allowlist_for_subagent("memory_manager").expect("memory_manager allowlist");
+    assert!(memory_tools.contains(&"store_memory"));
+    assert!(memory_tools.contains(&"recall_memory"));
+    assert!(memory_tools.contains(&"proactive_recall"));
+    assert!(memory_tools.contains(&"create_entities"));
+    assert!(memory_tools.contains(&"search_nodes"));
+
+    let self_imp_tools =
+        static_allowlist_for_subagent("self_improvement").expect("self_improvement allowlist");
+    assert!(self_imp_tools.contains(&"curate_skill"));
+    assert!(self_imp_tools.contains(&"workflow_memory"));
+
+    let sop_tools = static_allowlist_for_subagent("sop_designer").expect("sop_designer allowlist");
+    assert!(sop_tools.contains(&"trigger_sop"));
+    assert!(sop_tools.contains(&"orchestrate_workflow"));
+
+    let comm_tools = static_allowlist_for_subagent("communication_manager")
+        .expect("communication_manager allowlist");
+    assert!(comm_tools.contains(&"telegram_send_message"));
+    assert!(comm_tools.contains(&"desktop_notify"));
+}
+
+#[test]
+fn test_filter_tools_retains_universal_ccr_and_scope_tools() {
+    let tools: Vec<Arc<dyn Tool>> = vec![
+        Arc::new(DummyTool("read_file")),
+        Arc::new(DummyTool("request_tool_scope")),
+        Arc::new(DummyTool("retrieve_original")),
+        Arc::new(DummyTool("search_cache")),
+        Arc::new(DummyTool("scope_context")),
+        Arc::new(DummyTool("exec_command")),
+    ];
+
+    let filtered = filter_tools_for_subagent("planner", &tools);
+    assert!(filtered.iter().any(|t| t.name() == "read_file"));
+    assert!(filtered.iter().any(|t| t.name() == "request_tool_scope"));
+    assert!(filtered.iter().any(|t| t.name() == "retrieve_original"));
+    assert!(filtered.iter().any(|t| t.name() == "search_cache"));
+    assert!(filtered.iter().any(|t| t.name() == "scope_context"));
+    assert!(!filtered.iter().any(|t| t.name() == "exec_command"));
 }

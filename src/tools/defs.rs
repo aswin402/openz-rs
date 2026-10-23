@@ -404,7 +404,7 @@ pub static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
         name: "delegate_task",
         presentation_name: "Delegate Task",
         domain: "subagent",
-        risk: ToolRisk::Low,
+        risk: ToolRisk::Medium,
         packs: &["subagent"],
         writes_disk: false,
         uses_network: false,

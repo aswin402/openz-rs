@@ -321,8 +321,14 @@ const DOMAIN_INFERENCE_RULES: &[DomainRule] = &[
     ("subagent", |name| {
         matches!(
             name,
-            "delegate_task" | "parallel_research" | "evaluator_optimizer_loop"
+            "delegate_task"
+                | "parallel_research"
+                | "evaluator_optimizer_loop"
+                | "orchestrate_workflow"
+                | "trigger_sop"
         ) || name.contains("subagent")
+            || name.contains("orchestrat")
+            || name.ends_with("_sop")
     }),
     ("filesystem", |name| {
         matches!(
@@ -334,6 +340,8 @@ const DOMAIN_INFERENCE_RULES: &[DomainRule] = &[
                 | "list_dir"
                 | "find_files"
                 | "zenflow_edit"
+                | "file_watcher"
+                | "index_notes"
         )
     }),
     ("shell", |name| {
@@ -349,6 +357,7 @@ const DOMAIN_INFERENCE_RULES: &[DomainRule] = &[
             || name.contains("outline")
             || name.contains("ast_grep")
             || name.contains("rust_docs")
+            || matches!(name, "onpkg" | "js_format" | "compile_template")
     }),
     ("web", |name| {
         name.starts_with("web")
@@ -356,6 +365,7 @@ const DOMAIN_INFERENCE_RULES: &[DomainRule] = &[
             || name.contains("crawl")
             || name.starts_with("searchxyz")
             || name.contains("social_search")
+            || name == "check_port"
     }),
     ("memory", |name| {
         name.contains("memory")
@@ -364,6 +374,15 @@ const DOMAIN_INFERENCE_RULES: &[DomainRule] = &[
             || name.contains("observations")
             || name.contains("graph")
             || name.contains("recall")
+            || matches!(
+                name,
+                "db_inspector"
+                    | "db_write"
+                    | "knowledge_source"
+                    | "research_brief"
+                    | "archive_research"
+                    | "search_research"
+            )
     }),
     ("context", |name| {
         name.contains("headroom")
@@ -391,6 +410,18 @@ const DOMAIN_INFERENCE_RULES: &[DomainRule] = &[
             || name.contains("backup")
             || name.contains("tool_catalog")
             || name.contains("tool_scope")
+            || name.starts_with("telegram_send")
+            || matches!(
+                name,
+                "manage_tasks"
+                    | "get_logs"
+                    | "manage_whitelist"
+                    | "device_inventory"
+                    | "system_info"
+                    | "clipboard"
+                    | "open"
+                    | "send_remote_input"
+            )
     }),
     ("mcp", |name| name.starts_with("mcp") || name.contains("mcp")),
 ];

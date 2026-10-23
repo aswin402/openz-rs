@@ -39,10 +39,26 @@ fn low_disk_recovery_allows_only_safe_cleanup_actions() {
     ));
     assert!(is_low_disk_recovery_tool(
         "manage_sessions",
+        &serde_json::json!({ "command": "cleanup" })
+    ));
+    assert!(is_low_disk_recovery_tool(
+        "manage_sessions",
+        &serde_json::json!({ "action": "verify_chain" })
+    ));
+    assert!(is_low_disk_recovery_tool(
+        "manage_sessions",
         &serde_json::json!({ "action": "list" })
     ));
     assert!(is_low_disk_recovery_tool(
         "clear_cache",
+        &serde_json::json!({})
+    ));
+    assert!(is_low_disk_recovery_tool(
+        "diagnose_system",
+        &serde_json::json!({})
+    ));
+    assert!(is_low_disk_recovery_tool(
+        "openz_inventory",
         &serde_json::json!({})
     ));
     assert!(!is_low_disk_recovery_tool(

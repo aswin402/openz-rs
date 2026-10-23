@@ -104,7 +104,9 @@ pub fn evaluate_artifact_write(
 }
 
 pub fn ensure_artifact_write_allowed(action: &str) -> anyhow::Result<()> {
-    let defaults = AgentDefaults::default();
+    let defaults = crate::config::loader::load_config()
+        .map(|config| config.agents.defaults)
+        .unwrap_or_default();
     let runtime = RuntimeResourceSnapshot::current();
     match evaluate_artifact_write(action, defaults.min_free_disk_gb, &runtime) {
         ToolResourceDecision::Allow | ToolResourceDecision::RequireApproval { .. } => Ok(()),
@@ -116,12 +118,29 @@ pub fn ensure_artifact_write_allowed(action: &str) -> anyhow::Result<()> {
 }
 
 pub fn is_low_disk_recovery_tool(tool_name: &str, arguments: &serde_json::Value) -> bool {
-    match tool_name {
+    let canonical = super::canonical_tool_name(tool_name);
+    let action = ["action", "command", "operation", "mode"]
+        .into_iter()
+        .find_map(|key| arguments.get(key).and_then(|v| v.as_str()))
+        .map(|s| s.trim().to_ascii_lowercase());
+    match canonical.as_str() {
         "manage_sessions" => matches!(
-            arguments.get("action").and_then(|v| v.as_str()),
-            Some("list" | "prune")
+            action.as_deref(),
+            Some(
+                "list"
+                    | "ls"
+                    | "prune"
+                    | "clean"
+                    | "cleanup"
+                    | "gc"
+                    | "purge"
+                    | "audit"
+                    | "verify_chain"
+                    | "check_integrity"
+                    | "repair"
+            )
         ),
-        "cache_stats" | "clear_cache" => true,
+        "cache_stats" | "clear_cache" | "diagnose_system" | "openz_inventory" => true,
         _ => false,
     }
 }

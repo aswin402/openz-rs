@@ -14,8 +14,15 @@ pub fn static_allowlist_for_subagent(subagent_name: &str) -> Option<&'static [&'
             "list_dir",
             "find_files",
             "code_outline",
+            "grep_search",
+            "ast_grep",
             "parallel_research",
             "evaluator_optimizer_loop",
+            "orchestrate_workflow",
+            "sequentialthinking",
+            "analyze_graph",
+            "summarize_reasoning",
+            "reasoning_templates",
             "tool_catalog",
         ]),
         "researcher" => Some(&[
@@ -137,6 +144,9 @@ pub fn static_allowlist_for_subagent(subagent_name: &str) -> Option<&'static [&'
             "read_file",
             "write_file",
             "list_dir",
+            "trigger_sop",
+            "orchestrate_workflow",
+            "workflow_memory",
             "tool_catalog",
         ]),
         "api_integrator" => Some(&[
@@ -159,6 +169,10 @@ pub fn static_allowlist_for_subagent(subagent_name: &str) -> Option<&'static [&'
             "read_file",
             "list_dir",
             "check_port",
+            "telegram_send_message",
+            "telegram_send_document",
+            "desktop_notify",
+            "manage_whitelist",
             "tool_catalog",
         ]),
         "document_compiler" => Some(&[
@@ -301,15 +315,71 @@ pub fn static_allowlist_for_subagent(subagent_name: &str) -> Option<&'static [&'
             "replace_lines",
             "tool_catalog",
         ]),
-        "memory_manager" | "self_improvement" | "skill_improvement" => {
-            Some(&[
-                "read_file",
-                "write_file",
-                "list_dir",
-                "find_files",
-                "tool_catalog",
-            ])
-        }
+        "memory_manager" => Some(&[
+            "read_file",
+            "write_file",
+            "list_dir",
+            "find_files",
+            "store_memory",
+            "recall_memory",
+            "clear_memory",
+            "delete_memory",
+            "update_memory",
+            "archive_research",
+            "search_research",
+            "knowledge_source",
+            "research_brief",
+            "workflow_memory",
+            "set_working_memory",
+            "get_working_memory",
+            "evict_expired_working_memory",
+            "promote_working_memory",
+            "smart_store",
+            "extract_and_store_facts",
+            "proactive_recall",
+            "invalidate_fact",
+            "forget_memory",
+            "query_fact_history",
+            "query_as_of",
+            "search_text",
+            "hybrid_search",
+            "memory_stats",
+            "compact_memories",
+            "create_entities",
+            "create_relations",
+            "add_observations",
+            "delete_entities",
+            "delete_observations",
+            "delete_relations",
+            "read_graph",
+            "search_nodes",
+            "open_nodes",
+            "traverse_graph",
+            "find_path",
+            "analyze_graph_communities",
+            "detect_and_resolve_conflicts",
+            "tool_catalog",
+        ]),
+        "self_improvement" | "skill_improvement" => Some(&[
+            "read_file",
+            "write_file",
+            "list_dir",
+            "find_files",
+            "curate_skill",
+            "workflow_memory",
+            "store_memory",
+            "recall_memory",
+            "proactive_recall",
+            "smart_store",
+            "log_execution_episode",
+            "log_reflection",
+            "retrieve_episodic_reflections",
+            "record_tool_performance",
+            "query_tool_performance",
+            "openz_inventory",
+            "diagnose_system",
+            "tool_catalog",
+        ]),
         "openz_maintainer" => Some(&[
             "read_file",
             "write_file",
@@ -341,6 +411,9 @@ pub fn static_allowlist_for_subagent(subagent_name: &str) -> Option<&'static [&'
             "list_dir",
             "exec_command",
             "cargo_manager",
+            "curate_skill",
+            "workflow_memory",
+            "openz_inventory",
             "tool_catalog",
         ]),
         "documentation_agent" => Some(&[
@@ -391,6 +464,17 @@ pub fn all_static_subagent_allowlist_tools() -> Vec<&'static str> {
     out
 }
 
+fn is_universal_subagent_meta_tool(tool_name: &str) -> bool {
+    matches!(
+        crate::tools::canonical_tool_name(tool_name).as_str(),
+        "tool_catalog"
+            | "request_tool_scope"
+            | "retrieve_original"
+            | "search_cache"
+            | "scope_context"
+    )
+}
+
 /// Filters a slice of tools for a specialized subagent profile.
 ///
 /// Precedence:
@@ -398,7 +482,7 @@ pub fn all_static_subagent_allowlist_tools() -> Vec<&'static str> {
 /// 2. If the profile configures `"domains"` or `"allowed_domains"` in its extra metadata, filters by matching domain names.
 /// 3. Otherwise, applies the built-in `static_allowlist_for_subagent(&profile.name)`.
 /// 4. If none matches (unrestricted custom subagent), allows all parent tools except `send_remote_input`.
-/// 5. Automatically retains `tool_catalog` (if present in parent tools) so any subagent can discover and mount tools dynamically.
+/// 5. Automatically retains universal meta/CCR tools (`tool_catalog`, `request_tool_scope`, `retrieve_original`, `search_cache`, `scope_context`) so any subagent can discover tools and inspect compressed outputs.
 pub fn filter_tools_for_profile(
     profile: &SubagentProfile,
     all_tools: &[Arc<dyn Tool>],
@@ -436,7 +520,7 @@ pub fn filter_tools_for_profile(
                 tool_names
                     .iter()
                     .any(|name| crate::tools::tool_names_match(name, tool.name()))
-                    || crate::tools::tool_names_match("tool_catalog", tool.name())
+                    || is_universal_subagent_meta_tool(tool.name())
             })
             .cloned()
             .collect(),
@@ -445,10 +529,8 @@ pub fn filter_tools_for_profile(
             .filter(|tool| {
                 let d = tool.metadata().domain.to_lowercase();
                 domains.iter().any(|dom| dom == &d)
-                    || matches!(
-                        tool.name(),
-                        "read_file" | "list_dir" | "write_file" | "tool_catalog"
-                    )
+                    || matches!(tool.name(), "read_file" | "list_dir" | "write_file")
+                    || is_universal_subagent_meta_tool(tool.name())
             })
             .cloned()
             .collect(),
@@ -458,7 +540,7 @@ pub fn filter_tools_for_profile(
                 allowed
                     .iter()
                     .any(|allowed_name| crate::tools::tool_names_match(allowed_name, tool.name()))
-                    || crate::tools::tool_names_match("tool_catalog", tool.name())
+                    || is_universal_subagent_meta_tool(tool.name())
             })
             .cloned()
             .collect(),

@@ -22,6 +22,19 @@ fn parse_string_list(val: Option<&Value>) -> Vec<String> {
     }
 }
 
+fn parse_string_list_aliases(arguments: &Value, keys: &[&str]) -> Vec<String> {
+    let mut out = Vec::new();
+    for key in keys {
+        for item in parse_string_list(arguments.get(*key)) {
+            match out.iter().any(|existing| existing == &item) {
+                true => {}
+                false => out.push(item),
+            }
+        }
+    }
+    out
+}
+
 impl RequestToolScopeTool {
     pub fn new(registry: crate::tools::ToolRegistry) -> Self {
         Self { registry }
@@ -62,13 +75,28 @@ impl Tool for RequestToolScopeTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let reason = arguments
-            .get("reason")
-            .and_then(|v| v.as_str())
+        let reason = ["reason", "rationale", "why", "description"]
+            .into_iter()
+            .find_map(|key| arguments.get(key).and_then(|v| v.as_str()))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
             .unwrap_or("no reason provided")
             .to_string();
-        let needed_domains = parse_string_list(arguments.get("needed_domains"));
-        let needed_tools = parse_string_list(arguments.get("needed_tools"));
+        let needed_domains = parse_string_list_aliases(
+            arguments,
+            &[
+                "needed_domains",
+                "domains",
+                "domain",
+                "packs",
+                "pack",
+                "categories",
+            ],
+        );
+        let needed_tools = parse_string_list_aliases(
+            arguments,
+            &["needed_tools", "tools", "tool", "tool_names", "names"],
+        );
         self.registry
             .request_tool_scope(needed_tools.clone(), needed_domains.clone());
 
@@ -118,24 +146,20 @@ impl Tool for OptimizeToolScopeTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let prefixes = arguments
-            .get("active_prefixes")
-            .and_then(|v| v.as_array())
-            .filter(|arr| !arr.is_empty());
+        let prefixes_vec = parse_string_list_aliases(
+            arguments,
+            &["active_prefixes", "prefixes", "prefix", "scope"],
+        );
 
-        match prefixes {
-            Some(arr) => {
-                let prefixes_vec: Vec<String> = arr
-                    .iter()
-                    .filter_map(|v| v.as_str().map(ToString::to_string))
-                    .collect();
+        match prefixes_vec.is_empty() {
+            false => {
                 self.registry.set_filter_scope(Some(prefixes_vec.clone()));
                 Ok(serde_json::json!({
                     "success": true,
                     "message": format!("Tool scope restricted to prefixes: {:?}", prefixes_vec)
                 }))
             }
-            None => {
+            true => {
                 self.registry.set_filter_scope(None);
                 Ok(serde_json::json!({
                     "success": true,

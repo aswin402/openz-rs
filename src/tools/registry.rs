@@ -43,6 +43,22 @@ fn identity_keys(name: &str) -> Vec<String> {
     keys
 }
 
+fn expand_requested_domain(domain: &str) -> &'static [&'static str] {
+    match domain {
+        "repo_read" | "repo_write" | "repo" | "files" | "file" | "fs" => {
+            &["filesystem", "code", "git"]
+        }
+        "local_exec" | "exec" | "bash" | "terminal" => &["shell", "code"],
+        "web_research" | "research" | "search" | "browser" => &["web", "search"],
+        "subagents" | "delegation" | "workflow" | "orchestration" | "orchestrator" => &["subagent"],
+        "docs" | "doc" | "pdf" | "office" => &["document"],
+        "visual" | "image" | "video" | "svg" | "diagram" => &["media"],
+        "cron" | "scheduler" | "jobs" => &["cron", "self_management"],
+        "admin" | "system" | "diagnostics" | "config" => &["self_management"],
+        _ => &[],
+    }
+}
+
 pub(crate) fn insert_unique_tool(
     tools: &mut HashMap<String, Arc<dyn Tool>>,
     tool: Arc<dyn Tool>,
@@ -341,10 +357,19 @@ impl ToolRegistry {
             .into_iter()
             .map(|name| self.resolve_canonical_name(&name).to_ascii_lowercase())
             .collect();
-        let resolved_domains: Vec<String> = domains
-            .into_iter()
-            .map(|domain| domain.to_ascii_lowercase())
-            .collect();
+        let mut resolved_domains: Vec<String> = Vec::new();
+        for domain in domains {
+            let normalized = domain.trim().to_ascii_lowercase();
+            match normalized.is_empty() {
+                true => {}
+                false => {
+                    for mapped in expand_requested_domain(&normalized) {
+                        resolved_domains.push((*mapped).to_string());
+                    }
+                    resolved_domains.push(normalized);
+                }
+            }
+        }
         let _ = self.pending_scope.lock().map(|mut pending| {
             pending.tools.extend(resolved_tools);
             pending.domains.extend(resolved_domains);
