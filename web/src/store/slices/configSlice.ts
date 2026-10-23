@@ -17,6 +17,7 @@ import type {
   SaveSubagentData,
   UpdateSubagentSettingsData,
 } from '../../services/websocket/commands';
+import { createWorkspaceNotice } from '../chatUtils';
 import type { OpenZState } from '../useOpenZStore';
 
 const EMPTY_CAPABILITIES: WebUiCapabilities = {
@@ -108,12 +109,11 @@ export const createConfigSlice: StateCreator<
 
   updateConfig: (data) => {
     set({
-      workspaceNotice: {
-        scope: 'settings',
-        type: 'info',
-        message: 'Settings save requested. Waiting for gateway refresh.',
-        timestamp: Date.now(),
-      },
+      workspaceNotice: createWorkspaceNotice(
+        'settings',
+        'info',
+        'Settings save requested. Waiting for gateway refresh.',
+      ),
     });
     if (data.defaults) {
       const settings = get().settings;
@@ -171,60 +171,55 @@ export const createConfigSlice: StateCreator<
 
   saveSkill: (name, content) => {
     set({
-      workspaceNotice: {
-        scope: 'skills',
-        type: 'info',
-        message: 'Skill save requested. Waiting for gateway refresh.',
-        timestamp: Date.now(),
-      },
+      workspaceNotice: createWorkspaceNotice(
+        'skills',
+        'info',
+        'Skill save requested. Waiting for gateway refresh.',
+      ),
     });
     wsService.saveSkill(name, content);
   },
 
   deleteSkill: (name) => {
     set({
-      workspaceNotice: {
-        scope: 'skills',
-        type: 'info',
-        message: 'Skill delete requested. Waiting for gateway refresh.',
-        timestamp: Date.now(),
-      },
+      workspaceNotice: createWorkspaceNotice(
+        'skills',
+        'info',
+        'Skill delete requested. Waiting for gateway refresh.',
+      ),
     });
     wsService.deleteSkill(name);
   },
 
   saveSubagent: (data) => {
     set({
-      workspaceNotice: {
-        scope: 'agents',
-        type: 'info',
-        message: 'Subagent save requested. Waiting for gateway refresh.',
-        timestamp: Date.now(),
-      },
+      workspaceNotice: createWorkspaceNotice(
+        'agents',
+        'info',
+        'Subagent save requested. Waiting for gateway refresh.',
+      ),
     });
     wsService.saveSubagent(data);
   },
 
   updateSubagentSettings: (data) => {
     set({
-      workspaceNotice: {
-        scope: 'agents',
-        type: 'info',
-        message: 'Subagent settings update requested. Waiting for gateway refresh.',
-        timestamp: Date.now(),
-      },
+      workspaceNotice: createWorkspaceNotice(
+        'agents',
+        'info',
+        'Subagent settings update requested. Waiting for gateway refresh.',
+      ),
     });
     wsService.updateSubagentSettings(data);
   },
 
   deleteSubagent: (name) => {
     set({
-      workspaceNotice: {
-        scope: 'agents',
-        type: 'info',
-        message: 'Subagent delete requested. Waiting for gateway refresh.',
-        timestamp: Date.now(),
-      },
+      workspaceNotice: createWorkspaceNotice(
+        'agents',
+        'info',
+        'Subagent delete requested. Waiting for gateway refresh.',
+      ),
     });
     wsService.deleteSubagent(name);
   },

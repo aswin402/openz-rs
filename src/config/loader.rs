@@ -100,6 +100,17 @@ pub const RUNTIME_DB_FILENAMES: &[&str] = &[
     "embeddings_cache.db",
 ];
 
+pub const RUNTIME_SQLITE_DB_FILENAMES: &[&str] = &[
+    "memory.db",
+    "docs.db",
+    "graph_memory.db",
+    "ccr_cache.db",
+    "context-bus.db",
+    "logs.db",
+    "thoughts.db",
+    "embeddings_cache.db",
+];
+
 /// Directory where all global runtime state (databases, caches, sessions,
 /// config) lives. Honors the `CONFIG_DIR_OVERRIDE` task-local (used inside
 /// tool execution) and the `OPENZ_CONFIG_DIR` environment variable, falling

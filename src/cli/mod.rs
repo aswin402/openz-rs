@@ -231,17 +231,7 @@ pub async fn run_cli() -> Result<()> {
 pub fn start_database_auto_optimizer() {
     tokio::spawn(async {
         tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-        let db_names = [
-            "memory.db",
-            "docs.db",
-            "graph_memory.db",
-            "ccr_cache.db",
-            "context-bus.db",
-            "logs.db",
-            "thoughts.db",
-            "embeddings_cache.db",
-        ];
-        for name in db_names {
+        for &name in crate::config::loader::RUNTIME_SQLITE_DB_FILENAMES {
             let path = crate::config::loader::runtime_db_path(name);
             match (path.exists(), rusqlite::Connection::open(&path)) {
                 (true, Ok(conn)) => {

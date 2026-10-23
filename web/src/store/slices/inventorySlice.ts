@@ -6,6 +6,7 @@ import type {
   RuntimeInventory,
 } from '../../types';
 import { wsService } from '../../services/websocket';
+import { createWorkspaceNotice } from '../chatUtils';
 import type { OpenZState } from '../useOpenZStore';
 
 export interface InventorySlice {
@@ -42,36 +43,21 @@ export const createInventorySlice: StateCreator<
 
   pauseCronJob: (id) => {
     set({
-      workspaceNotice: {
-        scope: 'inventory',
-        type: 'info',
-        message: `Pausing cron job ${id}.`,
-        timestamp: Date.now(),
-      },
+      workspaceNotice: createWorkspaceNotice('inventory', 'info', `Pausing cron job ${id}.`),
     });
     wsService.pauseCronJob(id);
   },
 
   resumeCronJob: (id) => {
     set({
-      workspaceNotice: {
-        scope: 'inventory',
-        type: 'info',
-        message: `Resuming cron job ${id}.`,
-        timestamp: Date.now(),
-      },
+      workspaceNotice: createWorkspaceNotice('inventory', 'info', `Resuming cron job ${id}.`),
     });
     wsService.resumeCronJob(id);
   },
 
   deleteCronJob: (id) => {
     set({
-      workspaceNotice: {
-        scope: 'inventory',
-        type: 'info',
-        message: `Deleting cron job ${id}.`,
-        timestamp: Date.now(),
-      },
+      workspaceNotice: createWorkspaceNotice('inventory', 'info', `Deleting cron job ${id}.`),
     });
     wsService.deleteCronJob(id);
   },

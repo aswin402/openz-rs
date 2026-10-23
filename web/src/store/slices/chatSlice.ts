@@ -4,17 +4,17 @@ import type {
   OpenZMessage,
   OpenZSession,
   OrchestrationRunState,
-  WorkspaceNotice,
 } from '../../types';
 import { wsService } from '../../services/websocket';
 import {
+  createWorkspaceNotice,
   forgetActiveChatId,
   newMsgId,
   normalizeChatId,
   rememberActiveChatId,
   savedActiveChatId,
   settleAssistantTurnMessages,
-  settleOrchestrationRuns,
+  settleStoppedOrchestrationRuns,
   titleFromFirstMessage,
 } from '../chatUtils';
 import type { OpenZState } from '../useOpenZStore';
@@ -34,14 +34,6 @@ export interface ChatSlice {
   sendMessage: (content: string, attachments?: ChatAttachment[]) => void;
   stopTurn: () => void;
   handleSecurityChoice: (reqId: string, choice: 'approve' | 'deny') => void;
-}
-
-function notice(
-  scope: WorkspaceNotice['scope'],
-  type: WorkspaceNotice['type'],
-  message: string,
-): WorkspaceNotice {
-  return { scope, type, message, timestamp: Date.now() };
 }
 
 export const createChatSlice: StateCreator<
@@ -76,7 +68,7 @@ export const createChatSlice: StateCreator<
   archiveSession: (chatId) => {
     const normalizedChatId = normalizeChatId(chatId);
     set({
-      workspaceNotice: notice(
+      workspaceNotice: createWorkspaceNotice(
         'inventory',
         'info',
         `Archiving session ${normalizedChatId}.`,
@@ -88,7 +80,7 @@ export const createChatSlice: StateCreator<
   deleteSession: (chatId) => {
     const normalizedChatId = normalizeChatId(chatId);
     set({
-      workspaceNotice: notice(
+      workspaceNotice: createWorkspaceNotice(
         'inventory',
         'info',
         `Deleting session ${normalizedChatId}.`,
@@ -111,7 +103,7 @@ export const createChatSlice: StateCreator<
 
     if (!chatId) {
       set({
-        workspaceNotice: notice(
+        workspaceNotice: createWorkspaceNotice(
           'global',
           'error',
           'No active chat session. Reconnect the gateway and try again.',
@@ -202,21 +194,11 @@ export const createChatSlice: StateCreator<
       get().messages[chatId] || [],
       'Turn stopped before this tool completed.',
     );
-    const stoppableRunIds = (get().orchestrationRuns[chatId] || [])
-      .filter((run) => run.status === 'running' || run.status === 'awaiting_review' || run.provisionalFailure)
-      .map((run) => run.id);
     set({
       messages: { ...get().messages, [chatId]: settledMessages },
       orchestrationRuns: {
         ...get().orchestrationRuns,
-        [chatId]: settleOrchestrationRuns(
-          get().orchestrationRuns[chatId] || [],
-          'cancelled',
-          'Turn stopped before this orchestration run completed.',
-          Date.now(),
-          true,
-          stoppableRunIds,
-        ),
+        [chatId]: settleStoppedOrchestrationRuns(get().orchestrationRuns[chatId] || []),
       },
       activeTurnIds: activeTurns,
       isStreaming: Object.keys(activeTurns).length > 0,

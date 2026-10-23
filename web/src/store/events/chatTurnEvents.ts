@@ -7,10 +7,12 @@ import { isTurnEventCurrent } from '../../types/websocket';
 import { wsService } from '../../services/websocket';
 import {
   applyOrchestrationEvent,
+  createWorkspaceNotice,
   newMsgId,
   normalizeChatId,
   settleAssistantTurnMessages,
   settleOrchestrationRuns,
+  settleStoppedOrchestrationRuns,
   type OrchestrationPayload,
 } from '../chatUtils';
 import type { StoreEventContext } from '../eventContext';
@@ -295,12 +297,12 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
 
   wsService.on('security_response_rejected', (payload) => {
     set({
-      workspaceNotice: {
-        scope: 'global',
-        type: 'error',
-        message: asString(payload.detail) || 'Security approval was rejected because it belongs to another client or chat.',
-        timestamp: Date.now(),
-      },
+      workspaceNotice: createWorkspaceNotice(
+        'global',
+        'error',
+        asString(payload.detail) ||
+          'Security approval was rejected because it belongs to another client or chat.',
+      ),
     });
   });
 
@@ -354,22 +356,11 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
     if (!settled) return;
     const { chatId, activeTurns, settledMessages } = settled;
 
-    const stoppableRunIds = (get().orchestrationRuns[chatId] || [])
-      .filter((run) => run.status === 'running' || run.status === 'awaiting_review' || run.provisionalFailure)
-      .map((run) => run.id);
-
     set({
       messages: { ...get().messages, [chatId]: settledMessages },
       orchestrationRuns: {
         ...get().orchestrationRuns,
-        [chatId]: settleOrchestrationRuns(
-          get().orchestrationRuns[chatId] || [],
-          'cancelled',
-          'Turn stopped before this orchestration run completed.',
-          Date.now(),
-          true,
-          stoppableRunIds,
-        ),
+        [chatId]: settleStoppedOrchestrationRuns(get().orchestrationRuns[chatId] || []),
       },
       activeTurnIds: activeTurns,
       isStreaming: Object.keys(activeTurns).length > 0,
@@ -385,7 +376,7 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
         : activeView === 'agents' || activeView === 'skills' || activeView === 'knowledge' || activeView === 'inventory'
           ? activeView
           : 'global';
-      set({ workspaceNotice: { scope, type: 'error', message: String(detail), timestamp: Date.now() } });
+      set({ workspaceNotice: createWorkspaceNotice(scope, 'error', String(detail)) });
       return;
     }
     const settled = settleActiveTurn(

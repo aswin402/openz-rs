@@ -1,5 +1,34 @@
+## [0.0.300] - 2026-10-23
+### v0.0.300 (Latest Release)
+
+#### Changed
+- **Eliminated 28 Boilerplate Pass-Through Methods in `OpenZWebSocketService` (-142 Lines), Unified `createWorkspaceNotice` & `settleStoppedOrchestrationRuns` Across WebUI Store Slices, and Canonicalized `RUNTIME_SQLITE_DB_FILENAMES` ([`web/src/services/websocket.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/services/websocket.ts), [`web/src/store/chatUtils.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/chatUtils.ts), [`web/src/store/slices/chatSlice.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/slices/chatSlice.ts), [`web/src/store/slices/configSlice.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/slices/configSlice.ts), [`web/src/store/slices/inventorySlice.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/slices/inventorySlice.ts), [`web/src/store/events/chatTurnEvents.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/events/chatTurnEvents.ts), [`src/config/loader.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/loader.rs), [`src/cli/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/mod.rs))**:
+  - **Eliminated 28 Boilerplate Forwarding Wrappers (`web/src/services/websocket.ts`)**:
+    - Bound [`createWebSocketCommands`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/services/websocket/commands.ts) directly onto [`OpenZWebSocketService`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/services/websocket.ts) via `Object.assign` and TypeScript declaration merging (`export interface OpenZWebSocketService extends WebSocketCommandMethods {}`), removing 142 lines of manual 1-line pass-through methods.
+  - **Shared `createWorkspaceNotice` & `settleStoppedOrchestrationRuns` (`web/src/store/chatUtils.ts`, `web/src/store/slices/{chatSlice,configSlice,inventorySlice}.ts`, `web/src/store/events/chatTurnEvents.ts`)**:
+    - Exported [`createWorkspaceNotice`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/chatUtils.ts) and [`settleStoppedOrchestrationRuns`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/chatUtils.ts) in `web/src/store/chatUtils.ts`, deduplicating 14 repeated notice object literals and the stopped-turn orchestration settlement logic between `chatSlice.ts` and `chatTurnEvents.ts`.
+  - **Canonicalized `RUNTIME_SQLITE_DB_FILENAMES` (`src/config/loader.rs`, `src/cli/mod.rs`)**:
+    - Exported [`RUNTIME_SQLITE_DB_FILENAMES`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/loader.rs) in `src/config/loader.rs` and routed [`start_database_auto_optimizer`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/mod.rs) through it.
+
+#### Documentation
+- **Synchronized Release Manifests**: Updated [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md), and [`CHANGELOG.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/CHANGELOG.md) to `0.0.300`.
+
+### Sources & Inspirations
+- **[Inspiration]**: TypeScript interface-class declaration merging for command delegation and shared store notice builders.
+
+- **Ideas**:
+  - Eliminate 28 redundant 1-line pass-through command methods in `OpenZWebSocketService`, unify `createWorkspaceNotice` and `settleStoppedOrchestrationRuns` across WebUI store slices/events, and canonicalize the runtime SQLite database list in `src/config/loader.rs`.
+- **Inspirations**:
+  - Composition over pass-through delegation and single-source constants.
+- **Sources & References**:
+  - [`web/src/services/websocket.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/services/websocket.ts), [`web/src/store/chatUtils.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/chatUtils.ts), [`web/src/store/slices/chatSlice.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/slices/chatSlice.ts), [`web/src/store/slices/configSlice.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/slices/configSlice.ts), [`web/src/store/slices/inventorySlice.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/slices/inventorySlice.ts), [`web/src/store/events/chatTurnEvents.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/events/chatTurnEvents.ts), [`src/config/loader.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/loader.rs), [`src/cli/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/mod.rs)
+- **Details & Metrics**:
+  - Updated 6 WebUI modules and 2 Rust modules; shrank `web/src/services/websocket.ts` from 246 lines to 104 lines (-142 lines).
+- **Verification**:
+  - Verified with `just test-guard`, `just check openz`, `just test-one test_native_tool_registration_names openz`, and `cd web && npm run build`.
+
 ## [0.0.299] - 2026-10-23
-### v0.0.299 (Latest Release)
+### v0.0.299
 
 #### Changed
 - **Consolidated Shared WebUI Type Guards (`isRecord`, `asString`), Unified Streaming Assistant Message Upserts & Turn Settlement, and Deduplicated CLI Channel/Headless Dispatch & SVG Path Token Classification ([`web/src/shared/lib/format.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/shared/lib/format.ts), [`web/src/store/chatUtils.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/chatUtils.ts), [`web/src/store/events/chatTurnEvents.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/events/chatTurnEvents.ts), [`web/src/store/events/sessionEvents.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/events/sessionEvents.ts), [`web/src/types/protocol.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/types/protocol.ts), [`web/src/types/websocket.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/types/websocket.ts), [`web/src/types/openz.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/types/openz.ts), [`src/cli/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/mod.rs), [`src/tools/openmedia/animate/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/openmedia/animate/mod.rs))**:

@@ -3,6 +3,7 @@ import type {
   OpenZSession,
   OrchestrationRunState,
   OrchestrationStepState,
+  WorkspaceNotice,
 } from '../types';
 import { UI_STORAGE_KEYS } from '../config/runtime';
 
@@ -11,6 +12,14 @@ let msgCounter = 0;
 
 export function newMsgId(prefix: string): string {
   return `${prefix}-${Date.now()}-${msgCounter++}`;
+}
+
+export function createWorkspaceNotice(
+  scope: WorkspaceNotice['scope'],
+  type: WorkspaceNotice['type'],
+  message: string,
+): WorkspaceNotice {
+  return { scope, type, message, timestamp: Date.now() };
 }
 
 export function savedActiveChatId(): string {
@@ -309,4 +318,26 @@ export function settleAssistantTurnMessages(
   });
 
   return changed ? settled : messages;
+}
+
+export function settleStoppedOrchestrationRuns(
+  runs: OrchestrationRunState[],
+  now = Date.now(),
+): OrchestrationRunState[] {
+  const stoppableRunIds = runs
+    .filter(
+      (run) =>
+        run.status === 'running' ||
+        run.status === 'awaiting_review' ||
+        run.provisionalFailure,
+    )
+    .map((run) => run.id);
+  return settleOrchestrationRuns(
+    runs,
+    'cancelled',
+    'Turn stopped before this orchestration run completed.',
+    now,
+    true,
+    stoppableRunIds,
+  );
 }
