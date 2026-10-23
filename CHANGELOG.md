@@ -1,5 +1,34 @@
+## [0.0.301] - 2026-10-23
+### v0.0.301 (Latest Release)
+
+#### Changed
+- **Eliminated Final Multi-Boolean Tuple `match` Chains Across All 615 Rust Files, Deduplicated Turn Runner Halt/Auto-Tool Helpers (`src/agent/agent_loop/run/mod.rs`), and Consolidated WebUI `createWorkspaceNotice` & `sendSimple` Command Builders ([`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs), [`web/src/store/events/configEvents.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/events/configEvents.ts), [`web/src/store/events/sessionEvents.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/events/sessionEvents.ts), [`web/src/services/websocket/commands.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/services/websocket/commands.ts))**:
+  - **Zero Multi-Boolean Tuple `match` Chains Across All 615 Rust Files (`src/agent/agent_loop/run/mod.rs`)**:
+    - Replaced the final 3-boolean tuple `match` blocks in [`emit_reasoning_and_thoughts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs) and [`dispatch_tool_call`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs) with `select_reasoning_source`, table-driven `research_lookup_skip_reason`, and `ApprovalGateOutcome` / `classify_approval_gate`.
+    - Extracted `execute_scoped_approved_tool`, `emit_turn_halt_message` (replacing 4 duplicate turn-termination blocks), and `run_and_record_optional_auto_tool` (replacing 2 duplicate post-tool device-inventory auto-suggestion blocks) in [`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs).
+  - **WebUI Workspace Notice & Command Builder Consolidation (`web/src/store/events/{configEvents,sessionEvents}.ts`, `web/src/services/websocket/commands.ts`)**:
+    - Routed the remaining inline `workspaceNotice` literals in [`configEvents.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/events/configEvents.ts) and [`sessionEvents.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/events/sessionEvents.ts) through [`createWorkspaceNotice`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/chatUtils.ts).
+    - Consolidated the 10 zero-argument command methods and 17 single/multi-field command methods in [`createWebSocketCommands`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/services/websocket/commands.ts) using `sendSimple` (-51 lines).
+
+#### Documentation
+- **Synchronized Release Manifests**: Updated [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md), and [`CHANGELOG.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/CHANGELOG.md) to `0.0.301`.
+
+### Sources & Inspirations
+- **[Inspiration]**: Declarative rule tables, explicit approval gate enums, and higher-order WebSocket command factories.
+
+- **Ideas**:
+  - Eliminate the final multi-boolean tuple `match` expressions in `src/agent/agent_loop/run/mod.rs`, deduplicate turn halt/auto-tool helpers, and unify the remaining WebUI `workspaceNotice` builders and zero-arg WebSocket command creators.
+- **Inspirations**:
+  - Rule-driven guard evaluation and typed command factories.
+- **Sources & References**:
+  - [`src/agent/agent_loop/run/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/mod.rs), [`web/src/store/events/configEvents.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/events/configEvents.ts), [`web/src/store/events/sessionEvents.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/events/sessionEvents.ts), [`web/src/services/websocket/commands.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/services/websocket/commands.ts)
+- **Details & Metrics**:
+  - Updated 1 Rust module and 3 WebUI modules; achieved 0 files with multi-boolean (`>=3`) tuple `match` chains across all 615 Rust files in `src/**/*.rs` and shrank `web/src/services/websocket/commands.ts` by 51 lines.
+- **Verification**:
+  - Verified with `just test-guard`, `just check openz`, `just test-one test_native_tool_registration_names openz`, and `cd web && npm run build`.
+
 ## [0.0.300] - 2026-10-23
-### v0.0.300 (Latest Release)
+### v0.0.300
 
 #### Changed
 - **Eliminated 28 Boilerplate Pass-Through Methods in `OpenZWebSocketService` (-142 Lines), Unified `createWorkspaceNotice` & `settleStoppedOrchestrationRuns` Across WebUI Store Slices, and Canonicalized `RUNTIME_SQLITE_DB_FILENAMES` ([`web/src/services/websocket.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/services/websocket.ts), [`web/src/store/chatUtils.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/chatUtils.ts), [`web/src/store/slices/chatSlice.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/slices/chatSlice.ts), [`web/src/store/slices/configSlice.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/slices/configSlice.ts), [`web/src/store/slices/inventorySlice.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/slices/inventorySlice.ts), [`web/src/store/events/chatTurnEvents.ts`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/web/src/store/events/chatTurnEvents.ts), [`src/config/loader.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/config/loader.rs), [`src/cli/mod.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/mod.rs))**:

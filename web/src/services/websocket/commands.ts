@@ -79,6 +79,10 @@ export interface WebSocketCommandMethods {
 export function createWebSocketCommands(
   send: WebSocketCommandSender,
 ): WebSocketCommandMethods {
+  const sendSimple = (command: WebSocketCommand) => () => {
+    send(command);
+  };
+
   return {
     sendMessage(chatId, content, model, provider, attachments) {
       const payload: Extract<WebSocketCommand, { type: 'message' }> = {
@@ -92,11 +96,8 @@ export function createWebSocketCommands(
       return send(payload, { requireConnected: true });
     },
 
-    createNewChat() {
-      send({ type: 'new_chat' });
-    },
-
-    attachChat(chatId) {
+    createNewChat: sendSimple({ type: 'new_chat' }),
+    attachChat: (chatId) => {
       send({ type: 'attach', chat_id: chatId });
     },
 
@@ -117,117 +118,65 @@ export function createWebSocketCommands(
       send(payload);
     },
 
-    requestHistory(chatId) {
+    requestHistory: (chatId) => {
       send({ type: 'load_history', chat_id: chatId });
     },
-
-    archiveSession(chatId) {
+    archiveSession: (chatId) => {
       send({ type: 'archive_session', chat_id: chatId });
     },
-
-    deleteSession(chatId) {
+    deleteSession: (chatId) => {
       send({ type: 'delete_session', chat_id: chatId });
     },
-
-    requestCognitiveMemory() {
-      send({ type: 'get_cognitive_memory' });
-    },
-
-    requestMcpServers() {
-      send({ type: 'get_mcp_servers' });
-    },
-
-    requestLogs() {
-      send({ type: 'get_logs' });
-    },
-
-    requestServers() {
-      send({ type: 'get_servers' });
-    },
-
-    stopServer(target) {
+    requestCognitiveMemory: sendSimple({ type: 'get_cognitive_memory' }),
+    requestMcpServers: sendSimple({ type: 'get_mcp_servers' }),
+    requestLogs: sendSimple({ type: 'get_logs' }),
+    requestServers: sendSimple({ type: 'get_servers' }),
+    stopServer: (target) => {
       send({ type: 'stop_server', target });
     },
-
-    requestModels() {
-      send({ type: 'get_models' });
-    },
-
-    requestProviderModels(provider) {
+    requestModels: sendSimple({ type: 'get_models' }),
+    requestProviderModels: (provider) => {
       send({ type: 'get_models', provider });
     },
-
-    toggleFavoriteModel(provider, model) {
+    toggleFavoriteModel: (provider, model) => {
       send({ type: 'toggle_favorite_model', provider, model });
     },
-
-    requestConfig() {
-      send({ type: 'get_config' });
-    },
-
-    updateConfig(patch) {
-      return send(
-        { type: 'set_config', defaults: patch },
-        { queueIfDisconnected: true },
-      );
-    },
-
-    sendSetConfig(data) {
-      return send(
-        { type: 'set_config', ...data },
-        { queueIfDisconnected: true },
-      );
-    },
-
-    saveSkill(name, content) {
+    requestConfig: sendSimple({ type: 'get_config' }),
+    updateConfig: (patch) =>
+      send({ type: 'set_config', defaults: patch }, { queueIfDisconnected: true }),
+    sendSetConfig: (data) =>
+      send({ type: 'set_config', ...data }, { queueIfDisconnected: true }),
+    saveSkill: (name, content) => {
       send({ type: 'save_skill', name, content });
     },
-
-    deleteSkill(name) {
+    deleteSkill: (name) => {
       send({ type: 'delete_skill', name });
     },
-
-    saveSubagent(data) {
+    saveSubagent: (data) => {
       send({ type: 'save_subagent', ...data });
     },
-
-    updateSubagentSettings(data) {
+    updateSubagentSettings: (data) => {
       send({ type: 'update_subagent_settings', ...data });
     },
-
-    deleteSubagent(name) {
+    deleteSubagent: (name) => {
       send({ type: 'delete_subagent', name });
     },
-
-    requestSlashCommands() {
-      send({ type: 'get_slash_commands' });
-    },
-
-    requestStatus() {
-      send({ type: 'get_status' });
-    },
-
-    requestRuntimeInventory() {
-      send({ type: 'get_runtime_inventory' });
-    },
-
-    pauseCronJob(id) {
+    requestSlashCommands: sendSimple({ type: 'get_slash_commands' }),
+    requestStatus: sendSimple({ type: 'get_status' }),
+    requestRuntimeInventory: sendSimple({ type: 'get_runtime_inventory' }),
+    pauseCronJob: (id) => {
       send({ type: 'pause_cron_job', id });
     },
-
-    resumeCronJob(id) {
+    resumeCronJob: (id) => {
       send({ type: 'resume_cron_job', id });
     },
-
-    deleteCronJob(id) {
+    deleteCronJob: (id) => {
       send({ type: 'delete_cron_job', id });
     },
-
-    requestCronLogs(id, limit = 20) {
+    requestCronLogs: (id, limit = 20) => {
       send({ type: 'get_cron_logs', id, limit });
     },
-
-    sendSecurityResponse(reqId, approved) {
+    sendSecurityResponse: (reqId, approved) => {
       send({ type: 'security_response', req_id: reqId, approved });
     },
   };

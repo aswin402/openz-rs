@@ -3,6 +3,7 @@ import type {
 } from '../../types';
 import { normalizeWebUiCapabilities } from '../../types';
 import { wsService } from '../../services/websocket';
+import { createWorkspaceNotice } from '../chatUtils';
 import type { StoreEventContext } from '../eventContext';
 import { EMPTY_MCP_STATS } from '../slices/memorySlice';
 
@@ -69,12 +70,11 @@ function emitWorkspaceUpdateNotice(
   const status = typeof payload.status === 'string' ? payload.status : 'updated';
   const name = typeof payload.name === 'string' ? payload.name : fallbackName;
   set({
-    workspaceNotice: {
+    workspaceNotice: createWorkspaceNotice(
       scope,
-      type: 'success',
-      message: `${labelPrefix} ${name} ${status}.`,
-      timestamp: Date.now(),
-    },
+      'success',
+      `${labelPrefix} ${name} ${status}.`,
+    ),
   });
 }
 
@@ -146,12 +146,11 @@ export function registerConfigEvents(ctx: StoreEventContext) {
     applyCapabilitiesAndDefaultsPatch(ctx, payload);
     if (payload.defaults) {
       set({
-        workspaceNotice: {
-          scope: 'settings',
-          type: 'success',
-          message: 'Settings saved and refreshed from gateway.',
-          timestamp: Date.now(),
-        },
+        workspaceNotice: createWorkspaceNotice(
+          'settings',
+          'success',
+          'Settings saved and refreshed from gateway.',
+        ),
       });
     }
   });

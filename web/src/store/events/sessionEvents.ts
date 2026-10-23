@@ -7,6 +7,7 @@ import type {
 import { wsService } from '../../services/websocket';
 import { applySessionMutationResult } from '../sessionMutation';
 import {
+  createWorkspaceNotice,
   mergeAssistantFinalIntoToolTurn,
   normalizeChatId,
   rememberActiveChatId,
@@ -117,12 +118,11 @@ export function registerSessionEvents({ set, get }: StoreEventContext) {
       const result = applySessionMutationResult(get().sessions, get().messages, chatId, false);
       set({
         ...result,
-        workspaceNotice: {
-          scope: 'inventory',
-          type: 'error',
-          message: asString(payloadObj.detail) || options.errorMessage,
-          timestamp: Date.now(),
-        },
+        workspaceNotice: createWorkspaceNotice(
+          'inventory',
+          'error',
+          asString(payloadObj.detail) || options.errorMessage,
+        ),
       });
       wsService.requestSessions();
       wsService.requestRuntimeInventory();
@@ -134,14 +134,13 @@ export function registerSessionEvents({ set, get }: StoreEventContext) {
       const wasActive = get().activeChatId === chatId;
       set({
         ...result,
-        workspaceNotice: {
-          scope: 'inventory',
-          type: succeeded ? 'success' : 'info',
-          message: succeeded
+        workspaceNotice: createWorkspaceNotice(
+          'inventory',
+          succeeded ? 'success' : 'info',
+          succeeded
             ? `${options.presentVerb} session ${chatId}.`
             : `Session ${chatId} was already missing on disk.`,
-          timestamp: Date.now(),
-        },
+        ),
       });
       if (wasActive) {
         if (result.sessions.length > 0) get().selectSession(result.sessions[0].id);

@@ -288,6 +288,17 @@ async fn stream_provider_response(
     Ok(assembled)
 }
 
+fn select_reasoning_source(
+    resp: &crate::providers::LLMResponse,
+    has_reasoning: bool,
+    allow_content_fallback: bool,
+) -> Option<String> {
+    has_reasoning
+        .then(|| resp.reasoning_content.clone())
+        .flatten()
+        .or_else(|| allow_content_fallback.then(|| resp.content.clone()).flatten())
+}
+
 async fn emit_reasoning_and_thoughts(
     ctx: &TurnContext<'_>,
     config: &crate::config::schema::Config,
@@ -312,15 +323,9 @@ async fn emit_reasoning_and_thoughts(
             let public_reasoning_progress =
                 should_send_public_reasoning_progress(&config.agents.defaults.tui_thought_display);
 
-            let candidate_reasoning = match (
-                public_reasoning_progress,
-                has_reasoning,
-                has_content && has_tool_calls,
-            ) {
-                (true, true, _) => resp.reasoning_content.clone(),
-                (true, false, true) => resp.content.clone(),
-                _ => None,
-            };
+            let candidate_reasoning = public_reasoning_progress
+                .then(|| select_reasoning_source(resp, has_reasoning, has_content && has_tool_calls))
+                .flatten();
             match candidate_reasoning.and_then(|text| {
                 crate::agent::events::AgentEvent::PrivateReasoning(text)
                     .public_text(&output_visibility)
@@ -369,14 +374,12 @@ async fn emit_reasoning_and_thoughts(
                             duration_secs,
                             COLOR_RESET
                         );
-                        let full_reasoning = match (
+                        let full_reasoning = select_reasoning_source(
+                            resp,
                             has_reasoning,
                             public_reasoning_progress && has_content && has_tool_calls,
-                        ) {
-                            (true, _) => resp.reasoning_content.clone().unwrap_or_default(),
-                            (false, true) => resp.content.clone().unwrap_or_default(),
-                            (false, false) => String::new(),
-                        };
+                        )
+                        .unwrap_or_default();
                         let _ = (!full_reasoning.is_empty()).then(|| {
                             crate::channels::ratatui::send_ratatui_turn_event(
                                 crate::channels::ratatui::TurnEvent::SingleMessage(
@@ -419,6 +422,68 @@ async fn emit_skipped_tool_notice(session_key: &str, silent: bool, skip_msg: &st
     serde_json::json!({ "status": "skipped", "reason": skip_msg })
 }
 
+fn research_lookup_skip_reason(
+    out_of_scope_direct_page_lookup: bool,
+    duplicate_direct_url: bool,
+    fresh_brief_blocks_lookup: bool,
+) -> Option<&'static str> {
+    [
+        (
+            out_of_scope_direct_page_lookup,
+            "Skipped broader research: this request supplied one direct URL. Use the fetched page, or ask for deeper/broader research to inspect additional sources.",
+        ),
+        (
+            duplicate_direct_url,
+            "Skipped duplicate URL lookup: this page was already fetched successfully in this turn. Use the previous result or continue with a different source.",
+        ),
+        (
+            fresh_brief_blocks_lookup,
+            "Skipped web/search lookup: a fresh saved research brief already matches this non-latest query. Answer from [Relevant Research Briefs] unless the user asks for latest/current data.",
+        ),
+    ]
+    .into_iter()
+    .find_map(|(blocked, reason)| blocked.then_some(reason))
+}
+
+#[derive(Clone, Copy)]
+enum ApprovalGateOutcome {
+    LoopBlocked,
+    Forbidden,
+    UserDenied,
+    Approved,
+}
+
+fn classify_approval_gate(
+    approval: &super::security_approval::ToolApprovalDecision,
+) -> ApprovalGateOutcome {
+    [
+        (approval.is_loop, ApprovalGateOutcome::LoopBlocked),
+        (approval.forbidden, ApprovalGateOutcome::Forbidden),
+        (!approval.approved, ApprovalGateOutcome::UserDenied),
+    ]
+    .into_iter()
+    .find_map(|(matched, outcome)| matched.then_some(outcome))
+    .unwrap_or(ApprovalGateOutcome::Approved)
+}
+
+async fn execute_scoped_approved_tool(
+    loop_ref: &AgentLoop,
+    exec: ApprovedToolExec<'_>,
+    scope_sticky: bool,
+) -> serde_json::Value {
+    match scope_sticky {
+        true => {
+            crate::tools::subagent::ACTIVE_PARENT_STICKY_TOOLS
+                .scope(
+                    loop_ref.tools.current_sticky_tools(),
+                    execute_approved_tool(exec),
+                )
+                .await
+        }
+        false => execute_approved_tool(exec).await,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn dispatch_tool_call(
     loop_ref: &AgentLoop,
@@ -436,36 +501,15 @@ async fn dispatch_tool_call(
     duplicate_direct_url: bool,
     fresh_brief_blocks_lookup: bool,
 ) -> serde_json::Value {
-    match (
+    match research_lookup_skip_reason(
         out_of_scope_direct_page_lookup,
         duplicate_direct_url,
         fresh_brief_blocks_lookup,
     ) {
-        (true, _, _) => {
-            return emit_skipped_tool_notice(
-                ctx.session_key,
-                silent,
-                "Skipped broader research: this request supplied one direct URL. Use the fetched page, or ask for deeper/broader research to inspect additional sources.",
-            )
-            .await;
+        Some(skip_msg) => {
+            return emit_skipped_tool_notice(ctx.session_key, silent, skip_msg).await;
         }
-        (false, true, _) => {
-            return emit_skipped_tool_notice(
-                ctx.session_key,
-                silent,
-                "Skipped duplicate URL lookup: this page was already fetched successfully in this turn. Use the previous result or continue with a different source.",
-            )
-            .await;
-        }
-        (false, false, true) => {
-            return emit_skipped_tool_notice(
-                ctx.session_key,
-                silent,
-                "Skipped web/search lookup: a fresh saved research brief already matches this non-latest query. Answer from [Relevant Research Briefs] unless the user asks for latest/current data.",
-            )
-            .await;
-        }
-        (false, false, false) => {}
+        None => {}
     }
 
     match approval.parse_error.as_deref() {
@@ -493,8 +537,8 @@ async fn dispatch_tool_call(
         None => {}
     }
 
-    match (approval.is_loop, approval.forbidden, approval.approved) {
-        (true, _, _) => {
+    match classify_approval_gate(approval) {
+        ApprovalGateOutcome::LoopBlocked => {
             let warning_str = format!(
                 "Loop detected: You have already executed the tool '{}' with these exact arguments {} times in this turn. To prevent infinite loops, execution was blocked. Do NOT call this tool again. Analyze previous tool outputs and use a different strategy, or finish your response.",
                 call.name, approval.repeat_count
@@ -518,7 +562,7 @@ async fn dispatch_tool_call(
             );
             serde_json::json!({ "error": warning_str })
         }
-        (false, true, _) => {
+        ApprovalGateOutcome::Forbidden => {
             let reject_msg = format!(
                 "✕ *{}* - Rejected: Dangerous command is forbidden",
                 formatted_args
@@ -542,7 +586,7 @@ async fn dispatch_tool_call(
             );
             serde_json::json!({ "error": "Execution denied by host: This command is forbidden by security rules." })
         }
-        (false, false, false) => {
+        ApprovalGateOutcome::UserDenied => {
             let deny_msg = format!("✕ *{}* - Denied by user", formatted_args);
             super::tool_execution::send_progress_update(ctx.session_key, &deny_msg).await;
             let _ = (!silent).then(|| {
@@ -563,7 +607,7 @@ async fn dispatch_tool_call(
             );
             serde_json::json!({ "error": "Execution denied by user." })
         }
-        (false, false, true) => match loop_ref.tools.get(&call.name) {
+        ApprovalGateOutcome::Approved => match loop_ref.tools.get(&call.name) {
             None => {
                 ctx.turn_errors
                     .push(format!("Tool {} not found", call.name));
@@ -594,19 +638,23 @@ async fn dispatch_tool_call(
                                 );
                         match is_low_disk_recovery {
                             true => {
-                                execute_approved_tool(ApprovedToolExec {
-                                    tool: t,
-                                    call,
-                                    metadata: &metadata,
-                                    config,
-                                    formatted_args,
-                                    session_key: ctx.session_key,
-                                    silent,
-                                    tool_spinner_msg,
-                                    turn_cancel,
-                                    turn_errors: &mut ctx.turn_errors,
-                                    prefetched_output: prefetched_outputs.remove(&call.id),
-                                })
+                                execute_scoped_approved_tool(
+                                    loop_ref,
+                                    ApprovedToolExec {
+                                        tool: t,
+                                        call,
+                                        metadata: &metadata,
+                                        config,
+                                        formatted_args,
+                                        session_key: ctx.session_key,
+                                        silent,
+                                        tool_spinner_msg,
+                                        turn_cancel,
+                                        turn_errors: &mut ctx.turn_errors,
+                                        prefetched_output: prefetched_outputs.remove(&call.id),
+                                    },
+                                    false,
+                                )
                                 .await
                             }
                             false => {
@@ -665,50 +713,101 @@ async fn dispatch_tool_call(
                                 .await
                             }
                             true => {
-                                crate::tools::subagent::ACTIVE_PARENT_STICKY_TOOLS
-                                    .scope(
-                                        loop_ref.tools.current_sticky_tools(),
-                                        execute_approved_tool(ApprovedToolExec {
-                                            tool: t.clone(),
-                                            call,
-                                            metadata: &metadata,
-                                            config,
-                                            formatted_args,
-                                            session_key: ctx.session_key,
-                                            silent,
-                                            tool_spinner_msg,
-                                            turn_cancel,
-                                            turn_errors: &mut ctx.turn_errors,
-                                            prefetched_output: prefetched_outputs.remove(&call.id),
-                                        }),
-                                    )
-                                    .await
+                                execute_scoped_approved_tool(
+                                    loop_ref,
+                                    ApprovedToolExec {
+                                        tool: t.clone(),
+                                        call,
+                                        metadata: &metadata,
+                                        config,
+                                        formatted_args,
+                                        session_key: ctx.session_key,
+                                        silent,
+                                        tool_spinner_msg,
+                                        turn_cancel,
+                                        turn_errors: &mut ctx.turn_errors,
+                                        prefetched_output: prefetched_outputs.remove(&call.id),
+                                    },
+                                    true,
+                                )
+                                .await
                             }
                         }
                     }
                     crate::tools::resource_policy::ToolResourceDecision::Allow => {
-                        crate::tools::subagent::ACTIVE_PARENT_STICKY_TOOLS
-                            .scope(
-                                loop_ref.tools.current_sticky_tools(),
-                                execute_approved_tool(ApprovedToolExec {
-                                    tool: t.clone(),
-                                    call,
-                                    metadata: &metadata,
-                                    config,
-                                    formatted_args,
-                                    session_key: ctx.session_key,
-                                    silent,
-                                    tool_spinner_msg,
-                                    turn_cancel,
-                                    turn_errors: &mut ctx.turn_errors,
-                                    prefetched_output: prefetched_outputs.remove(&call.id),
-                                }),
-                            )
-                            .await
+                        execute_scoped_approved_tool(
+                            loop_ref,
+                            ApprovedToolExec {
+                                tool: t.clone(),
+                                call,
+                                metadata: &metadata,
+                                config,
+                                formatted_args,
+                                session_key: ctx.session_key,
+                                silent,
+                                tool_spinner_msg,
+                                turn_cancel,
+                                turn_errors: &mut ctx.turn_errors,
+                                prefetched_output: prefetched_outputs.remove(&call.id),
+                            },
+                            true,
+                        )
+                        .await
                     }
                 }
             }
         },
+    }
+}
+
+async fn emit_turn_halt_message(ctx: &mut TurnContext<'_>, icon: &str, msg: &str) {
+    ctx.final_content = msg.to_string();
+    super::tool_execution::send_progress_update(ctx.session_key, msg).await;
+    let _ = (!crate::agent::style::spinner::is_silent()).then(|| {
+        crate::tui_println!("{}{} {}{}", AURA_GOLD, icon, msg, COLOR_RESET);
+    });
+    ctx.messages.push(Message {
+        role: "assistant".to_string(),
+        content: msg.to_string(),
+        timestamp: Some(chrono::Utc::now().to_rfc3339()),
+        extra: serde_json::Map::new(),
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn run_and_record_optional_auto_tool(
+    tools: &crate::tools::ToolRegistry,
+    maybe_call: Option<crate::providers::ToolCallRequest>,
+    config: &crate::config::schema::Config,
+    session_key: &str,
+    silent: bool,
+    turn_cancel: &crate::tools::subagent::CancellationToken,
+    turn_errors: &mut Vec<String>,
+    tool_results: &mut Vec<super::transcript::ToolTranscriptResult>,
+    assistant_tool_calls_json: &mut Vec<serde_json::Value>,
+) {
+    match maybe_call {
+        Some(auto_call) => {
+            let _ = execute_auto_tool_call(
+                tools,
+                &auto_call,
+                config,
+                session_key,
+                silent,
+                turn_cancel,
+                turn_errors,
+            )
+            .await
+            .map(|result| {
+                super::transcript::append_auto_tool_result(
+                    tool_results,
+                    assistant_tool_calls_json,
+                    &auto_call,
+                    result,
+                );
+            });
+        }
+        None => {}
     }
 }
 
@@ -743,18 +842,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     loop {
         match run.turn_cancel.is_cancelled() {
             true => {
-                let msg = "Turn cancelled by user.".to_string();
-                ctx.final_content = msg.clone();
-                super::tool_execution::send_progress_update(ctx.session_key, &msg).await;
-                let _ = (!crate::agent::style::spinner::is_silent()).then(|| {
-                    crate::tui_println!("{}▲ {}{}", AURA_GOLD, msg, COLOR_RESET);
-                });
-                ctx.messages.push(Message {
-                    role: "assistant".to_string(),
-                    content: msg,
-                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
-                    extra: serde_json::Map::new(),
-                });
+                emit_turn_halt_message(ctx, "▲", "Turn cancelled by user.").await;
                 break;
             }
             false => {}
@@ -779,17 +867,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     "⚠️ Reached tool iteration limit ({}). Summarizing work so far.",
                     run.max_iterations
                 );
-                ctx.final_content = msg.clone();
-                super::tool_execution::send_progress_update(ctx.session_key, &msg).await;
-                let _ = (!crate::agent::style::spinner::is_silent()).then(|| {
-                    crate::tui_println!("{}⚠️ {}{}", AURA_GOLD, msg, COLOR_RESET);
-                });
-                ctx.messages.push(Message {
-                    role: "assistant".to_string(),
-                    content: msg,
-                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
-                    extra: serde_json::Map::new(),
-                });
+                emit_turn_halt_message(ctx, "⚠️", &msg).await;
                 break;
             }
             false => {}
@@ -913,19 +991,12 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     super::loop_control::count_previous_text_responses(&ctx.messages, &content);
                 match text_repeat >= 2 {
                     true => {
-                        let loop_msg = "⚠️ Halted execution: Detected repetitive text responses.";
-                        ctx.final_content = loop_msg.to_string();
-                        super::tool_execution::send_progress_update(ctx.session_key, loop_msg)
-                            .await;
-                        let _ = (!crate::agent::style::spinner::is_silent()).then(|| {
-                            crate::tui_println!("{}⚠️ {}{}", AURA_GOLD, loop_msg, COLOR_RESET);
-                        });
-                        ctx.messages.push(Message {
-                            role: "assistant".to_string(),
-                            content: loop_msg.to_string(),
-                            timestamp: Some(chrono::Utc::now().to_rfc3339()),
-                            extra: serde_json::Map::new(),
-                        });
+                        emit_turn_halt_message(
+                            ctx,
+                            "⚠️",
+                            "⚠️ Halted execution: Detected repetitive text responses.",
+                        )
+                        .await;
                         break;
                     }
                     false => {}
@@ -980,11 +1051,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             let orig_name = call.name.clone();
             let scoped_candidate =
                 auto_scope_context_before_edit(call.clone(), &mut run.auto_scoped_edit_paths);
-            match (
-                orig_name != "scope_context",
-                scoped_candidate.name == "scope_context",
-            ) {
-                (true, true) => {
+            match orig_name != "scope_context" && scoped_candidate.name == "scope_context" {
+                true => {
                     let pre_scope_call = crate::providers::ToolCallRequest {
                         id: format!("auto_scope_{}", call.id),
                         name: scoped_candidate.name,
@@ -1017,7 +1085,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                         None => {}
                     }
                 }
-                _ => {}
+                false => {}
             }
             match turn_cancel.is_cancelled() {
                 true => break,
@@ -1252,29 +1320,18 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 extra: loop_tool_extra,
             });
 
-            match maybe_device_suggest_call {
-                Some(suggest_call) => {
-                    let _ = execute_auto_tool_call(
-                        &loop_ref.tools,
-                        &suggest_call,
-                        &config,
-                        ctx.session_key,
-                        silent,
-                        &turn_cancel_clone,
-                        &mut ctx.turn_errors,
-                    )
-                    .await
-                    .map(|suggest_result| {
-                        super::transcript::append_auto_tool_result(
-                            &mut tool_results,
-                            &mut assistant_tool_calls_json,
-                            &suggest_call,
-                            suggest_result,
-                        );
-                    });
-                }
-                None => {}
-            }
+            run_and_record_optional_auto_tool(
+                &loop_ref.tools,
+                maybe_device_suggest_call,
+                &config,
+                ctx.session_key,
+                silent,
+                &turn_cancel_clone,
+                &mut ctx.turn_errors,
+                &mut tool_results,
+                &mut assistant_tool_calls_json,
+            )
+            .await;
 
             match maybe_auto_open_call {
                 Some(open_call) => {
@@ -1304,29 +1361,18 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                 open_result,
                             );
 
-                            match maybe_open_suggest_call {
-                                Some(suggest_call) => {
-                                    let _ = execute_auto_tool_call(
-                                        &loop_ref.tools,
-                                        &suggest_call,
-                                        &config,
-                                        ctx.session_key,
-                                        silent,
-                                        &turn_cancel_clone,
-                                        &mut ctx.turn_errors,
-                                    )
-                                    .await
-                                    .map(|suggest_result| {
-                                        super::transcript::append_auto_tool_result(
-                                            &mut tool_results,
-                                            &mut assistant_tool_calls_json,
-                                            &suggest_call,
-                                            suggest_result,
-                                        );
-                                    });
-                                }
-                                None => {}
-                            }
+                            run_and_record_optional_auto_tool(
+                                &loop_ref.tools,
+                                maybe_open_suggest_call,
+                                &config,
+                                ctx.session_key,
+                                silent,
+                                &turn_cancel_clone,
+                                &mut ctx.turn_errors,
+                                &mut tool_results,
+                                &mut assistant_tool_calls_json,
+                            )
+                            .await;
                         }
                         None => {}
                     }
@@ -1356,18 +1402,12 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         run.iterations += 1;
         match should_halt {
             true => {
-                let halt_msg = "⚠️ Halted execution: Too many repeating tool calls blocked by loop detection. Halting to save RAM and tokens.";
-                ctx.final_content = halt_msg.to_string();
-                super::tool_execution::send_progress_update(ctx.session_key, halt_msg).await;
-                let _ = (!crate::agent::style::spinner::is_silent()).then(|| {
-                    crate::tui_println!("{}⚠️ {}{}", AURA_GOLD, halt_msg, COLOR_RESET);
-                });
-                ctx.messages.push(Message {
-                    role: "assistant".to_string(),
-                    content: halt_msg.to_string(),
-                    timestamp: Some(chrono::Utc::now().to_rfc3339()),
-                    extra: serde_json::Map::new(),
-                });
+                emit_turn_halt_message(
+                    ctx,
+                    "⚠️",
+                    "⚠️ Halted execution: Too many repeating tool calls blocked by loop detection. Halting to save RAM and tokens.",
+                )
+                .await;
                 break;
             }
             false => {}
