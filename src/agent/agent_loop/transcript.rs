@@ -98,10 +98,12 @@ pub(crate) async fn append_tool_results(
         let content = match content_str.len() > limit && !is_retrieve {
             true => {
                 let outputs_dir = crate::config::loader::runtime_data_dir().join("tool_outputs");
-                let compressed = crate::agent::context_compactor::compress_tool_output(
-                    &tool_result.name,
-                    &content_str,
-                );
+                let compressed =
+                    crate::agent::context_compactor::compress_tool_output_with_limit(
+                        &tool_result.name,
+                        &content_str,
+                        limit,
+                    );
 
                 let saved_path = match tokio::fs::create_dir_all(&outputs_dir).await {
                     Ok(()) => {

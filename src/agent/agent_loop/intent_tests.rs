@@ -35,3 +35,12 @@ fn build_request_prefers_local_execution_tools() {
     assert_eq!(decision.intent, TurnIntent::LocalExecution);
     assert_eq!(decision.knowledge_policy, KnowledgePolicy::UseLocalContext);
 }
+
+#[test]
+fn specialist_subagent_profile_mentions_route_to_orchestration() {
+    let decision = classify_turn_intent(
+        "Have code_auditor and database_specialist inspect the authentication schema",
+    );
+    assert_eq!(decision.intent, TurnIntent::Orchestration);
+    assert_eq!(decision.knowledge_policy, KnowledgePolicy::UseLocalContext);
+}

@@ -290,13 +290,10 @@ pub(crate) fn extract_container_snippet(
                 .replace(title, "")
                 .trim()
                 .to_string();
-            match snippet.len() > 200 {
-                true => {
-                    snippet.truncate(200);
-                    snippet.push_str("...");
-                }
-                false => {}
-            }
+            let _ = snippet.char_indices().nth(200).map(|(idx, _)| {
+                snippet.truncate(idx);
+                snippet.push_str("...");
+            });
             snippet
         }
     }

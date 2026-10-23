@@ -958,7 +958,7 @@ impl ToolRegistry {
             || pending_scope.domains.contains("orchestrator")
             || pending_scope.tools.contains("vision_agent");
         let mut subagent_tools = match include_subagents {
-            true => self.dynamic_subagent_tools(filter.as_ref(), &static_names),
+            true => self.dynamic_subagent_tools_for_prompt(filter.as_ref(), &static_names, prompt),
             false => Vec::new(),
         };
         let route = self.route_for_prompt(prompt);
@@ -998,15 +998,20 @@ impl ToolRegistry {
             let tier_b = !routing::is_core_tool(name_b);
             tier_a.cmp(&tier_b).then_with(|| name_a.cmp(name_b))
         });
-        subagent_tools.truncate(128usize.saturating_sub(selected.len()));
+        let max_subagent_slots = match routing_cfg.enabled {
+            true => routing_cfg.max_visible_tools.max(24),
+            false => 128usize.saturating_sub(selected.len()),
+        };
+        subagent_tools.truncate(max_subagent_slots.min(128usize.saturating_sub(selected.len())));
         selected.extend(subagent_tools);
         selected
     }
 
-    fn dynamic_subagent_tools(
+    fn dynamic_subagent_tools_for_prompt(
         &self,
         filter: Option<&Vec<String>>,
         static_names: &std::collections::HashSet<String>,
+        prompt: &str,
     ) -> Vec<serde_json::Value> {
         let active_subagent = crate::tools::subagent::ACTIVE_SUBAGENT
             .try_with(|s| s.clone())
@@ -1016,7 +1021,11 @@ impl ToolRegistry {
                 &active_subagent,
             );
         let policy = self.active_capability_policy();
-        let mut subagent_tools: Vec<serde_json::Value> = self
+        let prompt_lower = prompt.to_ascii_lowercase();
+        let prompt_tokens: std::collections::HashSet<String> =
+            routing::tokenize(prompt).into_iter().collect();
+
+        let mut scored_subagent_tools: Vec<(i32, String, serde_json::Value)> = self
             .context
             .as_ref()
             .filter(|_| nested_allowed)
@@ -1047,7 +1056,26 @@ impl ToolRegistry {
             })
             .filter(|profile| !static_names.contains(&profile.name))
             .map(|profile| {
-                serde_json::json!({
+                let name_lower = profile.name.to_ascii_lowercase();
+                let spaced = name_lower.replace('_', " ");
+                let direct_bonus = match (
+                    routing::contains_phrase_bounded(&prompt_lower, &name_lower),
+                    spaced.len() >= 4 && routing::contains_phrase_bounded(&prompt_lower, &spaced),
+                ) {
+                    (true, _) => 1_000,
+                    (false, true) => 800,
+                    (false, false) => 0,
+                };
+                let profile_tokens = routing::tokenize(&format!(
+                    "{} {}",
+                    profile.name, profile.description
+                ));
+                let token_overlap = profile_tokens
+                    .iter()
+                    .filter(|tok| prompt_tokens.contains(*tok))
+                    .count() as i32;
+                let score = direct_bonus + (token_overlap * 50);
+                let schema = serde_json::json!({
                     "type": "function",
                     "function": {
                         "name": profile.name,
@@ -1067,15 +1095,15 @@ impl ToolRegistry {
                             "required": ["goal"]
                         })
                     }
-                })
+                });
+                (score, profile.name, schema)
             })
             .collect();
-        subagent_tools.sort_by(|a, b| {
-            let name_a = a["function"]["name"].as_str().unwrap_or("");
-            let name_b = b["function"]["name"].as_str().unwrap_or("");
-            name_a.cmp(name_b)
-        });
-        subagent_tools
+        scored_subagent_tools.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        scored_subagent_tools
+            .into_iter()
+            .map(|(_, _, schema)| schema)
+            .collect()
     }
 }
 

@@ -76,6 +76,17 @@ fn test_prompt_budget_resolution() {
 }
 
 #[test]
+fn test_prompt_section_budgets_scale_with_total_budget() {
+    let small = PromptSectionBudgets::from_total_budget(8_000);
+    let large = PromptSectionBudgets::from_total_budget(256_000);
+    assert!(large.pinned_memory_chars > small.pinned_memory_chars);
+    assert!(large.recent_session_chars > small.recent_session_chars);
+    assert!(large.brief_context_chars > small.brief_context_chars);
+    assert!(large.source_context_chars > small.source_context_chars);
+    assert!(large.workflow_context_chars > small.workflow_context_chars);
+}
+
+#[test]
 fn weak_model_detection_catches_small_or_free_models() {
     assert!(is_weak_or_risky_model("llama-3.1-8b-instant"));
     assert!(is_weak_or_risky_model("mimo-v2.5-free"));

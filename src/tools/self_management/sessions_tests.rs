@@ -150,4 +150,26 @@ fn test_manage_sessions_colon_keys_and_coercion() {
     // 6. Test direct string "list"
     let str_list = rt.block_on(tool.call(&serde_json::json!("list"))).unwrap();
     assert_eq!(str_list["status"].as_str().unwrap(), "success");
+
+    // 7. Test cryptographic Merkle chain audit action
+    let mut valid_session = crate::session::Session::new("audit_test_key");
+    valid_session.add_message("user", "hello audit");
+    valid_session.add_message("assistant", "audit response");
+    valid_session.populate_hashes();
+    let audit_file = sessions_dir.join("audit_test_key.json");
+    std::fs::write(&audit_file, serde_json::to_string(&valid_session).unwrap()).unwrap();
+
+    let single_audit = rt
+        .block_on(tool.call(&serde_json::json!({
+            "action": "audit",
+            "session_key": "audit_test_key"
+        })))
+        .unwrap();
+    assert_eq!(single_audit["status"], "success");
+    assert_eq!(single_audit["verified"], true);
+    assert_eq!(single_audit["message_count"], 2);
+
+    let all_audit = rt.block_on(tool.call(&serde_json::json!("audit"))).unwrap();
+    assert_eq!(all_audit["status"], "success");
+    assert_eq!(all_audit["all_verified"], true);
 }

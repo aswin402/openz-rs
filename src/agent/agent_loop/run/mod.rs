@@ -1191,8 +1191,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     .then_some("error")
                     .unwrap_or("success");
                 let mut output = result_val.to_string();
-                let _ = (output.len() > 2000).then(|| {
-                    output.truncate(2000);
+                let _ = output.char_indices().nth(2000).map(|(idx, _)| {
+                    output.truncate(idx);
                     output.push_str("...");
                 });
                 crate::channels::websocket::publish_ws_event(

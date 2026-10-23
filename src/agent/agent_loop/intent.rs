@@ -79,14 +79,29 @@ const ORCHESTRATION_KEYWORDS: &[&str] = &[
     "planner",
     "reviewer",
     "subagent workflow",
+    "delegate_task",
+    "delegate task",
+    "delegate this",
+    "parallel_research",
+    "parallel research",
+    "evaluator_optimizer_loop",
+    "evaluator optimizer",
+    "trigger_sop",
+    "subagent",
+    "subagents",
 ];
 
 const CRON_KEYWORDS: &[&str] = &[
     "cron",
+    "cronjob",
     "cornjob",
     "schedule_job",
     "list_jobs",
     "remove_job",
+    "pause_job",
+    "resume_job",
+    "run_job_now",
+    "get_job",
     "scheduled job",
     "job logs",
 ];
@@ -184,7 +199,23 @@ fn is_local_execution_query(lower: &str) -> bool {
 }
 
 fn is_orchestration_query(lower: &str) -> bool {
-    contains_any(lower, ORCHESTRATION_KEYWORDS)
+    contains_any(lower, ORCHESTRATION_KEYWORDS) || mentions_registered_subagent_profile(lower)
+}
+
+fn mentions_registered_subagent_profile(lower: &str) -> bool {
+    let matches_name = |name: &str| {
+        let name_lower = name.to_ascii_lowercase();
+        let spaced = name_lower.replace('_', " ");
+        (name_lower.contains('_') && contains_phrase_bounded(lower, &name_lower))
+            || (spaced.contains(' ') && contains_phrase_bounded(lower, &spaced))
+    };
+    crate::subagents::DEFAULT_SUBAGENT_NAMES
+        .iter()
+        .copied()
+        .any(matches_name)
+        || crate::subagents::load_profiles()
+            .ok()
+            .is_some_and(|profiles| profiles.iter().any(|p| matches_name(&p.name)))
 }
 
 fn is_cron_query(lower: &str) -> bool {

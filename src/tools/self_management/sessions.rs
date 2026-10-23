@@ -64,7 +64,7 @@ impl Tool for ManageSessionsTool {
     }
 
     fn description(&self) -> &str {
-        "Manage, clean up, or archive session history files and temporary tool outputs to prevent disk space exhaustion."
+        "Manage, clean up, archive, or cryptographically audit session history files and temporary tool outputs."
     }
 
     fn parameters(&self) -> Value {
@@ -73,12 +73,12 @@ impl Tool for ManageSessionsTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "prune", "archive", "delete", "export"],
-                    "description": "The curation action to perform."
+                    "enum": ["list", "prune", "archive", "delete", "export", "audit"],
+                    "description": "The curation or verification action to perform."
                 },
                 "session_key": {
                     "type": "string",
-                    "description": "Required for archive, delete, or export. Use the exact session_key returned by list."
+                    "description": "Required for archive, delete, or export; optional for audit (audits all sessions when omitted)."
                 },
                 "older_than_days": {
                     "type": "integer",
@@ -96,6 +96,7 @@ impl Tool for ManageSessionsTool {
                 match s_trim.to_lowercase().as_str() {
                     "list" | "ls" | "show" | "view" => (Some("list"), None),
                     "prune" | "clean" | "cleanup" => (Some("prune"), None),
+                    "audit" | "verify" | "verify_chain" => (Some("audit"), None),
                     _ => (Some("export"), Some(s_trim)),
                 }
             }
@@ -112,6 +113,7 @@ impl Tool for ManageSessionsTool {
             "archive" => "archive",
             "export" | "dump" | "get" | "read" => "export",
             "delete" | "remove" | "rm" => "delete",
+            "audit" | "verify" | "verify_chain" => "audit",
             other => other,
         };
         let openz_dir = crate::config::loader::runtime_data_dir();
@@ -266,6 +268,95 @@ impl Tool for ManageSessionsTool {
                         "bytes_reclaimed": size
                     }
                 }))
+            }
+            "audit" => {
+                match extract_session_key(arguments, direct_key) {
+                    Some(_) => {
+                        let (session_key, session_file, _, _) =
+                            resolve_existing_session(arguments, direct_key, &sessions_dir, "audit")?;
+                        let content = std::fs::read_to_string(&session_file)?;
+                        let session: crate::session::Session = serde_json::from_str(&content)?;
+                        let chain_entries: Vec<Value> = session
+                            .messages
+                            .iter()
+                            .enumerate()
+                            .map(|(idx, msg)| {
+                                serde_json::json!({
+                                    "index": idx,
+                                    "role": msg.role,
+                                    "timestamp": msg.timestamp,
+                                    "hash": msg.get_hash(),
+                                })
+                            })
+                            .collect();
+                        match session.verify_hash_chain() {
+                            Ok(()) => Ok(serde_json::json!({
+                                "status": "success",
+                                "verified": true,
+                                "session_key": session_key,
+                                "message_count": session.messages.len(),
+                                "chain": chain_entries
+                            })),
+                            Err(err) => Ok(serde_json::json!({
+                                "status": "failed",
+                                "verified": false,
+                                "session_key": session_key,
+                                "message_count": session.messages.len(),
+                                "error": err.to_string(),
+                                "chain": chain_entries
+                            })),
+                        }
+                    }
+                    None => {
+                        let mut results = Vec::new();
+                        let mut all_verified = true;
+                        for entry in std::fs::read_dir(&sessions_dir)
+                            .into_iter()
+                            .flatten()
+                            .flatten()
+                        {
+                            let path = entry.path();
+                            let is_json = path.is_file()
+                                && path.extension().and_then(|s| s.to_str()) == Some("json");
+                            match is_json {
+                                false => {}
+                                true => {
+                                    let session_key = path
+                                        .file_stem()
+                                        .and_then(|s| s.to_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let audit_entry = std::fs::read_to_string(&path)
+                                        .ok()
+                                        .and_then(|c| serde_json::from_str::<crate::session::Session>(&c).ok())
+                                        .map(|session| match session.verify_hash_chain() {
+                                            Ok(()) => serde_json::json!({
+                                                "session_key": session_key,
+                                                "verified": true,
+                                                "message_count": session.messages.len()
+                                            }),
+                                            Err(err) => {
+                                                all_verified = false;
+                                                serde_json::json!({
+                                                    "session_key": session_key,
+                                                    "verified": false,
+                                                    "message_count": session.messages.len(),
+                                                    "error": err.to_string()
+                                                })
+                                            }
+                                        });
+                                    let _ = audit_entry.map(|item| results.push(item));
+                                }
+                            }
+                        }
+                        Ok(serde_json::json!({
+                            "status": "success",
+                            "all_verified": all_verified,
+                            "audited_count": results.len(),
+                            "results": results
+                        }))
+                    }
+                }
             }
             _ => Err(anyhow::anyhow!("Invalid action")),
         }

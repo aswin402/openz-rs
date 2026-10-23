@@ -5,6 +5,30 @@ use std::collections::HashSet;
 
 pub const MIN_MATCH_SCORE: f64 = 6.0;
 pub const MAX_SOURCE_CONTEXT_CHARS: usize = 3000;
+pub const DEFAULT_BRIEF_CONTEXT_CHARS: usize = 3600;
+pub const DEFAULT_WORKFLOW_CONTEXT_CHARS: usize = 3600;
+pub const DEFAULT_PINNED_MEMORY_CHARS: usize = 1500;
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PromptSectionBudgets {
+    pub pinned_memory_chars: usize,
+    pub recent_session_chars: usize,
+    pub brief_context_chars: usize,
+    pub source_context_chars: usize,
+    pub workflow_context_chars: usize,
+}
+
+impl PromptSectionBudgets {
+    pub(crate) fn from_total_budget(total_budget: usize) -> Self {
+        Self {
+            pinned_memory_chars: (total_budget / 32).clamp(1_000, 4_000),
+            recent_session_chars: (total_budget / 24).clamp(1_200, 6_000),
+            brief_context_chars: (total_budget / 16).clamp(1_800, 8_000),
+            source_context_chars: (total_budget / 20).clamp(1_500, 6_000),
+            workflow_context_chars: (total_budget / 16).clamp(1_800, 8_000),
+        }
+    }
+}
 
 fn extract_metadata_section(
     metadata: &serde_json::Map<String, serde_json::Value>,
@@ -210,28 +234,45 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         })
         .unwrap_or_default();
 
-    let pinned_memory =
-        retrieve_pinned_identity_memories(&config.agents.defaults.bot_name).await;
-    let persona_priority_part = identity_answer_priority_context(ctx.user_content, &pinned_memory);
-    let recent_session_part = recent_session_context(&ctx.session.messages, 2000);
-    let brief_context = retrieve_research_brief_context(ctx.session_key, ctx.user_content).await;
-    let source_context =
-        retrieve_source_context(ctx.session_key, ctx.user_content, !brief_context.is_empty()).await;
-    let workflow_context = retrieve_workflow_context(
-        ctx.session_key,
-        ctx.user_content,
-        &mut ctx.workflow_notice_names,
-    )
-    .await;
-    let weak_model_rules = weak_model_operating_rules(&config.agents.defaults.model);
-    let grounding_rules = crate::grounding::main_agent_grounding_rules();
-    let cross_session_memory =
-        retrieve_cross_session_memories(ctx.user_content, &config.agents.defaults.bot_name).await;
-
     let budget_limit = crate::providers::DynamicContextRegistry::resolve_prompt_budget_chars(
         &config.agents.defaults.model,
         config,
     );
+    let section_budgets = PromptSectionBudgets::from_total_budget(budget_limit);
+
+    let pinned_memory = retrieve_pinned_identity_memories_with_limit(
+        &config.agents.defaults.bot_name,
+        section_budgets.pinned_memory_chars,
+    )
+    .await;
+    let persona_priority_part = identity_answer_priority_context(ctx.user_content, &pinned_memory);
+    let recent_session_part =
+        recent_session_context(&ctx.session.messages, section_budgets.recent_session_chars);
+    let brief_context = retrieve_research_brief_context_with_limit(
+        ctx.session_key,
+        ctx.user_content,
+        section_budgets.brief_context_chars,
+    )
+    .await;
+    let source_context = retrieve_source_context_with_limit(
+        ctx.session_key,
+        ctx.user_content,
+        !brief_context.is_empty(),
+        section_budgets.source_context_chars,
+    )
+    .await;
+    let workflow_context = retrieve_workflow_context_with_limit(
+        ctx.session_key,
+        ctx.user_content,
+        &mut ctx.workflow_notice_names,
+        section_budgets.workflow_context_chars,
+    )
+    .await;
+    let weak_model_rules = weak_model_operating_rules(&config.agents.defaults.model);
+    let grounding_rules = crate::grounding::main_agent_grounding_rules();
+    let active_agent_scope = profile_name.unwrap_or(&config.agents.defaults.bot_name);
+    let cross_session_memory =
+        retrieve_cross_session_memories(ctx.user_content, active_agent_scope).await;
     let now_rfc3339 = chrono::Utc::now().to_rfc3339();
     let static_prefix = StaticPromptPrefix {
         bot_name: &config.agents.defaults.bot_name,
@@ -648,9 +689,22 @@ fn should_show_saved_context_notification(text: &str) -> bool {
     !super::research_policy::has_live_research_intent(text)
 }
 
+#[cfg(test)]
 fn format_research_brief_context_items(
     items: &[crate::tools::shared_memory::ResearchBrief],
     user_content: &str,
+) -> String {
+    format_research_brief_context_items_with_limit(
+        items,
+        user_content,
+        DEFAULT_BRIEF_CONTEXT_CHARS,
+    )
+}
+
+fn format_research_brief_context_items_with_limit(
+    items: &[crate::tools::shared_memory::ResearchBrief],
+    user_content: &str,
+    max_chars: usize,
 ) -> String {
     match items.is_empty() {
         true => String::new(),
@@ -674,7 +728,7 @@ fn format_research_brief_context_items(
                     item.score,
                     item.summary
                 );
-                match out.chars().count() + line.chars().count() > 3600 {
+                match out.chars().count() + line.chars().count() > max_chars {
                     true => break,
                     false => out.push_str(&line),
                 }
@@ -684,7 +738,11 @@ fn format_research_brief_context_items(
     }
 }
 
-async fn retrieve_research_brief_context(session_key: &str, user_content: &str) -> String {
+async fn retrieve_research_brief_context_with_limit(
+    session_key: &str,
+    user_content: &str,
+    max_chars: usize,
+) -> String {
     match should_skip_research_memory_for_generic_query(user_content) {
         true => String::new(),
         false => match crate::tools::shared_memory::search_research_briefs(user_content, 3).await {
@@ -705,7 +763,7 @@ async fn retrieve_research_brief_context(session_key: &str, user_content: &str) 
                             format!("{} ({})", best.topic, best.freshness),
                         );
                     });
-                format_research_brief_context_items(&items, user_content)
+                format_research_brief_context_items_with_limit(&items, user_content, max_chars)
             }
             Err(err) => {
                 tracing::debug!(error = ?err, "research brief context retrieval skipped");
@@ -715,7 +773,10 @@ async fn retrieve_research_brief_context(session_key: &str, user_content: &str) 
     }
 }
 
-fn format_source_context_items(items: &[crate::tools::shared_memory::SourceBookmark]) -> String {
+fn format_source_context_items_with_limit(
+    items: &[crate::tools::shared_memory::SourceBookmark],
+    max_chars: usize,
+) -> String {
     match items.is_empty() {
         true => String::new(),
         false => {
@@ -735,7 +796,7 @@ fn format_source_context_items(items: &[crate::tools::shared_memory::SourceBookm
                     item.aliases.join(", "),
                     item.summary
                 );
-                match out.chars().count() + line.chars().count() > MAX_SOURCE_CONTEXT_CHARS {
+                match out.chars().count() + line.chars().count() > max_chars {
                     true => break,
                     false => out.push_str(&line),
                 }
@@ -749,10 +810,11 @@ fn should_notify_source_context(user_content: &str, brief_context_available: boo
     should_show_saved_context_notification(user_content) && !brief_context_available
 }
 
-async fn retrieve_source_context(
+async fn retrieve_source_context_with_limit(
     session_key: &str,
     user_content: &str,
     brief_context_available: bool,
+    max_chars: usize,
 ) -> String {
     match should_skip_research_memory_for_generic_query(user_content) {
         true => String::new(),
@@ -775,7 +837,7 @@ async fn retrieve_source_context(
                             format!("{} ({})", label, best.freshness),
                         );
                     });
-                format_source_context_items(&items)
+                format_source_context_items_with_limit(&items, max_chars)
             }
             Err(err) => {
                 tracing::debug!(error = ?err, "source context retrieval skipped");
@@ -817,7 +879,15 @@ fn summarize_workflow_steps(steps: &serde_json::Value) -> String {
         .join("; ")
 }
 
+#[cfg(test)]
 fn format_workflow_context_items(items: &[crate::tools::shared_memory::WorkflowCard]) -> String {
+    format_workflow_context_items_with_limit(items, DEFAULT_WORKFLOW_CONTEXT_CHARS)
+}
+
+fn format_workflow_context_items_with_limit(
+    items: &[crate::tools::shared_memory::WorkflowCard],
+    max_chars: usize,
+) -> String {
     let relevant: Vec<_> = items
         .iter()
         .filter(|item| item.score >= 4.0)
@@ -845,7 +915,7 @@ fn format_workflow_context_items(items: &[crate::tools::shared_memory::WorkflowC
                     steps,
                     item.verification.join(", ")
                 );
-                match out.chars().count() + line.chars().count() > 3600 {
+                match out.chars().count() + line.chars().count() > max_chars {
                     true => break,
                     false => out.push_str(&line),
                 }
@@ -859,10 +929,11 @@ fn should_emit_workflow_notice(seen: &mut HashSet<String>, workflow_name: &str) 
     seen.insert(workflow_name.to_string())
 }
 
-async fn retrieve_workflow_context(
+async fn retrieve_workflow_context_with_limit(
     session_key: &str,
     user_content: &str,
     seen_workflow_notices: &mut HashSet<String>,
+    max_chars: usize,
 ) -> String {
     match crate::tools::shared_memory::search_workflow_cards(user_content, 3, true).await {
         Ok(items) => {
@@ -880,7 +951,7 @@ async fn retrieve_workflow_context(
                         best.name.clone(),
                     );
                 });
-            format_workflow_context_items(&items)
+            format_workflow_context_items_with_limit(&items, max_chars)
         }
         Err(err) => {
             tracing::debug!(error = ?err, "workflow context retrieval skipped");
@@ -889,7 +960,7 @@ async fn retrieve_workflow_context(
     }
 }
 
-async fn retrieve_pinned_identity_memories(bot_name: &str) -> String {
+async fn retrieve_pinned_identity_memories_with_limit(bot_name: &str, max_chars: usize) -> String {
     let mut entries: Vec<String> = Vec::new();
 
     let _lock = crate::tools::shared_memory::get_db_mutex().lock().await;
@@ -932,6 +1003,7 @@ async fn retrieve_pinned_identity_memories(bot_name: &str) -> String {
 
     let mut seen = std::collections::HashSet::new();
     let mut out = String::new();
+    let effective_max = max_chars.max(DEFAULT_PINNED_MEMORY_CHARS);
     for entry in entries {
         let normalized = entry.trim().to_lowercase();
         let is_new = !normalized.is_empty() && seen.insert(normalized);
@@ -942,7 +1014,7 @@ async fn retrieve_pinned_identity_memories(bot_name: &str) -> String {
                     out.push_str("\n\n[Pinned Memory]\nUse these stable identity/persona/preference facts before guessing:\n");
                 });
                 let line = format!("- {}\n", entry.trim());
-                match out.chars().count() + line.chars().count() > 1500 {
+                match out.chars().count() + line.chars().count() > effective_max {
                     true => break,
                     false => out.push_str(&line),
                 }
@@ -1037,7 +1109,8 @@ async fn retrieve_cross_session_memories(user_content: &str, bot_name: &str) -> 
         .to_string();
     let mut all_entries: Vec<(f32, String)> = Vec::new();
     let uid = "*";
-    let aid = "*";
+    let clean_bot = bot_name.trim();
+    let aid = (!clean_bot.is_empty()).then_some(clean_bot).unwrap_or("*");
 
     let _lock = crate::tools::shared_memory::get_db_mutex().lock().await;
     let cognitive_rows = with_shared_db(|conn| {
