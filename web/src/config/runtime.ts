@@ -23,9 +23,13 @@ function runtimeEnv(): ViteRuntimeEnv {
 }
 
 function gatewayWebSocketUrl(value: string): string {
-  const protocol = value.startsWith('https://') ? 'wss://' : value.startsWith('http://') ? 'ws://' : '';
-  const base = protocol ? protocol + value.replace(/^https?:\/\//, '') : value;
-  return base.endsWith('/ws') ? base : base.replace(/\/$/, '') + '/ws';
+  const base = value.startsWith('https://')
+    ? 'wss://' + value.slice('https://'.length)
+    : value.startsWith('http://')
+      ? 'ws://' + value.slice('http://'.length)
+      : value;
+  const trimmedBase = base.endsWith('/') ? base.slice(0, -1) : base;
+  return trimmedBase.endsWith('/ws') ? trimmedBase : trimmedBase + '/ws';
 }
 
 export function resolveWebSocketUrl(location: Location, configured?: string): string {

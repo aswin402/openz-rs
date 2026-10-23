@@ -301,44 +301,18 @@ pub fn find_replace_text(file_path: &str, find: &str, replace: &str) -> String {
 
 /// Convert a DOCX document to PDF using the rdocx layout engine.
 pub fn to_pdf(source: &str, output: &str) -> String {
-    let doc = match Document::open(source) {
-        Ok(d) => d,
-        Err(e) => return serde_json::json!({"error": e.to_string()}).to_string(),
-    };
-
-    match doc.to_pdf() {
-        Ok(pdf_bytes) => match std::fs::write(output, &pdf_bytes) {
-            Ok(_) => serde_json::json!({
-                "success": true,
-                "source": source,
-                "output": output,
-                "size_bytes": pdf_bytes.len()
-            })
-            .to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
-        },
-        Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
-    }
+    let bytes_res = Document::open(source)
+        .map_err(|e| e.to_string())
+        .and_then(|doc| doc.to_pdf().map_err(|e| e.to_string()));
+    crate::tools::opendoc::converters::write_converted_bytes_json(source, output, bytes_res)
 }
 
 /// Export a DOCX document to Markdown format.
 pub fn to_markdown(source: &str, output: &str) -> String {
-    let doc = match Document::open(source) {
-        Ok(d) => d,
-        Err(e) => return serde_json::json!({"error": e.to_string()}).to_string(),
-    };
-
-    let md = doc.to_markdown();
-    match std::fs::write(output, &md) {
-        Ok(_) => serde_json::json!({
-            "success": true,
-            "source": source,
-            "output": output,
-            "size_bytes": md.len()
-        })
-        .to_string(),
-        Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
-    }
+    let bytes_res = Document::open(source)
+        .map(|doc| doc.to_markdown().into_bytes())
+        .map_err(|e| e.to_string());
+    crate::tools::opendoc::converters::write_converted_bytes_json(source, output, bytes_res)
 }
 
 /// Embed an image into a DOCX document.

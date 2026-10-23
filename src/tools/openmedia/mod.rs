@@ -214,12 +214,13 @@ fn normalize_improve_feedback_arguments(arguments: &Value) -> Value {
         });
     match r {
         Some(rating) => {
-            let scaled = match (rating > 1.0, rating <= 5.0, rating <= 10.0, rating <= 100.0) {
-                (true, true, _, _) => rating / 5.0,
-                (true, false, true, _) => rating / 10.0,
-                (true, false, false, true) => rating / 100.0,
-                _ => rating,
-            };
+            const SCALE_DIVISORS: &[f64] = &[1.0, 5.0, 10.0, 100.0];
+            let scaled = SCALE_DIVISORS
+                .iter()
+                .copied()
+                .find(|&divisor| rating <= divisor)
+                .map(|divisor| rating / divisor)
+                .unwrap_or(rating);
             obj.insert("rating".to_string(), json!(scaled.clamp(0.0, 1.0)));
         }
         None => {}

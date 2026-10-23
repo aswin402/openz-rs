@@ -27,7 +27,8 @@ const MarkdownCodeBlock: React.FC<MarkdownCodeBlockProps> = ({ language, childre
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(String(children).replace(/\n$/, ''));
+    const raw = String(children);
+    navigator.clipboard.writeText(raw.endsWith('\n') ? raw.slice(0, -1) : raw);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };

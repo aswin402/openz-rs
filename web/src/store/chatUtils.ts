@@ -71,8 +71,10 @@ export function upsertDraftSession(sessions: OpenZSession[], chatId: string): Op
   return [createDraftSession(normalizedChatId), ...sessions.filter((session) => !session.isDraft)];
 }
 
+import { collapseWhitespace } from '../shared/lib/format';
+
 export function titleFromFirstMessage(content: string): string {
-  const compact = content.trim().replace(/\s+/g, ' ');
+  const compact = collapseWhitespace(content);
   if (!compact) return DRAFT_SESSION_TITLE;
   return compact.length > 42 ? compact.slice(0, 39) + '...' : compact;
 }

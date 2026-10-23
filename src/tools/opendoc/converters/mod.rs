@@ -20,6 +20,27 @@ pub fn convert(
     convert_with_password(source, target_format, output, None)
 }
 
+/// Write converted document bytes to `output` and return a standardized JSON string response.
+pub fn write_converted_bytes_json<E: std::fmt::Display>(
+    source: &str,
+    output: &str,
+    bytes_res: Result<Vec<u8>, E>,
+) -> String {
+    match bytes_res {
+        Ok(bytes) => match std::fs::write(output, &bytes) {
+            Ok(_) => serde_json::json!({
+                "success": true,
+                "source": source,
+                "output": output,
+                "size_bytes": bytes.len()
+            })
+            .to_string(),
+            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+        },
+        Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+    }
+}
+
 /// Convert a document from one format to another with an optional password
 pub fn convert_with_password(
     source: &str,

@@ -393,20 +393,30 @@ fn topic_from(tool_name: &str, args: &Value, user_content: &str) -> String {
 
 fn kind_for_url(url: &str) -> (&'static str, f64) {
     let lower = url.to_lowercase();
-    let is_repo = lower.contains("github.com") || lower.contains("gitlab.com");
-    let is_docs =
-        lower.contains("/docs") || lower.contains("docs.") || lower.contains("documentation");
-    let is_social = lower.contains("twitter.com")
-        || lower.contains("x.com")
-        || lower.contains("reddit.com")
-        || lower.contains("youtube.com")
-        || lower.contains("linkedin.com");
-    match (is_repo, is_docs, is_social) {
-        (true, _, _) => ("repo", 0.85),
-        (false, true, _) => ("docs", 0.8),
-        (false, false, true) => ("social", 0.55),
-        (false, false, false) => ("website", 0.65),
-    }
+    const URL_KIND_RULES: &[(&[&str], &'static str, f64)] = &[
+        (&["github.com", "gitlab.com"], "repo", 0.85),
+        (&["/docs", "docs.", "documentation"], "docs", 0.8),
+        (
+            &[
+                "twitter.com",
+                "x.com",
+                "reddit.com",
+                "youtube.com",
+                "linkedin.com",
+            ],
+            "social",
+            0.55,
+        ),
+    ];
+    URL_KIND_RULES
+        .iter()
+        .find_map(|(patterns, kind, conf)| {
+            patterns
+                .iter()
+                .any(|pat| lower.contains(pat))
+                .then_some((*kind, *conf))
+        })
+        .unwrap_or(("website", 0.65))
 }
 
 fn label_for_url(url: &str) -> String {

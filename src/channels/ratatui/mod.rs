@@ -1622,7 +1622,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     crate::agent::activity::remove_active_tui_session(&exit_session_key);
     match is_last_live_tui_in_dir(&marker_dir, current_pid) {
         true => {
-            let _ = save_default_model_selection(&app.provider, &app.model);
+            let _ = crate::channels::save_default_model_selection(&config, &app.provider, &app.model);
             crate::shutdown::trigger();
             crate::channels::shutdown_gateways_bounded(&config).await;
         }

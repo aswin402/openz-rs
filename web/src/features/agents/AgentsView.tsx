@@ -3,9 +3,11 @@ import { useOpenZStore } from '../../store/useOpenZStore';
 import type { SubagentInfo } from '../../types/openz';
 import { ArrowLeft, Bot, Check, Copy, Cpu, Edit3, Plus, Save, Search, ShieldCheck, Trash2, X } from 'lucide-react';
 
+import { normalizeIdentifier } from '../../shared/lib/format';
+
 const DEFAULT_PROMPT = 'You are a specialized OpenZ subagent. Focus on one clear responsibility, use available tools carefully, and return concise, actionable results.';
 function normalizeAgentName(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '');
+  return normalizeIdentifier(value, false);
 }
 
 function fallbacksToText(fallbacks?: string[]): string {

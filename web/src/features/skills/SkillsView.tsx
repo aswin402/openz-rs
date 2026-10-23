@@ -6,17 +6,19 @@ import { ArrowLeft, BookOpen, Check, Edit3, FileText, Plus, RefreshCw, Save, Sea
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
+import { normalizeIdentifier, stripMarkdownFormatting } from '../../shared/lib/format';
+
 const EMPTY_CONTENT = '# New Skill\n\nDescribe when the agent should use this skill and the concrete procedure it should follow.\n';
 const SUMMARY_LENGTH = 120;
 
 function normalizeSkillName(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '');
+  return normalizeIdentifier(value, true);
 }
 
 function skillSummary(content: string): string {
   const firstUsefulLine = content
-    .split(/\r?\n/)
-    .map((line) => line.replace(/^\s*#+\s*/, '').replace(/[`*_]/g, '').trim())
+    .split('\n')
+    .map((line) => stripMarkdownFormatting(line.endsWith('\r') ? line.slice(0, -1) : line))
     .find(Boolean);
   if (!firstUsefulLine) return 'No description provided.';
   return firstUsefulLine.length > SUMMARY_LENGTH

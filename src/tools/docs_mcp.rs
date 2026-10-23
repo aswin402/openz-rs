@@ -387,6 +387,16 @@ impl DocsService {
     }
 
     pub async fn read_rust_docs(&self, crate_name: &str, sub_path: Option<&str>) -> Result<String> {
+        self.read_rust_docs_with_url(crate_name, sub_path)
+            .await
+            .map(|(_, markdown)| markdown)
+    }
+
+    pub async fn read_rust_docs_with_url(
+        &self,
+        crate_name: &str,
+        sub_path: Option<&str>,
+    ) -> Result<(String, String)> {
         let crate_trimmed = crate_name.trim();
         match crate_trimmed.is_empty() {
             true => anyhow::bail!("Crate name cannot be empty."),
@@ -396,21 +406,28 @@ impl DocsService {
         let sub_path_actual = sub_path.unwrap_or("index.html").trim();
         let db_cache_path = format!("rust_docs/{}/{}", crate_trimmed, sub_path_actual);
 
-        match self.read_cached_rust_markdown(&db_cache_path) {
-            Some(md) => return Ok(md),
-            None => {}
-        }
-
         let module_name = crate_trimmed.replace('-', "_");
-        let url = match sub_path_actual.starts_with("http://")
-            || sub_path_actual.starts_with("https://")
-        {
-            true => sub_path_actual.to_string(),
-            false => format!(
+        let allowed_direct_url = sub_path_actual.starts_with("https://docs.rs/")
+            || sub_path_actual.starts_with("https://crates.io/");
+        let blocked_direct_url =
+            sub_path_actual.starts_with("http://") || sub_path_actual.starts_with("https://");
+        let url = match (allowed_direct_url, blocked_direct_url) {
+            (true, _) => sub_path_actual.to_string(),
+            (false, true) => {
+                anyhow::bail!(
+                    "SSRF blocked: sub_path can only reference docs.rs or crates.io URLs"
+                );
+            }
+            (false, false) => format!(
                 "https://docs.rs/{}/latest/{}/{}",
                 crate_trimmed, module_name, sub_path_actual
             ),
         };
+
+        match self.read_cached_rust_markdown(&db_cache_path) {
+            Some(md) => return Ok((url, md)),
+            None => {}
+        }
 
         crate::tools::web::validate_url(&url)
             .await
@@ -424,17 +441,18 @@ impl DocsService {
             .await;
 
         let ok_resp = resp_result.ok().filter(|r| r.status().is_success());
-        let resp = match ok_resp {
-            Some(r) => r,
+        let (resolved_url, resp) = match ok_resp {
+            Some(r) => (url, r),
             None => {
                 let fallback_url =
                     format!("https://docs.rs/{}/latest/{}/", crate_trimmed, module_name);
-                client
+                let fallback_resp = client
                     .get(&fallback_url)
                     .header(reqwest::header::USER_AGENT, USER_AGENT)
                     .send()
                     .await
-                    .map_err(|e| anyhow::anyhow!("Failed to connect to docs.rs: {}", e))?
+                    .map_err(|e| anyhow::anyhow!("Failed to connect to docs.rs: {}", e))?;
+                (fallback_url, fallback_resp)
             }
         };
 
@@ -473,7 +491,7 @@ impl DocsService {
             )
         });
 
-        Ok(markdown)
+        Ok((resolved_url, markdown))
     }
 }
 

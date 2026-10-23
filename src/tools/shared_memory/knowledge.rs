@@ -222,21 +222,8 @@ fn is_ui_chrome_noise_summary(lower: &str) -> bool {
     is_assignee_noise || is_footer_noise || is_action_error || chrome_hits
 }
 
-const STOP_WORDS: &[&str] = &[
-    "the", "a", "an", "is", "it", "this", "that", "to", "in", "for", "of", "on", "and", "or", "be",
-    "was", "are", "what", "how", "why", "who", "when", "where", "which", "with", "from", "about",
-    "do", "does", "did", "can", "could", "will", "would", "should", "may", "might", "shall", "has",
-    "have", "had", "been", "being", "not", "no", "nor", "but", "so", "if", "than", "too", "very",
-    "just", "get", "got", "let", "make", "made", "use", "used", "using", "like", "also", "new",
-    "set", "get", "say", "said", "see", "way", "part", "top", "own",
-];
-
 fn tokenize(text: &str) -> Vec<String> {
-    text.to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| w.len() > 2 && !STOP_WORDS.contains(w))
-        .map(|w| w.to_string())
-        .collect()
+    crate::tools::routing::tokenize_with_min_len(text, 3)
 }
 
 fn matching_term_count(query: &str, fields: &[&str]) -> (usize, usize) {
@@ -1027,17 +1014,18 @@ impl Tool for KnowledgeSourceTool {
                     .get("kind")
                     .or_else(|| arguments.get("type"))
                     .and_then(|v| v.as_str())
-                    .unwrap_or_else(|| {
-                        let is_http = uri.starts_with("http");
-                        let is_repo = uri.contains("github.com") || uri.contains("gitlab.com");
-                        let is_path =
-                            uri.starts_with('/') || uri.starts_with('~') || uri.starts_with("./");
-                        match (is_http, is_repo, is_path) {
-                            (true, true, _) => "repo",
-                            (true, false, _) => "website",
-                            (false, _, true) => "path",
-                            (false, _, false) => "other",
-                        }
+                    .unwrap_or_else(|| match uri.starts_with("http") {
+                        true => match uri.contains("github.com") || uri.contains("gitlab.com") {
+                            true => "repo",
+                            false => "website",
+                        },
+                        false => match uri.starts_with('/')
+                            || uri.starts_with('~')
+                            || uri.starts_with("./")
+                        {
+                            true => "path",
+                            false => "other",
+                        },
                     });
 
                 let aliases = ["aliases", "tags", "tag"]

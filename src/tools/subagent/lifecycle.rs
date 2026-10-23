@@ -115,19 +115,15 @@ fn parse_timeout_duration_secs(error: &str) -> Option<u64> {
 
 fn duration_unit_to_secs(value: u64, unit: &str) -> Option<u64> {
     let unit = unit.trim();
-    match unit.is_empty() {
-        true => return None,
-        false => {}
-    }
-    let is_sec = matches!(unit, "s" | "sec" | "secs") || unit.starts_with("second");
-    let is_min = matches!(unit, "m" | "min" | "mins") || unit.starts_with("minute");
-    let is_hr = matches!(unit, "h" | "hr" | "hrs") || unit.starts_with("hour");
-    match (is_sec, is_min, is_hr) {
-        (true, _, _) => Some(value),
-        (false, true, _) => Some(value.saturating_mul(60)),
-        (false, false, true) => Some(value.saturating_mul(3600)),
-        (false, false, false) => None,
-    }
+    const UNIT_RULES: &[(&[&str], &str, u64)] = &[
+        (&["s", "sec", "secs"], "second", 1),
+        (&["m", "min", "mins"], "minute", 60),
+        (&["h", "hr", "hrs"], "hour", 3600),
+    ];
+    UNIT_RULES.iter().find_map(|(exact, prefix, mult)| {
+        (!unit.is_empty() && (exact.contains(&unit) || unit.starts_with(prefix)))
+            .then(|| value.saturating_mul(*mult))
+    })
 }
 
 pub fn compact_lifecycle_line(name: &str, model: &str, status: &SubagentRunStatus) -> String {

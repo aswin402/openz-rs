@@ -151,14 +151,6 @@ pub async fn save_session_streaming_override(
     crate::agent::agent_loop::save_session_overrides(session_manager, session_key, &overrides).await
 }
 
-pub fn save_default_model_selection(provider: &str, model: &str) -> Result<()> {
-    let mut cfg = crate::config::loader::load_config()?;
-    cfg.agents.defaults.provider = provider.to_string();
-    cfg.agents.defaults.model = model.to_string();
-    crate::channels::record_recent_model(provider, model);
-    crate::config::loader::save_config(&cfg)
-}
-
 pub async fn apply_session_model_selection(
     session_manager: &crate::session::SessionManager,
     session_key: &str,

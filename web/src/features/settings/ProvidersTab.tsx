@@ -2,6 +2,7 @@ import React, { type Dispatch, type SetStateAction } from 'react';
 import { Trash2 } from 'lucide-react';
 import type { ProviderCapability } from '../../types';
 import type { ProviderDescriptor } from '../../config/providers';
+import { sanitizeProviderKey } from '../../shared/lib/format';
 import type { ProviderForm, ProvidersForm } from './settingsSchema';
 
 export interface ProvidersTabProps {
@@ -127,7 +128,7 @@ export const ProvidersTab: React.FC<ProvidersTabProps> = ({
               type="text"
               value={newProviderKey}
               onChange={(event) => {
-                onNewProviderKeyChange(event.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ''));
+                onNewProviderKeyChange(sanitizeProviderKey(event.target.value));
                 onNewProviderKeyError('');
               }}
               placeholder="my-custom-provider"

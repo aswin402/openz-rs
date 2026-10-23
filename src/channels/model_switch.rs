@@ -349,6 +349,7 @@ pub fn save_default_model_selection(
     let mut config = crate::config::loader::load_config().unwrap_or_else(|_| base_config.clone());
     config.agents.defaults.provider = provider.to_string();
     config.agents.defaults.model = model.trim().to_string();
+    crate::channels::record_recent_model(provider, model.trim());
     crate::config::loader::save_config(&config)?;
     spawn_model_smoke_test(config, provider, model);
     Ok(())

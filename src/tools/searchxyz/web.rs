@@ -32,25 +32,30 @@ impl SearchFailureKind {
 
 pub fn classify_search_failure(message: &str) -> SearchFailureKind {
     let normalized = message.to_lowercase();
-    let is_rate_limited = normalized.contains("429")
-        || normalized.contains("too many requests")
-        || normalized.contains("rate limit");
-    let is_blocked = normalized.contains("403")
-        || normalized.contains("forbidden")
-        || normalized.contains("captcha")
-        || normalized.contains("blocked")
-        || normalized.contains("unusual traffic");
-    let is_timeout = normalized.contains("timed out") || normalized.contains("timeout");
-    let is_no_usable = normalized.contains("0 usable results")
-        || normalized.contains("all search backends exhausted");
-
-    match (is_rate_limited, is_blocked, is_timeout, is_no_usable) {
-        (true, _, _, _) => SearchFailureKind::RateLimited,
-        (false, true, _, _) => SearchFailureKind::Blocked,
-        (false, false, true, _) => SearchFailureKind::Timeout,
-        (false, false, false, true) => SearchFailureKind::NoUsableResults,
-        (false, false, false, false) => SearchFailureKind::Other,
-    }
+    const FAILURE_RULES: &[(&[&str], SearchFailureKind)] = &[
+        (
+            &["429", "too many requests", "rate limit"],
+            SearchFailureKind::RateLimited,
+        ),
+        (
+            &["403", "forbidden", "captcha", "blocked", "unusual traffic"],
+            SearchFailureKind::Blocked,
+        ),
+        (&["timed out", "timeout"], SearchFailureKind::Timeout),
+        (
+            &["0 usable results", "all search backends exhausted"],
+            SearchFailureKind::NoUsableResults,
+        ),
+    ];
+    FAILURE_RULES
+        .iter()
+        .find_map(|(patterns, kind)| {
+            patterns
+                .iter()
+                .any(|pat| normalized.contains(pat))
+                .then_some(*kind)
+        })
+        .unwrap_or(SearchFailureKind::Other)
 }
 
 pub fn search_failure_cooldown_secs(kind: SearchFailureKind) -> u64 {

@@ -56,14 +56,8 @@ fn score_text(query: &str, fields: &[&str]) -> f64 {
 }
 
 fn normalized_terms(text: &str) -> std::collections::HashSet<String> {
-    const STOP_WORDS: &[&str] = &[
-        "about", "again", "also", "and", "any", "are", "can", "did", "for", "from", "how", "into",
-        "now", "please", "that", "the", "then", "this", "to", "use", "using", "was", "were",
-        "what", "when", "where", "with", "you", "your",
-    ];
-    text.split(|c: char| !c.is_alphanumeric())
-        .map(|t| t.to_lowercase())
-        .filter(|t| t.len() >= 3 && !STOP_WORDS.contains(&t.as_str()))
+    crate::tools::routing::tokenize_with_min_len(text, 3)
+        .into_iter()
         .collect()
 }
 

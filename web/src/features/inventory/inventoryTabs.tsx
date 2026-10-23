@@ -503,6 +503,4 @@ const CronAction: React.FC<{
   </button>
 );
 
-function humanize(value: string): string {
-  return value.replace(/([A-Z])/g, ' $1').replace(/^./, (char) => char.toUpperCase());
-}
+import { humanizeCamelCase as humanize } from '../../shared/lib/format';

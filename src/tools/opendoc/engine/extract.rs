@@ -395,28 +395,26 @@ pub fn extract_financial(doc: &Document) -> FinancialTemplate {
             match row.as_slice() {
                 [first, val_str, ..] => {
                     let label = first.to_lowercase();
-                    let is_rev = label.contains("revenue")
-                        || label.contains("total sales")
-                        || label.contains("turnover");
-                    let is_net = label.contains("net income") || label.contains("net profit");
-                    let is_assets = label.contains("total assets")
-                        || (label.contains("assets") && !label.contains("liabilities"));
-                    let is_liab =
-                        label.contains("total liabilities") || label.contains("liabilities");
-
-                    match (is_rev, is_net, is_assets, is_liab) {
-                        (true, _, _, _) => revenue = revenue.or_else(|| parse_number(val_str)),
-                        (false, true, _, _) => {
-                            net_income = net_income.or_else(|| parse_number(val_str))
-                        }
-                        (false, false, true, _) => {
-                            total_assets = total_assets.or_else(|| parse_number(val_str))
-                        }
-                        (false, false, false, true) => {
-                            total_liabilities =
-                                total_liabilities.or_else(|| parse_number(val_str))
-                        }
-                        _ => {}
+                    let rules: [(&[&str], Option<&str>, &mut Option<f64>); 4] = [
+                        (&["revenue", "total sales", "turnover"], None, &mut revenue),
+                        (&["net income", "net profit"], None, &mut net_income),
+                        (
+                            &["total assets", "assets"],
+                            Some("liabilities"),
+                            &mut total_assets,
+                        ),
+                        (
+                            &["total liabilities", "liabilities"],
+                            None,
+                            &mut total_liabilities,
+                        ),
+                    ];
+                    match rules.into_iter().find(|(includes, exclude, _)| {
+                        includes.iter().any(|kw| label.contains(kw))
+                            && exclude.is_none_or(|ex| !label.contains(ex))
+                    }) {
+                        Some((_, _, slot)) => *slot = slot.or_else(|| parse_number(val_str)),
+                        None => {}
                     }
                 }
                 _ => {}

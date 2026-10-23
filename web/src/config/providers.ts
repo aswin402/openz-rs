@@ -15,7 +15,10 @@ export function formatProviderDisplayName(key: string): string {
   if (normalized === 'google_ai_studio' || normalized === 'google-ai-studio') return 'Google AI Studio';
 
   return normalized
-    .replace(/[-_]+/g, ' ')
+    .split('-')
+    .join(' ')
+    .split('_')
+    .join(' ')
     .split(' ')
     .filter(Boolean)
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))

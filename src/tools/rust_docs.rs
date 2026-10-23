@@ -1,11 +1,8 @@
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
-use scraper::{Html, Selector};
 use serde_json::{json, Value};
 
-pub struct RustDocsTool {
-    client: reqwest::Client,
-}
+pub struct RustDocsTool;
 
 impl Default for RustDocsTool {
     fn default() -> Self {
@@ -13,15 +10,11 @@ impl Default for RustDocsTool {
     }
 }
 
-const USER_AGENT: &str = "OpenZ-Agent (openz-dev@openz.ai)";
+const MAX_RUST_DOCS_MARKDOWN_BYTES: usize = 15_000;
 
 impl RustDocsTool {
     pub fn new() -> Self {
-        let client = crate::core::http::custom_http_client(
-            std::time::Duration::from_secs(5),
-            std::time::Duration::from_secs(10),
-        );
-        Self { client }
+        Self
     }
 }
 
@@ -66,6 +59,7 @@ impl Tool for RustDocsTool {
             .get("action")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'action' parameter"))?;
+        let service = crate::tools::docs_mcp::global_docs_service();
 
         match action {
             "search" => {
@@ -73,47 +67,7 @@ impl Tool for RustDocsTool {
                     .get("query")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'query' parameter for search action"))?;
-
-                let url = format!(
-                    "https://crates.io/api/v1/crates?q={}&per_page=5",
-                    percent_encoding::utf8_percent_encode(
-                        query,
-                        percent_encoding::NON_ALPHANUMERIC
-                    )
-                );
-                let resp = self
-                    .client
-                    .get(&url)
-                    .header("User-Agent", USER_AGENT)
-                    .send()
-                    .await?;
-
-                match resp.status().is_success() {
-                    true => {}
-                    false => {
-                        return Err(anyhow!(
-                            "Failed to search crates.io (HTTP {})",
-                            resp.status()
-                        ));
-                    }
-                }
-
-                let data: Value = resp.json().await?;
-                let results: Vec<Value> = data
-                    .get("crates")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .map(|item| {
-                        json!({
-                            "name": item.get("name").and_then(|v| v.as_str()).unwrap_or(""),
-                            "version": item.get("max_version").and_then(|v| v.as_str()).unwrap_or(""),
-                            "description": item.get("description").and_then(|v| v.as_str()).unwrap_or(""),
-                            "documentation": item.get("documentation").and_then(|v| v.as_str()).unwrap_or("")
-                        })
-                    })
-                    .collect();
-
+                let results = service.search_rust_crate(query).await?;
                 Ok(json!({
                     "status": "success",
                     "results": results
@@ -124,96 +78,27 @@ impl Tool for RustDocsTool {
                     .get("crate_name")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing 'crate_name' parameter for get_docs action"))?;
-
-                let sub_path = arguments
-                    .get("sub_path")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("index.html");
-
-                let module_name = crate_name.replace('-', "_");
-                let allowed_direct_url = sub_path.starts_with("https://docs.rs/")
-                    || sub_path.starts_with("https://crates.io/");
-                let blocked_direct_url =
-                    sub_path.starts_with("http://") || sub_path.starts_with("https://");
-                let url = match (allowed_direct_url, blocked_direct_url) {
-                    (true, _) => sub_path.to_string(),
-                    (false, true) => {
-                        return Err(anyhow!(
-                            "SSRF blocked: sub_path can only reference docs.rs or crates.io URLs"
-                        ));
-                    }
-                    (false, false) => format!(
-                        "https://docs.rs/{}/latest/{}/{}",
-                        crate_name, module_name, sub_path
-                    ),
-                };
-
-                let resp = self
-                    .client
-                    .get(&url)
-                    .header("User-Agent", USER_AGENT)
-                    .send()
+                let sub_path = arguments.get("sub_path").and_then(|v| v.as_str());
+                let (url, markdown) = service
+                    .read_rust_docs_with_url(crate_name, sub_path)
                     .await?;
-                match resp.status().is_success() {
-                    true => self.parse_docs_html(resp.text().await?, &url),
-                    false => {
-                        let fallback_url =
-                            format!("https://docs.rs/{}/latest/{}/", crate_name, module_name);
-                        let fallback_resp = self
-                            .client
-                            .get(&fallback_url)
-                            .header("User-Agent", USER_AGENT)
-                            .send()
-                            .await?;
-                        match fallback_resp.status().is_success() {
-                            true => {
-                                self.parse_docs_html(fallback_resp.text().await?, &fallback_url)
-                            }
-                            false => Err(anyhow!(
-                                "Failed to fetch docs.rs page for {} (HTTP {})",
-                                crate_name,
-                                fallback_resp.status()
-                            )),
-                        }
+                let truncated_md = match markdown.len() > MAX_RUST_DOCS_MARKDOWN_BYTES {
+                    true => {
+                        let end = markdown.floor_char_boundary(MAX_RUST_DOCS_MARKDOWN_BYTES);
+                        format!(
+                            "{}\n\n... (content truncated for size) ...",
+                            &markdown[..end]
+                        )
                     }
-                }
+                    false => markdown,
+                };
+                Ok(json!({
+                    "status": "success",
+                    "url": url,
+                    "markdown": truncated_md
+                }))
             }
             _ => Err(anyhow!("Unsupported action: {}", action)),
         }
-    }
-}
-
-impl RustDocsTool {
-    fn parse_docs_html(&self, html: String, url: &str) -> Result<Value> {
-        let fragment = Html::parse_document(&html);
-
-        // Target only the main content section, discarding sidebars/headers
-        let main_html = ["main", "#main-content", ".content"]
-            .into_iter()
-            .find_map(|selector_str| {
-                let selector = Selector::parse(selector_str).ok()?;
-                fragment.select(&selector).next().map(|el| el.html())
-            })
-            .unwrap_or_else(|| html.clone());
-
-        let markdown = html2md::parse_html(&main_html);
-
-        // Limit markdown output size to keep context clean
-        let truncated_md = match markdown.len() > 15000 {
-            true => {
-                let end = markdown.floor_char_boundary(15000);
-                format!(
-                    "{}\n\n... (content truncated for size) ...",
-                    &markdown[..end]
-                )
-            }
-            false => markdown,
-        };
-
-        Ok(json!({
-            "status": "success",
-            "url": url,
-            "markdown": truncated_md
-        }))
     }
 }

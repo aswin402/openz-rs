@@ -184,6 +184,27 @@ fn scan_rust_source_for_forbidden_tokens(src: &str) -> (usize, usize, usize) {
     (bad_if, bad_else, bad_regex)
 }
 
+fn collect_web_ts_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        match path.is_dir() {
+            true => collect_web_ts_files(&path, out),
+            false => match path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| matches!(ext, "ts" | "tsx"))
+            {
+                true => out.push(path),
+                false => {}
+            },
+        }
+    }
+}
+
 #[test]
 fn codebase_enforces_zero_if_else_and_zero_regex() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -212,6 +233,31 @@ fn codebase_enforces_zero_if_else_and_zero_regex() {
                     rel.display()
                 ));
             }
+        }
+    }
+
+    let web_src_dir = manifest_dir.join("web/src");
+    let mut web_files = Vec::new();
+    collect_web_ts_files(&web_src_dir, &mut web_files);
+    web_files.sort();
+    for path in &web_files {
+        let content = std::fs::read_to_string(path)
+            .unwrap_or_else(|err| panic!("failed to read {}: {err}", path.display()));
+        let has_regex = content.lines().any(|line| {
+            let trimmed = line.trim_start();
+            !trimmed.starts_with("//")
+                && (trimmed.contains("RegExp")
+                    || trimmed.contains(".replace(/")
+                    || trimmed.contains(".match(/")
+                    || trimmed.contains(".split(/")
+                    || trimmed.contains(".test(/"))
+        });
+        match has_regex {
+            true => {
+                let rel = path.strip_prefix(manifest_dir).unwrap_or(path);
+                violations.push(format!("{}: web regex literal or RegExp found", rel.display()));
+            }
+            false => {}
         }
     }
 
