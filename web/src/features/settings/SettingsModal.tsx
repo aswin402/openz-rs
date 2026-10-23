@@ -4,9 +4,13 @@ import { useOpenZStore } from '../../store/useOpenZStore';
 import type { JsonObject } from '../../types';
 import { resolveProviderDescriptors } from '../../config/providers';
 import {
+  buildDefaultsPatch,
+  hasDefaultsChanged,
   jsonObjectToChannels,
   jsonObjectToProviders,
+  settingsToForm,
   stableStringify,
+  validateSettingsForm,
   type ChannelsForm,
   type ProvidersForm,
   type SettingsForm,
@@ -15,6 +19,12 @@ import { AgentSettingsTab } from './AgentSettingsTab';
 import { ChannelsTab } from './ChannelsTab';
 import { ProvidersTab } from './ProvidersTab';
 import { X, Settings, RotateCcw, CheckCircle2, AlertCircle, Save } from 'lucide-react';
+
+const SETTINGS_TABS = [
+  { id: 'agent', label: 'Agent & Gateway' },
+  { id: 'providers', label: 'LLM Providers' },
+  { id: 'channels', label: 'Bot Channels' },
+] as const;
 
 export const SettingsModal: React.FC = () => {
   const isSettingsOpen = useOpenZStore((s) => s.isSettingsOpen);
@@ -51,32 +61,9 @@ export const SettingsModal: React.FC = () => {
     if (isSettingsOpen) {
       setUrlInput(wsUrl);
       setTokenInput(wsToken);
-      if (settings) {
-        setForm({
-          model: settings.model,
-          provider: settings.provider,
-          temperature: settings.temperature,
-          max_tokens: settings.max_tokens,
-          bot_name: settings.bot_name,
-          max_messages: settings.max_messages,
-          max_tool_iterations: settings.max_tool_iterations,
-          tool_timeout_secs: settings.tool_timeout_secs,
-          security_mode: settings.security_mode,
-          workspace: settings.workspace,
-          context_limit: settings.context_limit ?? '',
-          tool_output_limit: settings.tool_output_limit ?? '',
-          show_auto_capture_notices: settings.show_auto_capture_notices ?? true,
-          tui_thought_display: settings.tui_thought_display ?? 'auto',
-          firefox_webdriver_port: settings.firefox_webdriver_port,
-          firefox_attach_port: settings.firefox_attach_port,
-        });
-      }
-      if (providersConfig) {
-        setProvidersForm(jsonObjectToProviders(providersConfig));
-      }
-      if (channelsConfig) {
-        setChannelsForm(jsonObjectToChannels(channelsConfig));
-      }
+      if (settings) setForm(settingsToForm(settings));
+      if (providersConfig) setProvidersForm(jsonObjectToProviders(providersConfig));
+      if (channelsConfig) setChannelsForm(jsonObjectToChannels(channelsConfig));
       setShowAddCustom(false);
       setNewProvKey('');
       setNewProvKeyErr('');
@@ -84,7 +71,6 @@ export const SettingsModal: React.FC = () => {
       clearWorkspaceNotice('settings');
     }
   }, [isSettingsOpen, wsUrl, wsToken, settings, providersConfig, channelsConfig, clearWorkspaceNotice]);
-
 
   const setField = (key: string, value: string | number | boolean) => {
     setForm((f) => ({ ...f, [key]: value }));
@@ -95,85 +81,26 @@ export const SettingsModal: React.FC = () => {
   const resetForms = () => {
     setUrlInput(wsUrl);
     setTokenInput(wsToken);
-    if (settings) {
-      setForm({
-        model: settings.model,
-        provider: settings.provider,
-        temperature: settings.temperature,
-        max_tokens: settings.max_tokens,
-        bot_name: settings.bot_name,
-        max_messages: settings.max_messages,
-        max_tool_iterations: settings.max_tool_iterations,
-        tool_timeout_secs: settings.tool_timeout_secs,
-        security_mode: settings.security_mode,
-        workspace: settings.workspace,
-        context_limit: settings.context_limit ?? '',
-        tool_output_limit: settings.tool_output_limit ?? '',
-        show_auto_capture_notices: settings.show_auto_capture_notices ?? true,
-        tui_thought_display: settings.tui_thought_display ?? 'auto',
-        firefox_webdriver_port: settings.firefox_webdriver_port,
-        firefox_attach_port: settings.firefox_attach_port,
-      });
-    }
+    if (settings) setForm(settingsToForm(settings));
     setProvidersForm(jsonObjectToProviders(providersConfig));
     setChannelsForm(jsonObjectToChannels(channelsConfig));
     setSaveNotice(null);
   };
 
-  const validationError = useMemo(() => {
-    if (!urlInput.trim()) return 'Gateway websocket URL is required.';
-    if (!/^wss?:\/\//.test(urlInput.trim())) return 'Gateway URL must start with ws:// or wss://.';
-    if (Number(form.temperature ?? 0) < 0 || Number(form.temperature ?? 0) > 2) return 'Temperature must be between 0 and 2.';
-    if (Number(form.max_tokens ?? 1) < 1) return 'Max tokens must be at least 1.';
-    if (Number(form.max_messages ?? 1) < 1) return 'Max messages must be at least 1.';
-    const firefoxWebdriverPort = Number(form.firefox_webdriver_port ?? settings?.firefox_webdriver_port ?? capabilities.browser.firefoxWebdriverPort);
-    const firefoxAttachPort = Number(form.firefox_attach_port ?? settings?.firefox_attach_port ?? capabilities.browser.firefoxAttachPort);
-    if (firefoxWebdriverPort < 1024 || firefoxWebdriverPort > 65535) return "Firefox WebDriver port must be 1024-65535.";
-    if (firefoxAttachPort < 1024 || firefoxAttachPort > 65535) return "Firefox attach port must be 1024-65535.";
-    if (Number(form.max_tool_iterations ?? 1) < 1) return 'Max tool iterations must be at least 1.';
-    if (Number(form.tool_timeout_secs ?? 1) < 1) return 'Tool timeout must be at least 1 second.';
-    if (form.context_limit !== '' && form.context_limit !== undefined && Number(form.context_limit) < 1) return 'Context limit must be blank or at least 1.';
-    if (form.tool_output_limit !== '' && form.tool_output_limit !== undefined && Number(form.tool_output_limit) < 1) return 'Tool output limit must be blank or at least 1.';
-    for (const channel of channelCapabilities) {
-      const values = channelsForm[channel.name] || {};
-      for (const field of channel.fields) {
-        if (field.kind !== 'number') continue;
-        const raw = values[field.key] ?? channel.defaults[field.key];
-        if (raw === undefined || raw === '') continue;
-        const number = Number(raw);
-        if (!Number.isFinite(number) || number < 1 || number > 65535) {
-          return channel.label + ' ' + field.label + ' must be 1-65535.';
-        }
-      }
-    }
-    return null;
-  }, [channelCapabilities, channelsForm, form.context_limit, form.max_messages, form.max_tokens, form.max_tool_iterations, form.temperature, form.tool_output_limit, form.tool_timeout_secs, form.firefox_attach_port, form.firefox_webdriver_port, urlInput]);
+  const validationError = useMemo(
+    () => validateSettingsForm(urlInput, form, settings, capabilities, channelsForm),
+    [capabilities, channelsForm, form, settings, urlInput],
+  );
 
-  const hasChanges = useMemo(() => {
-    const defaultsChanged = settings ? (
-      form.model !== settings.model ||
-      form.provider !== settings.provider ||
-      Number(form.temperature) !== settings.temperature ||
-      Number(form.max_tokens) !== settings.max_tokens ||
-      form.bot_name !== settings.bot_name ||
-      Number(form.max_messages) !== settings.max_messages ||
-      Number(form.max_tool_iterations) !== settings.max_tool_iterations ||
-      Number(form.tool_timeout_secs) !== settings.tool_timeout_secs ||
-      form.security_mode !== settings.security_mode ||
-      form.workspace !== settings.workspace ||
-      String(form.context_limit ?? '') !== String(settings.context_limit ?? '') ||
-      String(form.tool_output_limit ?? '') !== String(settings.tool_output_limit ?? '') ||
-      Boolean(form.show_auto_capture_notices ?? true) !== Boolean(settings.show_auto_capture_notices ?? true) ||
-      form.tui_thought_display !== (settings.tui_thought_display ?? 'auto') ||
-      Number(form.firefox_webdriver_port) !== settings.firefox_webdriver_port ||
-      Number(form.firefox_attach_port) !== settings.firefox_attach_port
-    ) : false;
-    return urlInput !== wsUrl ||
+  const hasChanges = useMemo(
+    () =>
+      urlInput !== wsUrl ||
       tokenInput !== wsToken ||
-      defaultsChanged ||
+      hasDefaultsChanged(form, settings) ||
       stableStringify(providersForm) !== stableStringify(providersConfig) ||
-      stableStringify(channelsForm) !== stableStringify(channelsConfig);
-  }, [channelsConfig, channelsForm, form, providersConfig, providersForm, settings, tokenInput, urlInput, wsToken, wsUrl]);
+      stableStringify(channelsForm) !== stableStringify(channelsConfig),
+    [channelsConfig, channelsForm, form, providersConfig, providersForm, settings, tokenInput, urlInput, wsToken, wsUrl],
+  );
 
   const pageNotice = workspaceNotice?.scope === 'settings' ? workspaceNotice : saveNotice;
   const visibleNotice = validationError ? { type: 'error' as const, message: validationError } : pageNotice;
@@ -186,28 +113,8 @@ export const SettingsModal: React.FC = () => {
 
     setWsConfig(urlInput.trim(), tokenInput);
 
-    const defaultsPatch: Record<string, unknown> = {};
-    if (settings) {
-      if (form.model !== undefined && form.model !== settings.model) defaultsPatch.model = form.model;
-      if (form.provider !== undefined && form.provider !== settings.provider) defaultsPatch.provider = form.provider;
-      if (form.temperature !== undefined && Number(form.temperature) !== settings.temperature) defaultsPatch.temperature = Number(form.temperature);
-      if (form.max_tokens !== undefined && Number(form.max_tokens) !== settings.max_tokens) defaultsPatch.max_tokens = Number(form.max_tokens);
-      if (form.bot_name !== undefined && form.bot_name !== settings.bot_name) defaultsPatch.bot_name = form.bot_name;
-      if (form.max_messages !== undefined && Number(form.max_messages) !== settings.max_messages) defaultsPatch.max_messages = Number(form.max_messages);
-      if (form.max_tool_iterations !== undefined && Number(form.max_tool_iterations) !== settings.max_tool_iterations) defaultsPatch.max_tool_iterations = Number(form.max_tool_iterations);
-      if (form.tool_timeout_secs !== undefined && Number(form.tool_timeout_secs) !== settings.tool_timeout_secs) defaultsPatch.tool_timeout_secs = Number(form.tool_timeout_secs);
-      if (form.security_mode !== undefined && form.security_mode !== settings.security_mode) defaultsPatch.security_mode = form.security_mode;
-      if (form.workspace !== undefined && form.workspace !== settings.workspace) defaultsPatch.workspace = form.workspace;
-      if (form.context_limit !== undefined && String(form.context_limit) !== String(settings.context_limit ?? '')) defaultsPatch.context_limit = form.context_limit === '' ? null : Number(form.context_limit);
-      if (form.tool_output_limit !== undefined && String(form.tool_output_limit) !== String(settings.tool_output_limit ?? '')) defaultsPatch.tool_output_limit = form.tool_output_limit === '' ? null : Number(form.tool_output_limit);
-      if (form.show_auto_capture_notices !== undefined && Boolean(form.show_auto_capture_notices) !== Boolean(settings.show_auto_capture_notices ?? true)) defaultsPatch.show_auto_capture_notices = Boolean(form.show_auto_capture_notices);
-      if (form.tui_thought_display !== undefined && form.tui_thought_display !== (settings.tui_thought_display ?? 'auto')) defaultsPatch.tui_thought_display = form.tui_thought_display;
-      if (form.firefox_webdriver_port !== undefined && Number(form.firefox_webdriver_port) !== settings.firefox_webdriver_port) defaultsPatch.firefox_webdriver_port = Number(form.firefox_webdriver_port);
-      if (form.firefox_attach_port !== undefined && Number(form.firefox_attach_port) !== settings.firefox_attach_port) defaultsPatch.firefox_attach_port = Number(form.firefox_attach_port);
-    }
-
     updateConfig({
-      defaults: defaultsPatch,
+      defaults: buildDefaultsPatch(form, settings),
       providers: providersForm as unknown as JsonObject,
       channels: channelsForm as unknown as JsonObject,
     });
@@ -264,36 +171,19 @@ export const SettingsModal: React.FC = () => {
 
         {/* Tab Selection */}
         <div className="flex border-b border-border/40 px-6 shrink-0 bg-muted/10 text-xs">
-          <button
-            onClick={() => setActiveTab('agent')}
-            className={`py-3 px-4 font-semibold border-b-2 transition-all ${
-              activeTab === 'agent'
-                ? 'border-amber-500 text-amber-500 bg-muted/20'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Agent & Gateway
-          </button>
-          <button
-            onClick={() => setActiveTab('providers')}
-            className={`py-3 px-4 font-semibold border-b-2 transition-all ${
-              activeTab === 'providers'
-                ? 'border-amber-500 text-amber-500 bg-muted/20'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            LLM Providers
-          </button>
-          <button
-            onClick={() => setActiveTab('channels')}
-            className={`py-3 px-4 font-semibold border-b-2 transition-all ${
-              activeTab === 'channels'
-                ? 'border-amber-500 text-amber-500 bg-muted/20'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Bot Channels
-          </button>
+          {SETTINGS_TABS.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`py-3 px-4 font-semibold border-b-2 transition-all ${
+                activeTab === tab.id
+                  ? 'border-amber-500 text-amber-500 bg-muted/20'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
 
         {visibleNotice && (

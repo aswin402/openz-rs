@@ -158,14 +158,15 @@ pub fn get_tree_spinner_msg(_name: &str, _formatted_args: &str) -> String {
 pub fn strip_ansi_escapes(s: &str) -> String {
     let (result, _) = s.chars().fold(
         (String::with_capacity(s.len()), false),
-        |(mut acc, in_escape), c| match (in_escape, c == '\x1b', c.is_ascii_alphabetic()) {
-            (_, true, _) => (acc, true),
-            (true, false, true) => (acc, false),
-            (true, false, false) => (acc, true),
-            (false, false, _) => {
-                acc.push(c);
-                (acc, false)
-            }
+        |(mut acc, in_escape), c| match in_escape {
+            true => (acc, c == '\x1b' || !c.is_ascii_alphabetic()),
+            false => match c == '\x1b' {
+                true => (acc, true),
+                false => {
+                    acc.push(c);
+                    (acc, false)
+                }
+            },
         },
     );
     result

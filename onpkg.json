@@ -154,7 +154,7 @@
   },
   "project": {
     "name": "openz",
-    "version": "0.0.297",
+    "version": "0.0.298",
     "description": "High-performance, async personal AI agent framework built in Rust",
     "package_manager": "cargo",
     "runtime": "rust",

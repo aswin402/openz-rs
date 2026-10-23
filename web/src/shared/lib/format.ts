@@ -100,3 +100,26 @@ export function formatObservations(value: unknown): string {
     return raw || 'No observations recorded.';
   }
 }
+
+export function extractCodeLanguage(className?: string): string | undefined {
+  if (!className) return undefined;
+  const prefix = 'language-';
+  const index = className.indexOf(prefix);
+  if (index < 0) return undefined;
+  const rest = className.slice(index + prefix.length);
+  let lang = '';
+  for (const ch of rest) {
+    const lower = ch.toLowerCase();
+    if (isAsciiAlnum(lower) || ch === '_') {
+      lang += ch;
+    } else {
+      break;
+    }
+  }
+  return lang || undefined;
+}
+
+export function isWebSocketUrl(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.startsWith('ws://') || trimmed.startsWith('wss://');
+}

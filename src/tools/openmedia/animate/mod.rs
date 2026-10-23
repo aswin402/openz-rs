@@ -460,21 +460,17 @@ impl Easing {
 }
 
 fn bounce_out(t: f64) -> f64 {
-    match (t < 1.0 / 2.75, t < 2.0 / 2.75, t < 2.5 / 2.75) {
-        (true, _, _) => 7.5625 * t * t,
-        (false, true, _) => {
-            let t = t - 1.5 / 2.75;
-            7.5625 * t * t + 0.75
-        }
-        (false, false, true) => {
-            let t = t - 2.25 / 2.75;
-            7.5625 * t * t + 0.9375
-        }
-        (false, false, false) => {
-            let t = t - 2.625 / 2.75;
-            7.5625 * t * t + 0.984375
-        }
-    }
+    const SEGMENTS: &[(f64, f64, f64)] = &[
+        (1.0 / 2.75, 0.0, 0.0),
+        (2.0 / 2.75, 1.5 / 2.75, 0.75),
+        (2.5 / 2.75, 2.25 / 2.75, 0.9375),
+    ];
+    let (shift, offset) = SEGMENTS
+        .iter()
+        .find_map(|&(limit, shift, offset)| (t < limit).then_some((shift, offset)))
+        .unwrap_or((2.625 / 2.75, 0.984375));
+    let shifted = t - shift;
+    7.5625 * shifted * shifted + offset
 }
 
 fn spring_evaluate(t: f64, stiffness: f64, damping: f64, mass: f64) -> f64 {

@@ -246,11 +246,24 @@ fn codebase_enforces_zero_if_else_and_zero_regex() {
         let has_regex = content.lines().any(|line| {
             let trimmed = line.trim_start();
             !trimmed.starts_with("//")
-                && (trimmed.contains("RegExp")
-                    || trimmed.contains(".replace(/")
-                    || trimmed.contains(".match(/")
-                    || trimmed.contains(".split(/")
-                    || trimmed.contains(".test(/"))
+                && [
+                    "RegExp",
+                    ".replace(/",
+                    ".match(/",
+                    ".matchAll(/",
+                    ".split(/",
+                    ".search(/",
+                    ".test(/",
+                    ".exec(/",
+                    "/.test(",
+                    "/.exec(",
+                    "/i.test(",
+                    "/g.test(",
+                    "/i.exec(",
+                    "/g.exec(",
+                ]
+                .iter()
+                .any(|pattern| trimmed.contains(pattern))
         });
         match has_regex {
             true => {

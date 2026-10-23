@@ -8,7 +8,7 @@ import type { OpenZMessage } from '../../types';
 import { ToolExecutionCard } from './ToolExecutionCard';
 import { SecurityGuardPrompt } from '../../components/SecurityGuardPrompt';
 import { useOpenZStore } from '../../store/useOpenZStore';
-import { formatFileSize } from '../../shared/lib/format';
+import { extractCodeLanguage, formatFileSize } from '../../shared/lib/format';
 import { User, Copy, Check, Brain, ChevronDown, ChevronRight, Info, FileText, Image as ImageIcon } from 'lucide-react';
 import 'katex/dist/katex.min.css';
 import 'highlight.js/styles/github-dark.css';
@@ -66,14 +66,14 @@ const MarkdownCodeBlock: React.FC<MarkdownCodeBlockProps> = ({ language, childre
 const markdownComponents: Components = {
   code({ node, className, children, ...props }) {
     void node;
-    const match = /language-(\w+)/.exec(className || '');
+    const language = extractCodeLanguage(className);
     const text = String(children);
-    const isBlock = Boolean(match) || text.includes('\n');
+    const isBlock = Boolean(language) || text.includes('\n');
 
     return isBlock ? (
       <MarkdownCodeBlock
         className={className}
-        language={match ? match[1] : undefined}
+        language={language}
         {...props}
       >
         {text}

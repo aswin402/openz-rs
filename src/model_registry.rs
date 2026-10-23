@@ -22,7 +22,7 @@ pub struct ModelHealthRecord {
 
 impl ModelHealthRecord {
     pub fn new(provider: &str, model: &str, tier: &str, risky: bool, reasons: Vec<String>) -> Self {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::tools::shared_memory::now_rfc3339();
         Self {
             provider: provider.to_string(),
             model: model.to_string(),
@@ -41,7 +41,7 @@ impl ModelHealthRecord {
     }
 
     pub fn mark_success(&mut self, blank: bool, think_leak: bool, fallback_used: bool) {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::tools::shared_memory::now_rfc3339();
         self.last_checked = now.clone();
         self.last_success = Some(now);
         self.success_count = self.success_count.saturating_add(1);
@@ -58,7 +58,7 @@ impl ModelHealthRecord {
     }
 
     pub fn mark_failure(&mut self, error: &str) {
-        self.last_checked = chrono::Utc::now().to_rfc3339();
+        self.last_checked = crate::tools::shared_memory::now_rfc3339();
         self.failure_count = self.failure_count.saturating_add(1);
         self.last_error = Some(truncate_health_error(error));
     }
@@ -100,16 +100,16 @@ impl ModelRegistry {
     }
 }
 
-pub fn record_model_risk(
+fn update_model_record(
     provider: &str,
     model: &str,
     tier: &str,
     risky: bool,
     reasons: Vec<String>,
+    mutate: impl FnOnce(&mut ModelHealthRecord),
 ) -> Result<()> {
     let mut registry = ModelRegistry::load();
     let key = ModelRegistry::key(provider, model);
-    let now = chrono::Utc::now().to_rfc3339();
     let mut record = registry
         .models
         .remove(&key)
@@ -117,9 +117,21 @@ pub fn record_model_risk(
     record.tier = tier.to_string();
     record.risky = risky;
     record.reasons = reasons;
-    record.last_checked = now;
+    mutate(&mut record);
     registry.upsert(record);
     registry.save()
+}
+
+pub fn record_model_risk(
+    provider: &str,
+    model: &str,
+    tier: &str,
+    risky: bool,
+    reasons: Vec<String>,
+) -> Result<()> {
+    update_model_record(provider, model, tier, risky, reasons, |record| {
+        record.last_checked = crate::tools::shared_memory::now_rfc3339();
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -133,18 +145,9 @@ pub fn record_model_success(
     think_leak: bool,
     fallback_used: bool,
 ) -> Result<()> {
-    let mut registry = ModelRegistry::load();
-    let key = ModelRegistry::key(provider, model);
-    let mut record = registry
-        .models
-        .remove(&key)
-        .unwrap_or_else(|| ModelHealthRecord::new(provider, model, tier, risky, reasons.clone()));
-    record.tier = tier.to_string();
-    record.risky = risky;
-    record.reasons = reasons;
-    record.mark_success(blank, think_leak, fallback_used);
-    registry.upsert(record);
-    registry.save()
+    update_model_record(provider, model, tier, risky, reasons, |record| {
+        record.mark_success(blank, think_leak, fallback_used);
+    })
 }
 
 pub fn record_model_failure(
@@ -155,18 +158,9 @@ pub fn record_model_failure(
     reasons: Vec<String>,
     error: &str,
 ) -> Result<()> {
-    let mut registry = ModelRegistry::load();
-    let key = ModelRegistry::key(provider, model);
-    let mut record = registry
-        .models
-        .remove(&key)
-        .unwrap_or_else(|| ModelHealthRecord::new(provider, model, tier, risky, reasons.clone()));
-    record.tier = tier.to_string();
-    record.risky = risky;
-    record.reasons = reasons;
-    record.mark_failure(error);
-    registry.upsert(record);
-    registry.save()
+    update_model_record(provider, model, tier, risky, reasons, |record| {
+        record.mark_failure(error);
+    })
 }
 
 #[cfg(test)]

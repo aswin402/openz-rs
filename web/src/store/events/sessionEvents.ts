@@ -107,28 +107,46 @@ export function registerSessionEvents({ set, get }: StoreEventContext) {
     }
   });
 
-  wsService.on('session_archived', (payload) => {
+  const handleSessionLifecycleEvent = (
+    payload: unknown,
+    options: {
+      flagKey: 'archived' | 'deleted';
+      errorMessage: string;
+      presentVerb: string;
+      refreshSessionsOnSuccess: boolean;
+    },
+  ) => {
     const payloadObj = isRecord(payload) ? payload : {};
     const rawChatId = asString(payloadObj.chat_id) || asString(payloadObj.session_key) || '';
     const chatId = normalizeChatId(rawChatId);
     const status = asString(payloadObj.status);
     if (status === 'error') {
       const result = applySessionMutationResult(get().sessions, get().messages, chatId, false);
-      set({ ...result, workspaceNotice: { scope: 'inventory', type: 'error', message: asString(payloadObj.detail) || 'Failed to archive session.', timestamp: Date.now() } });
+      set({
+        ...result,
+        workspaceNotice: {
+          scope: 'inventory',
+          type: 'error',
+          message: asString(payloadObj.detail) || options.errorMessage,
+          timestamp: Date.now(),
+        },
+      });
       wsService.requestSessions();
       wsService.requestRuntimeInventory();
       return;
     }
     if (chatId) {
-      const archived = payloadObj.archived !== false;
+      const succeeded = payloadObj[options.flagKey] !== false;
       const result = applySessionMutationResult(get().sessions, get().messages, chatId, true);
       const wasActive = get().activeChatId === chatId;
       set({
         ...result,
         workspaceNotice: {
           scope: 'inventory',
-          type: archived ? 'success' : 'info',
-          message: archived ? `Archived session ${chatId}.` : `Session ${chatId} was already missing on disk.`,
+          type: succeeded ? 'success' : 'info',
+          message: succeeded
+            ? `${options.presentVerb} session ${chatId}.`
+            : `Session ${chatId} was already missing on disk.`,
           timestamp: Date.now(),
         },
       });
@@ -137,42 +155,29 @@ export function registerSessionEvents({ set, get }: StoreEventContext) {
         else get().newSession();
       }
     }
-    wsService.requestSessions();
+    if (options.refreshSessionsOnSuccess) {
+      wsService.requestSessions();
+    }
     wsService.requestRuntimeInventory();
-  });
+  };
 
-  wsService.on('session_deleted', (payload) => {
-    const payloadObj = isRecord(payload) ? payload : {};
-    const rawChatId = asString(payloadObj.chat_id) || asString(payloadObj.session_key) || '';
-    const chatId = normalizeChatId(rawChatId);
-    const status = asString(payloadObj.status);
-    if (status === 'error') {
-      const result = applySessionMutationResult(get().sessions, get().messages, chatId, false);
-      set({ ...result, workspaceNotice: { scope: 'inventory', type: 'error', message: asString(payloadObj.detail) || 'Failed to delete session.', timestamp: Date.now() } });
-      wsService.requestSessions();
-      wsService.requestRuntimeInventory();
-      return;
-    }
-    if (chatId) {
-      const deleted = payloadObj.deleted !== false;
-      const result = applySessionMutationResult(get().sessions, get().messages, chatId, true);
-      const wasActive = get().activeChatId === chatId;
-      set({
-        ...result,
-        workspaceNotice: {
-          scope: 'inventory',
-          type: deleted ? 'success' : 'info',
-          message: deleted ? `Deleted session ${chatId}.` : `Session ${chatId} was already missing on disk.`,
-          timestamp: Date.now(),
-        },
-      });
-      if (wasActive) {
-        if (result.sessions.length > 0) get().selectSession(result.sessions[0].id);
-        else get().newSession();
-      }
-    }
-    wsService.requestRuntimeInventory();
-  });
+  wsService.on('session_archived', (payload) =>
+    handleSessionLifecycleEvent(payload, {
+      flagKey: 'archived',
+      errorMessage: 'Failed to archive session.',
+      presentVerb: 'Archived',
+      refreshSessionsOnSuccess: true,
+    }),
+  );
+
+  wsService.on('session_deleted', (payload) =>
+    handleSessionLifecycleEvent(payload, {
+      flagKey: 'deleted',
+      errorMessage: 'Failed to delete session.',
+      presentVerb: 'Deleted',
+      refreshSessionsOnSuccess: false,
+    }),
+  );
 
   wsService.on('session_history', (payload: { chat_id?: string; messages?: SessionHistoryMessage[] }) => {
     if (payload.chat_id && Array.isArray(payload.messages)) {

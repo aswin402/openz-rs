@@ -19,13 +19,13 @@ impl SubagentHealthRecord {
     pub fn mark_success(&mut self, model: &str) {
         self.last_successful_model = Some(model.to_string());
         self.last_error = None;
-        self.updated_at = Some(chrono::Utc::now().to_rfc3339());
+        self.updated_at = Some(crate::tools::shared_memory::now_rfc3339());
     }
 
     pub fn mark_failure(&mut self, error: &str) {
         self.failure_count = self.failure_count.saturating_add(1);
         self.last_error = Some(crate::model_registry::truncate_health_error(error));
-        self.updated_at = Some(chrono::Utc::now().to_rfc3339());
+        self.updated_at = Some(crate::tools::shared_memory::now_rfc3339());
     }
 }
 
@@ -66,14 +66,19 @@ impl SubagentHealthRegistry {
     }
 }
 
-pub fn record_subagent_success(profile: &str, model: &str) -> Result<()> {
+fn update_subagent_health(
+    profile: &str,
+    mutate: impl FnOnce(&mut SubagentHealthRecord),
+) -> Result<()> {
     let mut registry = SubagentHealthRegistry::load();
-    registry.record_success(profile, model);
+    mutate(registry.profiles.entry(profile.to_string()).or_default());
     registry.save()
 }
 
+pub fn record_subagent_success(profile: &str, model: &str) -> Result<()> {
+    update_subagent_health(profile, |record| record.mark_success(model))
+}
+
 pub fn record_subagent_failure(profile: &str, error: &str) -> Result<()> {
-    let mut registry = SubagentHealthRegistry::load();
-    registry.record_failure(profile, error);
-    registry.save()
+    update_subagent_health(profile, |record| record.mark_failure(error))
 }
