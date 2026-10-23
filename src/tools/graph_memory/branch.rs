@@ -53,7 +53,7 @@ impl Tool for CreateDatabaseBranchTool {
             .map(|s| s.trim())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
-            .unwrap_or_else(|| format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]));
+            .unwrap_or_else(|| format!("branch_{}", crate::core::short_uuid()));
 
         // Lock static db connection first
         let db_mutex = db_mutex()?;

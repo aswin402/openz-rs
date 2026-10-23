@@ -2,10 +2,7 @@ use anyhow::Result;
 use std::path::PathBuf;
 
 fn truncate_log_preview(message: &str) -> String {
-    match message.len() > 50 {
-        true => format!("{}...", &message[..47]),
-        false => message.to_string(),
-    }
+    crate::agent::style::truncate_summary_text(message, 47, "...")
 }
 
 fn select_running_session_id() -> Result<Option<String>> {

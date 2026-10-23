@@ -128,7 +128,7 @@ pub fn resolve_session_key(
         _ => format!(
             "cli:headless_{}_{}",
             chrono::Utc::now().format("%Y%m%d_%H%M%S"),
-            &uuid::Uuid::new_v4().to_string()[..8]
+            crate::core::short_uuid()
         ),
     }
 }

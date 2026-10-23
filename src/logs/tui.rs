@@ -591,8 +591,12 @@ fn render_log_row(
         _ => WHITE,
     };
 
-    let target_str = match target.len() > 35 {
-        true => format!("…{}", &target[target.len().saturating_sub(34)..]),
+    let target_chars: Vec<char> = target.chars().collect();
+    let target_str = match target_chars.len() > 35 {
+        true => {
+            let tail: String = target_chars[target_chars.len() - 34..].iter().collect();
+            format!("…{tail}")
+        }
         false => target.to_string(),
     };
 

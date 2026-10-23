@@ -231,7 +231,7 @@ fn create_sop_instance(
     let def = get_definition(sop_id)?
         .ok_or_else(|| anyhow::anyhow!("SOP definition '{}' not found", sop_id))?;
 
-    let instance_id = format!("{prefix}-{}", &uuid::Uuid::new_v4().to_string()[..8]);
+    let instance_id = format!("{prefix}-{}", crate::core::short_uuid());
     let steps = def
         .steps
         .iter()

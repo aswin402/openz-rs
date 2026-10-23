@@ -77,8 +77,14 @@ impl ClipTokenizer {
             match self.vocab.get(word).copied() {
                 Some(id) => tokens.push(id as i32),
                 None => {
-                    let sub_match = (1..=word.len()).rev().find_map(|i| {
-                        let sub = &word[0..i];
+                    let split_points: Vec<usize> = word
+                        .char_indices()
+                        .skip(1)
+                        .map(|(idx, _)| idx)
+                        .chain(std::iter::once(word.len()))
+                        .collect();
+                    let sub_match = split_points.into_iter().rev().find_map(|i| {
+                        let sub = &word[..i];
                         self.vocab.get(sub).copied().map(|id| (i, id))
                     });
                     match sub_match {

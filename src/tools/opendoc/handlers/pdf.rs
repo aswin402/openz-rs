@@ -90,16 +90,18 @@ impl<'a> PdfBuilder<'a> {
     /// Add wrapped text (word-wrap at margin width)
     fn add_wrapped_line(&mut self, line: &str, max_chars: usize) {
         let mut remaining = line;
+        let effective_max = max_chars.max(1);
         while !remaining.is_empty() {
-            match remaining.len() <= max_chars {
-                true => {
+            match remaining.char_indices().nth(effective_max) {
+                None => {
                     self.add_text_line(remaining);
                     break;
                 }
-                false => {
-                    let break_at = remaining[..max_chars]
+                Some((char_limit_byte, _)) => {
+                    let break_at = remaining[..char_limit_byte]
                         .rfind(|c: char| c.is_whitespace())
-                        .unwrap_or(max_chars);
+                        .filter(|&pos| pos > 0)
+                        .unwrap_or(char_limit_byte);
                     self.add_text_line(&remaining[..break_at]);
                     remaining = remaining[break_at..].trim_start();
                 }

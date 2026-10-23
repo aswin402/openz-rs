@@ -870,7 +870,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                                                         for fact in facts {
                                                                             let node_id = format!(
                                                                                 "fact_{}",
-                                                                                &uuid::Uuid::new_v4().to_string()[..8]
+                                                                                crate::core::short_uuid()
                                                                             );
                                                                             let timestamp = chrono::Utc::now().to_rfc3339();
                                                                             let _ = with_graph_db(

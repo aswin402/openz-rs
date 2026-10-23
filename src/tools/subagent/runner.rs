@@ -140,7 +140,7 @@ pub(crate) async fn create_simulation_branch(
     match enabled {
         false => Ok(None),
         true => {
-            let branch_id = format!("branch_{}", &uuid::Uuid::new_v4().to_string()[..8]);
+            let branch_id = format!("branch_{}", crate::core::short_uuid());
             crate::tools::graph_memory::CreateDatabaseBranchTool
                 .call(&serde_json::json!({ "branchId": branch_id }))
                 .await?;

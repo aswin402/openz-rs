@@ -319,7 +319,7 @@ pub(crate) async fn openai_chat_completions(
                 .as_secs();
 
             let response = serde_json::json!({
-                "id": format!("chatcmpl-{}", &uuid::Uuid::new_v4().to_string()[..8]),
+                "id": format!("chatcmpl-{}", crate::core::short_uuid()),
                 "object": "chat.completion",
                 "created": created,
                 "model": routed_model,

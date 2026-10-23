@@ -92,7 +92,7 @@ pub(crate) async fn ws_handler(
 }
 
 pub(crate) async fn handle_socket(socket: WebSocket, state: WsState) {
-    let client_id = format!("client-{}", &uuid::Uuid::new_v4().to_string()[..8]);
+    let client_id = format!("client-{}", crate::core::short_uuid());
     let default_chat_id = uuid::Uuid::new_v4().to_string();
     let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_WS_CLIENT_TURNS));
 

@@ -502,7 +502,7 @@ pub fn create_isolated_workspace(parent_dir: &Path) -> Result<PathBuf> {
     }
     let temp_dir = worktrees_dir.join(format!(
         "openz_worktree_{}",
-        &uuid::Uuid::new_v4().to_string()[..8]
+        crate::core::short_uuid()
     ));
 
     match !is_git && is_dangerous_fallback_copy_root(parent_dir) {

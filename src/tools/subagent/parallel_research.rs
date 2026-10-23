@@ -236,7 +236,7 @@ impl Tool for ParallelResearchTool {
                             child_registry.register(tool);
                         }
 
-                        let child_session_id = format!("subagent:parallel:{}", &uuid::Uuid::new_v4().to_string()[..8]);
+                        let child_session_id = format!("subagent:parallel:{}", crate::core::short_uuid());
                         let child_agent = AgentLoop::new(
                             config,
                             provider,

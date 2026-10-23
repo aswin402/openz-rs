@@ -56,6 +56,8 @@ fn test_collect_secret_values() {
 fn test_mask_secret_str() {
     assert_eq!(mask_secret_str("short"), "********");
     assert_eq!(mask_secret_str("sk-1234567890abcdef"), "sk-...cdef");
+    assert_eq!(mask_secret_str("🔑🔒💎1234567890🔒🔑💎🎯"), "🔑🔒💎...🔒🔑💎🎯");
+    assert_eq!(crate::core::short_uuid().len(), 8);
 }
 
 #[test]

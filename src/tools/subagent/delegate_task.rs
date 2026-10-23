@@ -163,7 +163,7 @@ impl Tool for DelegateTaskTool {
             &super::active_parent_sticky_tools(),
         );
 
-        let child_session_id = format!("subagent:{}", &uuid::Uuid::new_v4().to_string()[..8]);
+        let child_session_id = format!("subagent:{}", crate::core::short_uuid());
         let child_agent = AgentLoop::new(
             child_config,
             provider,

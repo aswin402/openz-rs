@@ -245,7 +245,7 @@ async fn test_delete_observations() {
 async fn test_branch_commit_rollback() {
     let _l = test_lock().lock().await;
     let scope_id = unique_scope("test_branch");
-    let branch_id = format!("br_{}", &uuid::Uuid::new_v4().to_string()[..8]);
+    let branch_id = format!("br_{}", crate::core::short_uuid());
 
     // Create entity in main
     CreateEntitiesTool

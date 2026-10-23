@@ -101,8 +101,11 @@ fn detect_conflicts(pages: &[ExtractedContent]) -> Vec<String> {
 
 fn contains_positive_phrase(text: &str, phrase: &str, negative_forms: &[&str]) -> bool {
     text.match_indices(phrase).any(|(idx, _)| {
-        let start = idx.saturating_sub(16);
-        let end = (idx + phrase.len() + 16).min(text.len());
+        let start = crate::tools::headroom::floor_char_boundary(text, idx.saturating_sub(16));
+        let end = crate::tools::headroom::ceil_char_boundary(
+            text,
+            (idx + phrase.len() + 16).min(text.len()),
+        );
         let window = &text[start..end];
         !negative_forms
             .iter()
@@ -199,5 +202,15 @@ mod tests {
         assert!(summary.contains("No explicit conflicts detected"));
         assert!(summary.contains("### Unknowns"));
         assert!(summary.contains("routing internals are not publicly disclosed"));
+
+        let utf8_pages = vec![ExtractedContent {
+            url: "https://example.com/utf8".to_string(),
+            title: "UTF8 — Pricing".to_string(),
+            description: "".to_string(),
+            content_markdown: "Platform — 🚀🔥✨• open source and cloud-hosted — €20/month.".to_string(),
+            links: vec![],
+        }];
+        let utf8_summary = build_evidence_summary("utf8 pricing", &utf8_pages);
+        assert!(utf8_summary.contains("## Evidence Summary"));
     }
 }

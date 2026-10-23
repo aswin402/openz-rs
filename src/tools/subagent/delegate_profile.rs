@@ -119,7 +119,7 @@ impl Tool for DelegateProfileTool {
 
         let models_to_try = delegate_profile_models_to_try(&self.config, &self.profile);
 
-        let child_session_id = format!("subagent:{}:{}", self.profile.name, &uuid::Uuid::new_v4().to_string()[..8]);
+        let child_session_id = format!("subagent:{}:{}", self.profile.name, crate::core::short_uuid());
         let subagent_prompt = build_subagent_prompt(
             &format!(
                 "You are a specialized subagent operating under the following profile guidelines:\n\n{}",

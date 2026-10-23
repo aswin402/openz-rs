@@ -138,7 +138,7 @@ pub(crate) async fn persist_attachments(attachments: &Value) -> Vec<String> {
             None => continue,
         };
         let mime = mime.trim().to_ascii_lowercase();
-        let file_name = format!("{}_{}", &uuid::Uuid::new_v4().to_string()[..8], clean_name);
+        let file_name = format!("{}_{}", crate::core::short_uuid(), clean_name);
         let path = attach_dir.join(&file_name);
         match tokio::fs::write(&path, &bytes).await {
             Ok(()) => {}

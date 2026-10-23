@@ -100,14 +100,14 @@ pub fn collect_secret_values(value: &Value, secrets: &mut Vec<String>) {
 
 /// Mask a secret string for display, preserving prefix/suffix if long enough.
 pub fn mask_secret_str(secret: &str) -> String {
-    let trimmed = secret.trim();
-    match trimmed.len() <= 8 {
+    let chars: Vec<char> = secret.trim().chars().collect();
+    match chars.len() <= 8 {
         true => "********".to_string(),
         false => {
-            let prefix_len = 3.min(trimmed.len() / 4);
-            let suffix_len = 4.min(trimmed.len() / 4);
-            let prefix = &trimmed[..prefix_len];
-            let suffix = &trimmed[trimmed.len() - suffix_len..];
+            let prefix_len = 3.min(chars.len() / 4);
+            let suffix_len = 4.min(chars.len() / 4);
+            let prefix: String = chars[..prefix_len].iter().collect();
+            let suffix: String = chars[chars.len() - suffix_len..].iter().collect();
             format!("{prefix}...{suffix}")
         }
     }

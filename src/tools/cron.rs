@@ -70,7 +70,7 @@ fn generate_job_id(prompt: &str) -> String {
         })
         .collect();
     let cleaned_slug = slug.trim_matches('_');
-    let short_uuid = &uuid::Uuid::new_v4().to_string()[..8];
+    let short_uuid = crate::core::short_uuid();
     match cleaned_slug.is_empty() {
         true => format!("job_{}", short_uuid),
         false => format!("{}_{}", cleaned_slug, short_uuid),

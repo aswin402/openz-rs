@@ -46,9 +46,12 @@ pub(crate) async fn logs_event() -> Value {
                     (false, true) => "WARN",
                     (false, false) => "INFO",
                 };
-                let timestamp = match line.len() >= 19 && line.as_bytes()[10] == b'T' {
-                    true => line[11..19].to_string(),
-                    false => chrono::Local::now().format("%H:%M:%S").to_string(),
+                let timestamp = match (
+                    line.as_bytes().get(10).copied() == Some(b'T'),
+                    line.get(11..19),
+                ) {
+                    (true, Some(ts)) => ts.to_string(),
+                    _ => chrono::Local::now().format("%H:%M:%S").to_string(),
                 };
                 log_entries.push(super::super::protocol::log_entry(
                     format!("log-{}", index),
