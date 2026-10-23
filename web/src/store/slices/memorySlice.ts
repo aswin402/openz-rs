@@ -19,6 +19,16 @@ const EMPTY_MEMORY: CognitiveMemoryStats = {
 
 export const EMPTY_MCP_STATS: McpStats = { loaded: 0, failed: 0, total: 0 };
 
+export function normalizeMcpStats(
+  raw?: { loaded?: number; failed?: number; total?: number } | null,
+): McpStats {
+  return {
+    loaded: raw?.loaded ?? 0,
+    failed: raw?.failed ?? 0,
+    total: raw?.total ?? 0,
+  };
+}
+
 export interface MemorySlice {
   cognitiveStats: CognitiveMemoryStats;
   mcpServers: McpServerInfo[];

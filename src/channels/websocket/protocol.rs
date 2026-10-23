@@ -19,103 +19,6 @@ fn to_value_safe<T: Serialize>(value: T) -> Value {
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct WsCapabilities {
-    version: u8,
-    providers: Vec<Value>,
-    #[serde(rename = "securityModes")]
-    security_modes: Vec<Value>,
-    channels: Vec<Value>,
-    browser: WsBrowserCapabilities,
-    attachments: WsAttachmentCapabilities,
-}
-
-#[derive(Debug, Serialize)]
-struct WsBrowserCapabilities {
-    #[serde(rename = "firefoxWebdriverPort")]
-    firefox_webdriver_port: u16,
-    #[serde(rename = "firefoxAttachPort")]
-    firefox_attach_port: u16,
-}
-
-#[derive(Debug, Serialize)]
-struct WsAttachmentCapabilities {
-    #[serde(rename = "maxCount")]
-    max_count: usize,
-    #[serde(rename = "maxFileBytes")]
-    max_file_bytes: usize,
-    #[serde(rename = "maxTotalBytes")]
-    max_total_bytes: usize,
-    #[serde(rename = "maxMessageBytes")]
-    max_message_bytes: usize,
-    #[serde(rename = "ttlSeconds")]
-    ttl_seconds: u64,
-    #[serde(rename = "allowedMimeTypes")]
-    allowed_mime_types: &'static [&'static str],
-}
-
-impl WsCapabilities {
-    pub(crate) fn into_json(self) -> Value {
-        to_value_safe(self)
-    }
-}
-
-#[derive(Debug, Serialize)]
-struct WsRuntimeInventoryEvent {
-    event: &'static str,
-    inventory: Value,
-}
-
-#[derive(Debug, Serialize)]
-struct WsSessionsListEvent {
-    event: &'static str,
-    sessions: Vec<Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    total: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    offset: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    limit: Option<usize>,
-}
-
-#[derive(Debug, Serialize)]
-struct WsSessionHistoryEvent {
-    event: &'static str,
-    chat_id: String,
-    messages: Vec<Value>,
-}
-
-#[derive(Debug, Serialize)]
-struct WsReadyEvent {
-    event: &'static str,
-    chat_id: String,
-    client_id: String,
-}
-
-#[derive(Debug, Serialize)]
-struct WsAttachedEvent {
-    event: &'static str,
-    chat_id: String,
-}
-
-#[derive(Debug, Serialize)]
-struct WsActivityNoticeEvent {
-    event: &'static str,
-    chat_id: String,
-    kind: String,
-    title: String,
-    detail: String,
-    timestamp: i64,
-}
-
-#[derive(Debug, Serialize)]
-struct WsOrchestrationEvent {
-    event: &'static str,
-    chat_id: String,
-    run_id: Option<String>,
-    payload: Value,
-}
-
-#[derive(Debug, Serialize)]
 pub(crate) struct WsModelProvider {
     name: String,
     display: String,
@@ -125,47 +28,9 @@ pub(crate) struct WsModelProvider {
 }
 
 #[derive(Debug, Serialize)]
-struct WsModelsListEvent {
-    event: &'static str,
-    providers: Vec<WsModelProvider>,
-    partial: bool,
-    recent_models: Vec<crate::channels::ModelRef>,
-    favorite_models: Vec<crate::channels::ModelRef>,
-    active_provider: String,
-    active_model: String,
-}
-
-#[derive(Debug, Serialize)]
-struct WsModelPrefsEvent {
-    event: &'static str,
-    recent_models: Vec<crate::channels::ModelRef>,
-    favorite_models: Vec<crate::channels::ModelRef>,
-}
-
-#[derive(Debug, Serialize)]
 pub(crate) struct WsSlashCommand {
     cmd: String,
     desc: String,
-}
-
-#[derive(Debug, Serialize)]
-struct WsSlashCommandsEvent {
-    event: &'static str,
-    commands: Vec<WsSlashCommand>,
-}
-
-#[derive(Debug, Serialize)]
-struct WsMcpStatus {
-    loaded: u32,
-    failed: u32,
-    total: u32,
-}
-
-#[derive(Debug, Serialize)]
-struct WsStatusEvent {
-    event: &'static str,
-    version: &'static str,
-    mcp: WsMcpStatus,
 }
 
 #[derive(Debug, Serialize)]
@@ -185,68 +50,6 @@ pub(crate) struct WsChannelStatus {
 }
 
 #[derive(Debug, Serialize)]
-struct WsServersListEvent {
-    event: &'static str,
-    servers: Vec<WsManagedServer>,
-    channels: Vec<WsChannelStatus>,
-}
-
-#[derive(Debug, Serialize)]
-struct WsServerStoppedEvent {
-    event: &'static str,
-    target: String,
-    result: String,
-}
-
-#[derive(Debug, Serialize)]
-struct WsSessionArchivedEvent {
-    event: &'static str,
-    status: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    chat_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    session_key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    archived: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    archive_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    detail: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct WsSessionDeletedEvent {
-    event: &'static str,
-    status: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    chat_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    session_key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    deleted: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    detail: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct WsSkillsUpdatedEvent<T> {
-    event: &'static str,
-    skills: Vec<T>,
-    status: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct WsSubagentsUpdatedEvent {
-    event: &'static str,
-    subagents: Vec<Value>,
-    status: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
 pub(crate) struct WsMcpServer {
     name: String,
     command: String,
@@ -258,103 +61,11 @@ pub(crate) struct WsMcpServer {
 }
 
 #[derive(Debug, Serialize)]
-struct WsMcpServersEvent {
-    event: &'static str,
-    servers: Vec<WsMcpServer>,
-    stats: WsMcpStatus,
-}
-
-#[derive(Debug, Serialize)]
 pub(crate) struct WsLogEntry {
     id: String,
     timestamp: String,
     level: String,
     target: String,
-    message: String,
-}
-
-#[derive(Debug, Serialize)]
-struct WsLogsDataEvent {
-    event: &'static str,
-    logs: Vec<WsLogEntry>,
-}
-
-#[derive(Debug, Serialize)]
-struct WsCronJobsUpdatedEvent {
-    event: &'static str,
-    status: String,
-    id: String,
-    result: Value,
-    inventory: crate::core::inventory::RuntimeInventory,
-}
-
-#[derive(Debug, Serialize)]
-struct WsCronLogsEvent {
-    event: &'static str,
-    id: Option<String>,
-    runs: Vec<crate::cron::CronRunRecord>,
-}
-
-#[derive(Debug, Serialize)]
-struct WsConfigUpdateRejectedEvent {
-    event: &'static str,
-    reason: String,
-    requires_gateway_token: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct WsConfigDataEvent {
-    event: &'static str,
-    defaults: Value,
-    skills: Vec<crate::agent::skills::SkillView>,
-    mcp_servers: Vec<Value>,
-    subagents: Vec<Value>,
-    providers: serde_json::Map<String, Value>,
-    channels: Value,
-    capabilities: Value,
-    version: &'static str,
-}
-
-#[derive(Debug, Serialize)]
-struct WsConfigUpdatedEvent {
-    event: &'static str,
-    defaults: Value,
-    capabilities: Value,
-}
-
-#[derive(Debug, Serialize)]
-struct WsCognitiveMemoryStats {
-    #[serde(rename = "entitiesCount")]
-    entities_count: i64,
-    #[serde(rename = "relationsCount")]
-    relations_count: i64,
-    #[serde(rename = "factsCount")]
-    facts_count: i64,
-    #[serde(rename = "workingMemoryKeys")]
-    working_memory_keys: Vec<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct WsCognitiveMemoryPaths {
-    #[serde(rename = "memoryDb")]
-    memory_db: String,
-    #[serde(rename = "graphDb")]
-    graph_db: String,
-}
-
-#[derive(Debug, Serialize)]
-struct WsCognitiveMemoryEvent {
-    event: &'static str,
-    stats: WsCognitiveMemoryStats,
-    paths: WsCognitiveMemoryPaths,
-    nodes: Vec<Value>,
-    edges: Vec<Value>,
-    facts: Vec<Value>,
-}
-
-#[derive(Debug, Serialize)]
-struct WsNotificationEvent {
-    event: &'static str,
     message: String,
 }
 
@@ -372,42 +83,37 @@ pub(crate) fn capabilities(
     ttl_seconds: u64,
     allowed_mime_types: &'static [&'static str],
 ) -> Value {
-    WsCapabilities {
-        version: 1,
-        providers,
-        security_modes,
-        channels,
-        browser: WsBrowserCapabilities {
-            firefox_webdriver_port,
-            firefox_attach_port,
+    json!({
+        "version": 1,
+        "providers": providers,
+        "securityModes": security_modes,
+        "channels": channels,
+        "browser": {
+            "firefoxWebdriverPort": firefox_webdriver_port,
+            "firefoxAttachPort": firefox_attach_port,
         },
-        attachments: WsAttachmentCapabilities {
-            max_count,
-            max_file_bytes,
-            max_total_bytes,
-            max_message_bytes,
-            ttl_seconds,
-            allowed_mime_types,
+        "attachments": {
+            "maxCount": max_count,
+            "maxFileBytes": max_file_bytes,
+            "maxTotalBytes": max_total_bytes,
+            "maxMessageBytes": max_message_bytes,
+            "ttlSeconds": ttl_seconds,
+            "allowedMimeTypes": allowed_mime_types,
         },
-    }
-    .into_json()
+    })
 }
 
 pub(crate) fn runtime_inventory(inventory: impl Serialize) -> Value {
-    let inventory = to_value_safe(inventory);
-    to_value_safe(WsRuntimeInventoryEvent {
-        event: "runtime_inventory",
-        inventory,
+    json!({
+        "event": "runtime_inventory",
+        "inventory": to_value_safe(inventory),
     })
 }
 
 pub(crate) fn sessions_list(sessions: Vec<Value>) -> Value {
-    to_value_safe(WsSessionsListEvent {
-        event: "sessions_list",
-        sessions,
-        total: None,
-        offset: None,
-        limit: None,
+    json!({
+        "event": "sessions_list",
+        "sessions": sessions,
     })
 }
 
@@ -417,35 +123,35 @@ pub(crate) fn sessions_list_paginated(
     offset: usize,
     limit: usize,
 ) -> Value {
-    to_value_safe(WsSessionsListEvent {
-        event: "sessions_list",
-        sessions,
-        total: Some(total),
-        offset: Some(offset),
-        limit: Some(limit),
+    json!({
+        "event": "sessions_list",
+        "sessions": sessions,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
     })
 }
 
 pub(crate) fn session_history(chat_id: impl Into<String>, messages: Vec<Value>) -> Value {
-    to_value_safe(WsSessionHistoryEvent {
-        event: "session_history",
-        chat_id: chat_id.into(),
-        messages,
+    json!({
+        "event": "session_history",
+        "chat_id": chat_id.into(),
+        "messages": messages,
     })
 }
 
 pub(crate) fn ready(chat_id: impl Into<String>, client_id: impl Into<String>) -> Value {
-    to_value_safe(WsReadyEvent {
-        event: "ready",
-        chat_id: chat_id.into(),
-        client_id: client_id.into(),
+    json!({
+        "event": "ready",
+        "chat_id": chat_id.into(),
+        "client_id": client_id.into(),
     })
 }
 
 pub(crate) fn attached(chat_id: impl Into<String>) -> Value {
-    to_value_safe(WsAttachedEvent {
-        event: "attached",
-        chat_id: chat_id.into(),
+    json!({
+        "event": "attached",
+        "chat_id": chat_id.into(),
     })
 }
 
@@ -456,13 +162,13 @@ pub(crate) fn activity_notice(
     detail: impl Into<String>,
     timestamp: i64,
 ) -> Value {
-    to_value_safe(WsActivityNoticeEvent {
-        event: "activity_notice",
-        chat_id: chat_id.into(),
-        kind: kind.into(),
-        title: title.into(),
-        detail: detail.into(),
-        timestamp,
+    json!({
+        "event": "activity_notice",
+        "chat_id": chat_id.into(),
+        "kind": kind.into(),
+        "title": title.into(),
+        "detail": detail.into(),
+        "timestamp": timestamp,
     })
 }
 
@@ -471,11 +177,11 @@ pub(crate) fn orchestration_event(chat_id: impl Into<String>, payload: Value) ->
         .get("run_id")
         .and_then(Value::as_str)
         .map(ToOwned::to_owned);
-    to_value_safe(WsOrchestrationEvent {
-        event: "orchestration_event",
-        chat_id: chat_id.into(),
-        run_id,
-        payload,
+    json!({
+        "event": "orchestration_event",
+        "chat_id": chat_id.into(),
+        "run_id": run_id,
+        "payload": payload,
     })
 }
 
@@ -502,22 +208,22 @@ pub(crate) fn models_list(
     active_provider: impl Into<String>,
     active_model: impl Into<String>,
 ) -> Value {
-    to_value_safe(WsModelsListEvent {
-        event: "models_list",
-        providers,
-        partial,
-        recent_models: prefs.recent,
-        favorite_models: prefs.favorites,
-        active_provider: active_provider.into(),
-        active_model: active_model.into(),
+    json!({
+        "event": "models_list",
+        "providers": to_value_safe(providers),
+        "partial": partial,
+        "recent_models": to_value_safe(prefs.recent),
+        "favorite_models": to_value_safe(prefs.favorites),
+        "active_provider": active_provider.into(),
+        "active_model": active_model.into(),
     })
 }
 
 pub(crate) fn model_prefs(prefs: crate::channels::ModelPrefs) -> Value {
-    to_value_safe(WsModelPrefsEvent {
-        event: "model_prefs",
-        recent_models: prefs.recent,
-        favorite_models: prefs.favorites,
+    json!({
+        "event": "model_prefs",
+        "recent_models": to_value_safe(prefs.recent),
+        "favorite_models": to_value_safe(prefs.favorites),
     })
 }
 
@@ -529,20 +235,20 @@ pub(crate) fn slash_command(cmd: impl Into<String>, desc: impl Into<String>) -> 
 }
 
 pub(crate) fn slash_commands(commands: Vec<WsSlashCommand>) -> Value {
-    to_value_safe(WsSlashCommandsEvent {
-        event: "slash_commands",
-        commands,
+    json!({
+        "event": "slash_commands",
+        "commands": to_value_safe(commands),
     })
 }
 
 pub(crate) fn gateway_status(loaded: u32, failed: u32, total: u32) -> Value {
-    to_value_safe(WsStatusEvent {
-        event: "status",
-        version: env!("CARGO_PKG_VERSION"),
-        mcp: WsMcpStatus {
-            loaded,
-            failed,
-            total,
+    json!({
+        "event": "status",
+        "version": env!("CARGO_PKG_VERSION"),
+        "mcp": {
+            "loaded": loaded,
+            "failed": failed,
+            "total": total,
         },
     })
 }
@@ -582,19 +288,41 @@ pub(crate) fn servers_list(
     servers: Vec<WsManagedServer>,
     channels: Vec<WsChannelStatus>,
 ) -> Value {
-    to_value_safe(WsServersListEvent {
-        event: "servers_list",
-        servers,
-        channels,
+    json!({
+        "event": "servers_list",
+        "servers": to_value_safe(servers),
+        "channels": to_value_safe(channels),
     })
 }
 
 pub(crate) fn server_stopped(target: impl Into<String>, result: impl Into<String>) -> Value {
-    to_value_safe(WsServerStoppedEvent {
-        event: "server_stopped",
-        target: target.into(),
-        result: result.into(),
+    json!({
+        "event": "server_stopped",
+        "target": target.into(),
+        "result": result.into(),
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn session_lifecycle_event(
+    event: &'static str,
+    status: &'static str,
+    chat_id: Option<String>,
+    session_key: Option<String>,
+    flag_key: &'static str,
+    flag_val: Option<bool>,
+    archive_path: Option<String>,
+    detail: Option<String>,
+) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert("event".to_string(), Value::String(event.to_string()));
+    map.insert("status".to_string(), Value::String(status.to_string()));
+    let _ = chat_id.map(|v| map.insert("chat_id".to_string(), Value::String(v)));
+    let _ = session_key.map(|v| map.insert("session_key".to_string(), Value::String(v)));
+    let _ = flag_val.map(|v| map.insert(flag_key.to_string(), Value::Bool(v)));
+    let _ = archive_path.map(|v| map.insert("archive_path".to_string(), Value::String(v)));
+    let _ = detail.map(|v| map.insert("detail".to_string(), Value::String(v)));
+    Value::Object(map)
 }
 
 pub(crate) fn session_archived(
@@ -605,15 +333,16 @@ pub(crate) fn session_archived(
     archive_path: Option<String>,
     detail: Option<String>,
 ) -> Value {
-    to_value_safe(WsSessionArchivedEvent {
-        event: "session_archived",
+    session_lifecycle_event(
+        "session_archived",
         status,
         chat_id,
         session_key,
+        "archived",
         archived,
         archive_path,
         detail,
-    })
+    )
 }
 
 pub(crate) fn session_deleted(
@@ -623,14 +352,31 @@ pub(crate) fn session_deleted(
     deleted: Option<bool>,
     detail: Option<String>,
 ) -> Value {
-    to_value_safe(WsSessionDeletedEvent {
-        event: "session_deleted",
+    session_lifecycle_event(
+        "session_deleted",
         status,
         chat_id,
         session_key,
+        "deleted",
         deleted,
+        None,
         detail,
-    })
+    )
+}
+
+fn named_collection_updated_event<T: Serialize>(
+    event: &'static str,
+    collection_key: &'static str,
+    items: Vec<T>,
+    status: &'static str,
+    name: Option<String>,
+) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert("event".to_string(), Value::String(event.to_string()));
+    map.insert(collection_key.to_string(), to_value_safe(items));
+    map.insert("status".to_string(), Value::String(status.to_string()));
+    let _ = name.map(|n| map.insert("name".to_string(), Value::String(n)));
+    Value::Object(map)
 }
 
 pub(crate) fn skills_updated<T: Serialize>(
@@ -638,12 +384,7 @@ pub(crate) fn skills_updated<T: Serialize>(
     status: &'static str,
     name: Option<String>,
 ) -> Value {
-    to_value_safe(WsSkillsUpdatedEvent {
-        event: "skills_updated",
-        skills,
-        status,
-        name,
-    })
+    named_collection_updated_event("skills_updated", "skills", skills, status, name)
 }
 
 pub(crate) fn subagents_updated(
@@ -651,12 +392,7 @@ pub(crate) fn subagents_updated(
     status: &'static str,
     name: Option<String>,
 ) -> Value {
-    to_value_safe(WsSubagentsUpdatedEvent {
-        event: "subagents_updated",
-        subagents,
-        status,
-        name,
-    })
+    named_collection_updated_event("subagents_updated", "subagents", subagents, status, name)
 }
 
 pub(crate) fn mcp_server(
@@ -683,13 +419,13 @@ pub(crate) fn mcp_servers(
     failed: u32,
     total: u32,
 ) -> Value {
-    to_value_safe(WsMcpServersEvent {
-        event: "mcp_servers",
-        servers,
-        stats: WsMcpStatus {
-            loaded,
-            failed,
-            total,
+    json!({
+        "event": "mcp_servers",
+        "servers": to_value_safe(servers),
+        "stats": {
+            "loaded": loaded,
+            "failed": failed,
+            "total": total,
         },
     })
 }
@@ -711,9 +447,9 @@ pub(crate) fn log_entry(
 }
 
 pub(crate) fn logs_data(logs: Vec<WsLogEntry>) -> Value {
-    to_value_safe(WsLogsDataEvent {
-        event: "logs_data",
-        logs,
+    json!({
+        "event": "logs_data",
+        "logs": to_value_safe(logs),
     })
 }
 
@@ -723,12 +459,12 @@ pub(crate) fn cron_jobs_updated(
     result: Value,
     inventory: crate::core::inventory::RuntimeInventory,
 ) -> Value {
-    to_value_safe(WsCronJobsUpdatedEvent {
-        event: "cron_jobs_updated",
-        status: status.into(),
-        id: id.into(),
-        result,
-        inventory,
+    json!({
+        "event": "cron_jobs_updated",
+        "status": status.into(),
+        "id": id.into(),
+        "result": result,
+        "inventory": to_value_safe(inventory),
     })
 }
 
@@ -736,10 +472,10 @@ pub(crate) fn cron_logs(
     id: Option<String>,
     runs: Vec<crate::cron::CronRunRecord>,
 ) -> Value {
-    to_value_safe(WsCronLogsEvent {
-        event: "cron_logs",
-        id,
-        runs,
+    json!({
+        "event": "cron_logs",
+        "id": id,
+        "runs": to_value_safe(runs),
     })
 }
 
@@ -747,10 +483,10 @@ pub(crate) fn config_update_rejected(
     reason: impl Into<String>,
     requires_gateway_token: bool,
 ) -> Value {
-    to_value_safe(WsConfigUpdateRejectedEvent {
-        event: "config_update_rejected",
-        reason: reason.into(),
-        requires_gateway_token,
+    json!({
+        "event": "config_update_rejected",
+        "reason": reason.into(),
+        "requires_gateway_token": requires_gateway_token,
     })
 }
 
@@ -763,24 +499,24 @@ pub(crate) fn config_data(
     channels: Value,
     capabilities: Value,
 ) -> Value {
-    to_value_safe(WsConfigDataEvent {
-        event: "config_data",
-        defaults,
-        skills,
-        mcp_servers,
-        subagents,
-        providers,
-        channels,
-        capabilities,
-        version: env!("CARGO_PKG_VERSION"),
+    json!({
+        "event": "config_data",
+        "defaults": defaults,
+        "skills": to_value_safe(skills),
+        "mcp_servers": mcp_servers,
+        "subagents": subagents,
+        "providers": providers,
+        "channels": channels,
+        "capabilities": capabilities,
+        "version": env!("CARGO_PKG_VERSION"),
     })
 }
 
 pub(crate) fn config_updated(defaults: Value, capabilities: Value) -> Value {
-    to_value_safe(WsConfigUpdatedEvent {
-        event: "config_updated",
-        defaults,
-        capabilities,
+    json!({
+        "event": "config_updated",
+        "defaults": defaults,
+        "capabilities": capabilities,
     })
 }
 
@@ -796,28 +532,28 @@ pub(crate) fn cognitive_memory(
     edges: Vec<Value>,
     facts: Vec<Value>,
 ) -> Value {
-    to_value_safe(WsCognitiveMemoryEvent {
-        event: "cognitive_memory",
-        stats: WsCognitiveMemoryStats {
-            entities_count,
-            relations_count,
-            facts_count,
-            working_memory_keys,
+    json!({
+        "event": "cognitive_memory",
+        "stats": {
+            "entitiesCount": entities_count,
+            "relationsCount": relations_count,
+            "factsCount": facts_count,
+            "workingMemoryKeys": working_memory_keys,
         },
-        paths: WsCognitiveMemoryPaths {
-            memory_db: memory_db.into(),
-            graph_db: graph_db.into(),
+        "paths": {
+            "memoryDb": memory_db.into(),
+            "graphDb": graph_db.into(),
         },
-        nodes,
-        edges,
-        facts,
+        "nodes": nodes,
+        "edges": edges,
+        "facts": facts,
     })
 }
 
 pub(crate) fn notification(message: impl Into<String>) -> Value {
-    to_value_safe(WsNotificationEvent {
-        event: "notification",
-        message: message.into(),
+    json!({
+        "event": "notification",
+        "message": message.into(),
     })
 }
 

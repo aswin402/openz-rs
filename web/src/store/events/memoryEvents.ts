@@ -1,5 +1,6 @@
 import type { StoreEventContext } from '../eventContext';
 import { wsService } from '../../services/websocket';
+import { normalizeMcpStats } from '../slices/memorySlice';
 
 export function registerMemoryEvents({ set }: StoreEventContext) {
   wsService.on('cognitive_memory', (payload) => {
@@ -44,13 +45,7 @@ export function registerMemoryEvents({ set }: StoreEventContext) {
       set({ mcpServers: payload.servers });
     }
     if (payload.stats) {
-      set({
-        mcpStats: {
-          loaded: payload.stats.loaded ?? 0,
-          failed: payload.stats.failed ?? 0,
-          total: payload.stats.total ?? 0,
-        },
-      });
+      set({ mcpStats: normalizeMcpStats(payload.stats) });
     }
   });
 

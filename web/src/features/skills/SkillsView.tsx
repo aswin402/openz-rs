@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useOpenZStore } from '../../store/useOpenZStore';
+import { resolveWorkspacePageNotice, workspaceNoticeBannerClass } from '../../store/chatUtils';
 import { wsService } from '../../services/websocket';
 import type { SkillInfo } from '../../types/openz';
 import { ArrowLeft, BookOpen, Check, Edit3, FileText, Plus, RefreshCw, Save, Search, Trash2, X } from 'lucide-react';
@@ -73,12 +74,8 @@ export const SkillsView: React.FC = () => {
     protected: skills.filter((skill) => skill.isProtected).length,
     invalid: skills.filter((skill) => (skill.validationErrors?.length || 0) > 0).length,
   }), [skills]);
-  const pageNotice = workspaceNotice?.scope === 'skills' ? workspaceNotice : notice ? { type: 'info' as const, message: notice } : null;
-  const noticeClass = pageNotice?.type === 'error'
-    ? 'border-red-500/30 bg-red-500/10 text-red-300'
-    : pageNotice?.type === 'success'
-      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-      : 'border-amber-500/30 bg-amber-500/10 text-amber-400';
+  const pageNotice = resolveWorkspacePageNotice(workspaceNotice, 'skills', notice);
+  const noticeClass = workspaceNoticeBannerClass(pageNotice?.type);
 
 
   const openSkill = (skill: SkillInfo) => {

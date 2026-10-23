@@ -5,7 +5,7 @@ import { normalizeWebUiCapabilities } from '../../types';
 import { wsService } from '../../services/websocket';
 import { createWorkspaceNotice } from '../chatUtils';
 import type { StoreEventContext } from '../eventContext';
-import { EMPTY_MCP_STATS } from '../slices/memorySlice';
+import { EMPTY_MCP_STATS, normalizeMcpStats } from '../slices/memorySlice';
 
 function mergeProviders(
   current: ProviderModelOption[],
@@ -165,11 +165,7 @@ export function registerConfigEvents(ctx: StoreEventContext) {
     set({
       status: {
         version: payload.version || '',
-        mcp: {
-          loaded: payload.mcp?.loaded ?? 0,
-          failed: payload.mcp?.failed ?? 0,
-          total: payload.mcp?.total ?? 0,
-        },
+        mcp: normalizeMcpStats(payload.mcp),
       },
     });
   });

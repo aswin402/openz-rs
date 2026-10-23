@@ -341,3 +341,20 @@ export function settleStoppedOrchestrationRuns(
     stoppableRunIds,
   );
 }
+
+export function resolveWorkspacePageNotice(
+  workspaceNotice: WorkspaceNotice | null,
+  scope: WorkspaceNotice['scope'],
+  localNotice?: string | null,
+): { type: WorkspaceNotice['type']; message: string } | null {
+  if (workspaceNotice?.scope === scope) return workspaceNotice;
+  return localNotice ? { type: 'info', message: localNotice } : null;
+}
+
+export function workspaceNoticeBannerClass(
+  type?: WorkspaceNotice['type'],
+): string {
+  if (type === 'error') return 'border-red-500/30 bg-red-500/10 text-red-300';
+  if (type === 'success') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
+  return 'border-amber-500/30 bg-amber-500/10 text-amber-400';
+}

@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useOpenZStore } from '../../store/useOpenZStore';
+import { resolveWorkspacePageNotice, workspaceNoticeBannerClass } from '../../store/chatUtils';
 import type { SubagentInfo } from '../../types/openz';
 import { ArrowLeft, Bot, Check, Copy, Cpu, Edit3, Plus, Save, Search, ShieldCheck, Trash2, X } from 'lucide-react';
 
@@ -74,12 +75,8 @@ export const AgentsView: React.FC = () => {
   const canSave = isProtected
     ? Boolean(activeAgent && settingsDirty)
     : Boolean(normalizedName && draftDescription.trim() && draftPrompt.trim() && !nameExists && isDirty);
-  const pageNotice = workspaceNotice?.scope === 'agents' ? workspaceNotice : notice ? { type: 'info' as const, message: notice } : null;
-  const noticeClass = pageNotice?.type === 'error'
-    ? 'border-red-500/30 bg-red-500/10 text-red-300'
-    : pageNotice?.type === 'success'
-      ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-      : 'border-amber-500/30 bg-amber-500/10 text-amber-400';
+  const pageNotice = resolveWorkspacePageNotice(workspaceNotice, 'agents', notice);
+  const noticeClass = workspaceNoticeBannerClass(pageNotice?.type);
 
   const openAgent = (agent: SubagentInfo) => {
     setSelectedAgentName(agent.name);

@@ -121,23 +121,27 @@ pub(crate) async fn handle_socket(socket: WebSocket, state: WsState) {
         Err(_) => {}
     }
 
+    fn unregister_ws_client(client_id: &str) {
+        cancel_ws_turns_for_client(client_id);
+        cancel_ws_approvals_for_client(client_id);
+        match crate::channels::get_active_ws_senders().lock() {
+            Ok(mut senders) => {
+                senders.remove(client_id);
+            }
+            Err(_) => {}
+        }
+        match crate::channels::get_active_ws_client_chats().lock() {
+            Ok(mut client_chats) => {
+                client_chats.remove(client_id);
+            }
+            Err(_) => {}
+        }
+    }
+
     struct WsSenderGuard(String);
     impl Drop for WsSenderGuard {
         fn drop(&mut self) {
-            cancel_ws_turns_for_client(&self.0);
-            cancel_ws_approvals_for_client(&self.0);
-            match crate::channels::get_active_ws_senders().lock() {
-                Ok(mut senders) => {
-                    senders.remove(&self.0);
-                }
-                Err(_) => {}
-            }
-            match crate::channels::get_active_ws_client_chats().lock() {
-                Ok(mut client_chats) => {
-                    client_chats.remove(&self.0);
-                }
-                Err(_) => {}
-            }
+            unregister_ws_client(&self.0);
         }
     }
     let _guard = WsSenderGuard(client_id.clone());
@@ -283,12 +287,7 @@ pub(crate) async fn handle_socket(socket: WebSocket, state: WsState) {
         }
     }
 
-    match crate::channels::get_active_ws_senders().lock() {
-        Ok(mut senders) => {
-            senders.remove(&client_id);
-        }
-        Err(_) => {}
-    }
+    unregister_ws_client(&client_id);
 }
 
 async fn send_delta_and_turn_end(tx: &mpsc::Sender<Message>, chat_id: &str, response_text: String) {

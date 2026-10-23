@@ -24,89 +24,112 @@ function isNullableString(record: UnknownRecord, key: string): boolean {
   return !(key in record) || record[key] === null || typeof record[key] === 'string';
 }
 
-function isRuntimePaths(value: unknown): boolean {
+interface RecordShapeSpec {
+  strings?: readonly string[];
+  numbers?: readonly string[];
+  booleans?: readonly string[];
+  nullableStrings?: readonly string[];
+  stringArrays?: readonly string[];
+}
+
+function hasRecordShape(value: unknown, spec: RecordShapeSpec): value is UnknownRecord {
   if (!isRecord(value)) return false;
-  return [
-    'configDir',
-    'workspace',
-    'memoryDb',
-    'graphDb',
-    'subagentsFile',
-    'skillsDir',
-    'workspaceSkillsDir',
-    'sessionsDir',
-  ].every((key) => hasString(value, key));
+  return (
+    (!spec.strings || spec.strings.every((key) => hasString(value, key))) &&
+    (!spec.numbers || spec.numbers.every((key) => hasNumber(value, key))) &&
+    (!spec.booleans || spec.booleans.every((key) => hasBoolean(value, key))) &&
+    (!spec.nullableStrings || spec.nullableStrings.every((key) => isNullableString(value, key))) &&
+    (!spec.stringArrays || spec.stringArrays.every((key) => isStringArray(value[key])))
+  );
+}
+
+function isRuntimePaths(value: unknown): boolean {
+  return hasRecordShape(value, {
+    strings: [
+      'configDir',
+      'workspace',
+      'memoryDb',
+      'graphDb',
+      'subagentsFile',
+      'skillsDir',
+      'workspaceSkillsDir',
+      'sessionsDir',
+    ],
+  });
 }
 
 function isRuntimeDefaults(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return (
-    hasString(value, 'model') &&
-    hasString(value, 'provider') &&
-    hasBoolean(value, 'streaming') &&
-    hasBoolean(value, 'cavemanMode') &&
-    hasNumber(value, 'maxMessages') &&
-    hasNumber(value, 'maxToolIterations') &&
-    hasNumber(value, 'toolTimeoutSecs')
-  );
+  return hasRecordShape(value, {
+    strings: ['model', 'provider'],
+    booleans: ['streaming', 'cavemanMode'],
+    numbers: ['maxMessages', 'maxToolIterations', 'toolTimeoutSecs'],
+  });
 }
 
 function isRuntimeCounts(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return [
-    'subagents',
-    'skills',
-    'coreSubagents',
-    'customSubagents',
-    'channels',
-    'enabledChannels',
-    'tools',
-    'cronJobs',
-    'activeCronJobs',
-    'runningCronJobs',
-    'sessions',
-    'activeUiSessions',
-  ].every((key) => hasNumber(value, key));
+  return hasRecordShape(value, {
+    numbers: [
+      'subagents',
+      'skills',
+      'coreSubagents',
+      'customSubagents',
+      'channels',
+      'enabledChannels',
+      'tools',
+      'cronJobs',
+      'activeCronJobs',
+      'runningCronJobs',
+      'sessions',
+      'activeUiSessions',
+    ],
+  });
 }
 
 function isChannelInventory(value: unknown): boolean {
-  return isRecord(value) && hasString(value, 'name') && hasBoolean(value, 'enabled') && hasBoolean(value, 'configured');
+  return hasRecordShape(value, {
+    strings: ['name'],
+    booleans: ['enabled', 'configured'],
+  });
 }
 
 function isActiveUiSession(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return [
-    'sessionKey',
-    'channel',
-    'cwd',
-    'startedAt',
-    'lastSeenAt',
-    'model',
-    'provider',
-    'preview',
-  ].every((key) => hasString(value, key)) && hasNumber(value, 'pid');
+  return hasRecordShape(value, {
+    strings: [
+      'sessionKey',
+      'channel',
+      'cwd',
+      'startedAt',
+      'lastSeenAt',
+      'model',
+      'provider',
+      'preview',
+    ],
+    numbers: ['pid'],
+  });
 }
 
 function isRecentSession(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return (
-    ['key', 'channel', 'title', 'updatedAt', 'filePath'].every((key) => hasString(value, key)) &&
-    hasNumber(value, 'messageCount') &&
-    hasBoolean(value, 'active')
-  );
+  return hasRecordShape(value, {
+    strings: ['key', 'channel', 'title', 'updatedAt', 'filePath'],
+    numbers: ['messageCount'],
+    booleans: ['active'],
+  });
 }
 
 function isSessionChannelCount(value: unknown): boolean {
-  return isRecord(value) && hasString(value, 'channel') && hasNumber(value, 'count');
+  return hasRecordShape(value, {
+    strings: ['channel'],
+    numbers: ['count'],
+  });
 }
 
 function isSessionInventory(value: unknown): boolean {
-  if (!isRecord(value) || !hasString(value, 'sessionsDir')) return false;
-  const controlCenter = value.webuiControlCenter;
+  if (!hasRecordShape(value, { strings: ['sessionsDir'] })) return false;
   if (
-    !isRecord(controlCenter) ||
-    !hasNumber(controlCenter, 'connectedClients') ||
-    !isStringArray(controlCenter.attachedChats)
+    !hasRecordShape(value.webuiControlCenter, {
+      numbers: ['connectedClients'],
+      stringArrays: ['attachedChats'],
+    })
   ) {
     return false;
   }
@@ -118,24 +141,20 @@ function isSessionInventory(value: unknown): boolean {
 }
 
 function isSubagentInventory(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return (
-    ['name', 'description', 'model', 'provider', 'effectiveModel', 'effectiveProvider', 'source']
-      .every((key) => hasString(value, key)) &&
-    isStringArray(value.fallbacks) &&
-    isStringArray(value.capabilities) &&
-    hasNumber(value, 'fallbackCount') &&
-    hasBoolean(value, 'supportsVision') &&
-    hasBoolean(value, 'isCore') &&
-    hasBoolean(value, 'isProtected') &&
-    hasNumber(value, 'failureCount') &&
-    isNullableString(value, 'lastSuccessfulModel') &&
-    isNullableString(value, 'lastError')
-  );
+  return hasRecordShape(value, {
+    strings: ['name', 'description', 'model', 'provider', 'effectiveModel', 'effectiveProvider', 'source'],
+    stringArrays: ['fallbacks', 'capabilities'],
+    numbers: ['fallbackCount', 'failureCount'],
+    booleans: ['supportsVision', 'isCore', 'isProtected'],
+    nullableStrings: ['lastSuccessfulModel', 'lastError'],
+  });
 }
 
 function isDatabaseInventory(value: unknown): boolean {
-  return isRecord(value) && hasString(value, 'path') && hasBoolean(value, 'exists');
+  return hasRecordShape(value, {
+    strings: ['path'],
+    booleans: ['exists'],
+  });
 }
 
 function isMemoryInventory(value: unknown): boolean {
@@ -143,44 +162,40 @@ function isMemoryInventory(value: unknown): boolean {
 }
 
 function isToolInventory(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return (
-    ['name', 'domain', 'risk', 'description'].every((key) => hasString(value, key)) &&
-    ['usesNetwork', 'writesDisk', 'spawnsProcess', 'requiresApproval'].every((key) => hasBoolean(value, key)) &&
-    hasNumber(value, 'priority')
-  );
+  return hasRecordShape(value, {
+    strings: ['name', 'domain', 'risk', 'description'],
+    booleans: ['usesNetwork', 'writesDisk', 'spawnsProcess', 'requiresApproval'],
+    numbers: ['priority'],
+  });
 }
 
 function isCronJobInventory(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return (
-    ['id', 'schedule', 'prompt', 'status', 'notifyOn'].every((key) => hasString(value, key)) &&
-    ['enabled', 'runOnce', 'quiet'].every((key) => hasBoolean(value, key)) &&
-    ['runCount', 'failureCount'].every((key) => hasNumber(value, key)) &&
-    ['nextRun', 'lastRun', 'lastStartedAt', 'lastFinishedAt', 'lastError', 'lastLogPath', 'createdAt', 'updatedAt']
-      .every((key) => isNullableString(value, key))
-  );
+  return hasRecordShape(value, {
+    strings: ['id', 'schedule', 'prompt', 'status', 'notifyOn'],
+    booleans: ['enabled', 'runOnce', 'quiet'],
+    numbers: ['runCount', 'failureCount'],
+    nullableStrings: ['nextRun', 'lastRun', 'lastStartedAt', 'lastFinishedAt', 'lastError', 'lastLogPath', 'createdAt', 'updatedAt'],
+  });
 }
 
 function isCronInventory(value: unknown): boolean {
   return (
-    isRecord(value) &&
-    hasString(value, 'jobsFile') &&
-    hasString(value, 'runsFile') &&
-    hasNumber(value, 'recentRuns') &&
+    hasRecordShape(value, {
+      strings: ['jobsFile', 'runsFile'],
+      numbers: ['recentRuns'],
+    }) &&
     Array.isArray(value.jobs) &&
     value.jobs.every(isCronJobInventory)
   );
 }
 
 function isSkillInfo(value: unknown): boolean {
-  return isRecord(value) && hasString(value, 'name') && hasString(value, 'content');
+  return hasRecordShape(value, { strings: ['name', 'content'] });
 }
 
 function isRuntimeInventory(value: unknown): value is RuntimeInventory {
-  if (!isRecord(value)) return false;
+  if (!hasRecordShape(value, { strings: ['version'] })) return false;
   return (
-    hasString(value, 'version') &&
     isRuntimePaths(value.paths) &&
     isRuntimeDefaults(value.defaults) &&
     isRuntimeCounts(value.counts) &&
@@ -195,11 +210,10 @@ function isRuntimeInventory(value: unknown): value is RuntimeInventory {
 }
 
 function isCronRunRecord(value: unknown): value is CronRunRecord {
-  if (!isRecord(value)) return false;
-  return (
-    ['run_id', 'job_id', 'schedule', 'started_at', 'status'].every((key) => hasString(value, key)) &&
-    ['finished_at', 'log_path', 'summary', 'error'].every((key) => isNullableString(value, key))
-  );
+  return hasRecordShape(value, {
+    strings: ['run_id', 'job_id', 'schedule', 'started_at', 'status'],
+    nullableStrings: ['finished_at', 'log_path', 'summary', 'error'],
+  });
 }
 
 export function normalizeRuntimeInventory(value: unknown): RuntimeInventory | null {

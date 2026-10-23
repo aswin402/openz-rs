@@ -1,5 +1,6 @@
 import { normalizeCronRuns, normalizeRuntimeInventory } from '../../types/protocol';
 import { wsService } from '../../services/websocket';
+import { createWorkspaceNotice } from '../chatUtils';
 import type { StoreEventContext } from '../eventContext';
 
 export function registerInventoryEvents({ set }: StoreEventContext) {
@@ -27,12 +28,11 @@ export function registerInventoryEvents({ set }: StoreEventContext) {
     const inventory = normalizeRuntimeInventory(payload.inventory);
     if (inventory) set({ runtimeInventory: inventory });
     set({
-      workspaceNotice: {
-        scope: 'inventory',
-        type: 'success',
-        message: `Cron job ${id} ${status}.`,
-        timestamp: Date.now(),
-      },
+      workspaceNotice: createWorkspaceNotice(
+        'inventory',
+        'success',
+        `Cron job ${id} ${status}.`,
+      ),
     });
   });
 
