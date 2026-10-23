@@ -40,6 +40,43 @@ pub fn set_silent_mode(val: bool) {
     IS_SILENT_MODE.store(val, std::sync::atomic::Ordering::Relaxed);
 }
 
+async fn run_headless_with_prompt(
+    prompt: Option<String>,
+    output_format: Option<String>,
+    yes: bool,
+) -> Result<()> {
+    let headless_args = args::HeadlessArgs {
+        prompt,
+        output_format: output_format.unwrap_or_else(|| "text".to_string()),
+        yes,
+        ..Default::default()
+    };
+    headless::handle_headless(headless_args).await
+}
+
+async fn run_ratatui_and_exit() -> Result<()> {
+    channels::handle_ratatui_tui().await?;
+    let _ = crossterm::terminal::disable_raw_mode();
+    let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
+    std::process::exit(0);
+}
+
+async fn dispatch_channel_action<F>(
+    action: Option<ChannelAction>,
+    channel_name: &str,
+    start_fut: F,
+) -> Result<()>
+where
+    F: std::future::Future<Output = Result<()>>,
+{
+    match action {
+        Some(ChannelAction::Logs { tail }) => {
+            logs::handle_logs(None, tail, Some(channel_name.to_string()), None, false, None).await
+        }
+        None => start_fut.await,
+    }
+}
+
 pub async fn run_cli() -> Result<()> {
     // Intercept top-level version flags only before `--` and outside passthrough subcommands
     let args_before_sep: Vec<String> = std::env::args()
@@ -106,27 +143,14 @@ pub async fn run_cli() -> Result<()> {
             use crossterm::tty::IsTty;
             match (args.prompt, std::io::stdin().is_tty()) {
                 (Some(prompt), _) => {
-                    let headless_args = args::HeadlessArgs {
-                        prompt: Some(prompt),
-                        output_format: args.output_format.unwrap_or_else(|| "text".to_string()),
-                        yes: args.yes,
-                        ..Default::default()
-                    };
-                    return headless::handle_headless(headless_args).await;
+                    return run_headless_with_prompt(Some(prompt), args.output_format, args.yes)
+                        .await;
                 }
                 (None, false) => {
-                    let headless_args = args::HeadlessArgs {
-                        output_format: args.output_format.unwrap_or_else(|| "text".to_string()),
-                        yes: args.yes,
-                        ..Default::default()
-                    };
-                    return headless::handle_headless(headless_args).await;
+                    return run_headless_with_prompt(None, args.output_format, args.yes).await;
                 }
                 (None, true) => {
-                    channels::handle_ratatui_tui().await?;
-                    let _ = crossterm::terminal::disable_raw_mode();
-                    let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
-                    std::process::exit(0);
+                    run_ratatui_and_exit().await?;
                 }
             }
         }
@@ -139,45 +163,23 @@ pub async fn run_cli() -> Result<()> {
             std::process::exit(0);
         }
         Some(Command::Agent) => {
-            channels::handle_ratatui_tui().await?;
-            let _ = crossterm::terminal::disable_raw_mode();
-            let _ = crossterm::execute!(std::io::stdout(), crossterm::cursor::Show);
-            std::process::exit(0);
+            run_ratatui_and_exit().await?;
         }
-        Some(Command::Gateway { action }) => match action {
-            Some(ChannelAction::Logs { tail }) => {
-                logs::handle_logs(None, tail, Some("gateway".to_string()), None, false, None)
-                    .await?;
-            }
-            None => channels::handle_gateway().await?,
-        },
-        Some(Command::Telegram { action }) => match action {
-            Some(ChannelAction::Logs { tail }) => {
-                logs::handle_logs(None, tail, Some("telegram".to_string()), None, false, None)
-                    .await?;
-            }
-            None => channels::handle_telegram().await?,
-        },
-        Some(Command::Discord { action }) => match action {
-            Some(ChannelAction::Logs { tail }) => {
-                logs::handle_logs(None, tail, Some("discord".to_string()), None, false, None)
-                    .await?;
-            }
-            None => channels::handle_discord().await?,
-        },
-        Some(Command::Whatsapp { action }) => match action {
-            Some(ChannelAction::Logs { tail }) => {
-                logs::handle_logs(None, tail, Some("whatsapp".to_string()), None, false, None)
-                    .await?;
-            }
-            None => channels::handle_whatsapp().await?,
-        },
-        Some(Command::Email { action }) => match action {
-            Some(ChannelAction::Logs { tail }) => {
-                logs::handle_logs(None, tail, Some("email".to_string()), None, false, None).await?;
-            }
-            None => channels::handle_email().await?,
-        },
+        Some(Command::Gateway { action }) => {
+            dispatch_channel_action(action, "gateway", channels::handle_gateway()).await?;
+        }
+        Some(Command::Telegram { action }) => {
+            dispatch_channel_action(action, "telegram", channels::handle_telegram()).await?;
+        }
+        Some(Command::Discord { action }) => {
+            dispatch_channel_action(action, "discord", channels::handle_discord()).await?;
+        }
+        Some(Command::Whatsapp { action }) => {
+            dispatch_channel_action(action, "whatsapp", channels::handle_whatsapp()).await?;
+        }
+        Some(Command::Email { action }) => {
+            dispatch_channel_action(action, "email", channels::handle_email()).await?;
+        }
         Some(Command::Subagent) => {
             let config = crate::config::loader::load_config()?;
             crate::subagents::run_subagent_manager(config).await?;

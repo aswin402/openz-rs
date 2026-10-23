@@ -626,21 +626,46 @@ pub fn parse_path_commands(d: &str) -> Vec<PathCommand> {
         }
     }
 
+    enum PathCharKind {
+        Command,
+        Separator,
+        NumericStart,
+        Other,
+    }
+
+    fn classify_path_char(ch: char) -> PathCharKind {
+        let rules: &[(bool, PathCharKind)] = &[
+            (ch.is_alphabetic(), PathCharKind::Command),
+            (ch == ',' || ch.is_whitespace(), PathCharKind::Separator),
+            (
+                ch == '-' || ch == '.' || ch.is_numeric(),
+                PathCharKind::NumericStart,
+            ),
+        ];
+        rules
+            .iter()
+            .find_map(|(matched, kind)| {
+                matched.then_some(match kind {
+                    PathCharKind::Command => PathCharKind::Command,
+                    PathCharKind::Separator => PathCharKind::Separator,
+                    PathCharKind::NumericStart => PathCharKind::NumericStart,
+                    PathCharKind::Other => PathCharKind::Other,
+                })
+            })
+            .unwrap_or(PathCharKind::Other)
+    }
+
     while let Some(&ch) = chars.peek() {
-        match (
-            ch.is_alphabetic(),
-            ch == ',' || ch.is_whitespace(),
-            ch == '-' || ch == '.' || ch.is_numeric(),
-        ) {
-            (true, _, _) => {
+        match classify_path_char(ch) {
+            PathCharKind::Command => {
                 flush(&mut commands, &mut current_cmd, &mut current_coords);
                 current_cmd = Some(ch);
                 chars.next();
             }
-            (false, true, _) => {
+            PathCharKind::Separator | PathCharKind::Other => {
                 chars.next();
             }
-            (false, false, true) => {
+            PathCharKind::NumericStart => {
                 let mut num_str = String::new();
                 let mut dot_seen = false;
                 while let Some(&next_ch) = chars.peek() {
@@ -666,9 +691,6 @@ pub fn parse_path_commands(d: &str) -> Vec<PathCommand> {
                         chars.next();
                     }
                 }
-            }
-            (false, false, false) => {
-                chars.next();
             }
         }
     }

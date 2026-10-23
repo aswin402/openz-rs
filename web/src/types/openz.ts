@@ -1,3 +1,5 @@
+import { asString, isRecord } from '../shared/lib/format';
+
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
 export type JsonObject = { [key: string]: JsonValue };
@@ -236,9 +238,7 @@ export interface WebUiCapabilities {
 }
 
 function capabilityRecord(value: unknown): Record<string, unknown> | null {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : null;
+  return isRecord(value) ? value : null;
 }
 
 function capabilityNumber(value: unknown): number {
@@ -246,7 +246,8 @@ function capabilityNumber(value: unknown): number {
 }
 
 function capabilityString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
+  const str = asString(value)?.trim();
+  return str || null;
 }
 
 const CAPABILITY_FIELD_KINDS: CapabilityFieldKind[] = ['boolean', 'secret', 'number', 'text'];

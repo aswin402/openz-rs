@@ -14,6 +14,7 @@ import {
   upsertDraftSession,
 } from '../chatUtils';
 import type { StoreEventContext } from '../eventContext';
+import { asString, isRecord } from '../../shared/lib/format';
 
 type ToolCallPayload = {
   id?: unknown;
@@ -37,14 +38,6 @@ type SessionHistoryMessage = {
   timestamp?: unknown;
   extra?: SessionExtra;
 };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
-}
 
 function parseToolArgs(value: unknown): ToolExecution['args'] {
   if (typeof value === 'string') {

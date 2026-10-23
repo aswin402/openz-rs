@@ -71,7 +71,7 @@ export function upsertDraftSession(sessions: OpenZSession[], chatId: string): Op
   return [createDraftSession(normalizedChatId), ...sessions.filter((session) => !session.isDraft)];
 }
 
-import { collapseWhitespace } from '../shared/lib/format';
+import { asString, collapseWhitespace } from '../shared/lib/format';
 
 export function titleFromFirstMessage(content: string): string {
   const compact = collapseWhitespace(content);
@@ -90,10 +90,6 @@ export type OrchestrationPayload = {
   output?: unknown;
   summary?: unknown;
 };
-
-function asString(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
-}
 
 function normalizeWorkflowStatus(value: unknown): OrchestrationRunState['status'] {
   const raw = asString(value);

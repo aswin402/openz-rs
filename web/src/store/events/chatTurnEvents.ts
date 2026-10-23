@@ -14,14 +14,7 @@ import {
   type OrchestrationPayload,
 } from '../chatUtils';
 import type { StoreEventContext } from '../eventContext';
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function asString(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
-}
+import { asString, isRecord } from '../../shared/lib/format';
 
 function normalizeActivityKind(value: unknown): 'workflow' | 'memory' | 'research' | 'self_improvement' | 'source' | 'system' {
   const raw = typeof value === 'string' ? value : 'system';
@@ -69,28 +62,23 @@ function attachActivityNotice(
   });
 }
 
-function appendStreamingAssistantDelta(
+function upsertStreamingAssistantMessage(
   { set, get }: StoreEventContext,
-  payload: { chat_id?: string; turn_id?: string; content?: string },
-  field: 'content' | 'reasoningContent',
+  chatId: string,
+  updateExisting: (lastMsg: OpenZMessage) => OpenZMessage,
+  initialPatch: Partial<OpenZMessage>,
+  setStreamingOnExisting = false,
 ) {
-  const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
-  if (!isTurnEventCurrent({ chat_id: chatId, turn_id: payload.turn_id }, get().activeTurnIds)) return;
-  const chunk = payload.content || '';
   const chatMessages = get().messages[chatId] || [];
   const lastMsg = chatMessages[chatMessages.length - 1];
 
   if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
-    const updatedMsg: OpenZMessage =
-      field === 'content'
-        ? { ...lastMsg, content: lastMsg.content + chunk }
-        : { ...lastMsg, reasoningContent: (lastMsg.reasoningContent || '') + chunk };
     set({
       messages: {
         ...get().messages,
-        [chatId]: [...chatMessages.slice(0, -1), updatedMsg],
+        [chatId]: [...chatMessages.slice(0, -1), updateExisting(lastMsg)],
       },
-      ...(field === 'content' ? { isStreaming: true } : {}),
+      ...(setStreamingOnExisting ? { isStreaming: true } : {}),
     });
     return;
   }
@@ -98,16 +86,59 @@ function appendStreamingAssistantDelta(
   const newMsg: OpenZMessage = {
     id: newMsgId('msg'),
     role: 'assistant',
-    content: field === 'content' ? chunk : '',
-    ...(field === 'reasoningContent' ? { reasoningContent: chunk } : {}),
+    content: '',
     timestamp: Date.now(),
     isStreaming: true,
     model: get().activeModel || undefined,
+    ...initialPatch,
   };
   set({
     messages: { ...get().messages, [chatId]: [...chatMessages, newMsg] },
     isStreaming: true,
   });
+}
+
+function appendStreamingAssistantDelta(
+  ctx: StoreEventContext,
+  payload: { chat_id?: string; turn_id?: string; content?: string },
+  field: 'content' | 'reasoningContent',
+) {
+  const { get } = ctx;
+  const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
+  if (!isTurnEventCurrent({ chat_id: chatId, turn_id: payload.turn_id }, get().activeTurnIds)) return;
+  const chunk = payload.content || '';
+  upsertStreamingAssistantMessage(
+    ctx,
+    chatId,
+    (lastMsg) =>
+      field === 'content'
+        ? { ...lastMsg, content: lastMsg.content + chunk }
+        : { ...lastMsg, reasoningContent: (lastMsg.reasoningContent || '') + chunk },
+    field === 'content' ? { content: chunk } : { reasoningContent: chunk },
+    field === 'content',
+  );
+}
+
+function settleActiveTurn(
+  { get }: StoreEventContext,
+  rawChatId: unknown,
+  rawTurnId: unknown,
+  toolSettledReason: string,
+): {
+  chatId: string;
+  activeTurns: Record<string, string>;
+  settledMessages: OpenZMessage[];
+} | null {
+  const chatId = normalizeChatId(asString(rawChatId) || get().activeChatId);
+  const turnId = asString(rawTurnId)?.trim();
+  if (!isTurnEventCurrent({ chat_id: chatId, turn_id: turnId }, get().activeTurnIds)) return null;
+  const activeTurns = { ...get().activeTurnIds };
+  if (!turnId || activeTurns[chatId] === turnId) delete activeTurns[chatId];
+  const settledMessages = settleAssistantTurnMessages(
+    get().messages[chatId] || [],
+    toolSettledReason,
+  );
+  return { chatId, activeTurns, settledMessages };
 }
 
 export function registerChatTurnEvents(ctx: StoreEventContext) {
@@ -159,40 +190,22 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
       status: 'running',
       startedAt: Date.now(),
     };
-    const chatMessages = get().messages[chatId] || [];
-    const lastMsg = chatMessages[chatMessages.length - 1];
-
-    if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
-      const toolCalls = lastMsg.toolCalls || [];
-      const existingIdx = toolCalls.findIndex((t) => t.id === tool.id);
-      const updatedMsg: OpenZMessage = {
-        ...lastMsg,
-        toolCalls:
-          existingIdx >= 0
-            ? toolCalls.map((t, i) => (i === existingIdx ? tool : t))
-            : [...toolCalls, tool],
-      };
-      set({
-        messages: {
-          ...get().messages,
-          [chatId]: [...chatMessages.slice(0, -1), updatedMsg],
-        },
-      });
-    } else {
-      const newMsg: OpenZMessage = {
-        id: newMsgId('msg'),
-        role: 'assistant',
-        content: '',
-        timestamp: Date.now(),
-        isStreaming: true,
-        toolCalls: [tool],
-        model: get().activeModel || undefined,
-      };
-      set({
-        messages: { ...get().messages, [chatId]: [...chatMessages, newMsg] },
-        isStreaming: true,
-      });
-    }
+    upsertStreamingAssistantMessage(
+      ctx,
+      chatId,
+      (lastMsg) => {
+        const toolCalls = lastMsg.toolCalls || [];
+        const existingIdx = toolCalls.findIndex((t) => t.id === tool.id);
+        return {
+          ...lastMsg,
+          toolCalls:
+            existingIdx >= 0
+              ? toolCalls.map((t, i) => (i === existingIdx ? tool : t))
+              : [...toolCalls, tool],
+        };
+      },
+      { toolCalls: [tool] },
+    );
   });
 
   wsService.on('tool_end', (payload) => {
@@ -269,35 +282,15 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
       arguments: payload.arguments,
       status: 'pending',
     };
-    const chatMessages = get().messages[chatId] || [];
-    const lastMsg = chatMessages[chatMessages.length - 1];
-
-    if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
-      const updatedMsg: OpenZMessage = {
+    upsertStreamingAssistantMessage(
+      ctx,
+      chatId,
+      (lastMsg) => ({
         ...lastMsg,
         securityPrompts: [...(lastMsg.securityPrompts || []), prompt],
-      };
-      set({
-        messages: {
-          ...get().messages,
-          [chatId]: [...chatMessages.slice(0, -1), updatedMsg],
-        },
-      });
-    } else {
-      const newMsg: OpenZMessage = {
-        id: newMsgId('msg'),
-        role: 'assistant',
-        content: '',
-        timestamp: Date.now(),
-        isStreaming: true,
-        securityPrompts: [prompt],
-        model: get().activeModel || undefined,
-      };
-      set({
-        messages: { ...get().messages, [chatId]: [...chatMessages, newMsg] },
-        isStreaming: true,
-      });
-    }
+      }),
+      { securityPrompts: [prompt] },
+    );
   });
 
   wsService.on('security_response_rejected', (payload) => {
@@ -312,16 +305,14 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
   });
 
   wsService.on('turn_end', (payload) => {
-    const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
-    const turnId = asString(payload.turn_id)?.trim();
-    if (!isTurnEventCurrent({ chat_id: chatId, turn_id: turnId }, get().activeTurnIds)) return;
-    const activeTurns = { ...get().activeTurnIds };
-    if (!turnId || activeTurns[chatId] === turnId) delete activeTurns[chatId];
-    const chatMessages = get().messages[chatId] || [];
-    const settledMessages = settleAssistantTurnMessages(
-      chatMessages,
+    const settled = settleActiveTurn(
+      ctx,
+      payload.chat_id,
+      payload.turn_id,
       'Turn ended before this tool reported completion.',
     );
+    if (!settled) return;
+    const { chatId, activeTurns, settledMessages } = settled;
 
     const pendingRunIds = (get().orchestrationRuns[chatId] || [])
       .filter((run) => run.status === 'running' || run.status === 'awaiting_review')
@@ -354,16 +345,14 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
 
   wsService.on('stopped', (payload) => {
     const payloadObj = isRecord(payload) ? payload : {};
-    const chatId = normalizeChatId(asString(payloadObj.chat_id) || get().activeChatId);
-    const turnId = asString(payloadObj.turn_id)?.trim();
-    if (!isTurnEventCurrent({ chat_id: chatId, turn_id: turnId }, get().activeTurnIds)) return;
-    const activeTurns = { ...get().activeTurnIds };
-    if (!turnId || activeTurns[chatId] === turnId) delete activeTurns[chatId];
-    const chatMessages = get().messages[chatId] || [];
-    const settledMessages = settleAssistantTurnMessages(
-      chatMessages,
+    const settled = settleActiveTurn(
+      ctx,
+      payloadObj.chat_id,
+      payloadObj.turn_id,
       'Turn stopped before this tool completed.',
     );
+    if (!settled) return;
+    const { chatId, activeTurns, settledMessages } = settled;
 
     const stoppableRunIds = (get().orchestrationRuns[chatId] || [])
       .filter((run) => run.status === 'running' || run.status === 'awaiting_review' || run.provisionalFailure)
@@ -399,15 +388,14 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
       set({ workspaceNotice: { scope, type: 'error', message: String(detail), timestamp: Date.now() } });
       return;
     }
-    const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
-    const turnId = asString(payload.turn_id)?.trim();
-    if (!isTurnEventCurrent({ chat_id: chatId, turn_id: turnId }, get().activeTurnIds)) return;
-    const activeTurns = { ...get().activeTurnIds };
-    if (!turnId || activeTurns[chatId] === turnId) delete activeTurns[chatId];
-    const chatMessages = settleAssistantTurnMessages(
-      get().messages[chatId] || [],
+    const settled = settleActiveTurn(
+      ctx,
+      payload.chat_id,
+      payload.turn_id,
       'Turn errored before this tool reported completion.',
     );
+    if (!settled) return;
+    const { chatId, activeTurns, settledMessages: chatMessages } = settled;
     const orchestrationRuns = {
       ...get().orchestrationRuns,
       [chatId]: settleOrchestrationRuns(
@@ -426,32 +414,25 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
       isNotice: true,
     };
 
-    if (
-      lastMsg
-      && lastMsg.role === 'assistant'
-      && !lastMsg.content
-      && !lastMsg.reasoningContent
-      && !(lastMsg.toolCalls && lastMsg.toolCalls.length > 0)
-      && !(lastMsg.securityPrompts && lastMsg.securityPrompts.length > 0)
-      && !(lastMsg.activityNotices && lastMsg.activityNotices.length > 0)
-    ) {
-      // Replace empty placeholder with error.
-      set({
-        messages: {
-          ...get().messages,
-          [chatId]: [...chatMessages.slice(0, -1), errorMsg],
-        },
-        orchestrationRuns,
-        activeTurnIds: activeTurns,
-        isStreaming: Object.keys(activeTurns).length > 0,
-      });
-    } else {
-      set({
-        messages: { ...get().messages, [chatId]: [...chatMessages, errorMsg] },
-        orchestrationRuns,
-        activeTurnIds: activeTurns,
-        isStreaming: Object.keys(activeTurns).length > 0,
-      });
-    }
+    const isEmptyPlaceholder =
+      Boolean(lastMsg) &&
+      lastMsg.role === 'assistant' &&
+      !lastMsg.content &&
+      !lastMsg.reasoningContent &&
+      !(lastMsg.toolCalls && lastMsg.toolCalls.length > 0) &&
+      !(lastMsg.securityPrompts && lastMsg.securityPrompts.length > 0) &&
+      !(lastMsg.activityNotices && lastMsg.activityNotices.length > 0);
+
+    set({
+      messages: {
+        ...get().messages,
+        [chatId]: isEmptyPlaceholder
+          ? [...chatMessages.slice(0, -1), errorMsg]
+          : [...chatMessages, errorMsg],
+      },
+      orchestrationRuns,
+      activeTurnIds: activeTurns,
+      isStreaming: Object.keys(activeTurns).length > 0,
+    });
   });
 }

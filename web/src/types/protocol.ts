@@ -1,10 +1,7 @@
 import type { CronRunRecord, RuntimeInventory } from './openz';
+import { isRecord } from '../shared/lib/format';
 
 type UnknownRecord = Record<string, unknown>;
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function hasString(record: UnknownRecord, key: string): boolean {
   return typeof record[key] === 'string';

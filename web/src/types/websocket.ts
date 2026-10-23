@@ -1,3 +1,5 @@
+import { isRecord } from '../shared/lib/format';
+
 export interface WebSocketAttachment {
   name: string;
   mime: string;
@@ -86,10 +88,6 @@ export function createRequestId(sequence: number, now = Date.now()): string {
 export function buildCommandEnvelope(command: WebSocketCommand, requestId: string): WebSocketCommandEnvelope {
   if (!requestId.trim()) throw new Error('WebSocket request ID cannot be empty');
   return { ...command, request_id: requestId } as WebSocketCommandEnvelope;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 export function parseWebSocketEvent(value: unknown): WebSocketEventEnvelope | null {
