@@ -20,6 +20,16 @@ async fn test_render_mermaid() -> Result<()> {
     let content = fs::read_to_string(output_file)?;
     assert!(content.contains("<svg"));
 
+    let alias_output = temp_dir.join("alias_chart.svg");
+    let alias_res = tool
+        .call(&json!({
+            "code": "flowchart TD\n  X --> Y",
+            "output": alias_output.to_str().unwrap()
+        }))
+        .await?;
+    assert_eq!(alias_res["status"], "success");
+    assert!(alias_output.exists());
+
     let _ = fs::remove_dir_all(&temp_dir);
     Ok(())
 }

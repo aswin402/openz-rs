@@ -76,3 +76,24 @@ fn test_parse_repo_from_git_url() {
     assert_eq!(parse_repo_from_git_url(""), None);
 }
 
+#[test]
+fn test_infer_git_provider_action_and_issue_number() {
+    assert_eq!(
+        infer_git_provider_action(&json!({"head": "feat", "base": "main", "title": "PR"})).unwrap(),
+        "create_pr"
+    );
+    assert_eq!(
+        infer_git_provider_action(&json!({"issue_number": 42})).unwrap(),
+        "get_issue_comments"
+    );
+    assert_eq!(
+        infer_git_provider_action(&json!({"pr_number": 7})).unwrap(),
+        "get_pr_diff"
+    );
+    assert_eq!(
+        infer_git_provider_action(&json!({"query": "is:open label:bug"})).unwrap(),
+        "search_issues"
+    );
+    assert_eq!(extract_issue_number(&json!({"issue_number": "19"})).unwrap(), 19);
+}
+

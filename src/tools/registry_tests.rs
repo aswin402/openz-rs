@@ -523,7 +523,7 @@ async fn test_dynamic_tool_retrieval_and_scoping_benchmark() {
     crate::cli::tools::register_all_tools(&registry, &config, provider, sessions).unwrap();
 
     let total_tools = registry.read_tools().len();
-    assert_eq!(total_tools, 260, "Must have exactly 260 registered native tools");
+    assert_eq!(total_tools, 240, "Must have exactly 240 registered native tools");
 
     // 1. Code Engineering Domain Benchmark
     let code_prompt = "Inspect src/main.rs and run cargo check on the workspace";

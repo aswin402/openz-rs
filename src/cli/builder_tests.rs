@@ -31,10 +31,7 @@ fn test_native_tool_registration_names() {
     registry.register(std::sync::Arc::new(
         crate::tools::headroom::RetrieveOriginalTool,
     ));
-    registry.register(std::sync::Arc::new(crate::tools::headroom::PingTool));
-    registry.register(std::sync::Arc::new(crate::tools::headroom::ServerInfoTool));
     registry.register(std::sync::Arc::new(crate::tools::headroom::CountTokensTool));
-    registry.register(std::sync::Arc::new(crate::tools::headroom::CacheStatsTool));
     registry.register(std::sync::Arc::new(
         crate::tools::headroom::HeadroomStatsTool,
     ));
@@ -166,9 +163,6 @@ fn test_native_tool_registration_names() {
         crate::tools::memory_extra::ProactiveRecallTool,
     ));
     registry.register(std::sync::Arc::new(
-        crate::tools::memory_extra::CompressContextTool,
-    ));
-    registry.register(std::sync::Arc::new(
         crate::tools::memory_extra::MemoryStatsTool,
     ));
     registry.register(std::sync::Arc::new(
@@ -265,10 +259,7 @@ fn test_native_tool_registration_names() {
         "scope_context",
         "compress_content",
         "retrieve_original",
-        "ping",
-        "server_info",
         "count_tokens",
-        "cache_stats",
         "headroom_stats",
         "headroom_usage",
         "clear_cache",
@@ -319,7 +310,6 @@ fn test_native_tool_registration_names() {
         "smart_store",
         "extract_and_store_facts",
         "proactive_recall",
-        "compress_context",
         "memory_stats",
         "log_repository_evolution",
         "query_repository_evolution",
@@ -361,16 +351,16 @@ fn test_native_tool_registration_names() {
             .collect::<Vec<_>>()
     );
     assert_eq!(
-        headroom_count, 21,
-        "Expected 21 headroom tools, got {headroom_count}"
+        headroom_count, 18,
+        "Expected 18 headroom tools, got {headroom_count}"
     );
     assert_eq!(
         graph_mem_count, 12,
         "Expected 12 graph memory tools, got {graph_mem_count}"
     );
     assert_eq!(
-        mem_extra_count, 32,
-        "Expected 32 memory extra tools, got {mem_extra_count}"
+        mem_extra_count, 31,
+        "Expected 31 memory extra tools, got {mem_extra_count}"
     );
     assert_eq!(
         shared_count, 10,
@@ -379,7 +369,7 @@ fn test_native_tool_registration_names() {
     assert!(names.contains(&"orchestrate_workflow".to_string()));
     assert_eq!(
         names.len(),
-        5 + 21 + 12 + 32 + 10 + 1,
+        5 + 18 + 12 + 31 + 10 + 1,
         "Total tool count mismatch"
     );
 
@@ -421,10 +411,7 @@ fn test_native_tool_category_invariants() {
         "scope_context",
         "compress_content",
         "retrieve_original",
-        "ping",
-        "server_info",
         "count_tokens",
-        "cache_stats",
         "headroom_stats",
         "headroom_usage",
         "clear_cache",
@@ -475,7 +462,6 @@ fn test_native_tool_category_invariants() {
         "smart_store",
         "extract_and_store_facts",
         "proactive_recall",
-        "compress_context",
         "memory_stats",
         "log_repository_evolution",
         "query_repository_evolution",
@@ -522,12 +508,12 @@ fn test_native_tool_category_invariants() {
 
     // 2. Ensure each category has the exact expected cardinality
     assert_eq!(seq_names.len(), 5);
-    assert_eq!(headroom_names.len(), 21);
+    assert_eq!(headroom_names.len(), 18);
     assert_eq!(graph_mem_names.len(), 12);
-    assert_eq!(mem_extra_names.len(), 32);
+    assert_eq!(mem_extra_names.len(), 31);
     assert_eq!(shared_names.len(), 10);
     assert_eq!(orchestrator_names.len(), 1);
-    assert_eq!(seen.len(), 5 + 21 + 12 + 32 + 10 + 1);
+    assert_eq!(seen.len(), 5 + 18 + 12 + 31 + 10 + 1);
 }
 
 #[tokio::test]

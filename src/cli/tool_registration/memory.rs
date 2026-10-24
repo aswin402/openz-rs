@@ -30,10 +30,7 @@ pub(crate) fn register_headroom_tools(registry: &ToolRegistry) {
     registry.register(std::sync::Arc::new(
         crate::tools::headroom::RetrieveOriginalTool,
     ));
-    registry.register(std::sync::Arc::new(crate::tools::headroom::PingTool));
-    registry.register(std::sync::Arc::new(crate::tools::headroom::ServerInfoTool));
     registry.register(std::sync::Arc::new(crate::tools::headroom::CountTokensTool));
-    registry.register(std::sync::Arc::new(crate::tools::headroom::CacheStatsTool));
     registry.register(std::sync::Arc::new(
         crate::tools::headroom::HeadroomStatsTool,
     ));
@@ -167,9 +164,6 @@ pub(crate) fn register_memory_extra_tools(registry: &ToolRegistry) {
     ));
     registry.register(std::sync::Arc::new(
         crate::tools::memory_extra::ProactiveRecallTool,
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::memory_extra::CompressContextTool,
     ));
     registry.register(std::sync::Arc::new(
         crate::tools::memory_extra::MemoryStatsTool,

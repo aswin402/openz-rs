@@ -430,7 +430,7 @@ impl Tool for ToolCatalogTool {
     }
 
     fn description(&self) -> &str {
-        "Search, discover, hot-mount, and batch-execute native tools from the 260-tool catalog using BM25 relevance (alias: tool_search). Also lists registered tools by domain, risk, or resource status."
+        "Search, discover, hot-mount, and batch-execute native tools from the 240-tool catalog using BM25 relevance (alias: tool_search). Also lists registered tools by domain, risk, or resource status."
     }
 
     fn parameters(&self) -> Value {
@@ -439,7 +439,7 @@ impl Tool for ToolCatalogTool {
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "Optional search keywords to discover relevant tools in the 260-tool catalog using BM25 lexical relevance (e.g. 'sqlite inspector', 'video animation', 'diff compression', 'cron job')."
+                    "description": "Optional search keywords to discover relevant tools in the 240-tool catalog using BM25 lexical relevance (e.g. 'sqlite inspector', 'video animation', 'diff compression', 'cron job')."
                 },
                 "mount": {
                     "type": "boolean",

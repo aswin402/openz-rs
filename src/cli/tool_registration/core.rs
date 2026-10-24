@@ -156,9 +156,6 @@ pub(crate) fn register_core_tools(
     registry.register(std::sync::Arc::new(crate::tools::watcher::FileWatcherTool));
     registry.register(std::sync::Arc::new(crate::tools::ast_grep::AstGrepTool));
     registry.register(std::sync::Arc::new(
-        crate::tools::ast_grep::AstGrepIndexCodebaseTool,
-    ));
-    registry.register(std::sync::Arc::new(
         crate::tools::gsd_browser::GsdBrowserTool,
     ));
     registry.register(std::sync::Arc::new(

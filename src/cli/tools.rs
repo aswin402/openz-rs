@@ -24,7 +24,6 @@ pub fn register_all_tools(
     crate::cli::tool_registration::integrations::register_searchxyz_tools(registry);
     crate::cli::tool_registration::media::register_openmedia_tools(registry);
     crate::cli::tool_registration::media::register_opendoc_tools(registry);
-    crate::cli::tool_registration::integrations::register_github_mcp_tools(registry);
     crate::cli::tool_registration::integrations::register_docs_mcp_tools(registry);
     crate::cli::tool_registration::integrations::register_lazy_mcp_tools(registry, config);
 

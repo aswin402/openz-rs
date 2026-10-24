@@ -140,7 +140,7 @@ pub fn is_low_disk_recovery_tool(tool_name: &str, arguments: &serde_json::Value)
                     | "repair"
             )
         ),
-        "cache_stats" | "clear_cache" | "diagnose_system" | "openz_inventory" => true,
+        "headroom_stats" | "cache_stats" | "clear_cache" | "diagnose_system" | "openz_inventory" => true,
         _ => false,
     }
 }

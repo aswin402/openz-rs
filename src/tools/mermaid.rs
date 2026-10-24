@@ -35,11 +35,15 @@ impl Tool for MermaidRendererTool {
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let chart = arguments
             .get("chart")
+            .or_else(|| arguments.get("code"))
+            .or_else(|| arguments.get("diagram"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'chart' parameter"))?;
 
         let output_path_str = arguments
             .get("output_path")
+            .or_else(|| arguments.get("output"))
+            .or_else(|| arguments.get("path"))
             .and_then(|v| v.as_str())
             .unwrap_or("diagram.svg");
         let output_path = crate::config::resolve_path(output_path_str);

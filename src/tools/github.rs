@@ -56,6 +56,44 @@ fn extract_pr_number(arguments: &Value) -> Result<i64> {
         .ok_or_else(|| anyhow!("Missing pr_number for get_pr_diff"))
 }
 
+fn extract_issue_number(arguments: &Value) -> Result<u64> {
+    arguments
+        .get("issue_number")
+        .or_else(|| arguments.get("number"))
+        .or_else(|| arguments.get("issue"))
+        .and_then(|n| {
+            n.as_u64()
+                .or_else(|| n.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+        })
+        .filter(|n| *n > 0)
+        .ok_or_else(|| anyhow!("Missing positive issue_number for get_issue_comments"))
+}
+
+fn infer_git_provider_action(arguments: &Value) -> Result<&'static str> {
+    let has_create_pr = arguments.get("head").and_then(|v| v.as_str()).is_some()
+        && arguments.get("base").and_then(|v| v.as_str()).is_some();
+    let has_issue_number = arguments
+        .get("issue_number")
+        .or_else(|| arguments.get("issue"))
+        .is_some();
+    let has_pr_number = arguments
+        .get("pr_number")
+        .or_else(|| arguments.get("pr"))
+        .is_some();
+    let has_query = arguments
+        .get("query")
+        .or_else(|| arguments.get("q"))
+        .and_then(|v| v.as_str())
+        .is_some();
+    match (has_create_pr, has_issue_number, has_pr_number, has_query) {
+        (true, _, _, _) => Ok("create_pr"),
+        (false, true, _, _) => Ok("get_issue_comments"),
+        (false, false, true, _) => Ok("get_pr_diff"),
+        (false, false, false, true) => Ok("search_issues"),
+        (false, false, false, false) => Err(anyhow!("Missing action parameter")),
+    }
+}
+
 fn extract_create_pr_fields<'a>(
     arguments: &'a Value,
 ) -> Result<(&'a str, &'a str, &'a str, &'a str)> {
@@ -151,12 +189,16 @@ impl Tool for GitProviderTool {
                 },
                 "action": {
                     "type": "string",
-                    "enum": ["create_pr", "list_issues", "search_code", "get_pr_diff"],
-                    "description": "The action to perform (aliases: pr, issues, search, diff)"
+                    "enum": ["create_pr", "list_issues", "search_issues", "get_issue_comments", "search_code", "get_pr_diff"],
+                    "description": "The action to perform (aliases: pr, issues, issue_search, issue_comments, search, diff)"
+                },
+                "owner": {
+                    "type": "string",
+                    "description": "Repository owner when not included in 'repo' (optional)"
                 },
                 "repo": {
                     "type": "string",
-                    "description": "Repository path formatted as 'owner/repo' (e.g. 'tokio-rs/tokio'). If omitted or 'auto', auto-detected from local git origin."
+                    "description": "Repository path formatted as 'owner/repo' (e.g. 'tokio-rs/tokio') or repository name when 'owner' is supplied. If omitted or 'auto', auto-detected from local git origin."
                 },
                 "title": {
                     "type": "string",
@@ -179,9 +221,20 @@ impl Tool for GitProviderTool {
                     "enum": ["open", "closed", "all"],
                     "description": "State of issues to list (optional for list_issues, default is open)"
                 },
+                "issue_number": {
+                    "description": "Issue number (required for get_issue_comments, integer or string).",
+                    "oneOf": [
+                        { "type": "integer" },
+                        { "type": "string" }
+                    ]
+                },
                 "query": {
                     "type": "string",
-                    "description": "Search query or term (required for search_code)"
+                    "description": "Search query or term (required for search_code or search_issues)"
+                },
+                "per_page": {
+                    "type": "integer",
+                    "description": "Maximum results per page for search_issues or get_issue_comments (1..=100)"
                 },
                 "pr_number": {
                     "description": "Pull/Merge request number (required for get_pr_diff, integer or string).",
@@ -208,16 +261,20 @@ impl Tool for GitProviderTool {
             .get("platform")
             .and_then(|p| p.as_str())
             .unwrap_or("github");
-        let action_raw = arguments
+        let action_norm = match arguments
             .get("action")
             .or_else(|| arguments.get("command"))
             .or_else(|| arguments.get("operation"))
             .and_then(|a| a.as_str())
-            .ok_or_else(|| anyhow!("Missing action parameter"))?;
-        let action_norm = action_raw.trim().to_lowercase();
+        {
+            Some(raw) => raw.trim().to_lowercase(),
+            None => infer_git_provider_action(arguments)?.to_string(),
+        };
         let action = match action_norm.as_str() {
             "create_pr" | "pr" | "create_pull_request" | "pull_request" | "create_mr" => "create_pr",
             "list_issues" | "issues" | "list_issue" => "list_issues",
+            "search_issues" | "issue_search" | "find_issues" => "search_issues",
+            "get_issue_comments" | "issue_comments" | "comments" => "get_issue_comments",
             "search_code" | "search" | "code_search" => "search_code",
             "get_pr_diff" | "diff" | "pr_diff" | "mr_diff" => "get_pr_diff",
             _ => action_norm.as_str(),
@@ -227,11 +284,19 @@ impl Tool for GitProviderTool {
             .get("cwd")
             .or_else(|| arguments.get("dir"))
             .and_then(|v| v.as_str());
+        let owner_arg = arguments
+            .get("owner")
+            .and_then(|o| o.as_str())
+            .map(str::trim)
+            .filter(|o| !o.is_empty());
         let repo_arg = arguments
             .get("repo")
             .or_else(|| arguments.get("repository"))
             .and_then(|r| r.as_str())
-            .map(|s| s.to_string());
+            .map(|r| match (owner_arg, r.contains('/')) {
+                (Some(owner), false) => format!("{}/{}", owner, r.trim()),
+                _ => r.to_string(),
+            });
         let repo_owned = resolve_target_repo(repo_arg, cwd)?;
         let repo = repo_owned.as_str();
 
@@ -298,6 +363,47 @@ impl Tool for GitProviderTool {
                             .and_then(|s| s.as_str())
                             .unwrap_or("open");
                         let url = format!("{}/repos/{}/issues?state={}", api_base, repo, state);
+                        let resp = client.get(&url).headers(headers).send().await?;
+                        read_checked_response_json(resp, "GitHub").await
+                    }
+                    "search_issues" => {
+                        let query = arguments
+                            .get("query")
+                            .or_else(|| arguments.get("q"))
+                            .and_then(|q| q.as_str())
+                            .ok_or_else(|| anyhow!("Missing query for search_issues"))?;
+                        let per_page = arguments
+                            .get("per_page")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(10)
+                            .clamp(1, 100);
+                        let full_query = match query.contains("repo:") {
+                            true => query.to_string(),
+                            false => format!("{} repo:{}", query, repo),
+                        };
+                        let encoded_query = percent_encoding::utf8_percent_encode(
+                            &full_query,
+                            percent_encoding::NON_ALPHANUMERIC,
+                        )
+                        .to_string();
+                        let url = format!(
+                            "{}/search/issues?q={}&per_page={}",
+                            api_base, encoded_query, per_page
+                        );
+                        let resp = client.get(&url).headers(headers).send().await?;
+                        read_checked_response_json(resp, "GitHub").await
+                    }
+                    "get_issue_comments" => {
+                        let issue_number = extract_issue_number(arguments)?;
+                        let per_page = arguments
+                            .get("per_page")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(30)
+                            .clamp(1, 100);
+                        let url = format!(
+                            "{}/repos/{}/issues/{}/comments?per_page={}",
+                            api_base, repo, issue_number, per_page
+                        );
                         let resp = client.get(&url).headers(headers).send().await?;
                         read_checked_response_json(resp, "GitHub").await
                     }
@@ -392,6 +498,43 @@ impl Tool for GitProviderTool {
                         let url = format!(
                             "{}/projects/{}/issues?state={}",
                             api_base, urlencoded_repo, gitlab_state
+                        );
+                        let resp = client.get(&url).headers(headers).send().await?;
+                        read_checked_response_json(resp, "GitLab").await
+                    }
+                    "search_issues" => {
+                        let query = arguments
+                            .get("query")
+                            .or_else(|| arguments.get("q"))
+                            .and_then(|q| q.as_str())
+                            .ok_or_else(|| anyhow!("Missing query for search_issues"))?;
+                        let per_page = arguments
+                            .get("per_page")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(10)
+                            .clamp(1, 100);
+                        let encoded_query = percent_encoding::utf8_percent_encode(
+                            query,
+                            percent_encoding::NON_ALPHANUMERIC,
+                        )
+                        .to_string();
+                        let url = format!(
+                            "{}/projects/{}/issues?search={}&per_page={}",
+                            api_base, urlencoded_repo, encoded_query, per_page
+                        );
+                        let resp = client.get(&url).headers(headers).send().await?;
+                        read_checked_response_json(resp, "GitLab").await
+                    }
+                    "get_issue_comments" => {
+                        let issue_number = extract_issue_number(arguments)?;
+                        let per_page = arguments
+                            .get("per_page")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(30)
+                            .clamp(1, 100);
+                        let url = format!(
+                            "{}/projects/{}/issues/{}/notes?per_page={}",
+                            api_base, urlencoded_repo, issue_number, per_page
                         );
                         let resp = client.get(&url).headers(headers).send().await?;
                         read_checked_response_json(resp, "GitLab").await

@@ -1,5 +1,37 @@
+## [0.0.309] - 2026-10-24
+### v0.0.309 (Latest Release)
+
+#### Changed
+- **Tool Catalog De-Duplication & Legacy MCP Stub Consolidation (`260 -> 240` Canonical Native Tools) ([`src/cli/tools.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tools.rs), [`src/cli/tool_registration/core.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tool_registration/core.rs), [`src/cli/tool_registration/memory.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tool_registration/memory.rs), [`src/cli/tool_registration/integrations.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tool_registration/integrations.rs), [`src/cli/tool_registration/media.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tool_registration/media.rs))**:
+  - Unregistered 20 redundant/stub tools from active registration:
+    - 6 legacy MCP health/ping stubs (`ping`, `openmedia_ping`, `server_info`, `cache_stats`, `opendoc_check_ocr_available`, `searchxyz_doctor`).
+    - 1 destructive duplicate codebase indexer (`ast_grep_index_codebase`, which previously truncated `code_calls` in `graph.db` without repopulating call-graph edges).
+    - 13 duplicate wrapper tools (`docs_search_rust_crate`, `docs_read_rust_docs`, `github_create_pull_request`, `github_search_issues`, `github_get_issue_comments`, `openmedia_diagram_generate_mermaid`, `compress_context`, `opendoc_read_document_text`, `opendoc_extract_pdf_text`, `searchxyz_search_web`, `searchxyz_search_and_read`, `searchxyz_read_url`, `searchxyz_site_map`).
+  - Preserved 100% backward compatibility in [`compatibility_canonical_name`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/metadata.rs) and [`STATIC_TOOL_DEFS`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/defs.rs) so all 20 consolidated tool names resolve transparently via `ToolRegistry::get(name)` and `canonical_tool_name(name)` to their canonical tool (`diagnose_system`, `headroom_stats`, `read_doc`, `index_codebase`, `rust_docs`, `git_provider`, `render_mermaid`, `compress_content`, `web_search`, `web_fetch`, `crawl_website`).
+- **Canonical Tool Superset Upgrades ([`src/tools/github.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/github.rs), [`src/tools/rust_docs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/rust_docs.rs), [`src/tools/mermaid.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mermaid.rs))**:
+  - Extended [`GitProviderTool`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/github.rs) with `"search_issues"` and `"get_issue_comments"` actions across GitHub and GitLab, `owner` + `repo` combination, and automatic action inference when invoked via legacy aliases.
+  - Updated [`RustDocsTool`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/rust_docs.rs) to infer `"get_docs"` or `"search"` automatically from `crate_name` / `query` arguments when `action` is omitted.
+  - Updated [`MermaidRendererTool`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mermaid.rs) to accept `"code"` / `"diagram"` and `"output"` / `"path"` parameter aliases.
+
+#### Documentation
+- **Synchronized Release Manifests**: Updated [`Cargo.toml`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/Cargo.toml), [`onpkg.json`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/onpkg.json), [`README.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/README.md), and [`CHANGELOG.md`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/CHANGELOG.md) to `0.0.309`.
+
+### Sources & Inspirations
+- **[Inspiration]**: Canonical tool surface consolidation and alias-preserved backward compatibility inspired by Claude Code, OpenAI Codex, and Earendil Works `pi`.
+
+- **Ideas**:
+  - Eliminate tool-choice ambiguity and BM25 routing dilution by consolidating 20 legacy MCP health stubs and duplicate wrappers into 11 canonical superset tools while preserving 100% alias resolution at the registry boundary.
+- **Inspirations**:
+  - Anthropic Claude Code, OpenAI Codex (`openai/codex`), Earendil Works `pi` (`earendil-works/pi`), and Prime Intellect `prime-agent` (`PrimeIntellect-ai/prime-agent`).
+- **Sources & References**:
+  - [`src/cli/tools.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tools.rs), [`src/cli/tool_registration/core.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tool_registration/core.rs), [`src/cli/tool_registration/memory.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tool_registration/memory.rs), [`src/cli/tool_registration/integrations.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tool_registration/integrations.rs), [`src/cli/tool_registration/media.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tool_registration/media.rs), [`src/tools/github.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/github.rs), [`src/tools/github_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/github_tests.rs), [`src/tools/rust_docs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/rust_docs.rs), [`src/tools/mermaid.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mermaid.rs), [`src/tools/mermaid_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/mermaid_tests.rs), [`src/tools/metadata.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/metadata.rs), [`src/tools/defs.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/defs.rs), [`src/tools/subagent/allowlist.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/allowlist.rs), [`src/tools/subagent/allowlist_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/subagent/allowlist_tests.rs), [`src/cli/tools_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tools_tests.rs), [`src/cli/builder_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/builder_tests.rs)
+- **Details & Metrics**:
+  - Consolidated active native tool registrations from `260` to `240` (`-20` redundant tools), with 20 compatibility aliases verified in `tool_registry_exposes_every_registered_tool`, 0 `if`/`else` tokens, and 0 `regex` tokens.
+- **Verification**:
+  - Verified with `just test-guard` and unit tests across `cli::tools::tests`, `cli::builder::tests`, `tools::subagent::allowlist::tests`, `tools::github::tests`, and `tools::mermaid::tests`.
+
 ## [0.0.308] - 2026-10-24
-### v0.0.308 (Latest Release)
+### v0.0.308
 
 #### Added
 - **Per-File Async Mutation Lock Queue & `RwLock<()>` Read/Write Concurrency Gate ([`src/tools/filesystem.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem.rs), [`src/tools/filesystem_tests.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/filesystem_tests.rs), [`src/agent/agent_loop/run/tool_pipeline.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/agent/agent_loop/run/tool_pipeline.rs))**:

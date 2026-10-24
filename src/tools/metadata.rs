@@ -85,22 +85,46 @@ pub fn normalize_tool_name(name: &str) -> String {
 
 pub(crate) fn compatibility_canonical_name(requested: &str) -> Option<&'static str> {
     match normalize_tool_name(requested).as_str() {
-        "doc_reader" | "read_document_file" => Some("read_doc"),
-        "read_document" => Some("opendoc_read_document_text"),
+        "doc_reader"
+        | "read_document_file"
+        | "read_document"
+        | "opendoc_read_document_text"
+        | "opendoc_extract_pdf_text"
+        | "opendoc_check_ocr_available" => Some("read_doc"),
         "opendoc_extract_tables" => Some("opendoc_find_tables"),
         "opendoc_convert_document" => Some("opendoc_convert"),
-        "crawl_site" | "crawl" | "spider" | "crawl_website_tool" => Some("crawl_website"),
-        "web_scrape" | "web_fetch_tool" | "fetch_web" | "scrape_web" => Some("web_fetch"),
-        "web_search_tool" | "search_web" | "tavily_search" => Some("web_search"),
+        "crawl_site" | "crawl" | "spider" | "crawl_website_tool" | "searchxyz_site_map" => {
+            Some("crawl_website")
+        }
+        "web_scrape" | "web_fetch_tool" | "fetch_web" | "scrape_web" | "searchxyz_read_url" => {
+            Some("web_fetch")
+        }
+        "web_search_tool"
+        | "search_web"
+        | "tavily_search"
+        | "searchxyz_search_web"
+        | "searchxyz_search_and_read" => Some("web_search"),
         "obscura" | "obscura_tool" | "chrome_cdp" => Some("obscura_browser"),
         "gsd" | "gsd_tool" | "chrome_gui" => Some("gsd_browser"),
         "firefox" | "firefox_tool" => Some("firefox_browser"),
         "inspect_browser" | "browser_status" | "browser_health" => Some("inspect_browsers"),
         "db_writer" | "sqlite_write" | "sqlite_writer" => Some("db_write"),
         "sqlite" | "sqlite_query" | "sqlite_inspector" => Some("db_inspector"),
-        "diagnose" | "system_diagnostics" | "health_check" | "system_health" => {
-            Some("diagnose_system")
+        "diagnose"
+        | "system_diagnostics"
+        | "health_check"
+        | "system_health"
+        | "ping"
+        | "openmedia_ping"
+        | "searchxyz_doctor" => Some("diagnose_system"),
+        "cache_stats" | "server_info" => Some("headroom_stats"),
+        "compress_context" => Some("compress_content"),
+        "ast_grep_index_codebase" => Some("index_codebase"),
+        "docs_search_rust_crate" | "docs_read_rust_docs" => Some("rust_docs"),
+        "github_create_pull_request" | "github_search_issues" | "github_get_issue_comments" => {
+            Some("git_provider")
         }
+        "openmedia_diagram_generate_mermaid" => Some("render_mermaid"),
         "cron_schedule" | "cron_add" => Some("schedule_job"),
         "cron_list" | "cron_jobs" => Some("list_jobs"),
         "cron_remove" | "cron_delete" => Some("remove_job"),

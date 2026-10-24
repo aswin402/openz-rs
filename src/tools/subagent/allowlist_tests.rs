@@ -158,10 +158,10 @@ fn test_filter_tools_for_new_default_subagents() {
 
     // Test presentation_designer
     let filtered = filter_tools_for_subagent("presentation_designer", &tools);
-    assert_eq!(filtered.len(), 7);
+    assert_eq!(filtered.len(), 8);
     assert!(filtered.iter().any(|t| t.name() == "compile_template"));
     assert!(filtered.iter().any(|t| t.name() == "generate_image"));
-    assert!(!filtered.iter().any(|t| t.name() == "read_doc"));
+    assert!(filtered.iter().any(|t| t.name() == "read_doc"));
 
     // Test code_synthesizer
     let filtered = filter_tools_for_subagent("code_synthesizer", &tools);
@@ -276,10 +276,10 @@ fn test_filter_tools_for_profile_explicit_domains() {
 #[test]
 fn test_modernized_subagent_native_tools_allowlists() {
     let researcher_tools = static_allowlist_for_subagent("researcher").expect("researcher allowlist");
-    assert!(researcher_tools.contains(&"searchxyz_search_web"));
-    assert!(researcher_tools.contains(&"searchxyz_read_url"));
+    assert!(researcher_tools.contains(&"web_search"));
+    assert!(researcher_tools.contains(&"web_fetch"));
     assert!(researcher_tools.contains(&"searchxyz_recall"));
-    assert!(researcher_tools.contains(&"docs_read_rust_docs"));
+    assert!(researcher_tools.contains(&"rust_docs"));
     assert!(researcher_tools.contains(&"tool_catalog"));
 
     let media_tools = static_allowlist_for_subagent("media_designer").expect("media_designer allowlist");

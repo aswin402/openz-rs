@@ -141,19 +141,7 @@ pub(crate) fn register_lazy_mcp_tools(registry: &ToolRegistry, config: &Config) 
 pub(crate) fn register_searchxyz_tools(registry: &ToolRegistry) {
     // ── searchxyz tools ───────────────────────────────────────────────────────
     registry.register(std::sync::Arc::new(
-        crate::tools::searchxyz::SearchXyzDoctorTool,
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::searchxyz::SearchXyzSearchWebTool,
-    ));
-    registry.register(std::sync::Arc::new(
         crate::tools::searchxyz::SearchXyzBrowserSearchTool,
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::searchxyz::SearchXyzReadUrlTool,
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::searchxyz::SearchXyzSearchAndReadTool,
     ));
     registry.register(std::sync::Arc::new(
         crate::tools::searchxyz::SearchXyzRecallTool,
@@ -166,9 +154,6 @@ pub(crate) fn register_searchxyz_tools(registry: &ToolRegistry) {
     ));
     registry.register(std::sync::Arc::new(
         crate::tools::searchxyz::SearchXyzIndexContentTool,
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::searchxyz::SearchXyzSiteMapTool,
     ));
     registry.register(std::sync::Arc::new(
         crate::tools::searchxyz::SearchXyzIndexRelationshipTool,
@@ -193,19 +178,6 @@ pub(crate) fn register_searchxyz_tools(registry: &ToolRegistry) {
     ));
 }
 
-pub(crate) fn register_github_mcp_tools(registry: &ToolRegistry) {
-    // ── GitHub MCP Tools ──
-    registry.register(std::sync::Arc::new(
-        crate::tools::github_mcp::GithubCreatePullRequestTool,
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::github_mcp::GithubSearchIssuesTool,
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::github_mcp::GithubGetIssueCommentsTool,
-    ));
-}
-
 pub(crate) fn register_docs_mcp_tools(registry: &ToolRegistry) {
     // ── Docs MCP Tools ──
     registry.register(std::sync::Arc::new(
@@ -219,11 +191,5 @@ pub(crate) fn register_docs_mcp_tools(registry: &ToolRegistry) {
     ));
     registry.register(std::sync::Arc::new(
         crate::tools::docs_mcp::DocsReadDocPageTool,
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::docs_mcp::DocsSearchRustCrateTool,
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::docs_mcp::DocsReadRustDocsTool,
     ));
 }

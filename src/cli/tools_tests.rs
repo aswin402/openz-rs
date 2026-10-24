@@ -176,10 +176,44 @@ async fn tool_registry_exposes_every_registered_tool() {
     assert!(names.contains(&"sequentialthinking".to_string()));
     assert!(names.contains(&"scope_context".to_string()));
     assert!(names.contains(&"create_entities".to_string()));
-    assert!(names.contains(&"searchxyz_doctor".to_string()));
-    assert!(names.contains(&"searchxyz_search_web".to_string()));
-    assert!(names.contains(&"openmedia_ping".to_string()));
+    assert!(names.contains(&"diagnose_system".to_string()));
+    assert!(names.contains(&"web_search".to_string()));
+    assert!(names.contains(&"searchxyz_browser_search".to_string()));
     assert!(names.contains(&"opendoc_open_document".to_string()));
+    assert_eq!(names.len(), 240, "expected 240 canonical native tools");
+
+    for (legacy_alias, expected_canonical) in [
+        ("ping", "diagnose_system"),
+        ("openmedia_ping", "diagnose_system"),
+        ("searchxyz_doctor", "diagnose_system"),
+        ("server_info", "headroom_stats"),
+        ("cache_stats", "headroom_stats"),
+        ("opendoc_check_ocr_available", "read_doc"),
+        ("opendoc_read_document_text", "read_doc"),
+        ("opendoc_extract_pdf_text", "read_doc"),
+        ("ast_grep_index_codebase", "index_codebase"),
+        ("docs_search_rust_crate", "rust_docs"),
+        ("docs_read_rust_docs", "rust_docs"),
+        ("github_create_pull_request", "git_provider"),
+        ("github_search_issues", "git_provider"),
+        ("github_get_issue_comments", "git_provider"),
+        ("openmedia_diagram_generate_mermaid", "render_mermaid"),
+        ("compress_context", "compress_content"),
+        ("searchxyz_search_web", "web_search"),
+        ("searchxyz_search_and_read", "web_search"),
+        ("searchxyz_read_url", "web_fetch"),
+        ("searchxyz_site_map", "crawl_website"),
+    ] {
+        let resolved = registry
+            .get(legacy_alias)
+            .unwrap_or_else(|| panic!("consolidated tool alias '{legacy_alias}' must resolve"));
+        assert_eq!(
+            resolved.name(),
+            expected_canonical,
+            "consolidated tool alias '{legacy_alias}' resolved to '{}' instead of '{expected_canonical}'",
+            resolved.name()
+        );
+    }
 
     let find_path = registry
         .catalog_entries(true)

@@ -9,9 +9,6 @@ pub(crate) fn register_openmedia_tools(registry: &ToolRegistry) {
         crate::tools::openmedia::OpenMediaRasterizeSvgTool,
     ));
     registry.register(std::sync::Arc::new(
-        crate::tools::openmedia::OpenMediaDiagramGenerateMermaidTool,
-    ));
-    registry.register(std::sync::Arc::new(
         crate::tools::openmedia::OpenMediaHtmlToImageTool,
     ));
     registry.register(std::sync::Arc::new(
@@ -110,18 +107,12 @@ pub(crate) fn register_openmedia_tools(registry: &ToolRegistry) {
     registry.register(std::sync::Arc::new(
         crate::tools::openmedia::OpenMediaImproveQualityReportTool,
     ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::openmedia::OpenMediaPingTool,
-    ));
 }
 
 pub(crate) fn register_opendoc_tools(registry: &ToolRegistry) {
     // ── Opendoc Native Tools ──────────────────────────────────────────────────
     registry.register(std::sync::Arc::new(
         crate::tools::opendoc::OpendocOpenDocumentTool,
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::opendoc::OpendocReadDocumentTextTool,
     ));
     registry.register(std::sync::Arc::new(
         crate::tools::opendoc::OpendocSearchDocumentTool,
@@ -199,9 +190,6 @@ pub(crate) fn register_opendoc_tools(registry: &ToolRegistry) {
         crate::tools::opendoc::OpendocMergePdfsTool,
     ));
     registry.register(std::sync::Arc::new(
-        crate::tools::opendoc::OpendocExtractPdfTextTool,
-    ));
-    registry.register(std::sync::Arc::new(
         crate::tools::opendoc::OpendocListPdfFieldsTool,
     ));
     registry.register(std::sync::Arc::new(
@@ -215,9 +203,6 @@ pub(crate) fn register_opendoc_tools(registry: &ToolRegistry) {
     ));
     registry.register(std::sync::Arc::new(
         crate::tools::opendoc::OpendocOcrDocumentTool,
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::opendoc::OpendocCheckOcrAvailableTool,
     ));
     registry.register(std::sync::Arc::new(
         crate::tools::opendoc::OpendocExtractArchiveDigestTool,
