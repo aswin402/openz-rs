@@ -2,6 +2,216 @@ use crate::tools::Tool;
 use anyhow::Result;
 use serde_json::Value;
 
+fn is_pipeline_expr_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.' | '[' | ']')
+}
+
+fn traverse_json_path<'a>(root: &'a Value, segments: &[&str]) -> Option<&'a Value> {
+    let effective_segments = match segments.first().copied() {
+        Some("output") => &segments[1..],
+        _ => segments,
+    };
+    effective_segments.iter().try_fold(root, |curr, &seg| match curr {
+        Value::Object(map) => map.get(seg),
+        Value::Array(arr) => seg.parse::<usize>().ok().and_then(|idx| arr.get(idx)),
+        _ => None,
+    })
+}
+
+fn resolve_pipeline_expr<'a>(
+    expr: &str,
+    prev_output: Option<&'a Value>,
+    indexed_outputs: &'a [Value],
+    named_outputs: &'a std::collections::HashMap<String, Value>,
+) -> Option<&'a Value> {
+    let parts: Vec<&str> = expr.split('.').filter(|s| !s.is_empty()).collect();
+    let head = *parts.first()?;
+    let tail = &parts[1..];
+    let root_val = match (
+        head == "prev",
+        head.strip_prefix("steps[").and_then(|s| s.strip_suffix(']')),
+    ) {
+        (true, _) => prev_output,
+        (false, Some(idx_str)) => idx_str
+            .parse::<usize>()
+            .ok()
+            .and_then(|idx| indexed_outputs.get(idx)),
+        (false, None) => named_outputs.get(head),
+    }?;
+    traverse_json_path(root_val, tail)
+}
+
+fn value_to_inline_string(val: &Value) -> String {
+    match val {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+fn substitute_brace_templates(
+    input: &str,
+    prev_output: Option<&Value>,
+    indexed_outputs: &[Value],
+    named_outputs: &std::collections::HashMap<String, Value>,
+) -> String {
+    let mut parts = input.split("{{");
+    let first = parts.next().unwrap_or("");
+    let mut out = String::from(first);
+    for segment in parts {
+        match segment.split_once("}}") {
+            Some((expr, rest)) => {
+                let replacement =
+                    resolve_pipeline_expr(expr.trim(), prev_output, indexed_outputs, named_outputs)
+                        .map(value_to_inline_string)
+                        .unwrap_or_else(|| format!("{{{{{}}}}}", expr));
+                out.push_str(&replacement);
+                out.push_str(rest);
+            }
+            None => {
+                out.push_str("{{");
+                out.push_str(segment);
+            }
+        }
+    }
+    out
+}
+
+fn substitute_dollar_templates(
+    input: &str,
+    prev_output: Option<&Value>,
+    indexed_outputs: &[Value],
+    named_outputs: &std::collections::HashMap<String, Value>,
+) -> String {
+    let chars: Vec<char> = input.chars().collect();
+    let mut idx = 0;
+    let mut out = String::with_capacity(input.len());
+    while idx < chars.len() {
+        match chars[idx] == '$' {
+            false => {
+                out.push(chars[idx]);
+                idx += 1;
+            }
+            true => {
+                let start = idx + 1;
+                let mut end = start;
+                while end < chars.len() && is_pipeline_expr_char(chars[end]) {
+                    end += 1;
+                }
+                let trimmed_end = (start..end)
+                    .rev()
+                    .find(|&pos| chars[pos] != '.')
+                    .map(|pos| pos + 1)
+                    .unwrap_or(start);
+                let expr: String = chars[start..trimmed_end].iter().collect();
+                match (!expr.is_empty())
+                    .then(|| {
+                        resolve_pipeline_expr(&expr, prev_output, indexed_outputs, named_outputs)
+                    })
+                    .flatten()
+                {
+                    Some(resolved) => {
+                        out.push_str(&value_to_inline_string(resolved));
+                        idx = trimmed_end;
+                    }
+                    None => {
+                        out.push('$');
+                        idx += 1;
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+fn interpolate_step_value(
+    value: &Value,
+    prev_output: Option<&Value>,
+    indexed_outputs: &[Value],
+    named_outputs: &std::collections::HashMap<String, Value>,
+) -> Value {
+    match value {
+        Value::String(s) => {
+            let trimmed = s.trim();
+            let exact_expr = trimmed
+                .strip_prefix("{{")
+                .and_then(|inner| inner.strip_suffix("}}"))
+                .map(str::trim)
+                .or_else(|| {
+                    trimmed
+                        .strip_prefix('$')
+                        .filter(|rest| !rest.is_empty() && rest.chars().all(is_pipeline_expr_char))
+                });
+            match exact_expr.and_then(|expr| {
+                resolve_pipeline_expr(expr, prev_output, indexed_outputs, named_outputs)
+            }) {
+                Some(resolved) => resolved.clone(),
+                None => {
+                    let after_braces = substitute_brace_templates(
+                        s,
+                        prev_output,
+                        indexed_outputs,
+                        named_outputs,
+                    );
+                    let after_dollars = substitute_dollar_templates(
+                        &after_braces,
+                        prev_output,
+                        indexed_outputs,
+                        named_outputs,
+                    );
+                    Value::String(after_dollars)
+                }
+            }
+        }
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| {
+                    interpolate_step_value(item, prev_output, indexed_outputs, named_outputs)
+                })
+                .collect(),
+        ),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| {
+                    (
+                        k.clone(),
+                        interpolate_step_value(v, prev_output, indexed_outputs, named_outputs),
+                    )
+                })
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+fn value_contains_pipeline_reference(value: &Value) -> bool {
+    match value {
+        Value::String(s) => {
+            s.contains("$prev")
+                || s.contains("$steps[")
+                || s.contains("{{")
+                || s.split('$').skip(1).any(|seg| {
+                    seg.chars()
+                        .take_while(|c| is_pipeline_expr_char(*c))
+                        .collect::<String>()
+                        .contains('.')
+                })
+        }
+        Value::Array(items) => items.iter().any(value_contains_pipeline_reference),
+        Value::Object(map) => map.values().any(value_contains_pipeline_reference),
+        _ => false,
+    }
+}
+
+fn attach_step_telemetry(mut step_res: Value, step_id: Option<&str>, duration_ms: u64) -> Value {
+    step_res["duration_ms"] = serde_json::json!(duration_ms);
+    let _ = step_id.map(|id| {
+        step_res["id"] = serde_json::json!(id);
+    });
+    step_res
+}
+
 pub struct ToolCatalogTool {
     registry: crate::tools::ToolRegistry,
 }
@@ -16,7 +226,17 @@ impl ToolCatalogTool {
         item: &Value,
         defaults: &crate::config::schema::AgentDefaults,
         runtime: &crate::tools::resource_policy::RuntimeResourceSnapshot,
+        prev_output: Option<&Value>,
+        indexed_outputs: &[Value],
+        named_outputs: &std::collections::HashMap<String, Value>,
     ) -> (Option<String>, Value) {
+        let step_started = std::time::Instant::now();
+        let step_id = item
+            .get("id")
+            .or_else(|| item.get("step_id"))
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
         let raw_name = item
             .get("tool")
             .or_else(|| item.get("name"))
@@ -29,7 +249,9 @@ impl ToolCatalogTool {
             .or_else(|| item.get("args"))
             .cloned()
             .unwrap_or_else(|| serde_json::json!({}));
-        let normalized_args = crate::tools::normalize_tool_args(&raw_args);
+        let interpolated_args =
+            interpolate_step_value(&raw_args, prev_output, indexed_outputs, named_outputs);
+        let normalized_args = crate::tools::normalize_tool_args(&interpolated_args);
 
         let is_empty_name = canonical_name.is_empty();
         let is_recursive_catalog = canonical_name == "tool_catalog";
@@ -41,7 +263,7 @@ impl ToolCatalogTool {
             &defaults.security_mode,
         );
 
-        match (
+        let (executed_tool, raw_step_res) = match (
             is_empty_name,
             is_recursive_catalog,
             is_forbidden,
@@ -153,7 +375,12 @@ impl ToolCatalogTool {
                     }
                 }
             },
-        }
+        };
+        let duration_ms = step_started.elapsed().as_millis() as u64;
+        (
+            executed_tool,
+            attach_step_telemetry(raw_step_res, step_id, duration_ms),
+        )
     }
     fn is_read_only_batch_step(&self, item: &Value) -> bool {
         let raw_name = item
@@ -191,12 +418,7 @@ impl ToolCatalogTool {
         );
         match (is_mutating_name, self.registry.get(&canonical_name)) {
             (true, _) | (false, None) => false,
-            (false, Some(tool)) => {
-                let meta = tool.metadata();
-                matches!(meta.risk, crate::tools::ToolRisk::Low)
-                    && !meta.writes_disk
-                    && !meta.requires_approval
-            }
+            (false, Some(tool)) => tool.metadata().is_read_only(),
         }
     }
 }
@@ -338,21 +560,35 @@ impl Tool for ToolCatalogTool {
         let mut batch_results = Vec::new();
         let mut batch_mounted_tools = Vec::new();
         let mut batch_execution_mode: Option<&'static str> = None;
+        let mut batch_total_duration_ms: Option<u64> = None;
         match arguments.get("batch_execute").and_then(|v| v.as_array()) {
             Some(steps) => {
+                let batch_started = std::time::Instant::now();
                 let capped: Vec<&Value> = steps.iter().take(8).collect();
+                let has_pipeline_refs = capped.iter().any(|step| {
+                    step.get("arguments")
+                        .or_else(|| step.get("args"))
+                        .is_some_and(value_contains_pipeline_reference)
+                });
                 let run_concurrent = capped.len() > 1
+                    && !has_pipeline_refs
                     && capped
                         .iter()
                         .all(|step| self.is_read_only_batch_step(step));
+                let empty_named = std::collections::HashMap::new();
                 let outcomes = match run_concurrent {
                     true => {
                         batch_execution_mode = Some("concurrent");
-                        futures_util::future::join_all(
-                            capped
-                                .iter()
-                                .map(|step| self.run_batch_step(step, &defaults, &runtime)),
-                        )
+                        futures_util::future::join_all(capped.iter().map(|step| {
+                            self.run_batch_step(
+                                step,
+                                &defaults,
+                                &runtime,
+                                None,
+                                &[],
+                                &empty_named,
+                            )
+                        }))
                         .await
                     }
                     false => {
@@ -360,8 +596,37 @@ impl Tool for ToolCatalogTool {
                             batch_execution_mode = Some("sequential");
                         });
                         let mut seq = Vec::with_capacity(capped.len());
+                        let mut indexed_outputs: Vec<Value> = Vec::with_capacity(capped.len());
+                        let mut named_outputs: std::collections::HashMap<String, Value> =
+                            std::collections::HashMap::new();
+                        let mut prev_output: Option<Value> = None;
                         for step in capped {
-                            seq.push(self.run_batch_step(step, &defaults, &runtime).await);
+                            let (executed_tool, step_res) = self
+                                .run_batch_step(
+                                    step,
+                                    &defaults,
+                                    &runtime,
+                                    prev_output.as_ref(),
+                                    &indexed_outputs,
+                                    &named_outputs,
+                                )
+                                .await;
+                            let step_output = step_res
+                                .get("output")
+                                .cloned()
+                                .unwrap_or(Value::Null);
+                            let _ = step
+                                .get("id")
+                                .or_else(|| step.get("step_id"))
+                                .and_then(|v| v.as_str())
+                                .map(str::trim)
+                                .filter(|s| !s.is_empty())
+                                .map(|id| {
+                                    named_outputs.insert(id.to_string(), step_output.clone());
+                                });
+                            indexed_outputs.push(step_output.clone());
+                            prev_output = Some(step_output);
+                            seq.push((executed_tool, step_res));
                         }
                         seq
                     }
@@ -370,6 +635,7 @@ impl Tool for ToolCatalogTool {
                     executed_tool.map(|name| batch_mounted_tools.push(name));
                     batch_results.push(step_res);
                 }
+                batch_total_duration_ms = Some(batch_started.elapsed().as_millis() as u64);
             }
             None => {}
         }
@@ -544,6 +810,8 @@ impl Tool for ToolCatalogTool {
             response["batch_executed_count"] = serde_json::json!(batch_results.len());
             response["batch_execution_mode"] =
                 serde_json::json!(batch_execution_mode.unwrap_or("sequential"));
+            response["batch_total_duration_ms"] =
+                serde_json::json!(batch_total_duration_ms.unwrap_or(0));
             response["batch_results"] = serde_json::json!(batch_results);
         });
 

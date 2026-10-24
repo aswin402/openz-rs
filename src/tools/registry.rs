@@ -718,11 +718,15 @@ impl ToolRegistry {
             .into_iter()
             .map(|entry| {
                 let selection_reason = entry.selection_reason.join(",");
+                let exposure = entry.metadata.exposure(&entry.name).as_str();
+                let annotations = entry.metadata.annotations_json();
                 let mut value = serde_json::json!({
                     "name": entry.name,
                     "description": entry.description,
                     "domain": entry.metadata.domain,
                     "risk": entry.metadata.risk.as_str(),
+                    "exposure": exposure,
+                    "annotations": annotations,
                     "uses_network": entry.metadata.uses_network,
                     "writes_disk": entry.metadata.writes_disk,
                     "spawns_process": entry.metadata.spawns_process,

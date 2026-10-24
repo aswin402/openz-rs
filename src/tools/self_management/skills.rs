@@ -15,7 +15,7 @@ impl Tool for CurateSkillTool {
     }
 
     fn description(&self) -> &str {
-        "Curate, list, add, or delete procedural skills and guidelines in the OpenZ skills SQLite database."
+        "Curate, list, add, delete, inspect revision history, or roll back procedural skills and guidelines in the OpenZ skills SQLite database."
     }
 
     fn parameters(&self) -> Value {
@@ -24,7 +24,7 @@ impl Tool for CurateSkillTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "add", "delete"],
+                    "enum": ["list", "add", "delete", "history", "rollback"],
                     "description": "The curation action to perform."
                 },
                 "skill_name": {
@@ -38,6 +38,10 @@ impl Tool for CurateSkillTool {
                 "profile": {
                     "type": "string",
                     "description": "Optional subagent profile name to restrict this skill to."
+                },
+                "revision_id": {
+                    "type": "integer",
+                    "description": "Optional snapshot revision_id to restore when action='rollback' (defaults to the most recent snapshot)."
                 }
             },
             "required": ["action"]
@@ -61,8 +65,10 @@ impl Tool for CurateSkillTool {
             .unwrap_or_else(|| "list".to_string());
         let action = match normalized_action.as_str() {
             "" | "list" | "ls" | "view" | "show" => "list",
-            "add" | "save" | "create" | "set" => "add",
+            "add" | "save" | "create" | "set" | "update" => "add",
             "delete" | "remove" | "rm" => "delete",
+            "history" | "revisions" | "versions" | "snapshots" => "history",
+            "rollback" | "restore" | "revert" | "undo" => "rollback",
             other => other,
         };
 
@@ -103,6 +109,41 @@ impl Tool for CurateSkillTool {
                 Ok(serde_json::json!({
                     "success": true,
                     "message": format!("Skill '{}' successfully deleted", skill_name)
+                }))
+            }
+            "history" => {
+                let skill_name = extract_trimmed_str(arguments, SKILL_NAME_KEYS)
+                    .ok_or_else(|| anyhow::anyhow!("Missing skill_name for action 'history'"))?;
+                let revisions = crate::agent::skills::list_skill_revisions(
+                    &skill_name,
+                    profile.as_deref(),
+                )?;
+                Ok(serde_json::json!({
+                    "success": true,
+                    "skill_name": skill_name,
+                    "profile": profile,
+                    "revision_count": revisions.len(),
+                    "revisions": revisions
+                }))
+            }
+            "rollback" => {
+                let skill_name = extract_trimmed_str(arguments, SKILL_NAME_KEYS)
+                    .ok_or_else(|| anyhow::anyhow!("Missing skill_name for action 'rollback'"))?;
+                let revision_id = arguments
+                    .get("revision_id")
+                    .or_else(|| arguments.get("revisionId"))
+                    .and_then(|v| v.as_i64());
+                let restored = crate::agent::skills::rollback_skill(
+                    &skill_name,
+                    profile.as_deref(),
+                    revision_id,
+                )?;
+                Ok(serde_json::json!({
+                    "success": true,
+                    "skill_name": restored.name,
+                    "profile": profile,
+                    "content": restored.content,
+                    "message": format!("Skill '{}' rolled back to previous snapshot", restored.name)
                 }))
             }
             _ => Err(anyhow::anyhow!("Invalid action '{}'", action)),

@@ -44,7 +44,7 @@ pub(crate) mod routing;
 
 pub use metadata::{
     canonical_tool_name, compact_presentation_name, normalize_tool_name, presentation_name,
-    tool_names_match, ToolMetadata, ToolRisk, ToolSpec,
+    tool_names_match, ToolExposure, ToolMetadata, ToolRisk, ToolSpec,
 };
 pub use registry::*;
 

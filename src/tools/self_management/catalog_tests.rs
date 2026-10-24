@@ -326,3 +326,91 @@ async fn test_tool_catalog_batch_execute_concurrent_read_only_mode() {
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[tokio::test]
+async fn test_tool_catalog_pipeline_variable_chaining_and_annotations() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_batch_pipeline_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let path_pointer = temp_dir.join("pointer.txt");
+    let target_file = temp_dir.join("target_payload.txt");
+    std::fs::write(&target_file, "pipeline_chained_payload\n").unwrap();
+    std::fs::write(&path_pointer, target_file.to_str().unwrap()).unwrap();
+
+    let registry = crate::tools::ToolRegistry::new();
+    registry.register(std::sync::Arc::new(crate::tools::filesystem::ReadFileTool));
+    registry.register(std::sync::Arc::new(crate::tools::filesystem::ListDirTool));
+    registry.register(std::sync::Arc::new(crate::tools::filesystem::WriteFileTool));
+
+    let catalog = ToolCatalogTool::new(registry.clone());
+    let catalog_view = catalog
+        .call(&serde_json::json!({
+            "domain": "filesystem"
+        }))
+        .await
+        .unwrap();
+    let tools_arr = catalog_view["tools"].as_array().unwrap();
+    let read_entry = tools_arr
+        .iter()
+        .find(|e| e["name"] == "read_file")
+        .expect("read_file entry");
+    assert_eq!(read_entry["exposure"], "contextual");
+    assert_eq!(read_entry["annotations"]["readOnlyHint"], true);
+    assert_eq!(read_entry["annotations"]["destructiveHint"], false);
+    assert_eq!(read_entry["annotations"]["idempotentHint"], true);
+
+    let write_entry = tools_arr
+        .iter()
+        .find(|e| e["name"] == "write_file")
+        .expect("write_file entry");
+    assert_eq!(write_entry["annotations"]["readOnlyHint"], false);
+    assert_eq!(write_entry["annotations"]["destructiveHint"], true);
+
+    let res = catalog
+        .call(&serde_json::json!({
+            "batch_execute": [
+                {
+                    "id": "resolve_pointer",
+                    "tool": "read_file",
+                    "arguments": {
+                        "path": path_pointer.to_str().unwrap()
+                    }
+                },
+                {
+                    "id": "read_target",
+                    "tool": "read_file",
+                    "arguments": {
+                        "path": "$prev.output"
+                    }
+                },
+                {
+                    "id": "read_via_named_id",
+                    "tool": "read_file",
+                    "arguments": {
+                        "path": "{{resolve_pointer.output}}"
+                    }
+                }
+            ]
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(res["batch_execution_mode"], "sequential");
+    assert!(res.get("batch_total_duration_ms").and_then(|v| v.as_u64()).is_some());
+    let batch_results = res["batch_results"].as_array().unwrap();
+    assert_eq!(batch_results.len(), 3);
+    assert_eq!(batch_results[0]["id"], "resolve_pointer");
+    assert!(batch_results[0].get("duration_ms").is_some());
+    assert_eq!(
+        batch_results[1]["output"].as_str().unwrap(),
+        "pipeline_chained_payload\n"
+    );
+    assert_eq!(
+        batch_results[2]["output"].as_str().unwrap(),
+        "pipeline_chained_payload\n"
+    );
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}

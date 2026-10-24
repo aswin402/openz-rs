@@ -4,6 +4,39 @@ use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 use std::fs;
 
+static FILE_MUTATION_LOCKS: std::sync::OnceLock<
+    std::sync::Mutex<
+        std::collections::HashMap<std::path::PathBuf, std::sync::Arc<tokio::sync::Mutex<()>>>,
+    >,
+> = std::sync::OnceLock::new();
+
+fn normalized_file_lock_key(path: &std::path::Path) -> std::path::PathBuf {
+    path.canonicalize().unwrap_or_else(|_| {
+        path.parent()
+            .and_then(|parent| parent.canonicalize().ok())
+            .and_then(|parent| path.file_name().map(|name| parent.join(name)))
+            .unwrap_or_else(|| path.to_path_buf())
+    })
+}
+
+/// Acquires an exclusive per-file async mutation lock keyed by canonical path
+/// so concurrent edits to the same file across parallel subagents or batches
+/// are strictly serialized while edits to distinct files proceed concurrently.
+pub async fn acquire_file_mutation_lock(
+    path: &std::path::Path,
+) -> tokio::sync::OwnedMutexGuard<()> {
+    let key = normalized_file_lock_key(path);
+    let file_mutex = {
+        let map_mutex = FILE_MUTATION_LOCKS
+            .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+        let mut map = map_mutex.lock().unwrap_or_else(|p| p.into_inner());
+        map.entry(key)
+            .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    };
+    file_mutex.lock_owned().await
+}
+
 fn deserialize_flexible_opt_usize<'de, D>(deserializer: D) -> std::result::Result<Option<usize>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -1158,6 +1191,7 @@ impl Tool for WriteFileTool {
         let path = resolve_path(&args.path);
         crate::config::loader::verify_safe_path(&path)?;
         path.parent().map(fs::create_dir_all).transpose()?;
+        let _file_mutation_guard = acquire_file_mutation_lock(&path).await;
 
         fs::write(&path, &args.content)
             .with_context(|| format!("Failed to write to file at {:?}", path))?;
@@ -1273,6 +1307,7 @@ impl Tool for PatchFileTool {
 
         let path = resolve_path(&args.path);
         crate::config::loader::verify_safe_path(&path)?;
+        let _file_mutation_guard = acquire_file_mutation_lock(&path).await;
 
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read file at {:?}", path))?;
@@ -1485,6 +1520,7 @@ impl Tool for ReplaceLinesTool {
 
         let path = resolve_path(&args.path);
         crate::config::loader::verify_safe_path(&path)?;
+        let _file_mutation_guard = acquire_file_mutation_lock(&path).await;
 
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read file at {:?}", path))?;

@@ -581,3 +581,58 @@ async fn test_replace_lines_atomic_multi_hunk_bottom_up_and_patch_hashline_strip
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())
 }
+
+#[tokio::test]
+async fn test_concurrent_file_mutations_are_serialized_without_data_loss() -> Result<()> {
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_concurrent_edit_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir)?;
+    let file_path = temp_dir.join("shared.txt");
+    std::fs::write(&file_path, "slot_a = 0\nslot_b = 0\nslot_c = 0\n")?;
+
+    let p1 = file_path.to_str().unwrap().to_string();
+    let p2 = p1.clone();
+    let p3 = p1.clone();
+
+    let args1 = serde_json::json!({
+        "path": p1,
+        "target": "slot_a = 0",
+        "replacement": "slot_a = 1"
+    });
+    let args2 = serde_json::json!({
+        "path": p2,
+        "target": "slot_b = 0",
+        "replacement": "slot_b = 2"
+    });
+    let args3 = serde_json::json!({
+        "path": p3,
+        "target": "slot_c = 0",
+        "replacement": "slot_c = 3"
+    });
+
+    let (r1, r2, r3) = tokio::join!(
+        PatchFileTool.call(&args1),
+        PatchFileTool.call(&args2),
+        PatchFileTool.call(&args3),
+    );
+    assert_eq!(r1?["status"], "success");
+    assert_eq!(r2?["status"], "success");
+    assert_eq!(r3?["status"], "success");
+
+    let final_text = std::fs::read_to_string(&file_path)?;
+    assert_eq!(final_text, "slot_a = 1\nslot_b = 2\nslot_c = 3\n");
+
+    let exec_res = crate::tools::shell::ExecCommandTool
+        .call(&serde_json::json!({
+            "command": "printf 'alpha\\nbeta\\n'"
+        }))
+        .await?;
+    assert_eq!(exec_res["exit_code"], 0);
+    assert_eq!(exec_res["stdout_lines"], 2);
+    assert_eq!(exec_res["total_lines"], 2);
+    assert_eq!(exec_res["timed_out"], false);
+    assert!(exec_res.get("wall_time_ms").and_then(|v| v.as_u64()).is_some());
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(())
+}

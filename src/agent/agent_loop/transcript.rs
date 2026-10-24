@@ -97,6 +97,8 @@ pub(crate) async fn append_tool_results(
         let mut tool_output_metadata = None;
         let content = match content_str.len() > limit && !is_retrieve {
             true => {
+                let total_lines = content_str.lines().count();
+                let total_chars = content_str.chars().count();
                 let outputs_dir = crate::config::loader::runtime_data_dir().join("tool_outputs");
                 let compressed =
                     crate::agent::context_compactor::compress_tool_output_with_limit(
@@ -139,18 +141,20 @@ pub(crate) async fn append_tool_results(
                             "original_ref": original_ref,
                             "original_path": file_path.to_string_lossy(),
                             "original_bytes": content_str.len(),
+                            "total_lines": total_lines,
+                            "total_chars": total_chars,
                             "compressed_bytes": compressed.len(),
                             "inline_limit": limit,
                             "retrieve_tool": "retrieve_original",
                         }));
                         format!(
-                            "{}\n\n... [TRUNCATED - Full output saved for reference at {}] ...",
-                            compressed, original_ref
+                            "{}\n\n... [TRUNCATED ({} total lines, {} total chars) - Full output saved for reference at {}] ...",
+                            compressed, total_lines, total_chars, original_ref
                         )
                     }
                     None => format!(
-                        "{}\n\n... [TRUNCATED - Full output could not be saved to disk] ...",
-                        compressed
+                        "{}\n\n... [TRUNCATED ({} total lines, {} total chars) - Full output could not be saved to disk] ...",
+                        compressed, total_lines, total_chars
                     ),
                 }
             }

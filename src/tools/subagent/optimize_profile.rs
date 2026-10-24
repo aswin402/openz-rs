@@ -19,23 +19,32 @@ impl Tool for OptimizeSubagentTool {
     }
 
     fn description(&self) -> &str {
-        "Optimize a specialized subagent's system prompt using AI based on feedback logs or execution errors."
+        "Optimize a specialized subagent's system prompt using AI based on feedback logs or execution errors, or inspect/roll back snapshot revisions."
     }
 
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["optimize", "history", "rollback"],
+                    "description": "Action to perform: 'optimize' (default), 'history' (list prior snapshots), or 'rollback' (restore a prior snapshot)."
+                },
                 "subagent_name": {
                     "type": "string",
-                    "description": "The name of the subagent to optimize (e.g. 'researcher', 'architect', 'reviewer')"
+                    "description": "The name of the subagent (e.g. 'researcher', 'architect', 'reviewer')"
                 },
                 "feedback": {
                     "type": "string",
-                    "description": "Details about the error, feedback, failed logs, or missing guidelines that occurred."
+                    "description": "Details about the error, feedback, failed logs, or missing guidelines that occurred (required when action='optimize')."
+                },
+                "revision_id": {
+                    "type": "integer",
+                    "description": "Optional snapshot revision_id to restore when action='rollback'."
                 }
             },
-            "required": ["subagent_name", "feedback"]
+            "required": ["subagent_name"]
         })
     }
 
@@ -45,6 +54,44 @@ impl Tool for OptimizeSubagentTool {
             &["subagent_name", "name", "profile", "profile_name"],
         )
         .ok_or_else(|| anyhow!("Missing 'subagent_name' argument"))?;
+        let raw_action = super::extract_string_arg(arguments, &["action", "op", "mode"])
+            .map(|a| a.to_ascii_lowercase())
+            .unwrap_or_else(|| "optimize".to_string());
+        let action = match raw_action.as_str() {
+            "history" | "revisions" | "versions" | "snapshots" => "history",
+            "rollback" | "restore" | "revert" | "undo" => "rollback",
+            _ => "optimize",
+        };
+
+        match action {
+            "history" => {
+                let revisions = crate::subagents::list_profile_revisions(&subagent_name)?;
+                return Ok(serde_json::json!({
+                    "status": "success",
+                    "subagent_name": subagent_name,
+                    "revision_count": revisions.len(),
+                    "revisions": revisions
+                }));
+            }
+            "rollback" => {
+                let revision_id = arguments
+                    .get("revision_id")
+                    .or_else(|| arguments.get("revisionId"))
+                    .and_then(|v| v.as_u64());
+                let restored =
+                    crate::subagents::rollback_profile_revision(&subagent_name, revision_id)?;
+                return Ok(serde_json::json!({
+                    "status": "success",
+                    "subagent_name": restored.name,
+                    "restored_system_prompt": restored.system_prompt,
+                    "restored_model": restored.model,
+                    "restored_fallbacks": restored.fallbacks,
+                    "message": format!("Successfully rolled back subagent '{}'", restored.name)
+                }));
+            }
+            _ => {}
+        }
+
         let feedback = super::extract_string_arg(
             arguments,
             &["feedback", "error", "logs", "reason", "details"],
@@ -102,6 +149,8 @@ impl Tool for OptimizeSubagentTool {
             false => {}
         }
 
+        let snapshot =
+            crate::subagents::record_profile_revision(&profiles[pos], "optimize_subagent").ok();
         profiles[pos].system_prompt = clean_prompt.clone();
         crate::subagents::save_profiles(&profiles)?;
 
@@ -115,6 +164,7 @@ impl Tool for OptimizeSubagentTool {
         Ok(serde_json::json!({
             "status": "success",
             "message": format!("Successfully optimized subagent '{}'", subagent_name),
+            "snapshot_revision_id": snapshot.map(|s| s.revision_id),
             "new_system_prompt": clean_prompt
         }))
     }
@@ -218,6 +268,7 @@ impl Tool for UpdateSubagentSettingsTool {
                 .iter_mut()
                 .find(|profile| profile.name == name)
                 .ok_or_else(|| anyhow!("Subagent profile {} not found", name))?;
+            let _ = crate::subagents::record_profile_revision(profile, "update_subagent_settings");
 
             match arguments.get("model") {
                 Some(model) => {

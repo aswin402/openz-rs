@@ -155,3 +155,61 @@ async fn test_curate_skills_infers_add_without_explicit_action() {
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[tokio::test]
+async fn test_curate_skills_snapshot_history_and_rollback() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_skills_rollback_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            let tool = CurateSkillTool;
+
+            let _ = tool
+                .call(&serde_json::json!({
+                    "action": "add",
+                    "skill_name": "versioned_skill",
+                    "content": "# Versioned Skill\n\nVersion 1 guideline"
+                }))
+                .await
+                .unwrap();
+
+            let _ = tool
+                .call(&serde_json::json!({
+                    "action": "add",
+                    "skill_name": "versioned_skill",
+                    "content": "# Versioned Skill\n\nVersion 2 guideline"
+                }))
+                .await
+                .unwrap();
+
+            let history_res = tool
+                .call(&serde_json::json!({
+                    "action": "history",
+                    "skill_name": "versioned_skill"
+                }))
+                .await
+                .unwrap();
+            assert_eq!(history_res["success"].as_bool(), Some(true));
+            assert_eq!(history_res["revision_count"].as_u64(), Some(1));
+
+            let rollback_res = tool
+                .call(&serde_json::json!({
+                    "action": "rollback",
+                    "skill_name": "versioned_skill"
+                }))
+                .await
+                .unwrap();
+            assert_eq!(rollback_res["success"].as_bool(), Some(true));
+            assert!(rollback_res["content"]
+                .as_str()
+                .unwrap()
+                .contains("Version 1 guideline"));
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}

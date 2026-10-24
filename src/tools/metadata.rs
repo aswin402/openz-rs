@@ -57,6 +57,26 @@ pub enum ToolRisk {
     High,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolExposure {
+    /// Always visible in the initial turn window (`tool_catalog`, `openz_inventory`, `request_tool_scope`).
+    Direct,
+    /// Exposed when matched by turn intent or domain routing.
+    Contextual,
+    /// Deferred by default; discovered and hot-mounted via `tool_catalog` or `request_tool_scope`.
+    Deferred,
+}
+
+impl ToolExposure {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Direct => "direct",
+            Self::Contextual => "contextual",
+            Self::Deferred => "deferred",
+        }
+    }
+}
+
 /// Normalize user/model supplied tool names for case-insensitive alias lookup.
 /// Canonical names remain unchanged when emitted by the registry.
 pub fn normalize_tool_name(name: &str) -> String {
@@ -667,6 +687,62 @@ impl ToolMetadata {
         matches!(self.risk, ToolRisk::High) || self.requires_approval
     }
 
+    /// MCP-style annotation: true when the tool does not write disk, spawn
+    /// processes, require approval, or carry medium/high mutation risk.
+    pub fn is_read_only(&self) -> bool {
+        !self.writes_disk
+            && !self.spawns_process
+            && !self.requires_approval
+            && matches!(self.risk, ToolRisk::Low)
+    }
+
+    /// MCP-style annotation: true when the tool writes disk or carries high risk.
+    pub fn is_destructive(&self) -> bool {
+        self.writes_disk || matches!(self.risk, ToolRisk::High)
+    }
+
+    /// MCP-style annotation: true when repeated calls with identical arguments
+    /// have no additional side effects.
+    pub fn is_idempotent(&self) -> bool {
+        self.is_read_only()
+    }
+
+    /// MCP-style annotation: true when the tool interacts with external network,
+    /// web, MCP, or subprocess environments.
+    pub fn is_open_world(&self) -> bool {
+        self.uses_network
+            || self.spawns_process
+            || self.domain == "web"
+            || self.domain == "mcp"
+    }
+
+    /// Computes the default exposure tier for a tool name.
+    pub fn exposure(&self, name: &str) -> ToolExposure {
+        let canonical = canonical_tool_name(name);
+        match (
+            matches!(
+                canonical.as_str(),
+                "tool_catalog" | "openz_inventory" | "request_tool_scope"
+            ),
+            super::routing::is_core_tool(&canonical) || self.priority >= 75,
+        ) {
+            (true, _) => ToolExposure::Direct,
+            (false, true) => ToolExposure::Contextual,
+            (false, false) => ToolExposure::Deferred,
+        }
+    }
+
+    /// Returns MCP-standard tool safety annotations (`readOnlyHint`,
+    /// `destructiveHint`, `idempotentHint`, `openWorldHint`).
+    pub fn annotations_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "readOnlyHint": self.is_read_only(),
+            "destructiveHint": self.is_destructive(),
+            "idempotentHint": self.is_idempotent(),
+            "openWorldHint": self.is_open_world(),
+        })
+    }
+
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "presentation_name": &self.presentation_name,
@@ -682,6 +758,7 @@ impl ToolMetadata {
             "when_to_use": self.when_to_use,
             "when_not_to_use": self.when_not_to_use,
             "recommended_timeout_secs": self.recommended_timeout_secs,
+            "annotations": self.annotations_json(),
         })
     }
 }

@@ -34,3 +34,38 @@ fn default_subagent_policy_includes_orchestrator() {
     assert!(!is_default_subagent("custom_planner"));
     assert_eq!(MAX_SUBAGENT_FALLBACKS, 3);
 }
+
+#[tokio::test]
+async fn subagent_profile_revisions_record_and_rollback() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_subagent_rev_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    crate::config::loader::CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            let mut profiles = load_profiles().unwrap();
+            let pos = profiles
+                .iter()
+                .position(|p| p.name == "researcher")
+                .expect("researcher profile");
+            let original_prompt = profiles[pos].system_prompt.clone();
+
+            let snap = record_profile_revision(&profiles[pos], "unit_test").unwrap();
+            assert_eq!(snap.name, "researcher");
+
+            profiles[pos].system_prompt = "Temporary mutated prompt".to_string();
+            save_profiles(&profiles).unwrap();
+
+            let revisions = list_profile_revisions("researcher").unwrap();
+            assert_eq!(revisions.len(), 1);
+            assert_eq!(revisions[0].system_prompt, original_prompt);
+
+            let restored = rollback_profile_revision("researcher", None).unwrap();
+            assert_eq!(restored.system_prompt, original_prompt);
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}

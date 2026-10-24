@@ -10,6 +10,15 @@ pub struct Skill {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SkillRevision {
+    pub revision_id: i64,
+    pub name: String,
+    pub profile: Option<String>,
+    pub content: String,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SkillView {
     pub name: String,
@@ -280,6 +289,16 @@ fn create_skills_schema(conn: &Connection) -> Result<()> {
             last_used TEXT,
             created_at TEXT,
             PRIMARY KEY (name, profile)
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS skill_revisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            profile TEXT NOT NULL DEFAULT '',
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL
         )",
         [],
     )?;
@@ -1205,17 +1224,136 @@ fn normalize_and_validate_skill(name: &str, content: &str) -> Result<(String, St
     }
 }
 
+fn current_skill_content_in_db(
+    conn: &Connection,
+    safe_name: &str,
+    profile: Option<&str>,
+) -> Option<String> {
+    let profile_key = profile.unwrap_or("");
+    conn.query_row(
+        "SELECT content FROM skills WHERE name = ?1 AND COALESCE(profile, '') = ?2 ORDER BY rowid DESC LIMIT 1",
+        params![safe_name, profile_key],
+        |row| row.get::<_, String>(0),
+    )
+    .ok()
+    .or_else(|| {
+        let file_path = match profile {
+            Some(prof) => crate::config::runtime_data_dir()
+                .join("subagents")
+                .join(prof)
+                .join("skills")
+                .join(format!("{}.md", safe_name)),
+            None => get_skills_dir().join(format!("{}.md", safe_name)),
+        };
+        file_path
+            .is_file()
+            .then(|| fs::read_to_string(file_path).ok())
+            .flatten()
+    })
+}
+
+fn record_skill_revision_snapshot(
+    conn: &Connection,
+    safe_name: &str,
+    profile: Option<&str>,
+    previous_content: &str,
+) -> Result<()> {
+    let profile_key = profile.unwrap_or("");
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO skill_revisions (name, profile, content, created_at) VALUES (?1, ?2, ?3, ?4)",
+        params![safe_name, profile_key, previous_content, now],
+    )?;
+    conn.execute(
+        "DELETE FROM skill_revisions
+         WHERE name = ?1 AND profile = ?2
+           AND id NOT IN (
+               SELECT id FROM skill_revisions
+               WHERE name = ?1 AND profile = ?2
+               ORDER BY id DESC LIMIT 10
+           )",
+        params![safe_name, profile_key],
+    )?;
+    Ok(())
+}
+
+pub fn list_skill_revisions(name: &str, profile: Option<&str>) -> Result<Vec<SkillRevision>> {
+    let safe_name = sanitize_skill_name(name);
+    let profile_key = profile.unwrap_or("");
+    let conn = get_connection()?;
+    let mut stmt = conn.prepare(
+        "SELECT id, name, profile, content, created_at
+         FROM skill_revisions
+         WHERE name = ?1 AND profile = ?2
+         ORDER BY id DESC",
+    )?;
+    let rows = stmt.query_map(params![safe_name, profile_key], |row| {
+        let prof_raw: String = row.get(2)?;
+        Ok(SkillRevision {
+            revision_id: row.get(0)?,
+            name: row.get(1)?,
+            profile: (!prof_raw.is_empty()).then_some(prof_raw),
+            content: row.get(3)?,
+            created_at: row.get(4)?,
+        })
+    })?;
+    Ok(rows.flatten().collect())
+}
+
+pub fn rollback_skill(
+    name: &str,
+    profile: Option<&str>,
+    revision_id: Option<i64>,
+) -> Result<Skill> {
+    let safe_name = sanitize_skill_name(name);
+    let profile_key = profile.unwrap_or("");
+    let conn = get_connection()?;
+    let (rev_id, target_content): (i64, String) = match revision_id {
+        Some(explicit_id) => conn.query_row(
+            "SELECT id, content FROM skill_revisions WHERE name = ?1 AND profile = ?2 AND id = ?3",
+            params![safe_name, profile_key, explicit_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?,
+        None => conn.query_row(
+            "SELECT id, content FROM skill_revisions WHERE name = ?1 AND profile = ?2 ORDER BY id DESC LIMIT 1",
+            params![safe_name, profile_key],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?,
+    };
+
+    let _ = conn.execute("DELETE FROM skill_revisions WHERE id = ?1", params![rev_id]);
+    match profile {
+        Some(prof) => save_subagent_skill(prof, &safe_name, &target_content)?,
+        None => save_skill(&safe_name, &target_content)?,
+    }
+    Ok(Skill {
+        name: safe_name,
+        content: target_content,
+    })
+}
+
 pub fn save_skill(name: &str, content: &str) -> Result<()> {
     let (safe_name, normalized_content) = normalize_and_validate_skill(name, content)?;
 
     let conn = get_connection()?;
+    let _ = current_skill_content_in_db(&conn, &safe_name, None)
+        .filter(|existing| existing != &normalized_content)
+        .map(|existing| record_skill_revision_snapshot(&conn, &safe_name, None, &existing));
+
     let now = chrono::Utc::now().to_rfc3339();
-    conn.execute(
-        "INSERT INTO skills (name, content, profile, created_at, last_used)
-         VALUES (?1, ?2, NULL, ?3, ?3)
-         ON CONFLICT(name, profile) DO UPDATE SET content = ?2, last_used = ?3",
+    let updated = conn.execute(
+        "UPDATE skills SET content = ?2, last_used = ?3 WHERE name = ?1 AND profile IS NULL",
         params![safe_name, normalized_content, now],
     )?;
+    (updated == 0)
+        .then(|| {
+            conn.execute(
+                "INSERT INTO skills (name, content, profile, created_at, last_used)
+                 VALUES (?1, ?2, NULL, ?3, ?3)",
+                params![safe_name, normalized_content, now],
+            )
+        })
+        .transpose()?;
 
     let global_skills_dir = get_skills_dir();
     let _ = fs::create_dir_all(&global_skills_dir);
@@ -1232,6 +1370,9 @@ pub fn delete_skill(name: &str) -> Result<()> {
 pub fn delete_skill_with_profile(name: &str, profile_name: Option<&str>) -> Result<()> {
     let safe_name = sanitize_skill_name(name);
     let conn = get_connection()?;
+    let _ = current_skill_content_in_db(&conn, &safe_name, profile_name).map(|existing| {
+        record_skill_revision_snapshot(&conn, &safe_name, profile_name, &existing)
+    });
 
     match profile_name {
         Some(prof) => {
@@ -1295,6 +1436,12 @@ pub fn save_subagent_skill(profile: &str, name: &str, content: &str) -> Result<(
     let (safe_name, normalized_content) = normalize_and_validate_skill(name, content)?;
 
     let conn = get_connection()?;
+    let _ = current_skill_content_in_db(&conn, &safe_name, Some(profile))
+        .filter(|existing| existing != &normalized_content)
+        .map(|existing| {
+            record_skill_revision_snapshot(&conn, &safe_name, Some(profile), &existing)
+        });
+
     let now = chrono::Utc::now().to_rfc3339();
     conn.execute(
         "INSERT INTO skills (name, content, profile, created_at, last_used)

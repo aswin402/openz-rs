@@ -351,6 +351,8 @@ impl Tool for ExecCommandTool {
             .then_some(())
             .ok_or_else(|| anyhow!("Missing or empty 'command' argument"))?;
 
+        let started_at = std::time::Instant::now();
+
         // 1. Try to parse command line to see if it targets a WASM script or skill
         let parsed_args = parse_command_line(&command_str);
         match parsed_args.first().and_then(|first| find_wasm_file(first)) {
@@ -363,6 +365,7 @@ impl Tool for ExecCommandTool {
                 })
                 .await?;
 
+                let wall_time_ms = started_at.elapsed().as_millis() as u64;
                 match wasm_res {
                     Ok(val) => {
                         let stdout = val
@@ -377,17 +380,33 @@ impl Tool for ExecCommandTool {
                             .to_string();
                         let status_code =
                             val.get("exit_code").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                        let stdout_lines = stdout.lines().count();
+                        let stderr_lines = stderr.lines().count();
                         return Ok(serde_json::json!({
                             "status_code": status_code,
+                            "exit_code": status_code,
+                            "wall_time_ms": wall_time_ms,
+                            "total_lines": stdout_lines + stderr_lines,
+                            "stdout_lines": stdout_lines,
+                            "stderr_lines": stderr_lines,
+                            "timed_out": false,
                             "stdout": stdout,
                             "stderr": stderr
                         }));
                     }
                     Err(e) => {
+                        let stderr = format!("WASM execution error: {}", e);
+                        let stderr_lines = stderr.lines().count();
                         return Ok(serde_json::json!({
                             "status_code": 1,
+                            "exit_code": 1,
+                            "wall_time_ms": wall_time_ms,
+                            "total_lines": stderr_lines,
+                            "stdout_lines": 0,
+                            "stderr_lines": stderr_lines,
+                            "timed_out": false,
                             "stdout": "".to_string(),
-                            "stderr": format!("WASM execution error: {}", e)
+                            "stderr": stderr
                         }));
                     }
                 }
@@ -405,6 +424,12 @@ impl Tool for ExecCommandTool {
                 };
                 return Ok(serde_json::json!({
                     "status_code": 0,
+                    "exit_code": 0,
+                    "wall_time_ms": started_at.elapsed().as_millis() as u64,
+                    "total_lines": 0,
+                    "stdout_lines": 0,
+                    "stderr_lines": 0,
+                    "timed_out": false,
                     "stdout": "",
                     "stderr": "",
                     "detached": true,
@@ -449,15 +474,24 @@ impl Tool for ExecCommandTool {
             tokio_cmd.output(),
         )
         .await;
+        let wall_time_ms = started_at.elapsed().as_millis() as u64;
 
         let output = match output_res {
             Ok(Ok(o)) => o,
             Ok(Err(e)) => return Err(e.into()),
             Err(_) => {
+                let stderr = format!("Command execution timed out after {} seconds", timeout_secs);
+                let stderr_lines = stderr.lines().count();
                 return Ok(serde_json::json!({
                     "status_code": -1,
+                    "exit_code": -1,
+                    "wall_time_ms": wall_time_ms,
+                    "total_lines": stderr_lines,
+                    "stdout_lines": 0,
+                    "stderr_lines": stderr_lines,
+                    "timed_out": true,
                     "stdout": "",
-                    "stderr": format!("Command execution timed out after {} seconds", timeout_secs)
+                    "stderr": stderr
                 }));
             }
         };
@@ -465,9 +499,17 @@ impl Tool for ExecCommandTool {
         let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
         let status_code = output.status.code().unwrap_or(-1);
+        let stdout_lines = stdout.lines().count();
+        let stderr_lines = stderr.lines().count();
 
         Ok(serde_json::json!({
             "status_code": status_code,
+            "exit_code": status_code,
+            "wall_time_ms": wall_time_ms,
+            "total_lines": stdout_lines + stderr_lines,
+            "stdout_lines": stdout_lines,
+            "stderr_lines": stderr_lines,
+            "timed_out": false,
             "stdout": stdout,
             "stderr": stderr
         }))

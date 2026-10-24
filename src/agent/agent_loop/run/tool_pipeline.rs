@@ -64,6 +64,17 @@ pub(super) struct ApprovedToolExec<'a> {
     pub(super) prefetched_output: Option<serde_json::Value>,
 }
 
+static LEAF_TOOL_CONCURRENCY_GATE: std::sync::OnceLock<tokio::sync::RwLock<()>> =
+    std::sync::OnceLock::new();
+
+pub(crate) fn leaf_tool_concurrency_gate() -> &'static tokio::sync::RwLock<()> {
+    LEAF_TOOL_CONCURRENCY_GATE.get_or_init(|| tokio::sync::RwLock::new(()))
+}
+
+fn is_delegating_or_batch_tool(tool_name: &str, metadata: &crate::tools::ToolMetadata) -> bool {
+    metadata.domain == "subagent" || tool_name == "tool_catalog"
+}
+
 pub(crate) fn is_parallel_safe_tool_call(
     tools: &crate::tools::ToolRegistry,
     call: &crate::providers::ToolCallRequest,
@@ -75,10 +86,10 @@ pub(crate) fn is_parallel_safe_tool_call(
         (_, Some(tool)) => {
             let meta = tool.metadata();
             let normalized = crate::tools::normalize_tool_args(&call.arguments);
-            let is_pure_read = !meta.writes_disk
-                && !meta.spawns_process
+            let is_pure_read = meta.is_read_only()
                 && !meta.uses_network
-                && !meta.requires_risk_approval();
+                && !meta.requires_risk_approval()
+                && !crate::tools::metadata::is_state_changing_tool(&canonical);
             let is_security_safe =
                 !crate::agent::security::SecurityGuard::is_forbidden(&canonical, &normalized)
                     && !crate::agent::security::SecurityGuard::is_sensitive_with_mode(
@@ -135,9 +146,13 @@ pub(super) async fn prefetch_parallel_safe_batch(
                     .map(|(call_id, tool, normalized, timeout_secs)| {
                         let cancel = turn_cancel.clone();
                         async move {
+                            let gated_call = async {
+                                let _read_guard = leaf_tool_concurrency_gate().read().await;
+                                tool.call(&normalized).await
+                            };
                             let timed = tokio::time::timeout(
                                 std::time::Duration::from_secs(timeout_secs),
-                                tool.call(&normalized),
+                                gated_call,
                             );
                             let outcome = tokio::select! {
                                 biased;
@@ -235,8 +250,24 @@ impl<'a> ToolExecutionPipeline<'a> {
     async fn run_with_spinner(&self, timeout_secs: u64) -> anyhow::Result<serde_json::Value> {
         let tool_timeout = std::time::Duration::from_secs(timeout_secs);
         let normalized = crate::tools::normalize_tool_args(&self.params.call.arguments);
-        let fut = self.params.tool.call(&normalized);
-        let timed_fut = tokio::time::timeout(tool_timeout, fut);
+        let skip_gate =
+            is_delegating_or_batch_tool(&self.params.call.name, self.params.metadata);
+        let is_read_only = self.params.metadata.is_read_only()
+            && !crate::tools::metadata::is_state_changing_tool(&self.params.call.name);
+        let gated_fut = async {
+            match (skip_gate, is_read_only) {
+                (true, _) => self.params.tool.call(&normalized).await,
+                (false, true) => {
+                    let _read_guard = leaf_tool_concurrency_gate().read().await;
+                    self.params.tool.call(&normalized).await
+                }
+                (false, false) => {
+                    let _write_guard = leaf_tool_concurrency_gate().write().await;
+                    self.params.tool.call(&normalized).await
+                }
+            }
+        };
+        let timed_fut = tokio::time::timeout(tool_timeout, gated_fut);
         let tool_cancel_tx = crate::shutdown::cli_cancel_tx();
         let mut tool_cancel_rx = tool_cancel_tx.subscribe();
         let tool_cancel_initial = *tool_cancel_rx.borrow();
