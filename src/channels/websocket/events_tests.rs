@@ -143,3 +143,47 @@ async fn test_send_progress_update_dual_dispatches_events() {
         && p["kind"] == "progress"
         && p["detail"] == "Processing chunk 1/3..."));
 }
+
+#[test]
+fn ws_chat_id_filters_out_non_webui_sessions() {
+    assert_eq!(ws_chat_id("ws:abc-123"), Some("ws_abc-123".to_string()));
+    assert_eq!(ws_chat_id("web:abc-123"), Some("web_abc-123".to_string()));
+    assert_eq!(ws_chat_id("ws_abc-123"), Some("ws_abc-123".to_string()));
+    assert_eq!(ws_chat_id("cron:9a8a63f0-991a-40aa"), None);
+    assert_eq!(ws_chat_id("cli:default"), None);
+    assert_eq!(ws_chat_id("telegram:12345"), None);
+    assert_eq!(ws_chat_id("subagent:planner"), None);
+}
+
+#[test]
+fn orchestration_event_snapshot_matches_background_turn_after_session_switch() {
+    let client_id = format!("client-{}", uuid::Uuid::new_v4());
+    let bg_chat = format!("ws_{}", uuid::Uuid::new_v4());
+    let fg_chat = format!("ws_{}", uuid::Uuid::new_v4());
+    let turn_id = format!("turn-{}", uuid::Uuid::new_v4());
+    let (tx, _rx) = tokio::sync::mpsc::channel(4);
+
+    crate::channels::get_active_ws_senders()
+        .lock()
+        .unwrap()
+        .insert(client_id.clone(), tx);
+    crate::channels::get_active_ws_client_chats()
+        .lock()
+        .unwrap()
+        .insert(client_id.clone(), fg_chat);
+    crate::channels::websocket::turns::register_ws_turn(
+        turn_id.clone(),
+        client_id.clone(),
+        bg_chat.clone(),
+        crate::tools::subagent::CancellationToken::new(),
+    );
+
+    let matching = active_ws_sender_snapshot_for_chat(Some(&bg_chat))
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect::<Vec<_>>();
+    assert_eq!(matching, vec![client_id.clone()]);
+
+    crate::channels::websocket::turns::remove_ws_turn(&turn_id);
+    remove_active_ws_sender(&client_id);
+}

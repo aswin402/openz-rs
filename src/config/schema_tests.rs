@@ -13,6 +13,7 @@ fn blank_config() -> Config {
         integrations: IntegrationsConfig::default(),
         browser: BrowserConfig::default(),
         vault: VaultConfig::default(),
+        ui_settings: UiSettingsConfig::default(),
     }
 }
 

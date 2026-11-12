@@ -371,7 +371,7 @@ export function drawNodes(
   for (const node of labelCandidates) {
     if (labelIds.has(node.id)) continue;
     const isHub = node.degree > 0 && node.degree >= labelThreshold;
-    if (!isHub && transform.k <= 1.15) continue;
+    if (nodes.length > labelBudget && !isHub && transform.k <= 1.15) continue;
     if (labelIds.size >= maximumLabels) break;
     labelIds.add(node.id);
   }

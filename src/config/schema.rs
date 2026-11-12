@@ -643,6 +643,71 @@ impl Default for VaultConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct UiProfileSettings {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theme: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "max_tokens")]
+    pub max_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub streaming: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "caveman_mode")]
+    pub caveman_mode: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "security_mode")]
+    pub security_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "bot_name")]
+    pub bot_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "max_messages")]
+    pub max_messages: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "max_tool_iterations")]
+    pub max_tool_iterations: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "tool_timeout_secs")]
+    pub tool_timeout_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "enable_sandbox")]
+    pub enable_sandbox: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "context_limit")]
+    pub context_limit: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "tool_output_limit")]
+    pub tool_output_limit: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "show_auto_capture_notices")]
+    pub show_auto_capture_notices: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "tui_thought_display")]
+    pub tui_thought_display: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct UiSettingsConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tui: Option<UiProfileSettings>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "web",
+        alias = "websocket"
+    )]
+    pub webui: Option<UiProfileSettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub telegram: Option<UiProfileSettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub discord: Option<UiProfileSettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whatsapp: Option<UiProfileSettings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<UiProfileSettings>,
+    #[serde(flatten)]
+    pub others: HashMap<String, UiProfileSettings>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     #[serde(default)]
@@ -665,6 +730,8 @@ pub struct Config {
     pub integrations: IntegrationsConfig,
     #[serde(default)]
     pub vault: VaultConfig,
+    #[serde(default, alias = "uiSettings")]
+    pub ui_settings: UiSettingsConfig,
 }
 
 impl Default for ChannelsConfig {
@@ -714,6 +781,7 @@ impl Default for Config {
             research: ResearchConfig::default(),
             integrations: IntegrationsConfig::default(),
             vault: VaultConfig::default(),
+            ui_settings: UiSettingsConfig::default(),
         }
     }
 }
@@ -1129,6 +1197,176 @@ impl Config {
         }
 
         fallbacks
+    }
+
+    pub fn canonical_ui_surface(surface: &str) -> &str {
+        match surface.trim() {
+            "tui" | "cli" | "agent" | "terminal" => "tui",
+            "webui" | "web" | "ws" | "websocket" | "gateway" => "webui",
+            "telegram" | "tg" => "telegram",
+            "discord" | "dc" => "discord",
+            "whatsapp" | "wa" => "whatsapp",
+            "email" => "email",
+            other => other,
+        }
+    }
+
+    pub fn ui_surface_for_session_key(session_key: &str) -> &'static str {
+        let prefix = session_key
+            .split_once(':')
+            .map(|(scheme, _)| scheme)
+            .unwrap_or("cli");
+        match prefix {
+            "ws" | "web" | "webui" => "webui",
+            "telegram" => "telegram",
+            "discord" => "discord",
+            "whatsapp" => "whatsapp",
+            "email" => "email",
+            _ => "tui",
+        }
+    }
+
+    pub fn ui_profile(&self, surface: &str) -> Option<&UiProfileSettings> {
+        match Self::canonical_ui_surface(surface) {
+            "tui" => self.ui_settings.tui.as_ref(),
+            "webui" => self.ui_settings.webui.as_ref(),
+            "telegram" => self.ui_settings.telegram.as_ref(),
+            "discord" => self.ui_settings.discord.as_ref(),
+            "whatsapp" => self.ui_settings.whatsapp.as_ref(),
+            "email" => self.ui_settings.email.as_ref(),
+            other => self.ui_settings.others.get(other),
+        }
+    }
+
+    pub fn ui_profile_mut(&mut self, surface: &str) -> &mut UiProfileSettings {
+        match Self::canonical_ui_surface(surface) {
+            "tui" => self.ui_settings.tui.get_or_insert_with(UiProfileSettings::default),
+            "webui" => self
+                .ui_settings
+                .webui
+                .get_or_insert_with(UiProfileSettings::default),
+            "telegram" => self
+                .ui_settings
+                .telegram
+                .get_or_insert_with(UiProfileSettings::default),
+            "discord" => self
+                .ui_settings
+                .discord
+                .get_or_insert_with(UiProfileSettings::default),
+            "whatsapp" => self
+                .ui_settings
+                .whatsapp
+                .get_or_insert_with(UiProfileSettings::default),
+            "email" => self
+                .ui_settings
+                .email
+                .get_or_insert_with(UiProfileSettings::default),
+            other => self
+                .ui_settings
+                .others
+                .entry(other.to_string())
+                .or_default(),
+        }
+    }
+
+    pub fn ui_theme(&self, surface: &str) -> String {
+        let default_theme = match Self::canonical_ui_surface(surface) {
+            "webui" => "system",
+            _ => "aura_dark",
+        };
+        self.ui_profile(surface)
+            .and_then(|profile| profile.theme.as_deref())
+            .map(str::trim)
+            .filter(|theme| !theme.is_empty())
+            .unwrap_or(default_theme)
+            .to_string()
+    }
+
+    pub fn apply_ui_surface(&mut self, surface: &str) {
+        let profile = match self.ui_profile(surface).cloned() {
+            Some(p) => p,
+            None => return,
+        };
+        let defaults = &mut self.agents.defaults;
+        match profile.model {
+            Some(v) => defaults.model = v,
+            None => {}
+        }
+        match profile.provider {
+            Some(v) => defaults.provider = v,
+            None => {}
+        }
+        match profile.temperature {
+            Some(v) => defaults.temperature = v,
+            None => {}
+        }
+        match profile.max_tokens {
+            Some(v) => defaults.max_tokens = v,
+            None => {}
+        }
+        match profile.streaming {
+            Some(v) => defaults.streaming = v,
+            None => {}
+        }
+        match profile.caveman_mode {
+            Some(v) => defaults.caveman_mode = v,
+            None => {}
+        }
+        match profile.security_mode {
+            Some(v) => defaults.security_mode = v,
+            None => {}
+        }
+        match profile.bot_name {
+            Some(v) => defaults.bot_name = v,
+            None => {}
+        }
+        match profile.workspace {
+            Some(v) => defaults.workspace = v,
+            None => {}
+        }
+        match profile.max_messages {
+            Some(v) => defaults.max_messages = v,
+            None => {}
+        }
+        match profile.max_tool_iterations {
+            Some(v) => defaults.max_tool_iterations = v,
+            None => {}
+        }
+        match profile.tool_timeout_secs {
+            Some(v) => defaults.tool_timeout_secs = v,
+            None => {}
+        }
+        match profile.enable_sandbox {
+            Some(v) => defaults.enable_sandbox = v,
+            None => {}
+        }
+        match profile.context_limit {
+            Some(v) => defaults.context_limit = Some(v),
+            None => {}
+        }
+        match profile.tool_output_limit {
+            Some(v) => defaults.tool_output_limit = Some(v),
+            None => {}
+        }
+        match profile.show_auto_capture_notices {
+            Some(v) => defaults.show_auto_capture_notices = v,
+            None => {}
+        }
+        match profile.tui_thought_display {
+            Some(v) => defaults.tui_thought_display = v,
+            None => {}
+        }
+    }
+
+    pub fn with_ui_surface(&self, surface: &str) -> Self {
+        let mut cloned = self.clone();
+        cloned.apply_ui_surface(surface);
+        cloned
+    }
+
+    pub fn apply_ui_surface_for_session(&mut self, session_key: &str) {
+        let surface = Self::ui_surface_for_session_key(session_key);
+        self.apply_ui_surface(surface);
     }
 }
 

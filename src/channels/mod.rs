@@ -274,6 +274,29 @@ pub fn select_random_message(messages: &[&str]) -> String {
     }
 }
 
+static EXTERNAL_BOT_CHANNEL_ACTIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+pub fn mark_external_bot_channel_active() {
+    EXTERNAL_BOT_CHANNEL_ACTIVE.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn strip_ansi_codes(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut in_escape = false;
+    for ch in input.chars() {
+        match (in_escape, ch) {
+            (false, '\x1b') => in_escape = true,
+            (false, other) => out.push(other),
+            (true, c) => match c.is_ascii_alphabetic() {
+                true => in_escape = false,
+                false => {}
+            },
+        }
+    }
+    out
+}
+
 pub async fn shutdown_gateways(config: &crate::config::schema::Config) {
     let silent = std::env::var("OPENZ_SILENT").is_ok();
     match silent {
@@ -281,16 +304,23 @@ pub async fn shutdown_gateways(config: &crate::config::schema::Config) {
         true => {}
     }
 
-    let sessions_dir = crate::config::loader::sessions_dir();
-    let client =
-        crate::core::http::custom_http_client(SHUTDOWN_HTTP_TIMEOUT, SHUTDOWN_HTTP_TIMEOUT);
+    match EXTERNAL_BOT_CHANNEL_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+        true => {
+            let sessions_dir = crate::config::loader::sessions_dir();
+            let client =
+                crate::core::http::custom_http_client(SHUTDOWN_HTTP_TIMEOUT, SHUTDOWN_HTTP_TIMEOUT);
 
-    let offline_message = select_random_message(OFFLINE_MESSAGES);
-    for request in build_external_notification_requests(config, &sessions_dir, &offline_message) {
-        send_external_notification(&client, &request).await;
+            let offline_message = select_random_message(OFFLINE_MESSAGES);
+            for request in
+                build_external_notification_requests(config, &sessions_dir, &offline_message)
+            {
+                send_external_notification(&client, &request).await;
+            }
+        }
+        false => {}
     }
 
-    // Unload the active Ollama model and stop the local service if spawned by us
+    // Unload the active Ollama model and stop the local service when spawned locally
     crate::providers::ollama_manager::unload_active_ollama_model(config).await;
     crate::providers::ollama_manager::stop_local_ollama();
 }
@@ -415,9 +445,9 @@ pub fn send_notification(msg: &str) {
         ),
     );
 
+    let clean_msg = strip_ansi_codes(msg);
     match tokio::runtime::Handle::try_current() {
         Ok(handle) => {
-            let msg_str = msg.to_string();
             handle.spawn(async move {
                 let ws_senders = match get_active_ws_senders().lock() {
                     Ok(senders) => senders
@@ -427,7 +457,7 @@ pub fn send_notification(msg: &str) {
                     Err(_) => Vec::new(),
                 };
 
-                let evt = crate::channels::websocket::protocol::notification(msg_str.clone());
+                let evt = crate::channels::websocket::protocol::notification(clean_msg);
                 match serde_json::to_string(&evt) {
                     Ok(evt_str) => {
                         for (id, tx) in ws_senders {
@@ -444,7 +474,48 @@ pub fn send_notification(msg: &str) {
                     }
                     Err(_) => {}
                 }
+            });
+        }
+        Err(_) => {}
+    }
+}
 
+pub fn send_session_notice(session_key: &str, msg: &str) {
+    match (
+        session_key.starts_with("cli:"),
+        session_key.starts_with("ws:"),
+    ) {
+        (true, _) => {
+            match crate::channels::ratatui::is_ratatui_session_active(Some(session_key)) {
+                true => {
+                    let _ = crate::channels::ratatui::RATATUI_EVENT_CHANNEL.0.send(
+                        crate::channels::ratatui::TurnEvent::SingleMessage(
+                            crate::channels::ratatui::app::ChatMessage::notice(msg.to_string()),
+                        ),
+                    );
+                }
+                false => {}
+            }
+        }
+        (false, true) => {
+            let clean_msg = strip_ansi_codes(msg);
+            match crate::channels::websocket::ws_chat_id(session_key) {
+                Some(chat_id) => {
+                    let evt = crate::channels::websocket::protocol::notification(clean_msg);
+                    crate::channels::websocket::events::publish_ws_event_for_chat(&chat_id, evt);
+                }
+                None => {}
+            }
+        }
+        (false, false) => {}
+    }
+}
+
+pub fn send_external_notification_broadcast(msg: &str) {
+    let clean_msg = strip_ansi_codes(msg);
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) => {
+            handle.spawn(async move {
                 match crate::config::loader::load_config() {
                     Ok(config) => {
                         let sessions_dir = crate::config::loader::sessions_dir();
@@ -456,7 +527,7 @@ pub fn send_notification(msg: &str) {
                         for request in build_external_notification_requests(
                             &config,
                             &sessions_dir,
-                            &msg_str,
+                            &clean_msg,
                         ) {
                             send_external_notification(&client, &request).await;
                         }

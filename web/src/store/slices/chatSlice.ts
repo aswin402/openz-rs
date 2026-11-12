@@ -12,7 +12,6 @@ import {
   newMsgId,
   normalizeChatId,
   rememberActiveChatId,
-  savedActiveChatId,
   settleAssistantTurnMessages,
   settleStoppedOrchestrationRuns,
   titleFromFirstMessage,
@@ -41,9 +40,11 @@ export const createChatSlice: StateCreator<
   [],
   [],
   ChatSlice
-> = (set, get) => ({
+> = (set, get) => {
+  forgetActiveChatId();
+  return {
   sessions: [],
-  activeChatId: savedActiveChatId(),
+  activeChatId: '',
   messages: {},
   orchestrationRuns: {},
   isStreaming: false,
@@ -54,14 +55,20 @@ export const createChatSlice: StateCreator<
     set({ activeView: 'chats' });
     if (get().activeChatId !== normalizedChatId) {
       rememberActiveChatId(normalizedChatId);
-      set({ activeChatId: normalizedChatId });
+      const chatMessages = get().messages[normalizedChatId] || [];
+      const lastMsg = chatMessages[chatMessages.length - 1];
+      const isTargetStreaming = Boolean(
+        get().activeTurnIds[normalizedChatId] ||
+          (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming),
+      );
+      set({ activeChatId: normalizedChatId, isStreaming: isTargetStreaming });
       wsService.attachChat(normalizedChatId);
     }
   },
 
   newSession: () => {
     forgetActiveChatId();
-    set({ activeView: 'chats' });
+    set({ activeView: 'chats', isStreaming: false });
     wsService.createNewChat();
   },
 
@@ -161,7 +168,10 @@ export const createChatSlice: StateCreator<
           ? [{ name: attachment.name, mime: attachment.mime, size: attachment.size, data: attachment.data }]
           : [],
       );
-      wsService.sendMessage(chatId, content, model, provider, attachmentPayload);
+      wsService.sendMessage(chatId, content, model, provider, attachmentPayload, {
+        streaming: get().streamingMode,
+        cavemanMode: get().cavemanMode,
+      });
     } catch (err) {
       set({ isStreaming: false });
       const errorMessage = err instanceof Error ? err.message : 'Gateway offline';
@@ -201,7 +211,7 @@ export const createChatSlice: StateCreator<
         [chatId]: settleStoppedOrchestrationRuns(get().orchestrationRuns[chatId] || []),
       },
       activeTurnIds: activeTurns,
-      isStreaming: Object.keys(activeTurns).length > 0,
+      isStreaming: false,
     });
   },
 
@@ -226,4 +236,5 @@ export const createChatSlice: StateCreator<
     set({ messages: { ...get().messages, [chatId]: updated } });
     wsService.sendSecurityResponse(reqId, choice === 'approve');
   },
-});
+  };
+};

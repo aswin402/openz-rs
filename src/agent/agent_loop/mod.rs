@@ -184,7 +184,7 @@ pub async fn save_session_overrides(
 fn merge_latest_config_for_runtime(
     runtime_config: &Config,
     mut latest_config: Config,
-    _session_key: &str,
+    session_key: &str,
     session_metadata: Option<&serde_json::Map<String, serde_json::Value>>,
 ) -> Config {
     // Preserve the runtime overridden model/provider for any active loop execution.
@@ -195,6 +195,8 @@ fn merge_latest_config_for_runtime(
         runtime_config.agents.defaults.fallback_models.clone();
     latest_config.agents.defaults.max_tool_iterations =
         runtime_config.agents.defaults.max_tool_iterations;
+
+    latest_config.apply_ui_surface_for_session(session_key);
 
     match session_metadata {
         Some(metadata) => apply_session_overrides(&mut latest_config, metadata),
@@ -403,7 +405,11 @@ impl AgentLoop {
         let cwf_cancel_tx = crate::shutdown::cli_cancel_tx();
         let cwf_cancel_rx = cwf_cancel_tx.subscribe();
         let cwf_cancel_initial = *cwf_cancel_rx.borrow();
-        let is_cancelled = || -> bool { *cwf_cancel_rx.borrow() != cwf_cancel_initial };
+        let is_cancelled = || -> bool {
+            *cwf_cancel_rx.borrow() != cwf_cancel_initial
+                || current_turn_cancellation_context()
+                    .is_some_and(|context| context.token.is_cancelled())
+        };
         let provider_timeout_secs = self.provider_attempt_timeout_secs();
 
         let chat_fut = active_provider.chat(system_prompt, messages, tools, settings);
@@ -420,6 +426,10 @@ impl AgentLoop {
         match chat_result {
             Ok(_) => {}
             Err(ref err) => {
+                match is_cancelled() {
+                    true => return Err(anyhow::anyhow!("Cancelled by user")),
+                    false => {}
+                }
                 let provider_name = self.config.agents.defaults.provider.as_str();
                 let risk = crate::channels::classify_model_risk(provider_name, active_model_str);
                 let _ = crate::model_registry::record_model_failure(
@@ -433,10 +443,6 @@ impl AgentLoop {
                         .collect(),
                     &err.to_string(),
                 );
-                match is_cancelled() {
-                    true => return Err(anyhow::anyhow!("Cancelled by user")),
-                    false => {}
-                }
 
                 let fallbacks = fallback_models_for_turn(&self.config, Some(active_model_str));
                 let mut resolved_fallback = false;
@@ -531,7 +537,11 @@ impl AgentLoop {
         let csf_cancel_tx = crate::shutdown::cli_cancel_tx();
         let csf_cancel_rx = csf_cancel_tx.subscribe();
         let csf_cancel_initial = *csf_cancel_rx.borrow();
-        let is_cancelled = || -> bool { *csf_cancel_rx.borrow() != csf_cancel_initial };
+        let is_cancelled = || -> bool {
+            *csf_cancel_rx.borrow() != csf_cancel_initial
+                || current_turn_cancellation_context()
+                    .is_some_and(|context| context.token.is_cancelled())
+        };
         let provider_timeout_secs = self.provider_attempt_timeout_secs();
 
         let chat_fut = active_provider.chat_stream(system_prompt, messages, tools, settings);
@@ -548,6 +558,10 @@ impl AgentLoop {
         match chat_result {
             Ok(_) => {}
             Err(ref err) => {
+                match is_cancelled() {
+                    true => return Err(anyhow::anyhow!("Cancelled by user")),
+                    false => {}
+                }
                 let provider_name = self.config.agents.defaults.provider.as_str();
                 let risk = crate::channels::classify_model_risk(provider_name, active_model_str);
                 let _ = crate::model_registry::record_model_failure(
@@ -636,10 +650,7 @@ impl AgentLoop {
             }
         }
 
-        match chat_result {
-            Ok(stream) => Ok(Box::pin(crate::providers::openai::filter_think_stream(stream))),
-            Err(e) => Err(e),
-        }
+        chat_result
     }
 
     pub async fn run(&self, user_content: &str, session_key: &str) -> Result<RunResult> {

@@ -339,9 +339,11 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
 pub(crate) async fn send_progress_update(session_key: &str, text: &str) {
     let actual_session = crate::agent::style::spinner::get_current_session_key()
         .unwrap_or_else(|| session_key.to_string());
-    match crate::channels::websocket::ws_chat_id(&actual_session)
-        .or_else(|| crate::channels::websocket::ws_chat_id(session_key))
-    {
+    let target_session = match crate::channels::websocket::ws_chat_id(&actual_session) {
+        Some(_) => actual_session.as_str(),
+        None => session_key,
+    };
+    match crate::channels::websocket::ws_chat_id(target_session) {
         Some(chat_id) => {
             crate::channels::websocket::publish_ws_event(
                 crate::channels::websocket::protocol::tool_progress(
@@ -353,7 +355,7 @@ pub(crate) async fn send_progress_update(session_key: &str, text: &str) {
                 ),
             );
             crate::channels::websocket::publish_activity_notice(
-                &actual_session,
+                target_session,
                 "progress",
                 "Progress",
                 text,

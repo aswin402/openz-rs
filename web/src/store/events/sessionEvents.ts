@@ -11,7 +11,6 @@ import {
   mergeAssistantFinalIntoToolTurn,
   normalizeChatId,
   rememberActiveChatId,
-  savedActiveChatId,
   upsertDraftSession,
 } from '../chatUtils';
 import type { StoreEventContext } from '../eventContext';
@@ -58,17 +57,22 @@ function parseToolArgs(value: unknown): ToolExecution['args'] {
 export function registerSessionEvents({ set, get }: StoreEventContext) {
   wsService.on('ready', (payload) => {
     const readyChatId = normalizeChatId(payload.chat_id || '');
-    const preferredChatId = get().activeChatId || savedActiveChatId() || readyChatId;
-    if (!get().activeChatId && preferredChatId) {
+    const currentActiveChatId = get().activeChatId;
+    const preferredChatId = currentActiveChatId || readyChatId;
+    if (!currentActiveChatId && preferredChatId) {
       rememberActiveChatId(preferredChatId);
-      set({ activeChatId: preferredChatId, sessions: upsertDraftSession(get().sessions, preferredChatId) });
+      set({
+        activeChatId: preferredChatId,
+        isStreaming: false,
+        sessions: upsertDraftSession(get().sessions, preferredChatId),
+      });
     }
     if (preferredChatId && preferredChatId !== readyChatId) {
       wsService.attachChat(preferredChatId);
     }
     // Request everything real from the gateway on connect.
     wsService.requestSessions();
-    if (preferredChatId) wsService.requestHistory(preferredChatId);
+    if (currentActiveChatId && preferredChatId) wsService.requestHistory(preferredChatId);
     wsService.requestCognitiveMemory();
     wsService.requestMcpServers();
     wsService.requestLogs();
@@ -88,15 +92,6 @@ export function registerSessionEvents({ set, get }: StoreEventContext) {
       }));
       const activeChatId = get().activeChatId;
       const exists = realSessions.some((session: OpenZSession) => session.id === activeChatId);
-
-      if (!exists && realSessions.length > 0 && (get().messages[activeChatId]?.length ?? 0) === 0) {
-        const first = realSessions[0];
-        rememberActiveChatId(first.id);
-        set({ sessions: realSessions, activeChatId: first.id });
-        wsService.requestHistory(first.id);
-        return;
-      }
-
       set({ sessions: exists ? realSessions : upsertDraftSession(realSessions, activeChatId) });
     }
   });
@@ -278,7 +273,36 @@ export function registerSessionEvents({ set, get }: StoreEventContext) {
       }
 
       const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
-      rememberActiveChatId(chatId);
+      if (chatId === get().activeChatId) {
+        rememberActiveChatId(chatId);
+      }
+
+      const existingMessages = get().messages[chatId] || [];
+      const lastExisting = existingMessages[existingMessages.length - 1];
+      const hasInFlightTurn = Boolean(
+        get().activeTurnIds[chatId] ||
+          (lastExisting && lastExisting.role === 'assistant' && lastExisting.isStreaming),
+      );
+
+      if (hasInFlightTurn && existingMessages.length > 0) {
+        if (normalized.length === 0 || existingMessages.length > normalized.length) {
+          return;
+        }
+        const inFlightStartIdx = existingMessages.findIndex(
+          (msg, idx) =>
+            (msg.role === 'user' &&
+              existingMessages[idx + 1]?.role === 'assistant' &&
+              existingMessages[idx + 1]?.isStreaming) ||
+            (msg.role === 'assistant' && msg.isStreaming),
+        );
+        const inFlightTail =
+          inFlightStartIdx >= 0 ? existingMessages.slice(inFlightStartIdx) : existingMessages;
+        set({
+          messages: { ...get().messages, [chatId]: [...normalized, ...inFlightTail] },
+        });
+        return;
+      }
+
       set({
         messages: { ...get().messages, [chatId]: normalized },
       });
@@ -289,8 +313,24 @@ export function registerSessionEvents({ set, get }: StoreEventContext) {
     if (payload.chat_id) {
       const chatId = normalizeChatId(payload.chat_id);
       rememberActiveChatId(chatId);
-      set({ activeChatId: chatId, activeView: 'chats', sessions: upsertDraftSession(get().sessions, chatId) });
-      wsService.requestHistory(chatId);
+      const chatMessages = get().messages[chatId] || [];
+      const lastMsg = chatMessages[chatMessages.length - 1];
+      const isTargetStreaming = Boolean(
+        get().activeTurnIds[chatId] ||
+          (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming),
+      );
+      const nextSessions = upsertDraftSession(get().sessions, chatId);
+      const matchedSession = nextSessions.find((session) => session.id === chatId);
+      const isDraftSession = Boolean(matchedSession?.isDraft);
+      set({
+        activeChatId: chatId,
+        activeView: 'chats',
+        isStreaming: isTargetStreaming,
+        sessions: nextSessions,
+      });
+      if (!isTargetStreaming && !isDraftSession) {
+        wsService.requestHistory(chatId);
+      }
     }
   });
 }

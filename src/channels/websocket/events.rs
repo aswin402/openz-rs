@@ -42,6 +42,18 @@ pub fn publish_ws_event_except(except_client_id: &str, event: Value) {
     }
 }
 
+/// Deliver a JSON event only to WebSocket clients viewing or owning an active turn in `chat_id`.
+pub fn publish_ws_event_for_chat(chat_id: &str, event: Value) {
+    match serde_json::to_string(&event).ok() {
+        Some(evt_str) => {
+            for (_, sender) in active_ws_sender_snapshot_for_chat(Some(chat_id)) {
+                let _ = sender.try_send(Message::Text(evt_str.clone()));
+            }
+        }
+        None => {}
+    }
+}
+
 pub(crate) fn active_ws_sender_snapshot_for_chat(
     chat_id: Option<&str>,
 ) -> Vec<(String, mpsc::Sender<Message>)> {
@@ -57,10 +69,14 @@ pub(crate) fn active_ws_sender_snapshot_for_chat(
             senders
                 .iter()
                 .filter(|(id, _)| match normalized_chat_id.as_deref() {
-                    Some(target_chat) => client_chats
-                        .get(*id)
-                        .map(|client_chat| normalize_ws_chat_id(client_chat) == target_chat)
-                        .unwrap_or(false),
+                    Some(target_chat) => {
+                        let matches_active_chat = client_chats
+                            .get(*id)
+                            .map(|client_chat| normalize_ws_chat_id(client_chat) == target_chat)
+                            .unwrap_or(false);
+                        matches_active_chat
+                            || super::turns::has_active_ws_turn_for_client_chat(id, target_chat)
+                    }
                     None => true,
                 })
                 .map(|(id, sender)| (id.clone(), sender.clone()))
@@ -71,7 +87,7 @@ pub(crate) fn active_ws_sender_snapshot_for_chat(
 
 pub(crate) fn normalize_ws_chat_id(chat_id: &str) -> String {
     match chat_id.contains(':') {
-        true => ws_chat_id(chat_id).unwrap_or_else(|| chat_id.to_string()),
+        true => chat_id.replace(':', "_"),
         false => match KNOWN_WS_CHAT_PREFIXES
             .iter()
             .any(|prefix| chat_id.starts_with(prefix))
@@ -288,10 +304,16 @@ fn publish_reliable_ws_event(event: Value) {
     }
 }
 
-/// Extract the chat id from a session key (mapping colons to underscores to
-/// match WebUI format).
+/// Extract the WebUI chat id from a session key (mapping colons to underscores to
+/// match WebUI format). Non-WebUI sessions (`cron:`, `cli:`, `telegram:`, etc.)
+/// return `None` so background turns do not broadcast unsolicited streaming
+/// deltas to connected WebUI clients.
 pub fn ws_chat_id(session_key: &str) -> Option<String> {
-    (!session_key.is_empty()).then(|| session_key.replace(':', "_"))
+    let is_webui_session = session_key.starts_with("ws:")
+        || session_key.starts_with("web:")
+        || session_key.starts_with("ws_")
+        || session_key.starts_with("web_");
+    is_webui_session.then(|| session_key.replace(':', "_"))
 }
 
 /// Publish a structured activity notice to WebUI clients for a chat/session.

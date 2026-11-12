@@ -117,7 +117,7 @@ export const GraphControls: React.FC<GraphControlsProps> = ({
       </button>
     </div>
 
-    <div className="absolute right-3 top-3 z-10 flex items-start gap-2">
+    <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
       <div className="hidden rounded-xl border border-white/10 bg-slate-950/88 px-3 py-2 text-[10px] shadow-lg backdrop-blur-md lg:block">
         <div className="flex items-center gap-2 font-semibold text-slate-300">
           <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.8)]" />
@@ -125,7 +125,7 @@ export const GraphControls: React.FC<GraphControlsProps> = ({
         </div>
         <div className="mt-1 text-right font-mono text-[9px] text-slate-600">{modeLabel} · {loadedEdges} relations</div>
       </div>
-      <div className="flex flex-col gap-1 rounded-xl border border-white/10 bg-slate-950/88 p-1 shadow-lg backdrop-blur-md">
+      <div className="flex flex-row items-center gap-1 rounded-xl border border-white/10 bg-slate-950/88 p-1 shadow-lg backdrop-blur-md">
         <button type="button" onClick={() => onZoom(1.2)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-500 transition hover:bg-white/5 hover:text-slate-200 sm:h-8 sm:w-8 sm:min-h-0 sm:min-w-0" title="Zoom in" aria-label="Zoom in"><ZoomIn className="h-3.5 w-3.5" /></button>
         <button type="button" onClick={() => onZoom(0.83)} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-500 transition hover:bg-white/5 hover:text-slate-200 sm:h-8 sm:w-8 sm:min-h-0 sm:min-w-0" title="Zoom out" aria-label="Zoom out"><ZoomOut className="h-3.5 w-3.5" /></button>
         <button type="button" onClick={onFit} className="flex min-h-11 min-w-11 items-center justify-center rounded-lg text-slate-500 transition hover:bg-white/5 hover:text-slate-200 sm:h-8 sm:w-8 sm:min-h-0 sm:min-w-0" title="Fit graph" aria-label="Fit graph"><Maximize2 className="h-3.5 w-3.5" /></button>

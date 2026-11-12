@@ -286,3 +286,59 @@ pub mod model_switch_tests {
         );
     }
 }
+
+#[test]
+fn strip_ansi_codes_removes_escape_sequences() {
+    let styled = "\x1b[36m◇\x1b[0m Workflow matched: \x1b[1mGraphMemorySkillSynthesisWorkflow\x1b[0m";
+    assert_eq!(
+        strip_ansi_codes(styled),
+        "◇ Workflow matched: GraphMemorySkillSynthesisWorkflow"
+    );
+}
+
+#[tokio::test]
+async fn send_session_notice_routes_ws_only_to_matching_chat_and_silences_cron_and_telegram() {
+    let (tx_a, mut rx_a) = tokio::sync::mpsc::channel::<axum::extract::ws::Message>(10);
+    let (tx_b, mut rx_b) = tokio::sync::mpsc::channel::<axum::extract::ws::Message>(10);
+    let client_a = format!("notice-client-a-{}", uuid::Uuid::new_v4());
+    let client_b = format!("notice-client-b-{}", uuid::Uuid::new_v4());
+    let chat_a = format!("ws_notice_a_{}", uuid::Uuid::new_v4());
+    let chat_b = format!("ws_notice_b_{}", uuid::Uuid::new_v4());
+    let session_a = format!("ws:{}", chat_a.strip_prefix("ws_").unwrap());
+
+    get_active_ws_senders()
+        .lock()
+        .unwrap()
+        .insert(client_a.clone(), tx_a);
+    get_active_ws_client_chats()
+        .lock()
+        .unwrap()
+        .insert(client_a.clone(), chat_a);
+    get_active_ws_senders()
+        .lock()
+        .unwrap()
+        .insert(client_b.clone(), tx_b);
+    get_active_ws_client_chats()
+        .lock()
+        .unwrap()
+        .insert(client_b.clone(), chat_b);
+
+    send_session_notice("cron:job-1", "\x1b[36m◇\x1b[0m Workflow matched: CronSkill");
+    send_session_notice("telegram:12345", "◇ Workflow matched: TgSkill");
+    assert!(rx_a.try_recv().is_err());
+    assert!(rx_b.try_recv().is_err());
+
+    send_session_notice(&session_a, "\x1b[36m◇\x1b[0m Workflow matched: WebSkill");
+    let received_a = rx_a.recv().await.expect("matching ws client should receive notice");
+    match received_a {
+        axum::extract::ws::Message::Text(txt) => {
+            assert!(txt.contains("◇ Workflow matched: WebSkill"));
+            assert!(!txt.contains("\x1b"));
+        }
+        _ => panic!("expected text message"),
+    }
+    assert!(rx_b.try_recv().is_err());
+
+    crate::channels::websocket::events::remove_active_ws_sender(&client_a);
+    crate::channels::websocket::events::remove_active_ws_sender(&client_b);
+}

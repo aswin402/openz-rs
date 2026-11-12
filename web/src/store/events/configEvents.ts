@@ -6,6 +6,7 @@ import { wsService } from '../../services/websocket';
 import { createWorkspaceNotice } from '../chatUtils';
 import type { StoreEventContext } from '../eventContext';
 import { EMPTY_MCP_STATS, normalizeMcpStats } from '../slices/memorySlice';
+import { useThemeStore } from '../useThemeStore';
 
 function mergeProviders(
   current: ProviderModelOption[],
@@ -39,6 +40,7 @@ function applyCapabilitiesAndDefaultsPatch(
     defaults?: {
       model?: string;
       provider?: string;
+      theme?: string;
       caveman_mode?: boolean;
       streaming?: boolean;
       max_tokens?: number;
@@ -57,6 +59,10 @@ function applyCapabilitiesAndDefaultsPatch(
       cavemanMode: !!payload.defaults.caveman_mode,
       streamingMode: payload.defaults.streaming !== false,
     });
+    const rawTheme = payload.defaults.theme;
+    if (rawTheme === 'light' || rawTheme === 'dark' || rawTheme === 'system') {
+      useThemeStore.getState().setTheme(rawTheme);
+    }
   }
 }
 

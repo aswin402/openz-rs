@@ -9,7 +9,17 @@ export interface WebSocketAttachment {
 
 export type WebSocketCommand =
   | { type: 'ping' }
-  | { type: 'message'; chat_id: string; content: string; model?: string; provider?: string; turn_id?: string; attachments?: WebSocketAttachment[] }
+  | {
+      type: 'message';
+      chat_id: string;
+      content: string;
+      model?: string;
+      provider?: string;
+      turn_id?: string;
+      streaming?: boolean;
+      caveman_mode?: boolean;
+      attachments?: WebSocketAttachment[];
+    }
   | { type: 'new_chat' }
   | { type: 'attach' | 'load_history' | 'archive_session' | 'delete_session'; chat_id: string }
   | { type: 'list_sessions'; offset?: number; limit?: number }

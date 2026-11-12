@@ -122,6 +122,7 @@ fn direct_target_requires_exactly_one_session() {
 #[test]
 fn inbox_expiry_rejects_old_messages() {
     let old = InboxMessage {
+        session_id: "cli:test".to_string(),
         message: "old".to_string(),
         sender: "test".to_string(),
         timestamp: (chrono::Utc::now() - chrono::Duration::minutes(6)).to_rfc3339(),
@@ -138,6 +139,7 @@ async fn enqueue_cleans_expired_entries_for_other_targets() {
     crate::config::loader::CONFIG_DIR_OVERRIDE
         .scope(temp_dir.clone(), async {
             let stale = InboxMessage {
+                session_id: "telegram:direct".to_string(),
                 message: "stale".to_string(),
                 sender: "test".to_string(),
                 timestamp: (chrono::Utc::now() - chrono::Duration::minutes(6)).to_rfc3339(),
@@ -224,4 +226,92 @@ fn active_tui_stale_when_pid_is_dead_or_timestamp_invalid() {
     session.pid = std::process::id();
     session.last_seen_at = "not-a-date".to_string();
     assert!(active_tui_is_stale(&session, now));
+}
+
+#[tokio::test]
+async fn ws_inbox_queue_preserves_fifo_order_and_session_id() {
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_ws_inbox_fifo_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    crate::config::loader::CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            send_inbox_message("ws:session-alpha", "hello alpha", "telegram:101").unwrap();
+            tokio::time::sleep(Duration::from_millis(2)).await;
+            send_inbox_message("ws:session-beta", "hello beta", "telegram:202").unwrap();
+
+            let first = pop_any_ws_inbox_message().expect("first ws message");
+            assert_eq!(first.session_id, "ws:session-alpha");
+            assert_eq!(first.message, "hello alpha");
+            assert_eq!(first.sender, "telegram:101");
+
+            let second = pop_any_ws_inbox_message().expect("second ws message");
+            assert_eq!(second.session_id, "ws:session-beta");
+            assert_eq!(second.message, "hello beta");
+            assert_eq!(second.sender, "telegram:202");
+
+            assert!(pop_any_ws_inbox_message().is_none());
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(temp_dir);
+}
+
+#[tokio::test]
+async fn remote_target_sessions_list_live_tui_and_webui_gateway_sessions() {
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_remote_targets_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(temp_dir.join("sessions")).unwrap();
+
+    crate::config::loader::CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            let now = chrono::Utc::now().to_rfc3339();
+            let tui = make_active_tui_session(
+                "cli:openz_abc",
+                std::path::Path::new("/tmp/openz"),
+                &now,
+                "claude-3-7-sonnet",
+                "anthropic",
+                "TUI prompt",
+            );
+            upsert_active_tui_session(&tui).unwrap();
+
+            let gw = ActiveGatewayStatus {
+                pid: std::process::id(),
+                host: "127.0.0.1".to_string(),
+                port: 8765,
+                started_at: now.clone(),
+                last_seen_at: now,
+                model: "MiniMax-M3.1-Flash".to_string(),
+                provider: "minimax".to_string(),
+                open_sessions: vec!["ws:live-tab-1".to_string()],
+            };
+            upsert_active_gateway_status(&gw).unwrap();
+
+            assert_eq!(resolve_ws_direct_target().unwrap(), "ws:live-tab-1");
+            assert!(remote_target_is_available("cli:openz_abc"));
+            assert!(remote_target_is_available("ws:live-tab-1"));
+
+            let targets = list_remote_target_sessions();
+            assert!(targets.iter().any(|t| t.session_key == "cli:openz_abc" && t.surface == "tui"));
+            assert!(targets.iter().any(|t| {
+                t.session_key == "ws:live-tab-1" && t.surface == "webui" && t.is_live_viewer
+            }));
+            assert!(targets
+                .iter()
+                .any(|t| t.session_key == "ws:new" && t.surface == "webui"));
+
+            mark_remote_turn_pending(777, "ws:live-tab-1");
+            assert!(is_remote_turn_pending(777));
+            touch_remote_turn_pending(777);
+            assert!(is_remote_turn_pending(777));
+            clear_remote_turn_pending(777);
+            assert!(!is_remote_turn_pending(777));
+
+            remove_active_gateway_status(std::process::id());
+            assert!(!remote_target_is_available("ws:live-tab-1"));
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(temp_dir);
 }

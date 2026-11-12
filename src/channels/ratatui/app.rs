@@ -645,10 +645,26 @@ pub const PALETTE_COMMANDS: &[PaletteCommand] = &[
     PaletteCommand {
         slash_name: "/settings",
         title: "Settings & Configuration",
-        description: "View and adjust active configuration, security & sandbox",
+        description: "View and adjust active TUI configuration, security & sandbox",
         category: CommandCategory::System,
         shortcut: Some("F3"),
         example: "/settings",
+    },
+    PaletteCommand {
+        slash_name: "/gateway",
+        title: "Gateway Auto-Start & Startup Settings",
+        description: "Configure Gateway auto-start on openz launch or system login",
+        category: CommandCategory::System,
+        shortcut: None,
+        example: "/gateway | /gateway auto-tui on | /gateway auto-boot on",
+    },
+    PaletteCommand {
+        slash_name: "/theme",
+        title: "Switch TUI Theme",
+        description: "Switch TUI color palette (saved independently for TUI)",
+        category: CommandCategory::System,
+        shortcut: None,
+        example: "/theme | /theme aura_dark | /theme cyberpunk | /theme oceanic | /theme emerald | /theme light",
     },
     PaletteCommand {
         slash_name: "/streaming",
@@ -783,6 +799,8 @@ pub struct RatatuiApp {
     pub work_start: Option<Instant>,
     /// Spinner frame index for animation
     pub spinner_idx: usize,
+    /// Active theme name
+    pub theme_name: String,
     /// Active theme
     pub theme: Theme,
     /// Active interactive modal overlay
@@ -793,6 +811,7 @@ pub struct RatatuiApp {
     pub slash_selected_idx: usize,
     /// Queue of user prompts submitted while agent is actively executing
     pub queued_prompts: std::collections::VecDeque<String>,
+    pub queued_remote_turns: std::collections::VecDeque<(String, String)>,
     /// Current specific agent activity for live shimmering status
     pub current_activity: Option<super::animation::AgentActivity>,
     /// Selected spinner animation style
@@ -820,6 +839,7 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/stop-server", "Stop background server instance by ID or all"),
     ("/logs", "Stream real-time color-coded structured logs"),
     ("/settings", "View and adjust active configuration"),
+    ("/theme", "Switch TUI color theme (persisted for TUI)"),
     ("/streaming", "Toggle response streaming preference"),
     ("/device", "Manage local application and device inventory"),
     ("/audit", "Cryptographically verify session SHA-256 ledger"),
@@ -861,15 +881,23 @@ impl RatatuiApp {
             is_thinking: false,
             work_start: None,
             spinner_idx: 0,
+            theme_name: "aura_dark".to_string(),
             theme: Theme::aura_dark(),
             modal: ModalState::None,
             slash_category_idx: 0,
             slash_selected_idx: 0,
             queued_prompts: std::collections::VecDeque::new(),
+            queued_remote_turns: std::collections::VecDeque::new(),
             current_activity: None,
             spinner_style: super::animation::SpinnerStyle::BrailleWave,
             start_time: Instant::now(),
         }
+    }
+
+    pub fn set_theme(&mut self, theme_name: &str) {
+        let canonical = Theme::canonical_name(theme_name).unwrap_or("aura_dark");
+        self.theme_name = canonical.to_string();
+        self.theme = Theme::from_name(canonical);
     }
 
     /// Milliseconds elapsed since the application started (for smooth animations)
@@ -966,6 +994,21 @@ impl RatatuiApp {
 
     pub fn pop_next_prompt(&mut self) -> Option<String> {
         self.queued_prompts.pop_front()
+    }
+
+    pub fn queue_remote_prompt(&mut self, prompt: String, sender: String) {
+        let trimmed = prompt.trim().to_string();
+        match trimmed.is_empty() {
+            false => self.queued_remote_turns.push_back((trimmed, sender)),
+            true => {}
+        }
+    }
+
+    pub fn pop_next_turn_request(&mut self) -> Option<(String, Option<String>)> {
+        match self.queued_remote_turns.pop_front() {
+            Some((prompt, sender)) => Some((prompt, Some(sender))),
+            None => self.queued_prompts.pop_front().map(|prompt| (prompt, None)),
+        }
     }
 
     pub fn scroll_up(&mut self, lines: u32) {

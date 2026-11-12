@@ -95,17 +95,30 @@ where
         .unwrap_or(false)
 }
 
+fn websocket_channel_changes_non_loopback_host(envelope: &Value) -> bool {
+    envelope
+        .get("channels")
+        .and_then(|channels| channels.get("websocket"))
+        .and_then(|ws| ws.get("host"))
+        .and_then(Value::as_str)
+        .is_some_and(super::super::gateway_token_required_for_host)
+}
+
 pub(crate) fn config_update_requires_gateway_token(envelope: &Value) -> bool {
     object_changes_sensitive_key(envelope.get("defaults"), sensitive_default_config_key)
         || nested_objects_change_sensitive_key(envelope.get("providers"), credential_config_key)
         || nested_objects_change_sensitive_key(envelope.get("channels"), credential_config_key)
+        || websocket_channel_changes_non_loopback_host(envelope)
 }
 
 pub(crate) async fn config_data_event(config: &crate::config::schema::Config) -> Value {
+    let effective = config.with_ui_surface("webui");
     let skills = crate::agent::skills::load_skill_views().unwrap_or_default();
     let defaults = {
-        let d = &config.agents.defaults;
+        let d = &effective.agents.defaults;
         serde_json::json!({
+            "ui_surface": "webui",
+            "theme": effective.ui_theme("webui"),
             "model": d.model,
             "provider": d.provider,
             "temperature": d.temperature,
@@ -123,8 +136,8 @@ pub(crate) async fn config_data_event(config: &crate::config::schema::Config) ->
             "tool_output_limit": d.tool_output_limit,
             "show_auto_capture_notices": d.show_auto_capture_notices,
             "tui_thought_display": d.tui_thought_display,
-            "firefox_webdriver_port": config.browser.firefox_webdriver_port,
-            "firefox_attach_port": config.browser.firefox_attach_port,
+            "firefox_webdriver_port": effective.browser.firefox_webdriver_port,
+            "firefox_attach_port": effective.browser.firefox_attach_port,
         })
     };
     let mcp_resp = super::observability::mcp_servers_event(config).await;
@@ -181,6 +194,14 @@ pub(crate) async fn config_data_event(config: &crate::config::schema::Config) ->
     }
 
     let ch = &config.channels;
+    let ws_cfg = ch.websocket.clone().unwrap_or_default();
+    let websocket = serde_json::json!({
+        "enabled": ws_cfg.enabled,
+        "host": ws_cfg.host,
+        "port": ws_cfg.port,
+        "start_on_tui": ws_cfg.start_on_tui,
+        "start_on_boot": ws_cfg.start_on_boot,
+    });
     let telegram = ch.telegram.as_ref().map(|cfg| {
         serde_json::json!({
             "enabled": cfg.enabled,
@@ -203,6 +224,7 @@ pub(crate) async fn config_data_event(config: &crate::config::schema::Config) ->
         })
     });
     let channels = serde_json::json!({
+        "websocket": websocket,
         "telegram": telegram,
         "discord": discord,
         "whatsapp": whatsapp,
@@ -266,14 +288,21 @@ fn update_provider_config(
     *field = Some(config);
 }
 
-fn apply_defaults_update(config: &mut crate::config::schema::Config, defaults: &Value) {
-    let defaults_config = &mut config.agents.defaults;
+fn apply_webui_profile_update(
+    config: &mut crate::config::schema::Config,
+    defaults: &Value,
+) {
+    let profile = config.ui_profile_mut("webui");
     match defaults.get("model").and_then(Value::as_str) {
-        Some(value) => defaults_config.model = value.to_string(),
+        Some(value) => profile.model = Some(value.to_string()),
         None => {}
     }
     match defaults.get("provider").and_then(Value::as_str) {
-        Some(value) => defaults_config.provider = value.to_string(),
+        Some(value) => profile.provider = Some(value.to_string()),
+        None => {}
+    }
+    match defaults.get("theme").and_then(Value::as_str) {
+        Some(value) => profile.theme = Some(value.to_string()),
         None => {}
     }
     match (
@@ -284,42 +313,42 @@ fn apply_defaults_update(config: &mut crate::config::schema::Config, defaults: &
         _ => {}
     }
     match defaults.get("temperature").and_then(Value::as_f64) {
-        Some(value) => defaults_config.temperature = value as f32,
+        Some(value) => profile.temperature = Some(value as f32),
         None => {}
     }
     match defaults.get("max_tokens").and_then(Value::as_u64) {
-        Some(value) => defaults_config.max_tokens = value as usize,
+        Some(value) => profile.max_tokens = Some(value as usize),
         None => {}
     }
     match defaults.get("streaming").and_then(Value::as_bool) {
-        Some(value) => defaults_config.streaming = value,
+        Some(value) => profile.streaming = Some(value),
         None => {}
     }
     match defaults.get("caveman_mode").and_then(Value::as_bool) {
-        Some(value) => defaults_config.caveman_mode = value,
+        Some(value) => profile.caveman_mode = Some(value),
         None => {}
     }
     match defaults.get("security_mode").and_then(Value::as_str) {
-        Some(value) => defaults_config.security_mode = value.to_string(),
+        Some(value) => profile.security_mode = Some(value.to_string()),
         None => {}
     }
     match defaults.get("bot_name").and_then(Value::as_str) {
-        Some(value) => defaults_config.bot_name = value.to_string(),
+        Some(value) => profile.bot_name = Some(value.to_string()),
         None => {}
     }
     match defaults.get("workspace").and_then(Value::as_str) {
-        Some(value) => defaults_config.workspace = value.to_string(),
+        Some(value) => profile.workspace = Some(value.to_string()),
         None => {}
     }
     match defaults.get("context_limit") {
         Some(value) => {
-            defaults_config.context_limit = value.as_u64().map(|number| number as usize);
+            profile.context_limit = value.as_u64().map(|number| number as usize);
         }
         None => {}
     }
     match defaults.get("tool_output_limit") {
         Some(value) => {
-            defaults_config.tool_output_limit = value.as_u64().map(|number| number as usize);
+            profile.tool_output_limit = value.as_u64().map(|number| number as usize);
         }
         None => {}
     }
@@ -327,23 +356,27 @@ fn apply_defaults_update(config: &mut crate::config::schema::Config, defaults: &
         .get("show_auto_capture_notices")
         .and_then(Value::as_bool)
     {
-        Some(value) => defaults_config.show_auto_capture_notices = value,
+        Some(value) => profile.show_auto_capture_notices = Some(value),
         None => {}
     }
     match defaults.get("tui_thought_display").and_then(Value::as_str) {
-        Some(value) => defaults_config.tui_thought_display = value.to_string(),
+        Some(value) => profile.tui_thought_display = Some(value.to_string()),
         None => {}
     }
     match defaults.get("max_messages").and_then(Value::as_u64) {
-        Some(value) => defaults_config.max_messages = value as usize,
+        Some(value) => profile.max_messages = Some(value as usize),
         None => {}
     }
     match defaults.get("max_tool_iterations").and_then(Value::as_u64) {
-        Some(value) => defaults_config.max_tool_iterations = value as usize,
+        Some(value) => profile.max_tool_iterations = Some(value as usize),
         None => {}
     }
     match defaults.get("tool_timeout_secs").and_then(Value::as_u64) {
-        Some(value) => defaults_config.tool_timeout_secs = value,
+        Some(value) => profile.tool_timeout_secs = Some(value),
+        None => {}
+    }
+    match defaults.get("enable_sandbox").and_then(Value::as_bool) {
+        Some(value) => profile.enable_sandbox = Some(value),
         None => {}
     }
 }
@@ -395,6 +428,43 @@ fn apply_channels_update(
     channels: &serde_json::Map<String, Value>,
 ) {
     let channel_config = &mut config.channels;
+    match channels.get("websocket").and_then(Value::as_object) {
+        Some(data) => {
+            let mut ws = channel_config.websocket.clone().unwrap_or_default();
+            match data.get("enabled").and_then(Value::as_bool) {
+                Some(value) => ws.enabled = value,
+                None => {}
+            }
+            match data.get("host").and_then(Value::as_str) {
+                Some(value) => {
+                    let trimmed = value.trim();
+                    match trimmed.is_empty() {
+                        true => {}
+                        false => ws.host = trimmed.to_string(),
+                    }
+                }
+                None => {}
+            }
+            match data.get("port").and_then(Value::as_u64) {
+                Some(value) => match (1..=65535).contains(&value) {
+                    true => ws.port = value as u16,
+                    false => {}
+                },
+                None => {}
+            }
+            match data.get("start_on_tui").and_then(Value::as_bool) {
+                Some(value) => ws.start_on_tui = value,
+                None => {}
+            }
+            match data.get("start_on_boot").and_then(Value::as_bool) {
+                Some(value) => ws.start_on_boot = value,
+                None => {}
+            }
+            channel_config.websocket = Some(ws);
+        }
+        None => {}
+    }
+
     match channels.get("telegram").and_then(Value::as_object) {
         Some(data) => {
             let mut telegram = channel_config.telegram.clone().unwrap_or_default();
@@ -465,12 +535,12 @@ fn apply_channels_update(
     }
 }
 
-pub(crate) fn apply_config_update(
+pub(crate) fn apply_webui_disk_config_update(
     config: &mut crate::config::schema::Config,
     envelope: &Value,
 ) {
     match envelope.get("defaults") {
-        Some(defaults) => apply_defaults_update(config, defaults),
+        Some(defaults) => apply_webui_profile_update(config, defaults),
         None => {}
     }
     match envelope.get("providers").and_then(Value::as_object) {
@@ -484,9 +554,12 @@ pub(crate) fn apply_config_update(
 }
 
 pub(crate) fn config_updated_event(config: &crate::config::schema::Config) -> Value {
-    let defaults = &config.agents.defaults;
+    let effective = config.with_ui_surface("webui");
+    let defaults = &effective.agents.defaults;
     super::super::protocol::config_updated(
         serde_json::json!({
+            "ui_surface": "webui",
+            "theme": effective.ui_theme("webui"),
             "model": defaults.model,
             "provider": defaults.provider,
             "temperature": defaults.temperature,
@@ -505,7 +578,7 @@ pub(crate) fn config_updated_event(config: &crate::config::schema::Config) -> Va
             "show_auto_capture_notices": defaults.show_auto_capture_notices,
             "tui_thought_display": defaults.tui_thought_display,
         }),
-        super::super::webui_capabilities(config),
+        super::super::webui_capabilities(&effective),
     )
 }
 

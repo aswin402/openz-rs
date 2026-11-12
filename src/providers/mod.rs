@@ -353,7 +353,7 @@ pub trait LLMProvider: Send + Sync {
             finish_reason: Some(resp.finish_reason),
         });
         let stream = futures_util::stream::iter(chunks.into_iter().map(Ok));
-        Ok(Box::pin(stream))
+        Ok(Box::pin(openai::filter_think_stream(Box::pin(stream))))
     }
 }
 

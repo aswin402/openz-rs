@@ -158,7 +158,7 @@ export function buildClusters(
       );
       center.x /= group.length;
       center.y /= group.length;
-      const radius = Math.max(28, Math.min(170, 22 + Math.sqrt(group.length) * 14));
+      const radius = Math.max(54, Math.min(180, 38 + Math.sqrt(group.length) * 18));
       const representativeIds = [...group]
         .sort((left, right) => {
           const degreeDelta = (degrees.get(nodes[right].name) || 0) - (degrees.get(nodes[left].name) || 0);

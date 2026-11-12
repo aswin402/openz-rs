@@ -15,6 +15,7 @@ pub(crate) mod commands;
 pub(crate) mod events;
 pub(crate) mod handlers;
 pub(crate) mod protocol;
+pub(crate) mod remote_bridge;
 pub(crate) mod socket;
 pub(crate) mod turns;
 
@@ -60,8 +61,8 @@ impl WsState {
     pub(crate) fn current_config(&self) -> crate::config::schema::Config {
         self.live_config
             .read()
-            .map(|config| config.clone())
-            .unwrap_or_else(|_| self.agent_loop.config.clone())
+            .map(|config| config.with_ui_surface("webui"))
+            .unwrap_or_else(|_| self.agent_loop.config.with_ui_surface("webui"))
     }
 }
 
@@ -112,6 +113,24 @@ pub(crate) fn webui_capabilities(config: &crate::config::schema::Config) -> serd
     .collect::<Vec<_>>();
 
     let channels = vec![
+        serde_json::json!({
+            "name": "websocket",
+            "label": "WebUI & Gateway Server",
+            "fields": [
+                { "key": "enabled", "label": "Enable Gateway Server", "kind": "boolean" },
+                { "key": "start_on_tui", "label": "Start Gateway when launching openz (TUI)", "kind": "boolean" },
+                { "key": "start_on_boot", "label": "Start Gateway at system login (startup)", "kind": "boolean" },
+                { "key": "host", "label": "Bind Host", "kind": "text", "placeholder": "127.0.0.1" },
+                { "key": "port", "label": "Gateway Port", "kind": "number" }
+            ],
+            "defaults": {
+                "enabled": true,
+                "start_on_tui": false,
+                "start_on_boot": false,
+                "host": "127.0.0.1",
+                "port": 8765
+            }
+        }),
         serde_json::json!({
             "name": "telegram",
             "label": "Telegram Bot Listener",
@@ -175,11 +194,18 @@ impl WsGateway {
     }
 
     pub fn build_app(&self) -> Router {
-        let live_config = Arc::new(std::sync::RwLock::new(self.agent_loop.config.clone()));
+        self.build_app_inner(std::env::var("OPENZ_SILENT").is_ok())
+    }
+
+    fn build_app_inner(&self, silent: bool) -> Router {
+        let live_config = Arc::new(std::sync::RwLock::new(
+            self.agent_loop.config.with_ui_surface("webui"),
+        ));
         let config_watcher = match crate::config::watcher::spawn_default_config_watcher(
             live_config.clone(),
             move |updated_config| {
-                let event = commands::config::config_updated_event(updated_config);
+                let webui_config = updated_config.with_ui_surface("webui");
+                let event = commands::config::config_updated_event(&webui_config);
                 events::publish_ws_event(event);
             },
         ) {
@@ -231,7 +257,6 @@ impl WsGateway {
             .layer(cors)
             .with_state(state);
 
-        let silent = std::env::var("OPENZ_SILENT").is_ok();
         let addr_str = format!("{}:{}", self.config.host, self.config.port);
         match (find_web_dist(), silent) {
             (Some(dist_path), false) => {
@@ -260,8 +285,42 @@ impl WsGateway {
     }
 
     pub async fn start_with_listener(&self, listener: TcpListener) -> anyhow::Result<()> {
-        let app = self.build_app();
-        let silent = std::env::var("OPENZ_SILENT").is_ok();
+        self.start_with_listener_inner(listener, std::env::var("OPENZ_SILENT").is_ok())
+            .await
+    }
+
+    pub async fn start_background_quiet(&self) -> anyhow::Result<()> {
+        let addr_str = format!("{}:{}", self.config.host, self.config.port);
+        let addr: SocketAddr = addr_str.parse()?;
+        match gateway_token_required_for_host(&self.config.host) && !gateway_token_configured() {
+            true => return Ok(()),
+            false => {}
+        }
+        match TcpListener::bind(addr).await {
+            Ok(listener) => self.start_with_listener_inner(listener, true).await,
+            Err(err) => match err.kind() == std::io::ErrorKind::AddrInUse {
+                true => {
+                    tracing::info!(
+                        "Gateway already listening on {}; skipping duplicate auto-start",
+                        addr_str
+                    );
+                    Ok(())
+                }
+                false => Err(err.into()),
+            },
+        }
+    }
+
+    async fn start_with_listener_inner(
+        &self,
+        listener: TcpListener,
+        silent: bool,
+    ) -> anyhow::Result<()> {
+        let _remote_bridge_guard = remote_bridge::spawn_gateway_remote_bridge(
+            self.config.clone(),
+            self.agent_loop.clone(),
+        );
+        let app = self.build_app_inner(silent);
         let local_addr = listener.local_addr()?;
 
         match silent {

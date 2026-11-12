@@ -1,7 +1,7 @@
 use crate::agent::AgentLoop;
 use crate::channels::notifications::telegram_api_url;
 use crate::channels::telegram::state::{
-    remote_session_button_label, set_remote_session, APPROVAL_CALLBACKS,
+    get_remote_menu_option, remote_session_button_label, set_remote_session, APPROVAL_CALLBACKS,
 };
 use crate::channels::telegram::types::TelegramCallbackQuery;
 use reqwest::Client;
@@ -237,6 +237,80 @@ async fn handle_resume_select_callback(
     }
 }
 
+async fn handle_remote_idx_callback(
+    cb: &TelegramCallbackQuery,
+    callback_value: &str,
+    bot_token: &str,
+    client: &Client,
+) {
+    let inner_msg = match &cb.message {
+        Some(msg) => msg,
+        None => return,
+    };
+    let chat_id = inner_msg.chat.id;
+    let selected = callback_value
+        .parse::<usize>()
+        .ok()
+        .and_then(|idx| get_remote_menu_option(chat_id, idx))
+        .filter(|target| crate::agent::activity::remote_target_is_available(&target.session_key));
+
+    let resolved = selected.map(|mut target| {
+        match target.session_key == "ws:new" {
+            true => {
+                let fresh_id = uuid::Uuid::new_v4().to_string();
+                target.session_key = format!("ws:{fresh_id}");
+                target.label = format!("🌐 WebUI (New Session) | {}", &fresh_id[..8]);
+            }
+            false => {}
+        }
+        target
+    });
+
+    let answer_url = telegram_api_url(bot_token, "answerCallbackQuery");
+    let answer_payload = match &resolved {
+        Some(target) => {
+            set_remote_session(chat_id, target.session_key.clone());
+            serde_json::json!({
+                "callback_query_id": cb.id,
+                "text": format!("Remote {} session selected", target.surface.to_uppercase())
+            })
+        }
+        None => serde_json::json!({
+            "callback_query_id": cb.id,
+            "text": "That session is no longer active. Use /remote again.",
+            "show_alert": true
+        }),
+    };
+    let _ = client.post(&answer_url).json(&answer_payload).send().await;
+
+    match inner_msg.message_id {
+        Some(message_id) => {
+            let edit_url = telegram_api_url(bot_token, "editMessageText");
+            let text = resolved
+                .map(|target| {
+                    let surface_name = match target.surface == "webui" {
+                        true => "WebUI / Gateway",
+                        false => "TUI",
+                    };
+                    format!(
+                        "🔌 Remote mode active for {}\nNext messages will execute inside that {} session and reply here. Use /local or /exit to return to Telegram local chat.",
+                        target.label, surface_name
+                    )
+                })
+                .unwrap_or_else(|| {
+                    "That session is no longer active. Use /remote again.".to_string()
+                });
+            let edit_payload = serde_json::json!({
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text
+            });
+            let _ = client.post(&edit_url).json(&edit_payload).send().await;
+        }
+        None => {}
+    }
+}
+
 async fn handle_remote_callback(
     cb: &TelegramCallbackQuery,
     callback_value: &str,
@@ -248,23 +322,28 @@ async fn handle_remote_callback(
         None => return,
     };
     let chat_id = inner_msg.chat.id;
-    let sessions = crate::agent::activity::list_active_tui_sessions();
-    let selected = sessions
-        .iter()
-        .find(|session| session.session_key == callback_value);
+    let resolved_key = match callback_value == "ws:new" {
+        true => format!("ws:{}", uuid::Uuid::new_v4()),
+        false => callback_value.to_string(),
+    };
+    let available = crate::agent::activity::remote_target_is_available(&resolved_key);
+    let tui_label = crate::agent::activity::list_active_tui_sessions()
+        .into_iter()
+        .find(|session| session.session_key == resolved_key)
+        .map(|session| remote_session_button_label(&session));
 
     let answer_url = telegram_api_url(bot_token, "answerCallbackQuery");
-    let answer_payload = match selected.is_some() {
+    let answer_payload = match available {
         true => {
-            set_remote_session(chat_id, callback_value.to_string());
+            set_remote_session(chat_id, resolved_key.clone());
             serde_json::json!({
                 "callback_query_id": cb.id,
-                "text": "Remote TUI selected"
+                "text": "Remote session selected"
             })
         }
         false => serde_json::json!({
             "callback_query_id": cb.id,
-            "text": "That TUI session is no longer active. Use /remote again.",
+            "text": "That session is no longer active. Use /remote again.",
             "show_alert": true
         }),
     };
@@ -273,16 +352,16 @@ async fn handle_remote_callback(
     match inner_msg.message_id {
         Some(message_id) => {
             let edit_url = telegram_api_url(bot_token, "editMessageText");
-            let text = selected
-                .map(|session| {
+            let text = match available {
+                true => {
+                    let display = tui_label.unwrap_or_else(|| resolved_key.clone());
                     format!(
-                        "🔌 Remote mode active for {}\nNext messages are forwarded to that TUI. Use /local or /exit to leave remote mode.",
-                        remote_session_button_label(session)
+                        "🔌 Remote mode active for {}\nNext messages are forwarded to that session. Use /local or /exit to leave remote mode.",
+                        display
                     )
-                })
-                .unwrap_or_else(|| {
-                    "That TUI session is no longer active. Use /remote again.".to_string()
-                });
+                }
+                false => "That session is no longer active. Use /remote again.".to_string(),
+            };
             let edit_payload = serde_json::json!({
                 "chat_id": chat_id,
                 "message_id": message_id,
@@ -325,6 +404,10 @@ pub(crate) async fn handle_callback(
         }
         "resume_select" => {
             handle_resume_select_callback(&cb, callback_value, bot_token, client, agent_loop).await;
+            return;
+        }
+        "remote_idx" => {
+            handle_remote_idx_callback(&cb, callback_value, bot_token, client).await;
             return;
         }
         "remote" => {

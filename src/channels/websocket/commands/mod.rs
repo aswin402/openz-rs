@@ -44,8 +44,12 @@ pub(super) async fn handle_post_message_command(
         }
         "get_models" => {
             let config = state.current_config();
-            let event = models::models_list_event(&config, envelope).await;
-            super::send_event(tx, event).await;
+            let envelope_owned = envelope.clone();
+            let tx_clone = tx.clone();
+            tokio::spawn(async move {
+                let event = models::models_list_event(&config, &envelope_owned).await;
+                super::send_event(&tx_clone, event).await;
+            });
         }
         "toggle_favorite_model" => {
             let event = models::toggle_favorite_model_event(envelope);
@@ -53,8 +57,11 @@ pub(super) async fn handle_post_message_command(
         }
         "get_config" => {
             let config = state.current_config();
-            let event = config::config_data_event(&config).await;
-            super::send_event(tx, event).await;
+            let tx_clone = tx.clone();
+            tokio::spawn(async move {
+                let event = config::config_data_event(&config).await;
+                super::send_event(&tx_clone, event).await;
+            });
         }
         "set_config" => {
             let token_missing = config::config_update_requires_gateway_token(envelope)
@@ -71,37 +78,89 @@ pub(super) async fn handle_post_message_command(
                 false => {}
             }
 
-            let mut config = state.current_config();
-            config::apply_config_update(&mut config, envelope);
-            let _ = crate::config::loader::save_config(&config);
+            let mut disk_config = crate::config::loader::load_config()
+                .unwrap_or_else(|_| state.current_config());
+            let prev_boot = disk_config
+                .channels
+                .websocket
+                .as_ref()
+                .is_some_and(|ws| ws.enabled && ws.start_on_boot);
+            config::apply_webui_disk_config_update(&mut disk_config, envelope);
+            let _ = crate::config::loader::save_config(&disk_config);
+            let next_ws = disk_config.channels.websocket.clone().unwrap_or_default();
+            let next_boot = next_ws.enabled && next_ws.start_on_boot;
+            match prev_boot != next_boot {
+                true => {
+                    let _ = crate::cli::configure::sync_gateway_systemd_service(
+                        next_boot,
+                        false,
+                        &next_ws.host,
+                        next_ws.port,
+                    );
+                }
+                false => {}
+            }
+            let effective_config = disk_config.with_ui_surface("webui");
             match state.live_config.write() {
-                Ok(mut live) => *live = config.clone(),
+                Ok(mut live) => *live = effective_config.clone(),
                 Err(_) => {}
             }
-            let event = config::config_updated_event(&config);
+            let event = config::config_updated_event(&effective_config);
             super::send_event(tx, event.clone()).await;
             super::events::publish_ws_event_except(client_id, event);
         }
         "save_skill" => {
-            let event = profiles::save_skill_event(envelope);
-            super::send_event(tx, event).await;
+            let envelope_owned = envelope.clone();
+            let tx_clone = tx.clone();
+            tokio::spawn(async move {
+                match tokio::task::spawn_blocking(move || profiles::save_skill_event(&envelope_owned))
+                    .await
+                {
+                    Ok(event) => super::send_event(&tx_clone, event).await,
+                    Err(_) => {}
+                }
+            });
         }
         "delete_skill" => {
-            let event = profiles::delete_skill_event(envelope);
-            super::send_event(tx, event).await;
+            let envelope_owned = envelope.clone();
+            let tx_clone = tx.clone();
+            tokio::spawn(async move {
+                match tokio::task::spawn_blocking(move || {
+                    profiles::delete_skill_event(&envelope_owned)
+                })
+                .await
+                {
+                    Ok(event) => super::send_event(&tx_clone, event).await,
+                    Err(_) => {}
+                }
+            });
         }
         "save_subagent" => {
-            let event = profiles::save_subagent_event(&state.agent_loop.config, envelope).await;
-            super::send_event(tx, event).await;
+            let config = state.current_config();
+            let envelope_owned = envelope.clone();
+            let tx_clone = tx.clone();
+            tokio::spawn(async move {
+                let event = profiles::save_subagent_event(&config, &envelope_owned).await;
+                super::send_event(&tx_clone, event).await;
+            });
         }
         "update_subagent_settings" => {
-            let event =
-                profiles::update_subagent_settings_event(&state.agent_loop.config, envelope).await;
-            super::send_event(tx, event).await;
+            let config = state.current_config();
+            let envelope_owned = envelope.clone();
+            let tx_clone = tx.clone();
+            tokio::spawn(async move {
+                let event =
+                    profiles::update_subagent_settings_event(&config, &envelope_owned).await;
+                super::send_event(&tx_clone, event).await;
+            });
         }
         "delete_subagent" => {
-            let event = profiles::delete_subagent_event(envelope).await;
-            super::send_event(tx, event).await;
+            let envelope_owned = envelope.clone();
+            let tx_clone = tx.clone();
+            tokio::spawn(async move {
+                let event = profiles::delete_subagent_event(&envelope_owned).await;
+                super::send_event(&tx_clone, event).await;
+            });
         }
         "get_slash_commands" => {
             let event = system::slash_commands_event();
@@ -113,28 +172,55 @@ pub(super) async fn handle_post_message_command(
         }
         "pause_cron_job" | "resume_cron_job" | "delete_cron_job" => {
             let config = state.current_config();
-            let event = cron::cron_update_event(
-                command,
-                envelope,
-                &config,
-                Some(&state.agent_loop.tools),
-            )
-            .await;
-            super::send_event(tx, event).await;
+            let command_owned = command.to_string();
+            let envelope_owned = envelope.clone();
+            let tools = state.agent_loop.tools.clone();
+            let tx_clone = tx.clone();
+            tokio::spawn(async move {
+                let event = cron::cron_update_event(
+                    &command_owned,
+                    &envelope_owned,
+                    &config,
+                    Some(&tools),
+                )
+                .await;
+                super::send_event(&tx_clone, event).await;
+            });
         }
         "get_cron_logs" => {
-            let event = cron::cron_logs_event(envelope);
-            super::send_event(tx, event).await;
+            let envelope_owned = envelope.clone();
+            let tx_clone = tx.clone();
+            tokio::spawn(async move {
+                match tokio::task::spawn_blocking(move || cron::cron_logs_event(&envelope_owned))
+                    .await
+                {
+                    Ok(event) => super::send_event(&tx_clone, event).await,
+                    Err(_) => {}
+                }
+            });
         }
         "get_runtime_inventory" => {
             let config = state.current_config();
-            let event = system::runtime_inventory_event(&config, Some(&state.agent_loop.tools));
-            super::send_event(tx, event).await;
+            let tools = state.agent_loop.tools.clone();
+            let tx_clone = tx.clone();
+            tokio::spawn(async move {
+                match tokio::task::spawn_blocking(move || {
+                    system::runtime_inventory_event(&config, Some(&tools))
+                })
+                .await
+                {
+                    Ok(event) => super::send_event(&tx_clone, event).await,
+                    Err(_) => {}
+                }
+            });
         }
         "get_servers" => {
             let config = state.current_config();
-            let event = system::servers_list_event(&config).await;
-            super::send_event(tx, event).await;
+            let tx_clone = tx.clone();
+            tokio::spawn(async move {
+                let event = system::servers_list_event(&config).await;
+                super::send_event(&tx_clone, event).await;
+            });
         }
         "stop_server" => {
             let event = system::stop_server_event(envelope);

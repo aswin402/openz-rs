@@ -422,21 +422,39 @@ async fn handle_telegram_submenu(config: &mut Config) -> Result<()> {
     Ok(())
 }
 
-fn setup_systemd_service() -> Result<()> {
-    let home = dirs::home_dir().ok_or_else(|| anyhow!("Could not locate home directory"))?;
-    let service_dir = home.join(".config").join("systemd").join("user");
-    std::fs::create_dir_all(&service_dir)?;
+fn gateway_port_in_use(host: &str, port: u16) -> bool {
+    let connect_host = match host.trim() {
+        "" | "0.0.0.0" => "127.0.0.1",
+        "::" | "[::]" => "::1",
+        other => other,
+    };
+    let addr_str = format!("{connect_host}:{port}");
+    match addr_str.parse::<std::net::SocketAddr>() {
+        Ok(addr) => std::net::TcpStream::connect_timeout(
+            &addr,
+            std::time::Duration::from_millis(200),
+        )
+        .is_ok(),
+        Err(_) => false,
+    }
+}
 
-    let exe_path =
-        std::env::current_exe().unwrap_or_else(|_| home.join(".cargo").join("bin").join("openz"));
+pub(crate) fn write_gateway_systemd_unit(service_dir: &std::path::Path) -> Result<std::path::PathBuf> {
+    std::fs::create_dir_all(service_dir)?;
+    let fallback_exe = dirs::home_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(".cargo")
+        .join("bin")
+        .join("openz");
+    let exe_path = std::env::current_exe().unwrap_or(fallback_exe);
 
     let service_content = format!(
         r#"[Unit]
-Description=OpenZ WebSocket Gateway Daemon
+Description=OpenZ WebUI & WebSocket Gateway Daemon
 After=network.target
 
 [Service]
-ExecStart={} gateway
+ExecStart={} webui
 Restart=on-failure
 
 [Install]
@@ -447,30 +465,55 @@ WantedBy=default.target
 
     let service_file = service_dir.join("openz-gateway.service");
     std::fs::write(&service_file, service_content)?;
-
-    let _ = std::process::Command::new("systemctl")
-        .args(["--user", "daemon-reload"])
-        .output();
-
-    let _ = std::process::Command::new("systemctl")
-        .args(["--user", "enable", "openz-gateway.service"])
-        .output();
-
-    let _ = std::process::Command::new("systemctl")
-        .args(["--user", "restart", "openz-gateway.service"])
-        .output();
-
-    Ok(())
+    Ok(service_file)
 }
 
-fn disable_systemd_service() -> Result<()> {
-    let _ = std::process::Command::new("systemctl")
-        .args(["--user", "disable", "openz-gateway.service"])
-        .output();
-    let _ = std::process::Command::new("systemctl")
-        .args(["--user", "stop", "openz-gateway.service"])
-        .output();
-    Ok(())
+pub(crate) fn sync_gateway_systemd_service(
+    enable_on_boot: bool,
+    manage_running_process: bool,
+    host: &str,
+    port: u16,
+) -> Result<()> {
+    match enable_on_boot {
+        true => {
+            let home =
+                dirs::home_dir().ok_or_else(|| anyhow!("Could not locate home directory"))?;
+            let service_dir = home.join(".config").join("systemd").join("user");
+            write_gateway_systemd_unit(&service_dir)?;
+
+            let _ = std::process::Command::new("systemctl")
+                .args(["--user", "daemon-reload"])
+                .output();
+
+            let _ = std::process::Command::new("systemctl")
+                .args(["--user", "enable", "openz-gateway.service"])
+                .output();
+
+            match manage_running_process && !gateway_port_in_use(host, port) {
+                true => {
+                    let _ = std::process::Command::new("systemctl")
+                        .args(["--user", "restart", "openz-gateway.service"])
+                        .output();
+                }
+                false => {}
+            }
+            Ok(())
+        }
+        false => {
+            let _ = std::process::Command::new("systemctl")
+                .args(["--user", "disable", "openz-gateway.service"])
+                .output();
+            match manage_running_process {
+                true => {
+                    let _ = std::process::Command::new("systemctl")
+                        .args(["--user", "stop", "openz-gateway.service"])
+                        .output();
+                }
+                false => {}
+            }
+            Ok(())
+        }
+    }
 }
 
 async fn handle_gateway_submenu(config: &mut Config) -> Result<()> {
@@ -500,26 +543,55 @@ async fn handle_gateway_submenu(config: &mut Config) -> Result<()> {
                 Text::new(&format!("WebSocket Host [default: {}]:", ws.host)).prompt()?;
             apply_non_empty_input(&mut ws.host, &host_input);
 
+            let current_mode_label = match (ws.start_on_tui, ws.start_on_boot) {
+                (true, true) => {
+                    "Both (Start at system login AND when launching 'openz' TUI)"
+                }
+                (false, true) => "System Login Startup (systemd user service)",
+                (true, false) => "Auto-start on 'openz' TUI launch",
+                (false, false) => "None (Manual launch via 'openz webui' only)",
+            };
+
             let auto_start_options = vec![
-                "None (Manual launch only)".to_string(),
-                "Auto-start on TUI launch (TUI background thread)".to_string(),
-                "System Boot Daemon (Installs systemd user service)".to_string(),
+                "None (Manual launch via 'openz webui' only)".to_string(),
+                "Auto-start on 'openz' TUI launch".to_string(),
+                "System Login Startup (systemd user service)".to_string(),
+                "Both (Start at system login AND when launching 'openz' TUI)".to_string(),
             ];
 
             let auto_choice = select_menu_custom(
                 "Choose Gateway Auto-Start Preference:",
                 &auto_start_options,
-                "None (Manual launch only)",
+                current_mode_label,
                 None,
                 false,
             )?;
 
             match auto_choice {
+                Some(3) => {
+                    ws.start_on_boot = true;
+                    ws.start_on_tui = true;
+                    println!("Installing and enabling systemd user startup service...");
+                    match sync_gateway_systemd_service(true, true, &ws.host, ws.port) {
+                        Ok(()) => {
+                            println!(
+                                "{}✓ Gateway configured to start on system login AND when launching openz TUI!{}",
+                                EMERALD_GREEN, COLOR_RESET
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "{}✕ Failed to setup systemd service: {}{}",
+                                ERROR_RED, e, COLOR_RESET
+                            );
+                        }
+                    }
+                }
                 Some(2) => {
                     ws.start_on_boot = true;
                     ws.start_on_tui = false;
-                    println!("Installing and enabling systemd user service...");
-                    match setup_systemd_service() {
+                    println!("Installing and enabling systemd user startup service...");
+                    match sync_gateway_systemd_service(true, true, &ws.host, ws.port) {
                         Ok(()) => {
                             println!(
                                 "{}✓ systemd service openz-gateway.service installed and enabled successfully!{}",
@@ -537,19 +609,19 @@ async fn handle_gateway_submenu(config: &mut Config) -> Result<()> {
                 Some(1) => {
                     ws.start_on_boot = false;
                     ws.start_on_tui = true;
-                    let _ = disable_systemd_service();
-                    println!("Gateway configured to auto-start when terminal client launches.");
+                    let _ = sync_gateway_systemd_service(false, true, &ws.host, ws.port);
+                    println!("Gateway configured to auto-start when 'openz' TUI launches.");
                 }
                 _ => {
                     ws.start_on_boot = false;
                     ws.start_on_tui = false;
-                    let _ = disable_systemd_service();
-                    println!("Gateway auto-start disabled (manual launch only).");
+                    let _ = sync_gateway_systemd_service(false, true, &ws.host, ws.port);
+                    println!("Gateway auto-start disabled (manual launch via 'openz webui' only).");
                 }
             }
         }
         false => {
-            let _ = disable_systemd_service();
+            let _ = sync_gateway_systemd_service(false, true, &ws.host, ws.port);
         }
     }
 

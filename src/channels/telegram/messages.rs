@@ -74,6 +74,25 @@ pub(crate) fn spawn_telegram_keyboard(
     });
 }
 
+fn resolve_telegram_bot_info() -> Option<(String, Client)> {
+    match super::state::get_telegram_bot_info() {
+        Some(pair) => Some(pair),
+        None => {
+            let cfg_token = crate::config::loader::load_config()
+                .ok()
+                .and_then(|cfg| cfg.channels.telegram)
+                .map(|tg| tg.bot_token)
+                .unwrap_or_default();
+            let token = match cfg_token.trim().is_empty() {
+                true => std::env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default(),
+                false => cfg_token,
+            };
+            let trimmed = token.trim().to_string();
+            (!trimmed.is_empty()).then(|| (trimmed, crate::core::http::default_http_client()))
+        }
+    }
+}
+
 /// Send a text response through the active Telegram bot, splitting messages at
 /// Telegram's message-size limit.
 pub async fn send_text_message(chat_id: i64, text: &str) -> anyhow::Result<()> {
@@ -81,8 +100,8 @@ pub async fn send_text_message(chat_id: i64, text: &str) -> anyhow::Result<()> {
 }
 
 pub async fn send_text_message_to_target(target: &str, text: &str) -> anyhow::Result<()> {
-    let (bot_token, client) = super::state::get_telegram_bot_info()
-        .ok_or_else(|| anyhow::anyhow!("Telegram bot is not active"))?;
+    let (bot_token, client) = resolve_telegram_bot_info()
+        .ok_or_else(|| anyhow::anyhow!("Telegram bot token is not configured"))?;
 
     for chunk in chunk_message(text, TELEGRAM_MAX_MESSAGE_BYTES) {
         let request = NotificationRequest {
@@ -143,4 +162,35 @@ pub async fn send_text_message_to_target(target: &str, text: &str) -> anyhow::Re
         }
     }
     Ok(())
+}
+
+pub async fn deliver_remote_reply(
+    sender: &str,
+    surface_label: &str,
+    outcome: Result<&str, &str>,
+) {
+    let chat_id_str = match sender.strip_prefix("telegram:") {
+        Some(target) => target.trim(),
+        None => return,
+    };
+    match chat_id_str.parse::<i64>() {
+        Ok(chat_id) => {
+            crate::agent::activity::clear_remote_turn_pending(chat_id);
+            super::state::stop_typing_indicator(chat_id);
+        }
+        Err(_) => {}
+    }
+
+    let reply_text = match outcome {
+        Ok(content) => {
+            let trimmed = content.trim();
+            match trimmed.is_empty() {
+                true => format!("✓ [{surface_label}] Completed (no text output)."),
+                false => trimmed.to_string(),
+            }
+        }
+        Err(err) => format!("❌ [{surface_label}] Error processing remote request: {err}"),
+    };
+
+    let _ = send_text_message_to_target(chat_id_str, &reply_text).await;
 }

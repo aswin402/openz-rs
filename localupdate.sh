@@ -49,7 +49,7 @@ FULL_RELEASE=false
 CLEAN_TARGET=false
 SKIP_WEBUI_BUILD=false
 RUN_CHECK=false
-USE_CARGO_PRETTY=true
+USE_CARGO_PRETTY=false
 INSTALL_CARGO_PRETTY=false
 
 for arg in "$@"; do
@@ -89,14 +89,14 @@ for arg in "$@"; do
             echo -e "${C_BOLD}Usage:${C_RESET} ./localupdate.sh [OPTIONS]"
             echo ""
             echo -e "${C_BOLD}Build Mode Options:${C_RESET}"
-            echo "  --balanced, --moderate, -b     Balanced CPU/RAM mode (default: opt-level=2, cgu=4, -j 2)"
+            echo "  --balanced, --moderate, -b     Balanced CPU/RAM mode (default: opt-level=2, cgu=4, -j 1)"
             echo "  --low-resource, --low-mem, -l  Minimum CPU/RAM mode for constrained machines (opt-level=1, -j 1)"
-            echo "  --release, --full-release, -r  Full ThinLTO production release profile (opt-level=3, lto=thin)"
+            echo "  --release, --full-release, -r  Full ThinLTO production release profile (opt-level=3, lto=thin, -j 1)"
             echo ""
             echo -e "${C_BOLD}TUI & Pipeline Options:${C_RESET}"
-            echo "  --pretty                       Use cargo-pretty live unit-graph TUI when available (default)"
-            echo "  --no-pretty, --builtin-tui     Use OpenZ built-in cargo-pretty-style inline TUI renderer"
-            echo "  --install-pretty               Auto-install cargo-pretty if missing"
+            echo "  --builtin-tui, --no-pretty     Use OpenZ built-in smooth animated TUI renderer (default)"
+            echo "  --pretty                       Use external cargo-pretty binary if installed"
+            echo "  --install-pretty               Auto-install external cargo-pretty if missing"
             echo "  --clean-target                 Run cargo clean before building to reclaim target/ disk space"
             echo "  --check                        Run an explicit pre-build cargo check pass"
             echo "  --skip-check                   Skip pre-build cargo check (default)"
@@ -135,19 +135,17 @@ if [ "$LOW_RESOURCE" = true ]; then
     PROFILE_DIR="release-low-resource"
     MODE_LABEL="Low-Resource (release-low-resource, -j ${CARGO_BUILD_JOBS})"
 elif [ "$BALANCED_RESOURCE" = true ]; then
-    export CARGO_BUILD_JOBS="${OPENZ_BUILD_JOBS:-2}"
+    export CARGO_BUILD_JOBS="${OPENZ_BUILD_JOBS:-1}"
     CARGO_FLAGS=(-j "$CARGO_BUILD_JOBS")
     CARGO_PROFILE_ARGS=(--profile release-balanced)
     PROFILE_DIR="release-balanced"
     MODE_LABEL="Balanced (release-balanced, -j ${CARGO_BUILD_JOBS})"
 else
-    if [ -n "${OPENZ_BUILD_JOBS:-}" ]; then
-        export CARGO_BUILD_JOBS="$OPENZ_BUILD_JOBS"
-        CARGO_FLAGS=(-j "$CARGO_BUILD_JOBS")
-    fi
+    export CARGO_BUILD_JOBS="${OPENZ_BUILD_JOBS:-1}"
+    CARGO_FLAGS=(-j "$CARGO_BUILD_JOBS")
     CARGO_PROFILE_ARGS=(--release)
     PROFILE_DIR="release"
-    MODE_LABEL="Full Release (ThinLTO, opt-level=3)"
+    MODE_LABEL="Full Release (ThinLTO, opt-level=3, -j ${CARGO_BUILD_JOBS})"
 fi
 
 target_size_kib() {
@@ -172,11 +170,18 @@ has_cargo_pretty() {
 
 detect_tui_engine_label() {
     if [ "$USE_CARGO_PRETTY" = true ] && has_cargo_pretty && [ "$IS_INTERACTIVE_TTY" = true ]; then
-        echo "cargo-pretty (live unit-graph TUI)"
+        echo "cargo-pretty (external unit-graph TUI)"
     else
-        echo "openz-pretty (built-in live ANSI TUI)"
+        echo "openz-live-tui (12.5fps shimmer & crate monitor)"
     fi
 }
+
+restore_terminal_cursor() {
+    if [ "$IS_TTY" = true ]; then
+        printf "\033[?25h"
+    fi
+}
+trap restore_terminal_cursor EXIT INT TERM
 
 render_banner() {
     echo -e "${C_WHITE}     ██████╗ ██████╗ ███████╗███╗   ██╗${C_RUST_DEEP}███████╗${C_RESET}"
@@ -186,47 +191,12 @@ render_banner() {
     echo -e "${C_WHITE}    ╚██████╔╝██║     ███████╗██║ ╚████║${C_RUST_LIGHT}███████╗${C_RESET}"
     echo -e "${C_WHITE}     ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝${C_RUST_LIGHT}╚══════╝${C_RESET}"
     echo -e "${C_BORDER}╭──────────────────────────────────────────────────────────────────────╮${C_RESET}"
-    printf "${C_BORDER}│${C_RESET} 🦊 ${C_BOLD}${C_TEXT}%-65s${C_RESET} ${C_BORDER}│${C_RESET}\n" "OpenZ Update Manager"
+    printf "${C_BORDER}│${C_RESET}  ${C_RUST_MID}◆${C_RESET} ${C_BOLD}${C_TEXT}%-65s${C_RESET} ${C_BORDER}│${C_RESET}\n" "OpenZ Update Manager"
     printf "${C_BORDER}│${C_RESET}    ${C_MUTED}Profile:${C_RESET}    ${C_RUST_LIGHT}%-53s${C_RESET} ${C_BORDER}│${C_RESET}\n" "$MODE_LABEL"
     printf "${C_BORDER}│${C_RESET}    ${C_MUTED}TUI Engine:${C_RESET} ${C_CYAN}%-53s${C_RESET} ${C_BORDER}│${C_RESET}\n" "$(detect_tui_engine_label)"
     printf "${C_BORDER}│${C_RESET}    ${C_MUTED}Target Dir:${C_RESET} ${C_TEXT}%-53s${C_RESET} ${C_BORDER}│${C_RESET}\n" "target/${PROFILE_DIR} (cache: $(target_size_human))"
     echo -e "${C_BORDER}╰──────────────────────────────────────────────────────────────────────╯${C_RESET}"
     echo ""
-}
-
-# Render a 28-cell Rust-ramp progress bar (matching cargo-pretty BAR_WIDTH = 28)
-render_rust_progress_bar() {
-    local current="$1"
-    local total="$2"
-    local width=28
-    if [ "$total" -le 0 ]; then
-        total=1
-    fi
-    if [ "$current" -gt "$total" ]; then
-        current="$total"
-    fi
-    local filled=$(( (current * width) / total ))
-    local empty=$(( width - filled ))
-    local bar=""
-    local i=0
-    while [ "$i" -lt "$filled" ]; do
-        if [ "$i" -lt 7 ]; then
-            bar="${bar}${C_RUST_DEEP}█"
-        elif [ "$i" -lt 15 ]; then
-            bar="${bar}${C_RUST_MID}█"
-        elif [ "$i" -lt 23 ]; then
-            bar="${bar}${C_RUST_LIGHT}█"
-        else
-            bar="${bar}${C_WHITE}█"
-        fi
-        i=$((i + 1))
-    done
-    i=0
-    while [ "$i" -lt "$empty" ]; do
-        bar="${bar}${C_DIM}░"
-        i=$((i + 1))
-    done
-    printf "%b%b" "$bar" "$C_RESET"
 }
 
 format_elapsed() {
@@ -240,47 +210,144 @@ format_elapsed() {
     fi
 }
 
-# Run a quick pipeline step with an animated spinner and status badge
+format_elapsed_ns() {
+    local start_ns="$1"
+    local end_ns="$2"
+    local diff_ms=$(( (end_ns - start_ns) / 1000000 ))
+    if [ "$diff_ms" -lt 0 ]; then
+        diff_ms=0
+    fi
+    local secs=$(( diff_ms / 1000 ))
+    local tenths=$(( (diff_ms % 1000) / 100 ))
+    local mins=$(( secs / 60 ))
+    local rem_secs=$(( secs % 60 ))
+    if [ "$mins" -gt 0 ]; then
+        printf "%dm %02d.%ds" "$mins" "$rem_secs" "$tenths"
+    else
+        printf "%d.%ds" "$secs" "$tenths"
+    fi
+}
+
+# Render a 12-cell animated sliding pulse bar for quick pipeline steps
+render_step_pulse_bar() {
+    local tick="$1"
+    local width=12
+    local pos=$(( tick % width ))
+    local bar=""
+    local i=0
+    while [ "$i" -lt "$width" ]; do
+        local dist=$(( i - pos ))
+        [ "$dist" -lt 0 ] && dist=$(( -dist ))
+        if [ "$dist" -eq 0 ]; then
+            bar="${bar}${C_WHITE}━"
+        elif [ "$dist" -eq 1 ]; then
+            bar="${bar}${C_RUST_LIGHT}━"
+        elif [ "$dist" -eq 2 ]; then
+            bar="${bar}${C_RUST_MID}━"
+        else
+            bar="${bar}${C_DIM}─"
+        fi
+        i=$((i + 1))
+    done
+    printf "%b%b" "$bar" "$C_RESET"
+}
+
+# Render a 28-cell animated Rust-gradient + live shimmer bar for Cargo compilation
+render_cargo_shimmer_bar() {
+    local filled="$1"
+    local total="$2"
+    local tick="$3"
+    local width=28
+    if [ "$total" -le 0 ]; then
+        total=1
+    fi
+    if [ "$filled" -gt "$total" ]; then
+        filled="$total"
+    fi
+    local filled_cells=$(( (filled * width) / total ))
+    if [ "$filled_cells" -lt 4 ]; then
+        filled_cells=4
+    fi
+    local wave_pos=$(( tick % width ))
+    local bar=""
+    local i=0
+    while [ "$i" -lt "$width" ]; do
+        local dist=$(( i - wave_pos ))
+        [ "$dist" -lt 0 ] && dist=$(( -dist ))
+        if [ "$i" -lt "$filled_cells" ]; then
+            if [ "$dist" -eq 0 ]; then
+                bar="${bar}${C_WHITE}█"
+            elif [ "$dist" -eq 1 ]; then
+                bar="${bar}${C_RUST_LIGHT}█"
+            elif [ "$i" -lt 8 ]; then
+                bar="${bar}${C_RUST_DEEP}█"
+            elif [ "$i" -lt 18 ]; then
+                bar="${bar}${C_RUST_MID}█"
+            else
+                bar="${bar}${C_RUST_LIGHT}█"
+            fi
+        else
+            if [ "$dist" -eq 0 ]; then
+                bar="${bar}${C_RUST_MID}▒"
+            elif [ "$dist" -eq 1 ]; then
+                bar="${bar}${C_RUST_DEEP}░"
+            else
+                bar="${bar}${C_DIM}░"
+            fi
+        fi
+        i=$((i + 1))
+    done
+    printf "%b%b" "$bar" "$C_RESET"
+}
+
+# Run a quick pipeline step with a 12.5fps spinner, sliding pulse bar, and 0.1s timer
 run_pipeline_step() {
     local step_id="$1"
     local label="$2"
     shift 2
-    local start_ts
-    start_ts="$(date +%s)"
+    local start_ns
+    start_ns="$(date +%s%N)"
     local log_file
     log_file="$(mktemp)"
 
     if [ "$IS_TTY" = true ]; then
+        printf "\033[?25l"
         "$@" >"$log_file" 2>&1 &
         local pid=$!
         local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
-        local idx=0
+        local tick=0
         while kill -0 "$pid" 2>/dev/null; do
-            local now_ts
-            now_ts="$(date +%s)"
-            local elapsed=$((now_ts - start_ts))
-            printf "\r  ${C_RUST_MID}%s${C_RESET} ${C_DIM}[%s]${C_RESET} ${C_TEXT}%-44s${C_RESET} ${C_MUTED}%6s${C_RESET}" \
-                "${frames[$idx]}" "$step_id" "$label" "$(format_elapsed "$elapsed")"
-            idx=$(( (idx + 1) % 10 ))
+            local now_ns
+            now_ns="$(date +%s%N)"
+            local elapsed_str
+            elapsed_str="$(format_elapsed_ns "$start_ns" "$now_ns")"
+            local pulse_bar
+            pulse_bar="$(render_step_pulse_bar "$tick")"
+            local frame="${frames[$(( tick % 10 ))]}"
+            printf "\r\033[2K  ${C_RUST_MID}%s${C_RESET} ${C_DIM}[%s]${C_RESET} ${C_TEXT}%-42s${C_RESET} %b ${C_MUTED}%7s${C_RESET}" \
+                "$frame" "$step_id" "$label" "$pulse_bar" "$elapsed_str"
+            tick=$((tick + 1))
             sleep 0.08
         done
         local rc=0
         wait "$pid" || rc=$?
-        local end_ts
-        end_ts="$(date +%s)"
-        local elapsed=$((end_ts - start_ts))
+        local end_ns
+        end_ns="$(date +%s%N)"
+        local elapsed_str
+        elapsed_str="$(format_elapsed_ns "$start_ns" "$end_ns")"
         local summary_note=""
         if [ -s "$log_file" ]; then
-            summary_note="$(tail -n 1 "$log_file" | tr -d '\r' | cut -c1-36)"
+            summary_note="$(tail -n 1 "$log_file" | tr -d '\r' | cut -c1-20)"
         fi
+        printf "\033[?25h"
         if [ "$rc" -eq 0 ]; then
-            printf "\r\033[2K  ${C_OK}✓${C_RESET} ${C_DIM}[%s]${C_RESET} ${C_TEXT}%-44s${C_RESET} ${C_MUTED}%-18s %5s${C_RESET}\n" \
-                "$step_id" "$label" "$summary_note" "$(format_elapsed "$elapsed")"
+            printf "\r\033[2K  ${C_OK}✓${C_RESET} ${C_DIM}[%s]${C_RESET} ${C_TEXT}%-42s${C_RESET} ${C_MUTED}%-20s %6s${C_RESET}\n" \
+                "$step_id" "$label" "$summary_note" "$elapsed_str"
             rm -f "$log_file"
             return 0
         else
-            printf "\r\033[2K  ${C_ERR}✗${C_RESET} ${C_DIM}[%s]${C_RESET} ${C_TEXT}%-44s${C_RESET} ${C_ERR}FAILED (%s)${C_RESET}\n" \
-                "$step_id" "$label" "$(format_elapsed "$elapsed")"
+            printf "\r\033[2K  ${C_ERR}✗${C_RESET} ${C_DIM}[%s]${C_RESET} ${C_TEXT}%-42s${C_RESET} ${C_ERR}FAILED (%s)${C_RESET}\n" \
+                "$step_id" "$label" "$elapsed_str"
             cat "$log_file" >&2
             rm -f "$log_file"
             return "$rc"
@@ -288,9 +355,9 @@ run_pipeline_step() {
     else
         printf "  • [%s] %s...\n" "$step_id" "$label"
         if "$@" >"$log_file" 2>&1; then
-            local end_ts
-            end_ts="$(date +%s)"
-            printf "  ✓ [%s] %s (%s)\n" "$step_id" "$label" "$(format_elapsed $((end_ts - start_ts)))"
+            local end_ns
+            end_ns="$(date +%s%N)"
+            printf "  ✓ [%s] %s (%s)\n" "$step_id" "$label" "$(format_elapsed_ns "$start_ns" "$end_ns")"
             rm -f "$log_file"
             return 0
         else
@@ -404,135 +471,182 @@ estimate_unit_total() {
     echo 450
 }
 
-# Built-in cargo-pretty-style live animated status view for Cargo builds
+# Built-in 12.5fps live animated status view for Cargo builds
 # Displays:
-#   - 28-cell Rust gradient progress bar + unit count + percentage + elapsed time
-#   - Live "Compiling" section + fading "Compiled" history (up to 4 rows)
-#   - Never swallows stderr silently; dumps full diagnostics on failure
+#   - Smooth rotating spinner + 28-cell Rust gradient shimmer bar + sub-second timers
+#   - Live active crate + compilation stage + per-crate timer
+#   - Recent completed crates with individual durations
+#   - Collapses cleanly into a single ✓ [5/6] row upon completion
 run_builtin_cargo_pretty_tui() {
     local cargo_subcmd="$1"
     shift
-    local start_ts
-    start_ts="$(date +%s)"
+    local start_ns
+    start_ns="$(date +%s%N)"
+    local crate_start_ns="$start_ns"
     local total_est
     total_est="$(estimate_unit_total)"
     local seen=0
-    local current_crate="resolving unit graph..."
-    local done_0=""
+    local compiled_count=0
+    local current_crate="resolving Cargo unit graph..."
+    local current_stage="initializing cargo ${cargo_subcmd}"
+    local done_0="cached dependencies verified"
     local done_1=""
-    local done_2=""
-    local done_3=""
     local err_log
     err_log="$(mktemp)"
+    local processed_lines=0
     local drawn_lines=0
+    local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
+    local tick=0
 
     if [ "$IS_TTY" = true ]; then
-        # Reserve 7 lines for the inline cargo-pretty status panel
-        printf "\n\n\n\n\n\n\n"
-        drawn_lines=7
+        printf "\033[?25l"
+        printf "\n\n\n\n\n\n"
+        drawn_lines=6
     fi
 
     draw_inline_panel() {
-        local now_ts
-        now_ts="$(date +%s)"
-        local elapsed=$((now_ts - start_ts))
-        local pct=0
-        if [ "$total_est" -gt 0 ]; then
-            pct=$(( (seen * 100) / total_est ))
-            [ "$pct" -gt 99 ] && pct=99
-        fi
+        local now_ns
+        now_ns="$(date +%s%N)"
+        local total_elapsed
+        total_elapsed="$(format_elapsed_ns "$start_ns" "$now_ns")"
+        local crate_elapsed
+        crate_elapsed="$(format_elapsed_ns "$crate_start_ns" "$now_ns")"
+        local frame="${frames[$(( tick % 10 ))]}"
+
+        local fill_val="$seen"
+        local fill_max="$total_est"
+        case "$current_crate" in
+            openz\ *|openz)
+                fill_val=26
+                fill_max=28
+                current_stage="compiling root binary (codegen / LTO · -j ${CARGO_BUILD_JOBS})"
+                ;;
+            linking\ *)
+                fill_val=28
+                fill_max=28
+                current_stage="linking final executable"
+                ;;
+        esac
+
         local bar
-        bar="$(render_rust_progress_bar "$seen" "$total_est")"
+        bar="$(render_cargo_shimmer_bar "$fill_val" "$fill_max" "$tick")"
+        local pulse_bar
+        pulse_bar="$(render_step_pulse_bar "$tick")"
+
+        local recent_line="$done_0"
+        if [ -n "$done_1" ]; then
+            recent_line="${done_0}  ·  ${done_1}"
+        fi
 
         if [ "$IS_TTY" = true ]; then
             printf "\033[%dA\r\033[J" "$drawn_lines"
-            printf "  ${C_BOLD}${C_RUST_MID}Compiling${C_RESET} ${C_TEXT}openz${C_RESET} %b ${C_BOLD}${C_WHITE}%3d%%${C_RESET} ${C_MUTED}(%d/%d units · %s)${C_RESET}\n" \
-                "$bar" "$pct" "$seen" "$total_est" "$(format_elapsed "$elapsed")"
-            printf "  ${C_BORDER}├─${C_RESET} ${C_RUST_MID}▸${C_RESET} ${C_WHITE}%-58s${C_RESET}\n" "${current_crate:0:58}"
-            printf "  ${C_BORDER}├─${C_RESET} ${C_OK}✓${C_RESET} ${FADE_0}%-58s${C_RESET}\n" "${done_0:----}"
-            printf "  ${C_BORDER}├─${C_RESET} ${C_OK}✓${C_RESET} ${FADE_1}%-58s${C_RESET}\n" "${done_1:----}"
-            printf "  ${C_BORDER}├─${C_RESET} ${C_OK}✓${C_RESET} ${FADE_2}%-58s${C_RESET}\n" "${done_2:----}"
-            printf "  ${C_BORDER}╰─${C_RESET} ${C_OK}✓${C_RESET} ${FADE_3}%-58s${C_RESET}\n" "${done_3:----}"
-            printf "  ${C_DIM}   cargo %s %s${C_RESET}\n" "$cargo_subcmd" "$*"
+            printf "  ${C_RUST_MID}%s${C_RESET} ${C_DIM}[5/6]${C_RESET} ${C_TEXT}%-42s${C_RESET} %b ${C_MUTED}%7s${C_RESET}\n" \
+                "$frame" "Building OpenZ (${PROFILE_DIR}, -j ${CARGO_BUILD_JOBS})" "$pulse_bar" "$total_elapsed"
+            printf "    ${C_BORDER}╭──────────────────────────────────────────────────────────────────────╮${C_RESET}\n"
+            printf "    ${C_BORDER}│${C_RESET} ${C_RUST_MID}▸${C_RESET} ${C_BOLD}${C_WHITE}%-48s${C_RESET} ${C_RUST_LIGHT}%17s${C_RESET} ${C_BORDER}│${C_RESET}\n" \
+                "${current_crate:0:48}" "${crate_elapsed}"
+            printf "    ${C_BORDER}│${C_RESET}   %b  ${C_MUTED}%-36s${C_RESET} ${C_BORDER}│${C_RESET}\n" \
+                "$bar" "${current_stage:0:36}"
+            printf "    ${C_BORDER}│${C_RESET}   ${C_OK}✓${C_RESET} ${FADE_0}%-64s${C_RESET} ${C_BORDER}│${C_RESET}\n" \
+                "${recent_line:0:64}"
+            printf "    ${C_BORDER}╰──────────────────────────────────────────────────────────────────────╯${C_RESET}\n"
         fi
+    }
+
+    process_new_log_lines() {
+        if [ ! -s "$err_log" ]; then
+            return 0
+        fi
+        local total_lines
+        total_lines="$(wc -l < "$err_log" 2>/dev/null || echo 0)"
+        if [ "$total_lines" -le "$processed_lines" ]; then
+            return 0
+        fi
+        while IFS= read -r raw_line; do
+            local trimmed
+            trimmed="$(printf '%s' "$raw_line" | sed 's/^[[:space:]]*//')"
+            case "$trimmed" in
+                Compiling\ *|Checking\ *)
+                    local now_ns
+                    now_ns="$(date +%s%N)"
+                    local prev_dur
+                    prev_dur="$(format_elapsed_ns "$crate_start_ns" "$now_ns")"
+                    local crate_info="${trimmed#Compiling }"
+                    crate_info="${crate_info#Checking }"
+                    crate_info="${crate_info%% (*}"
+                    if [ -n "$current_crate" ] && [ "$current_crate" != "resolving Cargo unit graph..." ]; then
+                        done_1="$done_0"
+                        done_0="${current_crate} (${prev_dur})"
+                    fi
+                    current_crate="$crate_info"
+                    crate_start_ns="$now_ns"
+                    compiled_count=$((compiled_count + 1))
+                    seen=$((seen + 1))
+                    current_stage="compiled ${compiled_count} crate(s) · -j ${CARGO_BUILD_JOBS}"
+                    if [ "$IS_TTY" != true ]; then
+                        printf "  [build #%d] %s\n" "$compiled_count" "$trimmed"
+                    fi
+                    ;;
+                Fresh\ *)
+                    seen=$((seen + 1))
+                    ;;
+                Finished\ *)
+                    local now_ns
+                    now_ns="$(date +%s%N)"
+                    local prev_dur
+                    prev_dur="$(format_elapsed_ns "$crate_start_ns" "$now_ns")"
+                    if [ -n "$current_crate" ] && [ "$current_crate" != "resolving Cargo unit graph..." ]; then
+                        done_1="$done_0"
+                        done_0="${current_crate} (${prev_dur})"
+                    fi
+                    current_crate="linking final binary..."
+                    crate_start_ns="$now_ns"
+                    seen="$total_est"
+                    ;;
+            esac
+        done < <(tail -n +"$((processed_lines + 1))" "$err_log" 2>/dev/null)
+        processed_lines="$total_lines"
     }
 
     draw_inline_panel
 
-    local fifo
-    fifo="$(mktemp -u)"
-    mkfifo "$fifo"
-
-    CARGO_TERM_COLOR=never cargo "$cargo_subcmd" "$@" >"$fifo" 2>&1 &
+    CARGO_TERM_COLOR=never cargo "$cargo_subcmd" "$@" >"$err_log" 2>&1 &
     local cargo_pid=$!
 
-    while IFS= read -r raw_line; do
-        echo "$raw_line" >>"$err_log"
-        local trimmed
-        trimmed="$(printf '%s' "$raw_line" | sed 's/^[[:space:]]*//')"
-        case "$trimmed" in
-            Compiling\ *|Checking\ *)
-                local crate_info="${trimmed#Compiling }"
-                crate_info="${crate_info#Checking }"
-                crate_info="${crate_info%% (*}"
-                if [ -n "$current_crate" ] && [ "$current_crate" != "resolving unit graph..." ]; then
-                    done_3="$done_2"
-                    done_2="$done_1"
-                    done_1="$done_0"
-                    done_0="$current_crate"
-                fi
-                current_crate="$crate_info"
-                seen=$((seen + 1))
-                if [ "$seen" -ge "$total_est" ]; then
-                    total_est=$((seen + 10))
-                fi
-                if [ "$IS_TTY" = true ]; then
-                    draw_inline_panel
-                else
-                    printf "  [%3d%% | %d/%d] %s\n" "$(( (seen * 100) / total_est ))" "$seen" "$total_est" "$trimmed"
-                fi
-                ;;
-            Fresh\ *)
-                seen=$((seen + 1))
-                ;;
-            Finished\ *)
-                if [ -n "$current_crate" ] && [ "$current_crate" != "resolving unit graph..." ]; then
-                    done_3="$done_2"
-                    done_2="$done_1"
-                    done_1="$done_0"
-                    done_0="$current_crate"
-                fi
-                current_crate="linking final binary..."
-                seen="$total_est"
-                [ "$IS_TTY" = true ] && draw_inline_panel
-                ;;
-        esac
-    done <"$fifo"
+    while kill -0 "$cargo_pid" 2>/dev/null; do
+        process_new_log_lines
+        if [ "$IS_TTY" = true ]; then
+            draw_inline_panel
+        fi
+        tick=$((tick + 1))
+        sleep 0.08
+    done
 
-    rm -f "$fifo"
     local rc=0
     wait "$cargo_pid" || rc=$?
-    local end_ts
-    end_ts="$(date +%s)"
-    local elapsed=$((end_ts - start_ts))
+    process_new_log_lines
+    local end_ns
+    end_ns="$(date +%s%N)"
+    local elapsed_str
+    elapsed_str="$(format_elapsed_ns "$start_ns" "$end_ns")"
 
     if [ "$rc" -eq 0 ]; then
         if [ "$IS_TTY" = true ]; then
             printf "\033[%dA\r\033[J" "$drawn_lines"
-            local full_bar
-            full_bar="$(render_rust_progress_bar 28 28)"
-            printf "  ${C_OK}✓${C_RESET} ${C_DIM}[5/6]${C_RESET} ${C_TEXT}%-24s${C_RESET} %b ${C_OK}100%%${C_RESET} ${C_MUTED}(%s)${C_RESET}\n" \
-                "Cargo ${cargo_subcmd} (${PROFILE_DIR})" "$full_bar" "$(format_elapsed "$elapsed")"
+            printf "\033[?25h"
+            printf "  ${C_OK}✓${C_RESET} ${C_DIM}[5/6]${C_RESET} ${C_TEXT}%-42s${C_RESET} ${C_MUTED}%-20s %6s${C_RESET}\n" \
+                "Building & installing OpenZ binary" "${PROFILE_DIR} (-j ${CARGO_BUILD_JOBS})" "$elapsed_str"
         else
-            printf "  ✓ [5/6] Cargo %s (%s) completed in %s\n" "$cargo_subcmd" "$PROFILE_DIR" "$(format_elapsed "$elapsed")"
+            printf "  ✓ [5/6] Cargo %s (%s) completed in %s\n" "$cargo_subcmd" "$PROFILE_DIR" "$elapsed_str"
         fi
         rm -f "$err_log"
         return 0
     else
         if [ "$IS_TTY" = true ]; then
             printf "\033[%dA\r\033[J" "$drawn_lines"
+            printf "\033[?25h"
         fi
-        echo -e "  ${C_ERR}✗ [5/6] Cargo ${cargo_subcmd} failed after $(format_elapsed "$elapsed"):${C_RESET}"
+        echo -e "  ${C_ERR}✗ [5/6] Cargo ${cargo_subcmd} failed after ${elapsed_str}:${C_RESET}"
         echo -e "${C_BORDER}────────────────────────────────────────────────────────────────────────${C_RESET}"
         tail -n 60 "$err_log" >&2
         echo -e "${C_BORDER}────────────────────────────────────────────────────────────────────────${C_RESET}"
@@ -541,8 +655,7 @@ run_builtin_cargo_pretty_tui() {
     fi
 }
 
-# Compile OpenZ using cargo-pretty when available in an interactive TTY,
-# or seamlessly fall back to the built-in cargo-pretty-style live TUI.
+# Compile OpenZ using the built-in 12.5fps live TUI (or external cargo-pretty when --pretty is passed)
 compile_and_install_openz() {
     if [ "$INSTALL_CARGO_PRETTY" = true ] && ! has_cargo_pretty; then
         run_pipeline_step "PRE" "Installing cargo-pretty TUI wrapper" \
@@ -554,12 +667,12 @@ compile_and_install_openz() {
         run_builtin_cargo_pretty_tui check --locked "${CARGO_PROFILE_ARGS[@]}" "${CARGO_FLAGS[@]}"
     fi
 
-    local build_start
-    build_start="$(date +%s)"
+    local build_start_ns
+    build_start_ns="$(date +%s%N)"
     local built_with_pretty=false
 
     if [ "$USE_CARGO_PRETTY" = true ] && has_cargo_pretty && [ "$IS_INTERACTIVE_TTY" = true ]; then
-        echo -e "  ${C_RUST_MID}▸${C_RESET} ${C_DIM}[5/6]${C_RESET} ${C_TEXT}Building with ${C_BOLD}cargo-pretty${C_RESET}${C_TEXT} live status view (${PROFILE_DIR})...${C_RESET}"
+        echo -e "  ${C_RUST_MID}▸${C_RESET} ${C_DIM}[5/6]${C_RESET} ${C_TEXT}Building with ${C_BOLD}cargo-pretty${C_RESET}${C_TEXT} live status view (${PROFILE_DIR}, -j ${CARGO_BUILD_JOBS})...${C_RESET}"
         if cargo pretty build --bin openz --locked "${CARGO_PROFILE_ARGS[@]}" "${CARGO_FLAGS[@]}"; then
             built_with_pretty=true
         else
@@ -584,13 +697,11 @@ compile_and_install_openz() {
     install -m 755 "$built_bin" "$tmp_bin"
     mv -f "$tmp_bin" "$dst_bin"
 
-    local build_end
-    build_end="$(date +%s)"
+    local build_end_ns
+    build_end_ns="$(date +%s%N)"
     if [ "$built_with_pretty" = true ]; then
-        local full_bar
-        full_bar="$(render_rust_progress_bar 28 28)"
-        printf "  ${C_OK}✓${C_RESET} ${C_DIM}[5/6]${C_RESET} ${C_TEXT}%-24s${C_RESET} %b ${C_OK}100%%${C_RESET} ${C_MUTED}(%s)${C_RESET}\n" \
-            "Installed ~/.cargo/bin/openz" "$full_bar" "$(format_elapsed $((build_end - build_start)))"
+        printf "  ${C_OK}✓${C_RESET} ${C_DIM}[5/6]${C_RESET} ${C_TEXT}%-42s${C_RESET} ${C_MUTED}%-20s %6s${C_RESET}\n" \
+            "Building & installing OpenZ binary" "${PROFILE_DIR} (-j ${CARGO_BUILD_JOBS})" "$(format_elapsed_ns "$build_start_ns" "$build_end_ns")"
     fi
 }
 
@@ -603,12 +714,15 @@ build_and_install_webui() {
         echo "skipped (no web/)"
         return 0
     fi
-    if ! command -v npm >/dev/null 2>&1; then
+    if [ -x "web/node_modules/.bin/tsc" ] && [ -x "web/node_modules/.bin/vite" ]; then
+        (cd web && ./node_modules/.bin/tsc -b >/dev/null 2>&1 && ./node_modules/.bin/vite build >/dev/null 2>&1)
+    elif command -v npm >/dev/null 2>&1; then
+        (cd web && npm run build >/dev/null 2>&1)
+    else
         echo "skipped (no npm)"
         return 0
     fi
 
-    (cd web && npm run build >/dev/null 2>&1)
     rm -rf "$HOME/.openz/web/dist"
     mkdir -p "$HOME/.openz/web/dist"
     cp -a web/dist/. "$HOME/.openz/web/dist/"

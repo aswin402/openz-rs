@@ -10,6 +10,9 @@ static TELEGRAM_BOT_INFO: OnceLock<(String, Client)> = OnceLock::new();
 pub(crate) static APPROVAL_CALLBACKS: OnceLock<Mutex<HashMap<String, oneshot::Sender<bool>>>> =
     OnceLock::new();
 static REMOTE_CONTROL_TARGETS: OnceLock<Mutex<HashMap<i64, String>>> = OnceLock::new();
+static REMOTE_MENU_OPTIONS: OnceLock<
+    Mutex<HashMap<i64, Vec<crate::agent::activity::RemoteTargetSession>>>,
+> = OnceLock::new();
 static ACTIVE_TYPING_LOOPS: OnceLock<Mutex<HashMap<i64, oneshot::Sender<()>>>> = OnceLock::new();
 static REMOTE_TYPING_HEARTBEATS: OnceLock<Mutex<HashMap<i64, Instant>>> = OnceLock::new();
 
@@ -92,6 +95,65 @@ pub fn start_typing_indicator(chat_id: i64, token: String, client: Client) {
     }
 }
 
+pub fn start_remote_typing_indicator(chat_id: i64, token: String, client: Client) {
+    let map = ACTIVE_TYPING_LOOPS.get_or_init(|| Mutex::new(HashMap::new()));
+    let (tx, rx) = oneshot::channel::<()>();
+
+    let got_inserted = match map.lock() {
+        Ok(mut guard) => {
+            match guard.remove(&chat_id) {
+                Some(old_tx) => {
+                    let _ = old_tx.send(());
+                }
+                None => {}
+            }
+            guard.insert(chat_id, tx);
+            true
+        }
+        Err(_) => false,
+    };
+    REMOTE_TYPING_HEARTBEATS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .ok()
+        .map(|mut guard| guard.insert(chat_id, Instant::now()));
+
+    match got_inserted {
+        true => {
+            tokio::spawn(async move {
+                let send_action_url = telegram_api_url(&token, "sendChatAction");
+                let payload = serde_json::json!({
+                    "chat_id": chat_id,
+                    "action": "typing"
+                });
+                let _ = client.post(&send_action_url).json(&payload).send().await;
+
+                let mut rx = rx;
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = &mut rx => {
+                            break;
+                        }
+                        _ = tokio::time::sleep(Duration::from_secs(3)) => {
+                            match crate::agent::activity::is_remote_turn_pending(chat_id) {
+                                false => {
+                                    stop_typing_indicator(chat_id);
+                                    break;
+                                }
+                                true => {
+                                    let _ = client.post(&send_action_url).json(&payload).send().await;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        }
+        false => {}
+    }
+}
+
 pub fn stop_typing_indicator(chat_id: i64) {
     let map = ACTIVE_TYPING_LOOPS.get_or_init(|| Mutex::new(HashMap::new()));
     match map.lock() {
@@ -136,8 +198,13 @@ pub(crate) fn spawn_remote_typing_watchdog(chat_id: i64, token: String, client: 
         let timeout = Duration::from_secs(super::messages::remote_timeout_secs());
         loop {
             tokio::time::sleep(Duration::from_secs(30)).await;
-            match typing_indicator_active(chat_id) {
-                false => return,
+            match typing_indicator_active(chat_id)
+                && crate::agent::activity::is_remote_turn_pending(chat_id)
+            {
+                false => {
+                    stop_typing_indicator(chat_id);
+                    return;
+                }
                 true => {}
             }
 
@@ -152,11 +219,12 @@ pub(crate) fn spawn_remote_typing_watchdog(chat_id: i64, token: String, client: 
                 true => {}
             }
 
+            crate::agent::activity::clear_remote_turn_pending(chat_id);
             stop_typing_indicator(chat_id);
             let send_url = telegram_api_url(&token, "sendMessage");
             let payload = serde_json::json!({
                 "chat_id": chat_id,
-                "text": "Remote TUI request timed out. The selected TUI session may have stopped. Use /remote to select an active session again."
+                "text": "Remote request timed out. The selected TUI or WebUI session may have stopped. Use /remote to select an active session again."
             });
             let _ = client.post(&send_url).json(&payload).send().await;
             return;
@@ -182,6 +250,7 @@ pub(crate) fn set_remote_session(chat_id: i64, session_key: String) {
 }
 
 pub(crate) fn clear_remote_session(chat_id: i64) {
+    crate::agent::activity::clear_remote_turn_pending(chat_id);
     let map = REMOTE_CONTROL_TARGETS.get_or_init(|| Mutex::new(HashMap::new()));
     match map.lock() {
         Ok(mut guard) => {
@@ -189,6 +258,29 @@ pub(crate) fn clear_remote_session(chat_id: i64) {
         }
         Err(_) => {}
     }
+}
+
+pub(crate) fn set_remote_menu_options(
+    chat_id: i64,
+    options: Vec<crate::agent::activity::RemoteTargetSession>,
+) {
+    let map = REMOTE_MENU_OPTIONS.get_or_init(|| Mutex::new(HashMap::new()));
+    match map.lock() {
+        Ok(mut guard) => {
+            guard.insert(chat_id, options);
+        }
+        Err(_) => {}
+    }
+}
+
+pub(crate) fn get_remote_menu_option(
+    chat_id: i64,
+    idx: usize,
+) -> Option<crate::agent::activity::RemoteTargetSession> {
+    let map = REMOTE_MENU_OPTIONS.get_or_init(|| Mutex::new(HashMap::new()));
+    map.lock()
+        .ok()
+        .and_then(|guard| guard.get(&chat_id).and_then(|items| items.get(idx).cloned()))
 }
 
 pub(crate) fn remote_session_button_label(

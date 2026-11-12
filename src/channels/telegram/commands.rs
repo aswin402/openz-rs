@@ -3,15 +3,13 @@ use crate::channels::notifications::telegram_api_url;
 use crate::channels::telegram::messages::{
     escape_markdown, spawn_telegram_keyboard, spawn_telegram_markdown, spawn_telegram_msg,
 };
-use crate::channels::telegram::state::{
-    clear_remote_session, remote_session_button_label, stop_typing_indicator,
-};
+use crate::channels::telegram::state::{clear_remote_session, stop_typing_indicator};
 use crate::channels::telegram::types::TelegramCommandAction;
 use reqwest::Client;
 use std::sync::Arc;
 
 pub(crate) const TELEGRAM_COMMANDS: &[(&str, &str)] = &[
-    ("remote", "Toggle TUI remote control mode"),
+    ("remote", "Control an active TUI or WebUI session"),
     ("local", "Switch to local bot chat mode"),
     ("new_session", "Start a new local session"),
     ("resume", "Resume a previous local session"),
@@ -531,24 +529,28 @@ pub(crate) async fn handle_command(
         false => {}
     }
 
-    let sessions = crate::agent::activity::list_active_tui_sessions();
-    match sessions.is_empty() {
+    let targets: Vec<_> = crate::agent::activity::list_remote_target_sessions()
+        .into_iter()
+        .take(12)
+        .collect();
+    match targets.is_empty() {
         true => {
             spawn_telegram_msg(
                 client.clone(),
                 token.to_string(),
                 chat_id,
-                "No active OpenZ TUI sessions found. Start `openz` in a terminal, then use /remote again.".to_string(),
+                "No active OpenZ TUI or WebUI/Gateway sessions found.\nStart `openz` (TUI) or `openz webui` (Gateway), then run /remote again.".to_string(),
             );
         }
         false => {
-            let keyboard: Vec<Vec<serde_json::Value>> = sessions
+            super::state::set_remote_menu_options(chat_id, targets.clone());
+            let keyboard: Vec<Vec<serde_json::Value>> = targets
                 .iter()
-                .take(10)
-                .map(|session| {
+                .enumerate()
+                .map(|(idx, target)| {
                     vec![serde_json::json!({
-                        "text": remote_session_button_label(session),
-                        "callback_data": format!("remote:{}", session.session_key)
+                        "text": target.label,
+                        "callback_data": format!("remote_idx:{}", idx)
                     })]
                 })
                 .collect();
@@ -556,7 +558,7 @@ pub(crate) async fn handle_command(
                 client.clone(),
                 token.to_string(),
                 chat_id,
-                "Select the OpenZ TUI session to control:".to_string(),
+                "Select an OpenZ session (TUI or WebUI) to control remotely:".to_string(),
                 serde_json::json!(keyboard),
             );
         }

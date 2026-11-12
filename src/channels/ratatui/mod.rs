@@ -15,7 +15,6 @@ pub use session::*;
 use anyhow::Result;
 pub use app::IS_RATATUI_ACTIVE;
 use app::{ChatMessage, ModalState, RatatuiApp};
-use crate::channels::Channel;
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind};
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
@@ -135,28 +134,79 @@ fn spawn_agent_turn(
     session_manager: Arc<crate::session::SessionManager>,
     workspace: std::path::PathBuf,
     turn_tx: tokio::sync::mpsc::UnboundedSender<TurnEvent>,
+    remote_sender: Option<String>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let (hb_stop_tx, mut hb_stop_rx) = tokio::sync::oneshot::channel::<()>();
+        let sender_for_hb = remote_sender.clone();
+        tokio::spawn(async move {
+            let tg_chat_id = sender_for_hb
+                .as_deref()
+                .and_then(|s| s.strip_prefix("telegram:"))
+                .and_then(|s| s.trim().parse::<i64>().ok());
+            let chat_id = match tg_chat_id {
+                Some(id) => id,
+                None => return,
+            };
+            loop {
+                tokio::select! {
+                    biased;
+                    _ = &mut hb_stop_rx => break,
+                    _ = tokio::time::sleep(Duration::from_secs(10)) => {
+                        crate::agent::activity::touch_remote_turn_pending(chat_id);
+                        crate::channels::telegram::refresh_remote_typing_indicator(chat_id);
+                    }
+                }
+            }
+        });
+
         let run_result = crate::config::loader::ACTIVE_WORKSPACE
             .scope(workspace, async {
                 agent_loop.run(&prompt, &session_key).await
             })
             .await;
+        let _ = hb_stop_tx.send(());
+
         match run_result {
-            Ok(res) => match session_manager.load(&session_key) {
-                Ok(session) => {
-                    let msgs = ChatMessage::from_session_messages(&session.messages);
-                    let _ = turn_tx.send(TurnEvent::SyncSession(msgs));
+            Ok(res) => {
+                match &remote_sender {
+                    Some(sender) => {
+                        crate::channels::telegram::messages::deliver_remote_reply(
+                            sender,
+                            "TUI",
+                            Ok(&res.content),
+                        )
+                        .await;
+                    }
+                    None => {}
                 }
-                Err(_) => {
-                    let _ = turn_tx.send(TurnEvent::SingleMessage(ChatMessage::simple(
-                        "assistant",
-                        res.content,
-                    )));
+                match session_manager.load(&session_key) {
+                    Ok(session) => {
+                        let msgs = ChatMessage::from_session_messages(&session.messages);
+                        let _ = turn_tx.send(TurnEvent::SyncSession(msgs));
+                    }
+                    Err(_) => {
+                        let _ = turn_tx.send(TurnEvent::SingleMessage(ChatMessage::simple(
+                            "assistant",
+                            res.content,
+                        )));
+                    }
                 }
-            },
+            }
             Err(err) => {
-                let _ = turn_tx.send(TurnEvent::Error(err.to_string()));
+                let err_str = err.to_string();
+                match &remote_sender {
+                    Some(sender) => {
+                        crate::channels::telegram::messages::deliver_remote_reply(
+                            sender,
+                            "TUI",
+                            Err(&err_str),
+                        )
+                        .await;
+                    }
+                    None => {}
+                }
+                let _ = turn_tx.send(TurnEvent::Error(err_str));
             }
         }
     })
@@ -191,112 +241,6 @@ fn send_approval_decision(
     }
 }
 
-fn spawn_background_channels(
-    config: &crate::config::schema::Config,
-    agent_loop: Arc<crate::agent::AgentLoop>,
-) {
-    match &config.channels.websocket {
-        Some(ws_config) => match ws_config.enabled && ws_config.start_on_tui {
-            true => {
-                let ws_config_clone = ws_config.clone();
-                let shared_loop = agent_loop.clone();
-                tokio::spawn(async move {
-                    let gateway =
-                        crate::channels::WsGateway::with_shared_loop(ws_config_clone, shared_loop);
-                    let _ = gateway.start().await;
-                });
-            }
-            false => {}
-        },
-        None => {}
-    }
-
-    match &config.channels.telegram {
-        Some(tg_config) => match tg_config.enabled {
-            true => {
-                let token = match tg_config.bot_token.is_empty() {
-                    true => std::env::var("TELEGRAM_BOT_TOKEN").ok(),
-                    false => Some(tg_config.bot_token.clone()),
-                };
-                match token {
-                    Some(token) => {
-                        let shared_loop = agent_loop.clone();
-                        tokio::spawn(async move {
-                            let channel = crate::channels::TelegramChannel::with_shared_loop(
-                                token,
-                                shared_loop,
-                            );
-                            let _ = channel.start().await;
-                        });
-                    }
-                    None => {}
-                }
-            }
-            false => {}
-        },
-        None => {}
-    }
-
-    match &config.channels.discord {
-        Some(dc_config) => match dc_config.enabled {
-            true => {
-                let token = match dc_config.bot_token.is_empty() {
-                    true => std::env::var("DISCORD_BOT_TOKEN").ok(),
-                    false => Some(dc_config.bot_token.clone()),
-                };
-                match token {
-                    Some(token) => {
-                        let shared_loop = agent_loop.clone();
-                        tokio::spawn(async move {
-                            let channel = crate::channels::DiscordChannel::with_shared_loop(
-                                token,
-                                shared_loop,
-                            );
-                            let _ = channel.start().await;
-                        });
-                    }
-                    None => {}
-                }
-            }
-            false => {}
-        },
-        None => {}
-    }
-
-    match &config.channels.whatsapp {
-        Some(wa_config) => match wa_config.enabled {
-            true => {
-                let wa_config_clone = wa_config.clone();
-                let shared_loop = agent_loop.clone();
-                tokio::spawn(async move {
-                    let channel = crate::channels::WhatsAppChannel::with_shared_loop(
-                        wa_config_clone.api_key,
-                        wa_config_clone.phone_number_id,
-                        shared_loop,
-                    );
-                    let _ = channel.start().await;
-                });
-            }
-            false => {}
-        },
-        None => {}
-    }
-
-    match &config.channels.email {
-        Some(email_config) => match email_config.enabled {
-            true => {
-                let shared_loop = agent_loop.clone();
-                tokio::spawn(async move {
-                    let channel = crate::channels::EmailChannel::with_shared_loop(shared_loop);
-                    let _ = channel.start().await;
-                });
-            }
-            false => {}
-        },
-        None => {}
-    }
-}
-
 // ── Scroll / render tuning ──────────────────────────────────────────────────
 const TICK_MS: u64 = 50;
 /// Mouse wheel and modifier-arrow scroll amount
@@ -320,6 +264,7 @@ impl Drop for RatatuiGuard {
         let _ = stdout().execute(crossterm::cursor::Show);
         IS_RATATUI_ACTIVE.store(false, Ordering::SeqCst);
         set_active_ratatui_session_key(None);
+        remove_tui_marker_in_dir(&tui_marker_dir(), std::process::id());
     }
 }
 
@@ -424,7 +369,8 @@ pub fn coalesce_unbracketed_paste_batch(events: Vec<Event>, modal_active: bool) 
 }
 
 pub async fn handle_ratatui_tui() -> Result<()> {
-    let config = crate::config::loader::load_config().unwrap_or_default();
+    let raw_config = crate::config::loader::load_config().unwrap_or_default();
+    let config = raw_config.with_ui_surface("tui");
     let mut model = config.agents.defaults.model.clone();
     let mut provider = config.agents.defaults.provider.clone();
     let marker_dir = tui_marker_dir();
@@ -432,6 +378,13 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     let default_base_key = crate::config::loader::get_cli_session_key();
     let base_session_key =
         allocate_tui_session_key_in_dir(&marker_dir, current_pid, &default_base_key);
+    let _ = write_tui_marker_in_dir(
+        &marker_dir,
+        current_pid,
+        &base_session_key,
+        &model,
+        &provider,
+    );
     let session_key = Arc::new(tokio::sync::RwLock::new(base_session_key.clone()));
     let workspace = crate::config::loader::active_workspace_or_current_dir();
 
@@ -441,6 +394,25 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     let agent_loop = Arc::new(crate::cli::builder::build_agent_loop(config.clone()).await?);
 
     crate::cron::scheduler::start_scheduler(config.clone());
+
+    let ws_auto_cfg = raw_config.channels.websocket.clone().unwrap_or_default();
+    match ws_auto_cfg.enabled && ws_auto_cfg.start_on_tui {
+        true => {
+            let webui_cfg = raw_config.with_ui_surface("webui");
+            tokio::spawn(async move {
+                match crate::cli::builder::build_agent_loop(webui_cfg).await {
+                    Ok(webui_loop) => {
+                        let gateway = crate::channels::WsGateway::new(ws_auto_cfg, webui_loop);
+                        let _ = gateway.start_background_quiet().await;
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to initialize auto-start Gateway from TUI: {}", e);
+                    }
+                }
+            });
+        }
+        false => {}
+    }
 
     let history = crate::cli::load_session_history()?;
     match history.is_empty() {
@@ -535,7 +507,6 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     });
 
     crate::cli::set_silent_mode(true);
-    spawn_background_channels(&config, agent_loop.clone());
 
     install_ratatui_panic_hook();
     enable_raw_mode()?;
@@ -551,7 +522,9 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     IS_RATATUI_ACTIVE.store(true, Ordering::SeqCst);
     let _guard = RatatuiGuard;
 
-    let mut session_config = config.clone();
+    let mut session_config = crate::config::loader::load_config()
+        .unwrap_or_else(|_| config.clone())
+        .with_ui_surface("tui");
     match session_manager.load(&active_key) {
         Ok(session) => {
             crate::agent::agent_loop::apply_session_overrides(
@@ -565,6 +538,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     }
 
     let mut app = RatatuiApp::new(model, provider, active_key.clone());
+    app.set_theme(&session_config.ui_theme("tui"));
     let _ = write_tui_marker_in_dir(
         &marker_dir,
         current_pid,
@@ -696,8 +670,8 @@ pub async fn handle_ratatui_tui() -> Result<()> {
             app.scroll_to_bottom();
 
             match app.is_thinking {
-                false => match app.pop_next_prompt() {
-                    Some(next_prompt) => {
+                false => match app.pop_next_turn_request() {
+                    Some((next_prompt, next_remote_sender)) => {
                         app.is_thinking = true;
                         app.work_start = Some(Instant::now());
                         app.set_activity(animation::AgentActivity::from_user_prompt(&next_prompt));
@@ -710,11 +684,47 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                             session_manager.clone(),
                             workspace.clone(),
                             turn_tx.clone(),
+                            next_remote_sender,
                         ));
                     }
                     None => {}
                 },
                 true => {}
+            }
+        }
+
+        let inbox_session_key = session_key.read().await.clone();
+        while let Some(inbox_msg) =
+            crate::agent::activity::pop_inbox_message(&inbox_session_key)
+        {
+            app.messages.push(ChatMessage::notice(format!(
+                "🔌 Remote prompt from `{}`",
+                inbox_msg.sender
+            )));
+            app.messages
+                .push(ChatMessage::simple("user", inbox_msg.message.clone()));
+            app.scroll_to_bottom();
+
+            match app.is_thinking {
+                true => {
+                    app.queue_remote_prompt(inbox_msg.message, inbox_msg.sender);
+                }
+                false => {
+                    app.is_thinking = true;
+                    app.work_start = Some(Instant::now());
+                    app.set_activity(animation::AgentActivity::from_user_prompt(
+                        &inbox_msg.message,
+                    ));
+                    current_turn_handle = Some(spawn_agent_turn(
+                        inbox_msg.message,
+                        agent_loop.clone(),
+                        inbox_session_key.clone(),
+                        session_manager.clone(),
+                        workspace.clone(),
+                        turn_tx.clone(),
+                        Some(inbox_msg.sender),
+                    ));
+                }
             }
         }
 
@@ -1046,7 +1056,10 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                                 restored_key.clone(),
                                                             ));
 
-                                                            let mut restored_cfg = config.clone();
+                                                            let mut restored_cfg =
+                                                                crate::config::loader::load_config()
+                                                                    .unwrap_or_else(|_| config.clone())
+                                                                    .with_ui_surface("tui");
                                                             crate::agent::agent_loop::apply_session_overrides(
                                                                 &mut restored_cfg,
                                                                 &loaded.metadata,
@@ -1588,6 +1601,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                     session_manager.clone(),
                                                     workspace.clone(),
                                                     turn_tx.clone(),
+                                                    None,
                                                 ));
                                             }
                                         }
@@ -1622,9 +1636,9 @@ pub async fn handle_ratatui_tui() -> Result<()> {
     crate::agent::activity::remove_active_tui_session(&exit_session_key);
     match is_last_live_tui_in_dir(&marker_dir, current_pid) {
         true => {
-            let _ = crate::channels::save_default_model_selection(&config, &app.provider, &app.model);
             crate::shutdown::trigger();
-            crate::channels::shutdown_gateways_bounded(&config).await;
+            crate::providers::ollama_manager::unload_active_ollama_model(&config).await;
+            crate::providers::ollama_manager::stop_local_ollama();
         }
         false => {
             crate::shutdown::trigger();

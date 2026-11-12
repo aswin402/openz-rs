@@ -6,12 +6,28 @@ const SESSION_KEY_PREFIX_MAPPINGS: &[(&str, &str)] = &[
     ("cli_", "cli"),
     ("subagent_", "subagent"),
     ("telegram_", "telegram"),
+    ("web_", "web"),
     ("ws_", "ws"),
 ];
+
+pub(crate) fn is_webui_session_key(key: &str) -> bool {
+    key.starts_with("ws:") || key.starts_with("web:")
+}
+
+pub(crate) fn ensure_webui_session_key(key: &str) -> String {
+    match is_webui_session_key(key) {
+        true => key.to_string(),
+        false => {
+            let sanitized = key.replace(':', "_");
+            format!("ws:{sanitized}")
+        }
+    }
+}
 
 fn map_summaries_to_json(summaries: Vec<crate::session::SessionSummary>) -> Vec<Value> {
     summaries
         .into_iter()
+        .filter(|s| is_webui_session_key(&s.key))
         .map(|s| {
             let title = s.preview_title(36, &s.key);
             let last_message_at = s.updated_at.timestamp_millis().max(0) as u128;
@@ -40,14 +56,31 @@ pub(crate) async fn fetch_real_sessions_list_paginated(
     offset: usize,
     limit: usize,
 ) -> Value {
-    let (summaries, total) = session_mgr
-        .list_summaries_paginated_async(offset, limit)
-        .await;
-    let sessions = map_summaries_to_json(summaries);
+    let all_webui: Vec<crate::session::SessionSummary> = session_mgr
+        .list_summaries_async()
+        .await
+        .into_iter()
+        .filter(|s| is_webui_session_key(&s.key))
+        .collect();
+    let total = all_webui.len();
+    let page: Vec<crate::session::SessionSummary> =
+        all_webui.into_iter().skip(offset).take(limit).collect();
+    let sessions = map_summaries_to_json(page);
     super::super::protocol::sessions_list_paginated(sessions, total, offset, limit)
 }
 
-pub(crate) fn resolve_session_key(
+fn map_chat_id_fallback_scheme(chat_id: &str) -> String {
+    SESSION_KEY_PREFIX_MAPPINGS
+        .iter()
+        .find_map(|(prefix, scheme)| {
+            chat_id
+                .strip_prefix(prefix)
+                .map(|rest| format!("{scheme}:{rest}"))
+        })
+        .unwrap_or_else(|| format!("ws:{chat_id}"))
+}
+
+pub(crate) async fn resolve_session_key_async(
     session_mgr: &crate::session::SessionManager,
     chat_id: &str,
 ) -> String {
@@ -56,9 +89,10 @@ pub(crate) fn resolve_session_key(
         false => {}
     }
     let path = session_mgr.file_path(chat_id);
-    match path.exists() {
+    match tokio::fs::try_exists(&path).await.unwrap_or(false) {
         true => {
-            let stored_key = std::fs::read_to_string(&path)
+            let stored_key = tokio::fs::read_to_string(&path)
+                .await
                 .ok()
                 .and_then(|content| serde_json::from_str::<Value>(&content).ok())
                 .and_then(|value| {
@@ -71,14 +105,7 @@ pub(crate) fn resolve_session_key(
         }
         false => {}
     }
-    SESSION_KEY_PREFIX_MAPPINGS
-        .iter()
-        .find_map(|(prefix, scheme)| {
-            chat_id
-                .strip_prefix(prefix)
-                .map(|rest| format!("{scheme}:{rest}"))
-        })
-        .unwrap_or_else(|| format!("ws:{chat_id}"))
+    map_chat_id_fallback_scheme(chat_id)
 }
 
 pub(crate) async fn fetch_real_session_history(
@@ -86,8 +113,9 @@ pub(crate) async fn fetch_real_session_history(
     chat_id: &str,
 ) -> Value {
     let mut messages = Vec::new();
-    let load_key = resolve_session_key(session_mgr, chat_id);
-    match session_mgr.load(&load_key) {
+    let resolved_key = resolve_session_key_async(session_mgr, chat_id).await;
+    let load_key = ensure_webui_session_key(&resolved_key);
+    match session_mgr.load_async(&load_key).await {
         Ok(session) => {
             for (index, message) in session.messages.iter().enumerate() {
                 let timestamp = message
@@ -140,7 +168,7 @@ pub(crate) async fn archive_session_event(
         false => {}
     }
 
-    let session_key = resolve_session_key(session_mgr, requested_chat_id);
+    let session_key = resolve_session_key_async(session_mgr, requested_chat_id).await;
     match session_mgr.archive_async(&session_key).await {
         Ok(Some(archived)) => super::super::protocol::session_archived(
             "success",
@@ -188,7 +216,7 @@ pub(crate) async fn delete_session_event(
         false => {}
     }
 
-    let session_key = resolve_session_key(session_mgr, requested_chat_id);
+    let session_key = resolve_session_key_async(session_mgr, requested_chat_id).await;
     match session_mgr.delete_async(&session_key).await {
         Ok(deleted) => super::super::protocol::session_deleted(
             "success",

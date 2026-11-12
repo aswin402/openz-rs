@@ -64,6 +64,17 @@ function attachActivityNotice(
   });
 }
 
+function isChatActivelyStreaming(
+  state: ReturnType<StoreEventContext['get']>,
+  chatId: string,
+): boolean {
+  if (!chatId) return false;
+  if (state.activeTurnIds[chatId]) return true;
+  const chatMessages = state.messages[chatId] || [];
+  const lastMsg = chatMessages[chatMessages.length - 1];
+  return Boolean(lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming);
+}
+
 function upsertStreamingAssistantMessage(
   { set, get }: StoreEventContext,
   chatId: string,
@@ -71,8 +82,10 @@ function upsertStreamingAssistantMessage(
   initialPatch: Partial<OpenZMessage>,
   setStreamingOnExisting = false,
 ) {
+  if (!isChatActivelyStreaming(get(), chatId)) return;
   const chatMessages = get().messages[chatId] || [];
   const lastMsg = chatMessages[chatMessages.length - 1];
+  const isActiveChat = chatId === get().activeChatId;
 
   if (lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming) {
     set({
@@ -80,7 +93,7 @@ function upsertStreamingAssistantMessage(
         ...get().messages,
         [chatId]: [...chatMessages.slice(0, -1), updateExisting(lastMsg)],
       },
-      ...(setStreamingOnExisting ? { isStreaming: true } : {}),
+      ...(setStreamingOnExisting && isActiveChat ? { isStreaming: true } : {}),
     });
     return;
   }
@@ -96,7 +109,7 @@ function upsertStreamingAssistantMessage(
   };
   set({
     messages: { ...get().messages, [chatId]: [...chatMessages, newMsg] },
-    isStreaming: true,
+    ...(isActiveChat ? { isStreaming: true } : {}),
   });
 }
 
@@ -117,7 +130,7 @@ function appendStreamingAssistantDelta(
         ? { ...lastMsg, content: lastMsg.content + chunk }
         : { ...lastMsg, reasoningContent: (lastMsg.reasoningContent || '') + chunk },
     field === 'content' ? { content: chunk } : { reasoningContent: chunk },
-    field === 'content',
+    true,
   );
 }
 
@@ -150,11 +163,27 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
     const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
     const turnId = asString(payload.turn_id)?.trim();
     if (!turnId) return;
-    const activeTurns = get().activeTurnIds;
-    if (activeTurns[chatId] && activeTurns[chatId] !== turnId) return;
+    const nextActiveTurns = { ...get().activeTurnIds, [chatId]: turnId };
     set({
-      activeTurnIds: { ...activeTurns, [chatId]: turnId },
-      isStreaming: true,
+      activeTurnIds: nextActiveTurns,
+      ...(chatId === get().activeChatId ? { isStreaming: true } : {}),
+    });
+  });
+
+  wsService.on('remote_user_message', (payload) => {
+    const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
+    const content = asString(payload.content) || '';
+    if (!chatId || !content.trim()) return;
+    const chatMessages = get().messages[chatId] || [];
+    const sender = asString(payload.sender)?.trim() || 'remote';
+    const userMsg: OpenZMessage = {
+      id: newMsgId('remote-user'),
+      role: 'user',
+      content: `[Remote · ${sender}] ${content}`,
+      timestamp: typeof payload.timestamp === 'number' ? payload.timestamp : Date.now(),
+    };
+    set({
+      messages: { ...get().messages, [chatId]: [...chatMessages, userMsg] },
     });
   });
 
@@ -323,9 +352,9 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
     set({
       messages: { ...get().messages, [chatId]: settledMessages },
       activeTurnIds: activeTurns,
-      isStreaming: Object.keys(activeTurns).length > 0,
+      isStreaming: Boolean(activeTurns[get().activeChatId]),
     });
-    window.setTimeout(() => {
+    globalThis.setTimeout(() => {
       if (pendingRunIds.length === 0) return;
       set({
         orchestrationRuns: {
@@ -363,7 +392,7 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
         [chatId]: settleStoppedOrchestrationRuns(get().orchestrationRuns[chatId] || []),
       },
       activeTurnIds: activeTurns,
-      isStreaming: Object.keys(activeTurns).length > 0,
+      isStreaming: Boolean(activeTurns[get().activeChatId]),
     });
   });
 
@@ -423,7 +452,7 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
       },
       orchestrationRuns,
       activeTurnIds: activeTurns,
-      isStreaming: Object.keys(activeTurns).length > 0,
+      isStreaming: Boolean(activeTurns[get().activeChatId]),
     });
   });
 }

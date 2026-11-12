@@ -9,6 +9,7 @@ fn is_self_target(current_session: Option<&str>, target_session: &str) -> bool {
         Some(current) => {
             current == target_session
                 || (target_session == "cli:direct" && current.starts_with("cli:"))
+                || (target_session == "ws:direct" && current.starts_with("ws:"))
         }
         None => false,
     }
@@ -21,7 +22,7 @@ impl Tool for SendRemoteInputTool {
     }
 
     fn description(&self) -> &str {
-        "Queues a prompt, command, or query for another active agent session on the computer (e.g. 'cli:direct'). Self-targeting the current session is rejected to prevent TUI input loops."
+        "Queues a prompt, command, or query for another active OpenZ session on this machine — either a TUI session ('cli:direct' or 'cli:<id>') or a WebUI/Gateway session ('ws:direct', 'ws:new', or 'ws:<id>'). Self-targeting the current session is rejected."
     }
 
     fn parameters(&self) -> serde_json::Value {
@@ -30,7 +31,7 @@ impl Tool for SendRemoteInputTool {
             "properties": {
                 "session_id": {
                     "type": "string",
-                    "description": "The target session ID to send the input to (typically 'cli:direct')."
+                    "description": "Target session ID: 'cli:direct' (active TUI), 'ws:direct' (live open WebUI session), 'ws:new' (fresh WebUI session), 'list' (list available sessions), or an explicit 'cli:<id>' / 'ws:<id>'."
                 },
                 "message": {
                     "type": "string",
@@ -49,7 +50,23 @@ impl Tool for SendRemoteInputTool {
         let message = arguments
             .get("message")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("Missing 'message'"))?;
+            .unwrap_or("");
+
+        match session_id.trim() == "list" {
+            true => {
+                let sessions = crate::agent::activity::list_remote_target_sessions();
+                return Ok(json!({
+                    "status": "success",
+                    "sessions": sessions
+                }));
+            }
+            false => {}
+        }
+
+        match message.trim().is_empty() {
+            true => return Err(anyhow!("Missing non-empty 'message'")),
+            false => {}
+        }
 
         match is_self_target(
             crate::agent::style::spinner::get_current_session_key().as_deref(),
@@ -65,6 +82,17 @@ impl Tool for SendRemoteInputTool {
 
         let target_session = match session_id {
             "cli:direct" => crate::agent::activity::resolve_cli_direct_target()?,
+            "ws:direct" => crate::agent::activity::resolve_ws_direct_target()?,
+            "ws:new" => {
+                match crate::agent::activity::get_active_gateway_status().is_some() {
+                    true => format!("ws:{}", uuid::Uuid::new_v4()),
+                    false => {
+                        return Err(anyhow!(
+                            "Gateway / WebUI server is not active; launch `openz webui` first"
+                        ));
+                    }
+                }
+            }
             _ => session_id.to_string(),
         };
 
@@ -80,11 +108,27 @@ impl Tool for SendRemoteInputTool {
             false => {}
         }
 
-        crate::agent::activity::send_inbox_message(&target_session, message, "remote")?;
+        let missing_active_gateway = target_session.starts_with("ws:")
+            && crate::agent::activity::get_active_gateway_status().is_none();
+        match missing_active_gateway {
+            true => {
+                return Err(anyhow!(
+                    "No active WebUI / Gateway server is running for '{}'; start `openz webui` first",
+                    target_session
+                ));
+            }
+            false => {}
+        }
+
+        let sender = crate::agent::style::spinner::get_current_session_key()
+            .filter(|key| key.starts_with("telegram:"))
+            .unwrap_or_else(|| "remote".to_string());
+        crate::agent::activity::send_inbox_message(&target_session, message, &sender)?;
 
         Ok(json!({
             "status": "success",
-            "detail": format!("Successfully forwarded remote prompt to session '{}'", session_id)
+            "target_session": target_session,
+            "detail": format!("Successfully forwarded remote prompt to session '{}'", target_session)
         }))
     }
 }

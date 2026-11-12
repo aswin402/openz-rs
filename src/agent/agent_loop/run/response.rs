@@ -62,6 +62,19 @@ async fn continue_truncated_response(
             Ok(cont_resp) => {
                 finish_reason = cont_resp.finish_reason.clone();
                 let _ = cont_resp.content.as_ref().map(|cont_content| {
+                    let _ = (ctx.streamed && !cont_content.is_empty()).then(|| {
+                        let _ = crate::channels::websocket::ws_chat_id(ctx.session_key).map(
+                            |chat_id| {
+                                crate::channels::websocket::publish_ws_event(
+                                    crate::channels::websocket::protocol::delta(
+                                        chat_id,
+                                        crate::agent::agent_loop::current_turn_id(),
+                                        cont_content.clone(),
+                                    ),
+                                );
+                            },
+                        );
+                    });
                     match accumulated_content.as_mut() {
                         Some(acc) => acc.push_str(cont_content),
                         None => accumulated_content = Some(cont_content.clone()),
@@ -191,6 +204,7 @@ async fn recover_from_reasoning_only_response(
                     let mut recovery_content = String::new();
                     let mut recovery_reasoning = String::new();
                     let mut recovery_finish_reason = "stop".to_string();
+                    let mut ws_recovery_streamed = false;
                     let mut recovery_assembly =
                         crate::agent::agent_loop::streaming::StreamingAssembly::new();
 
@@ -220,17 +234,37 @@ async fn recover_from_reasoning_only_response(
                                     markdown_streamer,
                                     content_streaming_started,
                                 );
-                                crate::agent::agent_loop::tool_execution::send_progress_update(
-                                    ctx.session_key,
-                                    &text,
-                                )
-                                .await;
+                                let _ = (!text.is_empty()).then(|| {
+                                    let _ = crate::channels::websocket::ws_chat_id(ctx.session_key)
+                                        .map(|chat_id| {
+                                            ws_recovery_streamed = true;
+                                            crate::channels::websocket::publish_ws_event(
+                                                crate::channels::websocket::protocol::delta(
+                                                    chat_id,
+                                                    crate::agent::agent_loop::current_turn_id(),
+                                                    text.clone(),
+                                                ),
+                                            );
+                                        });
+                                });
                                 recovery_assembly.push_chunk(
                                     crate::providers::ChatStreamChunk::Content(text),
                                 );
                             }
                             crate::providers::ChatStreamChunk::Reasoning(text) => {
                                 recovery_reasoning.push_str(&text);
+                                let _ = (!text.is_empty()).then(|| {
+                                    let _ = crate::channels::websocket::ws_chat_id(ctx.session_key)
+                                        .map(|chat_id| {
+                                            crate::channels::websocket::publish_ws_event(
+                                                crate::channels::websocket::protocol::reasoning_delta(
+                                                    chat_id,
+                                                    crate::agent::agent_loop::current_turn_id(),
+                                                    text.clone(),
+                                                ),
+                                            );
+                                        });
+                                });
                                 recovery_assembly.push_chunk(
                                     crate::providers::ChatStreamChunk::Reasoning(text),
                                 );
@@ -303,7 +337,7 @@ async fn recover_from_reasoning_only_response(
                             );
                             resp.finish_reason = recovery_finish_reason;
                             resp.tool_calls.clear();
-                            ctx.streamed = *content_streaming_started;
+                            ctx.streamed = *content_streaming_started || ws_recovery_streamed;
                         }
                     }
                     Ok(())

@@ -43,7 +43,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
 }
 
 pub async fn handle_gateway() -> Result<()> {
-    let config = load_config()?;
+    let config = load_config()?.with_ui_surface("webui");
     let ws_config = config.channels.websocket.clone().unwrap_or_default();
 
     start_scheduler(config.clone());
@@ -53,12 +53,12 @@ pub async fn handle_gateway() -> Result<()> {
     tokio::select! {
         biased;
         _ = tokio::signal::ctrl_c() => {
-            crate::println!("\r\nExiting Gateway server...");
+            crate::println!("\r\nExiting WebUI server...");
         }
         res = gateway.start() => {
             match res {
                 Ok(()) => {}
-                Err(e) => crate::eprintln!("Gateway error: {}", e),
+                Err(e) => crate::eprintln!("WebUI error: {}", e),
             }
         }
     }
@@ -69,10 +69,11 @@ pub async fn handle_gateway() -> Result<()> {
 }
 
 pub async fn handle_telegram() -> Result<()> {
-    let config = load_config()?;
+    let config = load_config()?.with_ui_surface("telegram");
     let tg_config = config.channels.telegram.clone().unwrap_or_default();
     let token = resolve_channel_secret(tg_config.bot_token, "TELEGRAM_BOT_TOKEN")?;
 
+    crate::channels::mark_external_bot_channel_active();
     start_scheduler(config.clone());
     let agent_loop = build_agent_loop(config.clone()).await?;
     let channel = TelegramChannel::new(token, agent_loop);
@@ -80,10 +81,11 @@ pub async fn handle_telegram() -> Result<()> {
 }
 
 pub async fn handle_discord() -> Result<()> {
-    let config = load_config()?;
+    let config = load_config()?.with_ui_surface("discord");
     let dc_config = config.channels.discord.clone().unwrap_or_default();
     let token = resolve_channel_secret(dc_config.bot_token, "DISCORD_BOT_TOKEN")?;
 
+    crate::channels::mark_external_bot_channel_active();
     start_scheduler(config.clone());
     let agent_loop = build_agent_loop(config.clone()).await?;
     let channel = DiscordChannel::new(token, agent_loop);
@@ -91,11 +93,12 @@ pub async fn handle_discord() -> Result<()> {
 }
 
 pub async fn handle_whatsapp() -> Result<()> {
-    let config = load_config()?;
+    let config = load_config()?.with_ui_surface("whatsapp");
     let wa_config = config.channels.whatsapp.clone().unwrap_or_default();
     let key = resolve_channel_secret(wa_config.api_key, "WHATSAPP_API_KEY")?;
     let phone_id = resolve_channel_secret(wa_config.phone_number_id, "WHATSAPP_PHONE_NUMBER_ID")?;
 
+    crate::channels::mark_external_bot_channel_active();
     start_scheduler(config.clone());
     let agent_loop = build_agent_loop(config.clone()).await?;
     let channel = WhatsAppChannel::new(key, phone_id, agent_loop);
@@ -103,7 +106,7 @@ pub async fn handle_whatsapp() -> Result<()> {
 }
 
 pub async fn handle_email() -> Result<()> {
-    let config = load_config()?;
+    let config = load_config()?.with_ui_surface("email");
     start_scheduler(config.clone());
     let agent_loop = build_agent_loop(config.clone()).await?;
     let channel = EmailChannel::new(agent_loop);

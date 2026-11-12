@@ -347,6 +347,8 @@ export function normalizeWebUiCapabilities(value: unknown): WebUiCapabilities {
 export interface AgentDefaultsConfig {
   model: string;
   provider: string;
+  theme?: 'light' | 'dark' | 'system' | string;
+  ui_surface?: string;
   temperature: number;
   max_tokens: number;
   streaming: boolean;

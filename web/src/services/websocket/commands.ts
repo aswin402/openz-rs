@@ -34,6 +34,11 @@ export interface UpdateSubagentSettingsData {
   fallbacks?: string[] | null;
 }
 
+export interface SendMessageOptions {
+  streaming?: boolean;
+  cavemanMode?: boolean;
+}
+
 export interface WebSocketCommandMethods {
   sendMessage(
     chatId: string,
@@ -41,6 +46,7 @@ export interface WebSocketCommandMethods {
     model?: string,
     provider?: string,
     attachments?: WebSocketAttachment[],
+    options?: SendMessageOptions,
   ): string | null;
   createNewChat(): void;
   attachChat(chatId: string): void;
@@ -84,7 +90,7 @@ export function createWebSocketCommands(
   };
 
   return {
-    sendMessage(chatId, content, model, provider, attachments) {
+    sendMessage(chatId, content, model, provider, attachments, options) {
       const payload: Extract<WebSocketCommand, { type: 'message' }> = {
         type: 'message',
         chat_id: chatId,
@@ -92,6 +98,8 @@ export function createWebSocketCommands(
       };
       if (model) payload.model = model;
       if (provider) payload.provider = provider;
+      if (typeof options?.streaming === 'boolean') payload.streaming = options.streaming;
+      if (typeof options?.cavemanMode === 'boolean') payload.caveman_mode = options.cavemanMode;
       if (attachments?.length) payload.attachments = attachments;
       return send(payload, { requireConnected: true });
     },

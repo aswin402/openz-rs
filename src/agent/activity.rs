@@ -157,6 +157,8 @@ pub fn get_activity() -> Option<AgentActivity> {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct InboxMessage {
+    #[serde(default)]
+    pub session_id: String,
     pub message: String,
     pub sender: String,
     pub timestamp: String,
@@ -241,6 +243,7 @@ pub fn send_inbox_message(session_id: &str, message: &str, sender: &str) -> anyh
     cleanup_stale_inbox_files_in(&dir);
 
     let msg = InboxMessage {
+        session_id: session_id.to_string(),
         message: message.to_string(),
         sender: sender.to_string(),
         timestamp: chrono::Utc::now().to_rfc3339(),
@@ -248,6 +251,90 @@ pub fn send_inbox_message(session_id: &str, message: &str, sender: &str) -> anyh
     let slug = inbox_slug(session_id);
     let filename = format!("inbox_{}_{}.json", slug, uuid::Uuid::new_v4());
     crate::config::loader::save_pretty_json_atomic(&dir.join(filename), &msg)
+}
+
+fn infer_ws_session_from_inbox_filename(path: &Path) -> Option<String> {
+    let name = path.file_name().and_then(|s| s.to_str())?;
+    let body = name.strip_prefix("inbox_ws_")?.strip_suffix(".json")?;
+    let (chat_part, _) = body.rsplit_once('_')?;
+    (!chat_part.is_empty()).then(|| format!("ws:{chat_part}"))
+}
+
+pub fn pop_any_ws_inbox_message() -> Option<InboxMessage> {
+    let dir = runtime_data_dir();
+    let paths = fs::read_dir(&dir)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.starts_with("inbox_ws_") && name.ends_with(".json"))
+                .unwrap_or(false)
+        })
+        .collect::<Vec<_>>();
+
+    let mut candidates = Vec::new();
+    for path in paths {
+        let parsed = fs::read_to_string(&path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<InboxMessage>(&content).ok());
+        match parsed {
+            None => quarantine_inbox_file(&path),
+            Some(message) => match inbox_message_is_expired(&message) {
+                true => {
+                    let _ = fs::remove_file(&path);
+                }
+                false => candidates.push((message.timestamp.clone(), path)),
+            },
+        }
+    }
+    candidates.sort_by(|a, b| a.0.cmp(&b.0));
+
+    for (_, path) in candidates {
+        let inferred_session = infer_ws_session_from_inbox_filename(&path);
+        let claim_path = path.with_file_name(format!(
+            "{}.claimed.{}",
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("inbox"),
+            uuid::Uuid::new_v4()
+        ));
+        match fs::rename(&path, &claim_path) {
+            Ok(()) => {}
+            Err(_) => continue,
+        }
+
+        let parsed = fs::read_to_string(&claim_path)
+            .ok()
+            .and_then(|content| serde_json::from_str::<InboxMessage>(&content).ok());
+        let mut message = match parsed {
+            Some(msg) => msg,
+            None => {
+                quarantine_inbox_file(&claim_path);
+                continue;
+            }
+        };
+
+        match inbox_message_is_expired(&message) {
+            true => {
+                let _ = fs::remove_file(&claim_path);
+                continue;
+            }
+            false => {
+                let _ = fs::remove_file(&claim_path);
+                match message.session_id.trim().is_empty() {
+                    true => {
+                        message.session_id = inferred_session
+                            .unwrap_or_else(|| format!("ws:{}", uuid::Uuid::new_v4()));
+                    }
+                    false => {}
+                }
+                return Some(message);
+            }
+        }
+    }
+    None
 }
 
 pub fn pop_inbox_message(session_id: &str) -> Option<InboxMessage> {
@@ -483,6 +570,312 @@ pub fn make_active_tui_session(
         provider: provider.to_string(),
         preview: preview.to_string(),
     }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ActiveGatewayStatus {
+    pub pid: u32,
+    pub host: String,
+    pub port: u16,
+    pub started_at: String,
+    pub last_seen_at: String,
+    pub model: String,
+    pub provider: String,
+    #[serde(default)]
+    pub open_sessions: Vec<String>,
+}
+
+fn active_gateway_path() -> PathBuf {
+    runtime_data_dir().join("active_gateway.json")
+}
+
+fn active_gateway_is_stale(
+    status: &ActiveGatewayStatus,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    match (
+        process_is_alive(status.pid),
+        parse_rfc3339_utc(&status.last_seen_at),
+    ) {
+        (true, Some(last_seen)) => {
+            now.signed_duration_since(last_seen).num_seconds() > ACTIVE_TUI_STALE_SECS
+        }
+        _ => true,
+    }
+}
+
+pub fn make_active_gateway_status(
+    host: &str,
+    port: u16,
+    started_at: &str,
+    model: &str,
+    provider: &str,
+    open_sessions: Vec<String>,
+) -> ActiveGatewayStatus {
+    ActiveGatewayStatus {
+        pid: std::process::id(),
+        host: host.to_string(),
+        port,
+        started_at: started_at.to_string(),
+        last_seen_at: chrono::Utc::now().to_rfc3339(),
+        model: model.to_string(),
+        provider: provider.to_string(),
+        open_sessions,
+    }
+}
+
+pub fn upsert_active_gateway_status(status: &ActiveGatewayStatus) -> anyhow::Result<()> {
+    crate::config::loader::save_pretty_json_atomic(&active_gateway_path(), status)
+}
+
+pub fn remove_active_gateway_status(pid: u32) {
+    let path = active_gateway_path();
+    let owned_by_pid = fs::read_to_string(&path)
+        .ok()
+        .and_then(|content| serde_json::from_str::<ActiveGatewayStatus>(&content).ok())
+        .is_some_and(|status| status.pid == pid);
+    match owned_by_pid {
+        true => {
+            let _ = fs::remove_file(path);
+        }
+        false => {}
+    }
+}
+
+pub fn get_active_gateway_status() -> Option<ActiveGatewayStatus> {
+    let path = active_gateway_path();
+    let content = fs::read_to_string(&path).ok()?;
+    let status = match serde_json::from_str::<ActiveGatewayStatus>(&content) {
+        Ok(status) => status,
+        Err(_) => {
+            let _ = fs::remove_file(&path);
+            return None;
+        }
+    };
+    match active_gateway_is_stale(&status, chrono::Utc::now()) {
+        true => {
+            let _ = fs::remove_file(&path);
+            None
+        }
+        false => Some(status),
+    }
+}
+
+pub fn resolve_ws_direct_target() -> anyhow::Result<String> {
+    let gw = get_active_gateway_status().ok_or_else(|| {
+        anyhow::anyhow!("Gateway / WebUI server is not active; launch `openz webui` first")
+    })?;
+    match gw.open_sessions.first() {
+        Some(open_key) => Ok(open_key.clone()),
+        None => Ok(format!("ws:{}", uuid::Uuid::new_v4())),
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct RemoteTargetSession {
+    pub session_key: String,
+    pub surface: String,
+    pub label: String,
+    pub model: String,
+    pub provider: String,
+    pub preview: String,
+    pub is_live_viewer: bool,
+    pub last_seen_at: String,
+}
+
+fn normalize_ws_session_key_str(raw: &str) -> String {
+    let stripped = raw
+        .trim()
+        .strip_prefix("ws:")
+        .or_else(|| raw.trim().strip_prefix("ws_"))
+        .unwrap_or(raw.trim());
+    format!("ws:{stripped}")
+}
+
+fn load_recent_ws_sessions(
+    session_manager: &crate::session::SessionManager,
+    exclude_keys: &[String],
+    limit: usize,
+) -> Vec<(String, String, String)> {
+    let entries = match fs::read_dir(&session_manager.dir) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+    let mut items = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_ws_json = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(|name| name.starts_with("ws_") && name.ends_with(".json"))
+            .unwrap_or(false);
+        match is_ws_json {
+            false => continue,
+            true => {}
+        }
+        let session = match fs::read_to_string(&path)
+            .ok()
+            .and_then(|c| serde_json::from_str::<crate::session::Session>(&c).ok())
+        {
+            Some(s) => s,
+            None => continue,
+        };
+        let archived = session
+            .metadata
+            .get("archived")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let key = normalize_ws_session_key_str(&session.key);
+        let excluded = archived
+            || session.messages.is_empty()
+            || exclude_keys.iter().any(|existing| existing == &key);
+        match excluded {
+            true => continue,
+            false => {}
+        }
+        let preview = session_preview_from_messages(&session.messages);
+        items.push((key, preview, session.updated_at.to_rfc3339()));
+    }
+    items.sort_by(|a, b| b.2.cmp(&a.2));
+    items.truncate(limit);
+    items
+}
+
+pub fn list_remote_target_sessions() -> Vec<RemoteTargetSession> {
+    let mut targets = Vec::new();
+    for tui in list_active_tui_sessions() {
+        let cwd_name = Path::new(&tui.cwd)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&tui.cwd);
+        let preview = match tui.preview.trim().is_empty() {
+            true => "New session".to_string(),
+            false => tui.preview.clone(),
+        };
+        targets.push(RemoteTargetSession {
+            session_key: tui.session_key,
+            surface: "tui".to_string(),
+            label: format!("🖥️ TUI | {} | {}", cwd_name, preview),
+            model: tui.model,
+            provider: tui.provider,
+            preview,
+            is_live_viewer: true,
+            last_seen_at: tui.last_seen_at,
+        });
+    }
+
+    match get_active_gateway_status() {
+        Some(gw) => {
+            let session_manager =
+                crate::session::SessionManager::new(runtime_data_dir().join("sessions"));
+            let mut seen_ws_keys = Vec::new();
+            for raw_open in &gw.open_sessions {
+                let ws_key = normalize_ws_session_key_str(raw_open);
+                match seen_ws_keys.iter().any(|k| k == &ws_key) {
+                    true => continue,
+                    false => seen_ws_keys.push(ws_key.clone()),
+                }
+                let preview = session_manager
+                    .load(&ws_key)
+                    .ok()
+                    .filter(|s| !s.messages.is_empty())
+                    .map(|s| session_preview_from_messages(&s.messages))
+                    .unwrap_or_else(|| "New Session (open in browser)".to_string());
+                targets.push(RemoteTargetSession {
+                    session_key: ws_key,
+                    surface: "webui".to_string(),
+                    label: format!("🌐 WebUI (Live) | {}", preview),
+                    model: gw.model.clone(),
+                    provider: gw.provider.clone(),
+                    preview,
+                    is_live_viewer: true,
+                    last_seen_at: gw.last_seen_at.clone(),
+                });
+            }
+
+            for (ws_key, preview, updated_at) in
+                load_recent_ws_sessions(&session_manager, &seen_ws_keys, 3)
+            {
+                targets.push(RemoteTargetSession {
+                    session_key: ws_key,
+                    surface: "webui".to_string(),
+                    label: format!("🌐 WebUI | {}", preview),
+                    model: gw.model.clone(),
+                    provider: gw.provider.clone(),
+                    preview,
+                    is_live_viewer: false,
+                    last_seen_at: updated_at,
+                });
+            }
+
+            targets.push(RemoteTargetSession {
+                session_key: "ws:new".to_string(),
+                surface: "webui".to_string(),
+                label: "➕ WebUI | Start New Session".to_string(),
+                model: gw.model,
+                provider: gw.provider,
+                preview: "Start fresh WebUI session".to_string(),
+                is_live_viewer: false,
+                last_seen_at: gw.last_seen_at,
+            });
+        }
+        None => {}
+    }
+
+    targets
+}
+
+pub fn remote_target_is_available(session_key: &str) -> bool {
+    match (
+        session_key.starts_with("cli:"),
+        session_key.starts_with("ws:"),
+    ) {
+        (true, _) => active_tui_session_exists(session_key),
+        (false, true) => get_active_gateway_status().is_some(),
+        (false, false) => false,
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+struct RemotePendingMarker {
+    chat_id: i64,
+    target_session: String,
+    updated_at: String,
+}
+
+fn remote_pending_path(chat_id: i64) -> PathBuf {
+    runtime_data_dir().join(format!("remote_pending_{chat_id}.json"))
+}
+
+pub fn mark_remote_turn_pending(chat_id: i64, target_session: &str) {
+    let marker = RemotePendingMarker {
+        chat_id,
+        target_session: target_session.to_string(),
+        updated_at: chrono::Utc::now().to_rfc3339(),
+    };
+    let _ = crate::config::loader::save_pretty_json_atomic(&remote_pending_path(chat_id), &marker);
+}
+
+pub fn touch_remote_turn_pending(chat_id: i64) {
+    let path = remote_pending_path(chat_id);
+    let existing = fs::read_to_string(&path)
+        .ok()
+        .and_then(|c| serde_json::from_str::<RemotePendingMarker>(&c).ok());
+    match existing {
+        Some(mut marker) => {
+            marker.updated_at = chrono::Utc::now().to_rfc3339();
+            let _ = crate::config::loader::save_pretty_json_atomic(&path, &marker);
+        }
+        None => {}
+    }
+}
+
+pub fn clear_remote_turn_pending(chat_id: i64) {
+    let _ = fs::remove_file(remote_pending_path(chat_id));
+}
+
+pub fn is_remote_turn_pending(chat_id: i64) -> bool {
+    remote_pending_path(chat_id).exists()
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@ pub fn load_session_history() -> Result<Vec<HistoryItem>> {
     let items = manager
         .list_summaries()
         .into_iter()
-        .filter(|s| s.message_count > 0)
+        .filter(|s| s.key.starts_with("cli:") && s.message_count > 0)
         .map(|s| {
             let display_title = s.preview_title(50, "Empty session");
             HistoryItem {

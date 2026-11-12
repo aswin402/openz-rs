@@ -498,17 +498,18 @@ fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
     left_spans.push(mcp_span);
 
     // Queued prompts indicator
-    match app.queued_prompts.is_empty() {
-        false => {
+    let total_queued = app.queued_prompts.len() + app.queued_remote_turns.len();
+    match total_queued > 0 {
+        true => {
             left_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
             left_spans.push(Span::styled(
-                format!("[{} queued]", app.queued_prompts.len()),
+                format!("[{} queued]", total_queued),
                 Style::default()
                     .fg(theme.brand_accent)
                     .add_modifier(Modifier::BOLD),
             ));
         }
-        true => {}
+        false => {}
     }
 
     // Background servers indicator

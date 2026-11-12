@@ -289,10 +289,14 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
                                 &job_clone.notify_on,
                                 &CronJobStatus::Success,
                             ) {
-                                true => crate::channels::send_notification(&format!(
-                                    "Cron Job {} completed successfully.",
-                                    job_clone.id
-                                )),
+                                true => {
+                                    let msg = format!(
+                                        "Cron Job {} completed successfully.",
+                                        job_clone.id
+                                    );
+                                    crate::channels::send_notification(&msg);
+                                    crate::channels::send_external_notification_broadcast(&msg);
+                                }
                                 false => {}
                             }
                         }
@@ -310,10 +314,12 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
                                 &job_clone.notify_on,
                                 &CronJobStatus::Failed,
                             ) {
-                                true => crate::channels::send_notification(&format!(
-                                    "Error running Cron Job {}: {}",
-                                    job_clone.id, e
-                                )),
+                                true => {
+                                    let msg =
+                                        format!("Error running Cron Job {}: {}", job_clone.id, e);
+                                    crate::channels::send_notification(&msg);
+                                    crate::channels::send_external_notification_broadcast(&msg);
+                                }
                                 false => {}
                             }
                         }
@@ -343,10 +349,11 @@ async fn tick_scheduler(config: &Config) -> Result<()> {
                         &job_clone.notify_on,
                         &CronJobStatus::Failed,
                     ) {
-                        true => crate::channels::send_notification(&format!(
-                            "Error running Cron Job {}: {}",
-                            job_clone.id, e
-                        )),
+                        true => {
+                            let msg = format!("Error running Cron Job {}: {}", job_clone.id, e);
+                            crate::channels::send_notification(&msg);
+                            crate::channels::send_external_notification_broadcast(&msg);
+                        }
                         false => {}
                     }
                 }

@@ -91,7 +91,7 @@ pub(super) fn publish_auto_capture_notice(
         })
         .public_text(&output_visibility)
         .map(|notice| {
-            crate::channels::send_notification(&notice);
+            crate::channels::send_session_notice(session_key, &notice);
             crate::channels::websocket::publish_activity_notice(
                 session_key,
                 "memory",

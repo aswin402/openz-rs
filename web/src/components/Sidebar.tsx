@@ -22,6 +22,7 @@ interface NavItem {
 export const Sidebar: React.FC = () => {
   const sessions = useOpenZStore((s) => s.sessions);
   const activeChatId = useOpenZStore((s) => s.activeChatId);
+  const activeTurnIds = useOpenZStore((s) => s.activeTurnIds);
   const activeView = useOpenZStore((s) => s.activeView);
   const selectSession = useOpenZStore((s) => s.selectSession);
   const newSession = useOpenZStore((s) => s.newSession);
@@ -199,6 +200,7 @@ export const Sidebar: React.FC = () => {
             <div className="space-y-1">
               {sessions.map((session) => {
                 const isActive = session.id === activeChatId && activeView === 'chats';
+                const isRunning = Boolean(activeTurnIds[session.id]);
                 return (
                   <div
                     key={session.id}
@@ -211,19 +213,28 @@ export const Sidebar: React.FC = () => {
                     )}
                   >
                     <div className="flex min-w-0 items-center gap-2">
-                      <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+                      {isRunning ? (
+                        <span className="relative flex h-3.5 w-3.5 shrink-0 items-center justify-center" title="Streaming in background">
+                          <span className="absolute inline-flex h-2.5 w-2.5 animate-ping rounded-full bg-amber-400 opacity-75" />
+                          <span className="relative inline-flex h-2 w-2 rounded-full bg-amber-500" />
+                        </span>
+                      ) : (
+                        <MessageSquare className="h-3.5 w-3.5 shrink-0" />
+                      )}
                       <span className="truncate">{session.title}</span>
                     </div>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        deleteSession(session.id);
-                      }}
-                      className="shrink-0 p-1 opacity-0 transition hover:text-red-400 group-hover:opacity-100"
-                      title="Delete session"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
+                    {!session.isDraft && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          deleteSession(session.id);
+                        }}
+                        className="shrink-0 p-1 opacity-0 transition hover:text-red-400 group-hover:opacity-100"
+                        title="Delete session"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    )}
                   </div>
                 );
               })}

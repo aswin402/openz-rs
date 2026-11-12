@@ -390,12 +390,6 @@ export const KnowledgeView: React.FC = () => {
     );
   };
 
-  const cards = [
-    { label: 'Entities', value: snapshotStats.entitiesCount, icon: BrainCircuit, color: 'text-amber-500' },
-    { label: 'Relations', value: snapshotStats.relationsCount, icon: Share2, color: 'text-purple-400' },
-    { label: 'Stored Facts', value: snapshotStats.factsCount, icon: Database, color: 'text-emerald-400' },
-  ];
-
   return (
     <div className="mx-auto max-w-6xl space-y-6 px-4 py-6">
       {/* Header section */}
@@ -427,28 +421,41 @@ export const KnowledgeView: React.FC = () => {
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-2xl border border-border/70 bg-card/50 p-3 shadow-sm">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Loaded entities</div>
-          <div className="mt-1 text-xl font-extrabold text-foreground">{totalStats.entitiesCount}</div>
-          <div className="text-[10px] text-muted-foreground">{visibleGraphStats.loaded > 0 ? visibleGraphStats.visible : 0} visible now</div>
-        </div>
-        <div className="rounded-2xl border border-border/70 bg-card/50 p-3 shadow-sm">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Relations</div>
-          <div className="mt-1 text-xl font-extrabold text-foreground">{totalStats.relationsCount}</div>
-          <div className="text-[10px] text-muted-foreground">{visibleGraphStats.loaded > 0 ? visibleGraphStats.renderedEdges : 0} rendered now</div>
-        </div>
-        <div className="rounded-2xl border border-border/70 bg-card/50 p-3 shadow-sm">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Memory stores</div>
-          <div className="mt-1 flex items-center gap-2 text-sm font-bold text-foreground">
-            <span className={cn('h-2 w-2 rounded-full', memoryDbExists ? 'bg-emerald-400' : 'bg-red-400')} />
-            {memoryDbExists ? 'Memory ready' : 'Memory unavailable'}
+        <div className="rounded-2xl border border-border/70 bg-card/50 p-3.5 shadow-sm">
+          <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span>Graph Entities</span>
+            <BrainCircuit className="h-3.5 w-3.5 text-amber-500" />
           </div>
-          <div className="mt-1 text-[10px] text-muted-foreground">{graphDbExists ? 'Graph database ready' : 'Graph database unavailable'}</div>
+          <div className="mt-1 text-xl font-extrabold text-foreground">{snapshotStats.entitiesCount}</div>
+          <div className="text-[10px] text-muted-foreground">
+            {visibleGraphStats.loaded > 0 ? visibleGraphStats.visible : 0} visible · {totalStats.entitiesCount} total
+          </div>
         </div>
-        <div className="rounded-2xl border border-border/70 bg-card/50 p-3 shadow-sm">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Last sync</div>
-          <div className="mt-1 text-sm font-bold text-foreground">{syncLabel}</div>
-          <div className="text-[10px] text-muted-foreground">{allNodes.length > 0 ? 'Authoritative gateway payload' : 'No records received'}</div>
+        <div className="rounded-2xl border border-border/70 bg-card/50 p-3.5 shadow-sm">
+          <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span>Relations</span>
+            <Share2 className="h-3.5 w-3.5 text-purple-400" />
+          </div>
+          <div className="mt-1 text-xl font-extrabold text-foreground">{snapshotStats.relationsCount}</div>
+          <div className="text-[10px] text-muted-foreground">
+            {visibleGraphStats.loaded > 0 ? visibleGraphStats.renderedEdges : 0} rendered · {totalStats.relationsCount} total
+          </div>
+        </div>
+        <div className="rounded-2xl border border-border/70 bg-card/50 p-3.5 shadow-sm">
+          <div className="flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <span>Stored Facts</span>
+            <Database className="h-3.5 w-3.5 text-emerald-400" />
+          </div>
+          <div className="mt-1 text-xl font-extrabold text-foreground">{snapshotStats.factsCount}</div>
+          <div className="text-[10px] text-muted-foreground">{totalStats.factsCount} persisted in memory.db</div>
+        </div>
+        <div className="rounded-2xl border border-border/70 bg-card/50 p-3.5 shadow-sm">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Memory Stores & Sync</div>
+          <div className="mt-1 flex items-center gap-2 text-sm font-bold text-foreground">
+            <span className={cn('h-2 w-2 rounded-full', memoryDbExists && graphDbExists ? 'bg-emerald-400' : 'bg-amber-400')} />
+            {memoryDbExists && graphDbExists ? 'Stores Ready' : 'Partial Store'}
+          </div>
+          <div className="mt-1 text-[10px] text-muted-foreground">Last sync: {syncLabel}</div>
         </div>
       </div>
 
@@ -562,22 +569,6 @@ export const KnowledgeView: React.FC = () => {
         </div>
       </div>
 
-      {/* Metrics Row */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        {cards.map((card) => {
-          const Icon = card.icon;
-          return (
-            <div key={card.label} className="rounded-xl border border-border bg-card p-4 shadow-sm">
-              <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                {card.label}
-                <Icon className={`h-4 w-4 ${card.color}`} />
-              </div>
-              <div className="mt-1.5 text-2xl font-extrabold tracking-tight text-foreground">{card.value}</div>
-            </div>
-          );
-        })}
-      </div>
-
       {/* Mode Selector Tab Row */}
       <div className="flex flex-col gap-3 border-b border-border/40 pb-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex gap-1.5">
@@ -614,27 +605,6 @@ export const KnowledgeView: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1 rounded-xl border border-border/60 bg-card/50 p-1">
-            {([
-              ['overview', 'Overview'],
-              ['all', 'All nodes'],
-              ['neighborhood', 'Neighborhood'],
-            ] as const).map(([value, label]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setGraphMode(value)}
-                disabled={value === 'neighborhood' && !selectedNode}
-                className={cn(
-                  'min-h-9 rounded-lg px-3 text-[11px] font-semibold transition',
-                  graphMode === value ? 'bg-amber-500/15 text-amber-400' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-                  value === 'neighborhood' && !selectedNode && 'cursor-not-allowed opacity-40',
-                )}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
           {activeTab === 'markdown' && (
             <button
               onClick={handleCopyMarkdown}

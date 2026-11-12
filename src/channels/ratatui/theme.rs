@@ -59,6 +59,109 @@ impl Theme {
     pub fn default_theme() -> Self {
         Self::aura_dark()
     }
+
+    pub fn cyberpunk() -> Self {
+        Self {
+            bg_primary: Color::Rgb(13, 10, 26),
+            bg_elevated: Color::Rgb(24, 18, 43),
+            bg_input: Color::Rgb(34, 24, 60),
+            brand_accent: Color::Rgb(255, 42, 133),
+            brand_white: Color::Rgb(245, 245, 255),
+            success: Color::Rgb(0, 255, 179),
+            destructive: Color::Rgb(255, 71, 87),
+            warning: Color::Rgb(255, 211, 42),
+            highlight: Color::Rgb(0, 216, 255),
+            info: Color::Rgb(0, 216, 255),
+            text_primary: Color::Rgb(240, 238, 255),
+            muted: Color::Rgb(144, 134, 176),
+            border: Color::Rgb(84, 48, 128),
+        }
+    }
+
+    pub fn oceanic() -> Self {
+        Self {
+            bg_primary: Color::Rgb(11, 21, 29),
+            bg_elevated: Color::Rgb(18, 33, 45),
+            bg_input: Color::Rgb(24, 45, 61),
+            brand_accent: Color::Rgb(56, 189, 248),
+            brand_white: Color::Rgb(240, 249, 255),
+            success: Color::Rgb(52, 211, 153),
+            destructive: Color::Rgb(248, 113, 113),
+            warning: Color::Rgb(251, 191, 36),
+            highlight: Color::Rgb(129, 140, 248),
+            info: Color::Rgb(103, 232, 249),
+            text_primary: Color::Rgb(226, 232, 240),
+            muted: Color::Rgb(148, 163, 184),
+            border: Color::Rgb(45, 74, 99),
+        }
+    }
+
+    pub fn emerald() -> Self {
+        Self {
+            bg_primary: Color::Rgb(10, 20, 16),
+            bg_elevated: Color::Rgb(17, 34, 27),
+            bg_input: Color::Rgb(24, 48, 38),
+            brand_accent: Color::Rgb(16, 185, 129),
+            brand_white: Color::Rgb(236, 253, 245),
+            success: Color::Rgb(52, 211, 153),
+            destructive: Color::Rgb(248, 113, 113),
+            warning: Color::Rgb(250, 204, 21),
+            highlight: Color::Rgb(110, 231, 183),
+            info: Color::Rgb(45, 212, 191),
+            text_primary: Color::Rgb(229, 245, 238),
+            muted: Color::Rgb(134, 167, 153),
+            border: Color::Rgb(39, 82, 64),
+        }
+    }
+
+    pub fn light() -> Self {
+        Self {
+            bg_primary: Color::Rgb(248, 250, 252),
+            bg_elevated: Color::Rgb(241, 245, 249),
+            bg_input: Color::Rgb(226, 232, 240),
+            brand_accent: Color::Rgb(234, 88, 12),
+            brand_white: Color::Rgb(15, 23, 42),
+            success: Color::Rgb(5, 150, 105),
+            destructive: Color::Rgb(220, 38, 38),
+            warning: Color::Rgb(217, 119, 6),
+            highlight: Color::Rgb(124, 58, 237),
+            info: Color::Rgb(2, 132, 199),
+            text_primary: Color::Rgb(15, 23, 42),
+            muted: Color::Rgb(100, 116, 139),
+            border: Color::Rgb(203, 213, 225),
+        }
+    }
+
+    pub fn available_themes() -> &'static [(&'static str, &'static str)] {
+        &[
+            ("aura_dark", "Aura Dark + Red-Orange (Default)"),
+            ("cyberpunk", "Cyberpunk Neon Magenta & Cyan"),
+            ("oceanic", "Oceanic Deep Blue & Sky"),
+            ("emerald", "Emerald Matrix Forest"),
+            ("light", "Crisp Daylight Slate"),
+        ]
+    }
+
+    pub fn canonical_name(name: &str) -> Option<&'static str> {
+        match name.trim().to_lowercase().as_str() {
+            "aura_dark" | "aura" | "dark" | "default" => Some("aura_dark"),
+            "cyberpunk" | "neon" => Some("cyberpunk"),
+            "oceanic" | "ocean" => Some("oceanic"),
+            "emerald" | "matrix" => Some("emerald"),
+            "light" | "daylight" => Some("light"),
+            _ => None,
+        }
+    }
+
+    pub fn from_name(name: &str) -> Self {
+        match Self::canonical_name(name).unwrap_or("aura_dark") {
+            "cyberpunk" => Self::cyberpunk(),
+            "oceanic" => Self::oceanic(),
+            "emerald" => Self::emerald(),
+            "light" => Self::light(),
+            _ => Self::aura_dark(),
+        }
+    }
 }
 
 pub const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];

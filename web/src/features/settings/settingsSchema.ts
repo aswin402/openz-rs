@@ -35,6 +35,7 @@ interface AgentSettingFieldDescriptor {
 const AGENT_SETTING_FIELDS: readonly AgentSettingFieldDescriptor[] = [
   { key: 'model', kind: 'string' },
   { key: 'provider', kind: 'string' },
+  { key: 'theme', kind: 'string', fallback: 'dark' },
   { key: 'temperature', kind: 'number' },
   { key: 'max_tokens', kind: 'number' },
   { key: 'bot_name', kind: 'string' },

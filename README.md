@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.309-orange.svg" alt="Version 0.0.309"/></a>
+  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.314-orange.svg" alt="Version 0.0.314"/></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.82%2B-blue.svg" alt="Rust 1.82+"/></a>
   <a href="https://tokio.rs/"><img src="https://img.shields.io/badge/runtime-tokio-purple.svg" alt="Tokio Async"/></a>
   <a href="https://github.com/aswin402/openz-rs/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-green.svg" alt="License"/></a>
@@ -119,6 +119,9 @@ openz configure
 
 # 3. Start interactive TUI terminal agent
 openz
+
+# 4. Start WebUI server (independent session & settings profile)
+openz webui
 ```
 
 ---
@@ -135,8 +138,9 @@ While in OpenZ TUI mode, type `/` to access built-in slash commands:
 | `/compact` | Manually trigger LLM context compaction and memory consolidation |
 | `/clear` | Clear terminal screen |
 | `/tui` | Manage TUI settings (e.g. `/tui trace full\|compact\|off`) |
-| `/model` | View or switch active default LLM model |
-| `/history` | Interactively restore or switch sessions |
+| `/model` | View or switch active TUI LLM model |
+| `/theme` | View or switch TUI color theme (`aura_dark`, `cyberpunk`, `oceanic`, `emerald`, `light`) |
+| `/history` | Interactively restore or switch TUI sessions |
 | `/logs` | Stream color-coded structured runtime logs |
 | `/mcps` | List connected MCP servers |
 | `/memory` | Inspect cognitive metadata & working memory |
@@ -201,12 +205,12 @@ OpenZ includes multi-layered safety controls:
 
 | Command | Purpose |
 |---|---|
-| `openz` / `openz agent` | Start interactive TUI terminal chat |
+| `openz` / `openz agent` | Start interactive TUI terminal chat (runs only the TUI loop with isolated `cli:...` sessions and `ui_settings.tui`) |
+| `openz webui` / `openz web` | Start WebSocket gateway server & WebUI (`127.0.0.1:8765` default, with isolated `ws:...` sessions and `ui_settings.webui`) |
 | `openz run -p "<prompt>" [-y] [--format text\|json\|stream-json]` | Execute headless prompt (also supports `-f <file>`, `-c`/`--continue`, and piped stdin) |
 | `openz daemon [--interval-secs 300]` | Start autonomous background daemon loop |
 | `openz configure` | Full interactive config UI (providers, gateway, channels, sandbox) |
 | `openz onboard` | First-time provider setup wizard |
-| `openz gateway` | Start WebSocket gateway server & WebUI (`channels.websocket.host`/`port` in `~/.openz/config.json`, default `127.0.0.1:8765`) |
 | `openz telegram` | Start Telegram bot polling listener |
 | `openz discord` | Start Discord bot gateway listener |
 | `openz whatsapp` | Start WhatsApp Business API webhook receiver (port 8090) |

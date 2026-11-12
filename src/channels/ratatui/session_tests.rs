@@ -158,3 +158,38 @@ async fn test_per_session_overrides_isolation() {
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
 
+#[test]
+fn test_tui_themes_and_cli_webui_subcommand_aliases() {
+    use clap::Parser;
+    use crate::channels::ratatui::theme::Theme;
+
+    assert_eq!(Theme::canonical_name("cyberpunk"), Some("cyberpunk"));
+    assert_eq!(Theme::canonical_name("oceanic"), Some("oceanic"));
+    assert_eq!(Theme::canonical_name("emerald"), Some("emerald"));
+    assert_eq!(Theme::canonical_name("light"), Some("light"));
+    assert_eq!(Theme::canonical_name("unknown"), None);
+    assert_eq!(Theme::available_themes().len(), 5);
+
+    let cli_default = crate::cli::args::CliArgs::try_parse_from(["openz"]).unwrap();
+    assert!(cli_default.command.is_none());
+
+    let cli_webui = crate::cli::args::CliArgs::try_parse_from(["openz", "webui"]).unwrap();
+    assert!(matches!(
+        cli_webui.command,
+        Some(crate::cli::args::Command::Webui { action: None })
+    ));
+
+    let cli_web = crate::cli::args::CliArgs::try_parse_from(["openz", "web"]).unwrap();
+    assert!(matches!(
+        cli_web.command,
+        Some(crate::cli::args::Command::Webui { action: None })
+    ));
+
+    let cli_gateway = crate::cli::args::CliArgs::try_parse_from(["openz", "gateway"]).unwrap();
+    assert!(matches!(
+        cli_gateway.command,
+        Some(crate::cli::args::Command::Webui { action: None })
+    ));
+}
+
+

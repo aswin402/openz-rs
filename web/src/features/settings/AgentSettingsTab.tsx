@@ -62,11 +62,11 @@ export const AgentSettingsTab: React.FC<AgentSettingsTabProps> = ({
       <>
         <div className="pt-1">
           <div className="mb-3 flex items-center gap-1.5 font-semibold text-foreground border-b border-border/40 pb-1.5 select-none">
-            <Cpu className="h-3.5 w-3.5 text-amber-500" /> Agent Defaults
+            <Cpu className="h-3.5 w-3.5 text-amber-500" /> WebUI Profile Settings (Isolated from TUI)
           </div>
           <div className="space-y-3">
             <CustomSelect
-              label="Default Model"
+              label="WebUI Model"
               value={`${String(form.provider ?? settings.provider)}::${String(form.model ?? settings.model)}`}
               onChange={(value) => {
                 const [provider, ...modelParts] = value.split('::');
@@ -77,12 +77,24 @@ export const AgentSettingsTab: React.FC<AgentSettingsTabProps> = ({
               groups={modelGroups}
             />
 
-            <CustomSelect
-              label="Default Provider"
-              value={String(form.provider ?? settings.provider)}
-              onChange={(value) => onFieldChange('provider', value)}
-              options={providerOptions}
-            />
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <CustomSelect
+                label="WebUI Provider"
+                value={String(form.provider ?? settings.provider)}
+                onChange={(value) => onFieldChange('provider', value)}
+                options={providerOptions}
+              />
+              <CustomSelect
+                label="WebUI Theme"
+                value={String(form.theme ?? settings.theme ?? 'dark')}
+                onChange={(value) => onFieldChange('theme', value)}
+                options={[
+                  { value: 'dark', label: 'Dark' },
+                  { value: 'light', label: 'Light' },
+                  { value: 'system', label: 'System' },
+                ]}
+              />
+            </div>
 
             <div className="grid grid-cols-2 gap-3">
               <NumberInput

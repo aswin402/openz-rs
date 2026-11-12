@@ -6,7 +6,8 @@ pub(crate) fn runtime_inventory_event(
     config: &crate::config::schema::Config,
     tools: Option<&crate::tools::ToolRegistry>,
 ) -> Value {
-    let inventory = crate::core::inventory::build_runtime_inventory(config, tools);
+    let effective = config.with_ui_surface("webui");
+    let inventory = crate::core::inventory::build_runtime_inventory(&effective, tools);
     super::super::protocol::runtime_inventory(inventory)
 }
 

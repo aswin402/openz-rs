@@ -165,7 +165,7 @@ pub async fn run_cli() -> Result<()> {
         Some(Command::Agent) => {
             run_ratatui_and_exit().await?;
         }
-        Some(Command::Gateway { action }) => {
+        Some(Command::Webui { action }) => {
             dispatch_channel_action(action, "gateway", channels::handle_gateway()).await?;
         }
         Some(Command::Telegram { action }) => {

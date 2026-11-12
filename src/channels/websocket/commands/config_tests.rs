@@ -159,8 +159,107 @@ async fn websocket_set_config_updates_live_config_and_broadcasts() {
             assert!(other_text.contains("config_updated"));
 
             crate::channels::websocket::events::remove_active_ws_sender(&other_client_id);
+
+            let disk_cfg = crate::config::loader::load_config().unwrap();
+            let webui_prof = disk_cfg.ui_profile("webui").unwrap();
+            assert_eq!(webui_prof.model.as_deref(), Some("gpt-4o-mini"));
+            assert_eq!(webui_prof.temperature, Some(0.7));
+            assert!(disk_cfg.ui_profile("tui").is_none());
+            assert_ne!(disk_cfg.agents.defaults.model, "gpt-4o-mini");
         })
         .await;
 
     let _ = std::fs::remove_dir_all(temp_dir);
+}
+
+#[test]
+fn webui_config_update_isolates_settings_from_tui_and_core_defaults() {
+    let mut disk_cfg = crate::config::schema::Config::default();
+    disk_cfg.agents.defaults.model = "claude-3-5-sonnet".to_string();
+    disk_cfg.agents.defaults.provider = "anthropic".to_string();
+    {
+        let tui = disk_cfg.ui_profile_mut("tui");
+        tui.model = Some("claude-3-7-sonnet".to_string());
+        tui.provider = Some("anthropic".to_string());
+        tui.theme = Some("cyberpunk".to_string());
+    }
+
+    let webui_patch = serde_json::json!({
+        "defaults": {
+            "model": "deepseek-chat",
+            "provider": "deepseek",
+            "theme": "light",
+            "temperature": 0.6,
+            "streaming": false,
+            "caveman_mode": false
+        }
+    });
+
+    apply_webui_disk_config_update(&mut disk_cfg, &webui_patch);
+
+    assert_eq!(disk_cfg.agents.defaults.model, "claude-3-5-sonnet");
+    assert_eq!(disk_cfg.agents.defaults.provider, "anthropic");
+    let tui_prof = disk_cfg.ui_profile("tui").unwrap();
+    assert_eq!(tui_prof.model.as_deref(), Some("claude-3-7-sonnet"));
+    assert_eq!(tui_prof.theme.as_deref(), Some("cyberpunk"));
+
+    let webui_prof = disk_cfg.ui_profile("webui").unwrap();
+    assert_eq!(webui_prof.model.as_deref(), Some("deepseek-chat"));
+    assert_eq!(webui_prof.provider.as_deref(), Some("deepseek"));
+    assert_eq!(webui_prof.theme.as_deref(), Some("light"));
+    assert_eq!(webui_prof.streaming, Some(false));
+    assert_eq!(webui_prof.caveman_mode, Some(false));
+
+    let tui_effective = disk_cfg.with_ui_surface("tui");
+    let webui_effective = disk_cfg.with_ui_surface("webui");
+    assert_eq!(tui_effective.agents.defaults.model, "claude-3-7-sonnet");
+    assert_eq!(tui_effective.ui_theme("tui"), "cyberpunk");
+    assert_eq!(webui_effective.agents.defaults.model, "deepseek-chat");
+    assert_eq!(webui_effective.ui_theme("webui"), "light");
+}
+
+#[tokio::test]
+async fn websocket_gateway_autostart_settings_persist_and_gate_non_loopback_host() {
+    let mut disk_cfg = crate::config::schema::Config::default();
+
+    let loopback_autostart = serde_json::json!({
+        "channels": {
+            "websocket": {
+                "enabled": true,
+                "start_on_tui": true,
+                "start_on_boot": true,
+                "host": "127.0.0.1",
+                "port": 8765
+            }
+        }
+    });
+    assert!(!config_update_requires_gateway_token(&loopback_autostart));
+
+    let remote_bind = serde_json::json!({
+        "channels": {
+            "websocket": {
+                "enabled": true,
+                "host": "0.0.0.0",
+                "port": 8765
+            }
+        }
+    });
+    assert!(config_update_requires_gateway_token(&remote_bind));
+
+    apply_webui_disk_config_update(&mut disk_cfg, &loopback_autostart);
+    let ws = disk_cfg.channels.websocket.as_ref().expect("websocket config");
+    assert!(ws.enabled);
+    assert!(ws.start_on_tui);
+    assert!(ws.start_on_boot);
+    assert_eq!(ws.host, "127.0.0.1");
+    assert_eq!(ws.port, 8765);
+
+    let event = config_data_event(&disk_cfg).await;
+    assert_eq!(event["channels"]["websocket"]["start_on_tui"], true);
+    assert_eq!(event["channels"]["websocket"]["start_on_boot"], true);
+    let has_ws_capability = event["capabilities"]["channels"]
+        .as_array()
+        .map(|items| items.iter().any(|item| item["name"] == "websocket"))
+        .unwrap_or(false);
+    assert!(has_ws_capability);
 }

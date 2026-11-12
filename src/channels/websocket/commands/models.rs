@@ -30,12 +30,13 @@ pub(crate) async fn models_list_event(
         ));
     }
     let prefs = crate::channels::load_model_prefs();
+    let effective = config.with_ui_surface("webui");
     super::super::protocol::models_list(
         providers,
         requested_provider.is_some(),
         prefs,
-        config.agents.defaults.provider.clone(),
-        config.agents.defaults.model.clone(),
+        effective.agents.defaults.provider,
+        effective.agents.defaults.model,
     )
 }
 

@@ -180,7 +180,6 @@ async fn stream_provider_response(
                 });
                 full_content.push_str(&text);
                 stream_content_chunk(&text, markdown_streamer, content_streaming_started);
-                super::tool_execution::send_progress_update(ctx.session_key, &text).await;
                 let _ = crate::channels::websocket::ws_chat_id(ctx.session_key).map(|chat_id| {
                     crate::channels::websocket::publish_ws_event(
                         crate::channels::websocket::protocol::delta(
@@ -278,7 +277,7 @@ async fn stream_provider_response(
     });
 
     markdown_streamer.finish();
-    ctx.streamed = true;
+    ctx.streamed = !full_content.is_empty();
 
     let mut assembled = streaming_assembly.into_response();
     let _ = assembled.tool_calls.is_empty().then(|| {
@@ -762,6 +761,7 @@ async fn dispatch_tool_call(
 
 async fn emit_turn_halt_message(ctx: &mut TurnContext<'_>, icon: &str, msg: &str) {
     ctx.final_content = msg.to_string();
+    ctx.streamed = false;
     super::tool_execution::send_progress_update(ctx.session_key, msg).await;
     let _ = (!crate::agent::style::spinner::is_silent()).then(|| {
         crate::tui_println!("{}{} {}{}", AURA_GOLD, icon, msg, COLOR_RESET);
@@ -1011,12 +1011,25 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 
                 let should_append_caveat = config.research.require_sources_for_current_claims
                     && super::research_policy::has_live_research_intent(ctx.user_content);
+                let pre_caveat_len = content.len();
                 let content = match should_append_caveat {
                     true => run
                         .turn_source_ledger
                         .append_live_research_caveat_if_needed(content, true),
                     false => content,
                 };
+                let _ = (ctx.streamed && content.len() > pre_caveat_len).then(|| {
+                    let appended_suffix = content[pre_caveat_len..].to_string();
+                    let _ = crate::channels::websocket::ws_chat_id(ctx.session_key).map(|chat_id| {
+                        crate::channels::websocket::publish_ws_event(
+                            crate::channels::websocket::protocol::delta(
+                                chat_id,
+                                super::current_turn_id(),
+                                appended_suffix,
+                            ),
+                        );
+                    });
+                });
 
                 ctx.final_content = content.clone();
                 let mut extra = serde_json::Map::new();

@@ -164,7 +164,7 @@ async fn async_main() -> anyhow::Result<()> {
                         .with(openz::logs::SqliteLogLayer)
                         .init();
                 }
-                Some("gateway") => {
+                Some("webui" | "web" | "gateway") => {
                     let console_layer = tracing_subscriber::fmt::layer()
                         .event_format(GatewayFormatter)
                         .with_writer(std::io::stdout);

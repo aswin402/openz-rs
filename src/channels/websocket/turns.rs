@@ -50,6 +50,15 @@ pub fn remove_ws_turn(turn_id: &str) {
     }
 }
 
+pub(crate) fn has_active_ws_turn_for_client_chat(client_id: &str, chat_id: &str) -> bool {
+    let map = ACTIVE_WS_TURNS.get_or_init(Mutex::default);
+    map.lock().ok().is_some_and(|turns| {
+        turns
+            .values()
+            .any(|turn| turn.client_id == client_id && turn.chat_id == chat_id)
+    })
+}
+
 pub fn cancel_ws_turn(turn_id: &str, client_id: &str, chat_id: &str) -> bool {
     let map = ACTIVE_WS_TURNS.get_or_init(Mutex::default);
     let pending = map.lock().ok().and_then(|mut turns| {

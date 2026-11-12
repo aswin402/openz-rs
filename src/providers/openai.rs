@@ -374,20 +374,36 @@ impl LLMProvider for OpenAIProvider {
             .send_request(system_prompt, messages, tools, settings, Some(true))
             .await?;
 
+        let is_json_non_stream = res
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.to_ascii_lowercase().contains("application/json"));
+
+        match is_json_non_stream {
+            true => {
+                let body_text = res.text().await?;
+                let chunks = parse_non_stream_json_response(&body_text)?;
+                let single_stream = futures_util::stream::iter(chunks.into_iter().map(Ok));
+                return Ok(Box::pin(filter_think_stream(Box::pin(single_stream))));
+            }
+            false => {}
+        }
+
         let byte_stream = res.bytes_stream();
         use futures_util::StreamExt;
 
         let stream = futures_util::stream::unfold(
             (
                 byte_stream,
-                String::new(),
-                std::collections::VecDeque::<ChatStreamChunk>::new(),
+                Vec::<u8>::new(),
+                std::collections::VecDeque::<Result<ChatStreamChunk>>::new(),
                 false,
             ),
             |(mut stream, mut buffer, mut pending, mut done)| async move {
                 loop {
                     match pending.pop_front() {
-                        Some(chunk) => return Some((Ok(chunk), (stream, buffer, pending, done))),
+                        Some(item) => return Some((item, (stream, buffer, pending, done))),
                         None => {}
                     }
                     match done {
@@ -395,33 +411,39 @@ impl LLMProvider for OpenAIProvider {
                         false => {}
                     }
 
-                    while let Some(pos) = buffer.find('\n') {
-                        let line = buffer[..pos].trim().to_string();
-                        buffer = buffer[pos + 1..].to_string();
+                    while let Some(pos) = buffer.iter().position(|&b| b == b'\n') {
+                        let line_bytes: Vec<u8> = buffer.drain(..=pos).collect();
+                        let line = String::from_utf8_lossy(&line_bytes).trim().to_string();
                         match line.strip_prefix("data:") {
-                            Some(stripped) => {
-                                let (chunks, is_done) = parse_sse_data_chunks(stripped);
-                                for c in chunks {
-                                    pending.push_back(c);
-                                }
-                                match is_done {
-                                    true => {
-                                        done = true;
-                                        break;
+                            Some(stripped) => match try_parse_sse_data_chunks(stripped) {
+                                Ok((chunks, is_done)) => {
+                                    for c in chunks {
+                                        pending.push_back(Ok(c));
                                     }
-                                    false => {}
+                                    match is_done {
+                                        true => {
+                                            done = true;
+                                            break;
+                                        }
+                                        false => {}
+                                    }
+                                    match pending.is_empty() {
+                                        false => break,
+                                        true => {}
+                                    }
                                 }
-                                match pending.is_empty() {
-                                    false => break,
-                                    true => {}
+                                Err(err) => {
+                                    done = true;
+                                    pending.push_back(Err(err));
+                                    break;
                                 }
-                            }
+                            },
                             None => {}
                         }
                     }
 
                     match pending.pop_front() {
-                        Some(chunk) => return Some((Ok(chunk), (stream, buffer, pending, done))),
+                        Some(item) => return Some((item, (stream, buffer, pending, done))),
                         None => {}
                     }
                     match done {
@@ -431,7 +453,7 @@ impl LLMProvider for OpenAIProvider {
 
                     match stream.next().await {
                         Some(Ok(bytes)) => {
-                            buffer.push_str(&String::from_utf8_lossy(&bytes));
+                            buffer.extend_from_slice(&bytes);
                         }
                         Some(Err(e)) => {
                             done = true;
@@ -441,16 +463,23 @@ impl LLMProvider for OpenAIProvider {
                             ));
                         }
                         None => {
-                            match buffer.trim().is_empty() {
+                            let remaining_text = String::from_utf8_lossy(&buffer).to_string();
+                            buffer.clear();
+                            match remaining_text.trim().is_empty() {
                                 true => {}
                                 false => {
-                                    let remaining = std::mem::take(&mut buffer);
-                                    for raw_line in remaining.lines() {
+                                    for raw_line in remaining_text.lines() {
                                         match raw_line.trim().strip_prefix("data:") {
                                             Some(stripped) => {
-                                                let (chunks, _) = parse_sse_data_chunks(stripped);
-                                                for c in chunks {
-                                                    pending.push_back(c);
+                                                match try_parse_sse_data_chunks(stripped) {
+                                                    Ok((chunks, _)) => {
+                                                        for c in chunks {
+                                                            pending.push_back(Ok(c));
+                                                        }
+                                                    }
+                                                    Err(err) => {
+                                                        pending.push_back(Err(err));
+                                                    }
                                                 }
                                             }
                                             None => {}
@@ -458,19 +487,20 @@ impl LLMProvider for OpenAIProvider {
                                     }
                                 }
                             }
-                            let has_done = pending
-                                .iter()
-                                .any(|c| matches!(c, ChatStreamChunk::Done { .. }));
-                            match has_done {
+                            let has_done_or_err = pending.iter().any(|item| match item {
+                                Ok(ChatStreamChunk::Done { .. }) | Err(_) => true,
+                                Ok(_) => false,
+                            });
+                            match has_done_or_err {
                                 true => {}
-                                false => pending.push_back(ChatStreamChunk::Done {
+                                false => pending.push_back(Ok(ChatStreamChunk::Done {
                                     finish_reason: None,
-                                }),
+                                })),
                             }
                             done = true;
                             return pending
                                 .pop_front()
-                                .map(|chunk| (Ok(chunk), (stream, buffer, pending, done)));
+                                .map(|item| (item, (stream, buffer, pending, done)));
                         }
                     }
                 }
@@ -479,6 +509,129 @@ impl LLMProvider for OpenAIProvider {
 
         let filtered = filter_think_stream(Box::pin(stream));
         Ok(Box::pin(filtered))
+    }
+}
+
+fn extract_upstream_json_error(val: &serde_json::Value) -> Option<String> {
+    let std_err = val
+        .pointer("/error/message")
+        .and_then(|v| v.as_str())
+        .or_else(|| val.get("error").and_then(|v| v.as_str()))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    match std_err {
+        Some(msg) => Some(msg),
+        None => val
+            .pointer("/base_resp/status_code")
+            .and_then(|v| v.as_i64())
+            .filter(|&code| code != 0)
+            .map(|code| {
+                let status_msg = val
+                    .pointer("/base_resp/status_msg")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("Upstream provider error");
+                format!("Provider error ({code}): {status_msg}")
+            }),
+    }
+}
+
+pub(crate) fn parse_non_stream_json_response(body_text: &str) -> Result<Vec<ChatStreamChunk>> {
+    let val: serde_json::Value = serde_json::from_str(body_text)
+        .map_err(|e| anyhow::anyhow!("Invalid provider JSON response: {e}"))?;
+    match extract_upstream_json_error(&val) {
+        Some(err_msg) => return Err(anyhow::anyhow!("{err_msg}")),
+        None => {}
+    }
+    let parsed: OpenAIResponse = serde_json::from_value(val)
+        .map_err(|e| anyhow::anyhow!("Unexpected provider JSON structure: {e}"))?;
+    let choice = parsed
+        .choices
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("openai provider error: No choices returned"))?;
+
+    let mut chunks = Vec::new();
+    match choice
+        .message
+        .reasoning_content
+        .as_deref()
+        .filter(|s| !s.is_empty())
+    {
+        Some(r) => chunks.push(ChatStreamChunk::Reasoning(r.to_string())),
+        None => {}
+    }
+    match choice.message.content.as_deref().filter(|s| !s.is_empty()) {
+        Some(c) => chunks.push(ChatStreamChunk::Content(c.to_string())),
+        None => {}
+    }
+    match choice.message.tool_calls.as_ref() {
+        Some(calls) => {
+            for (index, call) in calls.iter().enumerate() {
+                chunks.push(ChatStreamChunk::ToolCall {
+                    index,
+                    id: Some(call.id.clone()),
+                    name: Some(call.function.name.clone()),
+                    arguments: Some(call.function.arguments.clone()),
+                });
+            }
+        }
+        None => {}
+    }
+    chunks.push(ChatStreamChunk::Done {
+        finish_reason: Some(
+            choice
+                .finish_reason
+                .clone()
+                .unwrap_or_else(|| "stop".to_string()),
+        ),
+    });
+    Ok(chunks)
+}
+
+pub(crate) fn try_parse_sse_data_chunks(data: &str) -> Result<(Vec<ChatStreamChunk>, bool)> {
+    let trimmed = data.trim();
+    match trimmed == "[DONE]" {
+        true => {
+            return Ok((
+                vec![ChatStreamChunk::Done {
+                    finish_reason: None,
+                }],
+                true,
+            ))
+        }
+        false => {}
+    }
+    match serde_json::from_str::<serde_json::Value>(trimmed).ok() {
+        Some(ref val) => match extract_upstream_json_error(val) {
+            Some(err_msg) => return Err(anyhow::anyhow!("{err_msg}")),
+            None => {}
+        },
+        None => {}
+    }
+    Ok(parse_sse_data_chunks(trimmed))
+}
+
+fn extract_delta_reasoning(choice: &serde_json::Value) -> Option<String> {
+    let direct = choice
+        .pointer("/delta/reasoning_content")
+        .or_else(|| choice.pointer("/delta/reasoning"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    match direct {
+        Some(r) => Some(r),
+        None => choice
+            .pointer("/delta/reasoning_details")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| {
+                let combined: String = arr
+                    .iter()
+                    .filter_map(|item| item.get("text").and_then(|t| t.as_str()))
+                    .collect();
+                (!combined.is_empty()).then_some(combined)
+            }),
     }
 }
 
@@ -508,13 +661,8 @@ pub(crate) fn parse_sse_data_chunks(data: &str) -> (Vec<ChatStreamChunk>, bool) 
     match choice_opt {
         None => {}
         Some(choice) => {
-            match choice
-                .pointer("/delta/reasoning_content")
-                .or_else(|| choice.pointer("/delta/reasoning"))
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-            {
-                Some(reasoning) => chunks.push(ChatStreamChunk::Reasoning(reasoning.to_string())),
+            match extract_delta_reasoning(&choice) {
+                Some(reasoning) => chunks.push(ChatStreamChunk::Reasoning(reasoning)),
                 None => {}
             }
 

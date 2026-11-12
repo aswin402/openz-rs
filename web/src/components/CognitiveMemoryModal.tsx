@@ -6,6 +6,7 @@ import { MetricCard } from '../shared/ui/MetricCard';
 export const CognitiveMemoryModal: React.FC = () => {
   const isMemoryOpen = useOpenZStore((s) => s.isMemoryOpen);
   const setIsMemoryOpen = useOpenZStore((s) => s.setIsMemoryOpen);
+  const setActiveView = useOpenZStore((s) => s.setActiveView);
   const stats = useOpenZStore((s) => s.cognitiveStats);
 
   if (!isMemoryOpen) return null;
@@ -38,26 +39,47 @@ export const CognitiveMemoryModal: React.FC = () => {
             <div className="mb-2 font-semibold text-foreground flex items-center gap-1.5">
               <Key className="h-3.5 w-3.5 text-amber-500" /> Active Working Memory Scope
             </div>
-            <div className="flex flex-wrap gap-1.5">
-              {stats.workingMemoryKeys.map((key) => (
-                <span
-                  key={key}
-                  className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 font-mono text-[11px] text-amber-300"
-                >
-                  {key}
-                </span>
-              ))}
-            </div>
+            {stats.workingMemoryKeys.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-border/50 bg-muted/15 px-3 py-2 text-[11px] text-muted-foreground">
+                No active working memory keys in current scope.
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {stats.workingMemoryKeys.map((key) => (
+                  <span
+                    key={key}
+                    className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 font-mono text-[11px] text-amber-300"
+                  >
+                    {key}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
-          {/* Cognitive Database Path */}
-          <div className="rounded-lg border border-border/40 bg-black/40 p-3 font-mono text-[11px] text-muted-foreground">
-            <div className="font-sans font-semibold text-foreground mb-1">SQLite Database Location</div>
-            ~/.openz/memory.db
+          {/* Cognitive Database Paths */}
+          <div className="space-y-2 rounded-lg border border-border/40 bg-black/40 p-3 font-mono text-[11px] text-muted-foreground">
+            <div>
+              <div className="font-sans font-semibold text-foreground mb-0.5">Knowledge Graph Database</div>
+              <div className="break-all">{stats.paths?.graphDb || 'Waiting for gateway path…'}</div>
+            </div>
+            <div className="border-t border-border/30 pt-2">
+              <div className="font-sans font-semibold text-foreground mb-0.5">Cognitive Facts Database</div>
+              <div className="break-all">{stats.paths?.memoryDb || 'Waiting for gateway path…'}</div>
+            </div>
           </div>
         </div>
 
-        <div className="mt-6 flex justify-end">
+        <div className="mt-6 flex items-center justify-between gap-2">
+          <button
+            onClick={() => {
+              setIsMemoryOpen(false);
+              setActiveView('knowledge');
+            }}
+            className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-2 text-xs font-semibold text-amber-400 hover:bg-amber-500/20 transition"
+          >
+            Open Graph View
+          </button>
           <button
             onClick={() => setIsMemoryOpen(false)}
             className="rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:opacity-90"

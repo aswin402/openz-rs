@@ -25,7 +25,8 @@ pub enum Command {
     Configure,
     #[command(hide = true)]
     Agent,
-    Gateway {
+    #[command(name = "webui", visible_alias = "web", alias = "gateway")]
+    Webui {
         #[command(subcommand)]
         action: Option<ChannelAction>,
     },

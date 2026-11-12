@@ -9,8 +9,9 @@ use super::commands;
 use super::commands::memory::cognitive_memory_event;
 use super::commands::observability::{logs_event, mcp_servers_event};
 use super::commands::sessions::{
-    archive_session_event, delete_session_event, fetch_real_session_history,
-    fetch_real_sessions_list, fetch_real_sessions_list_paginated, resolve_session_key,
+    archive_session_event, delete_session_event, ensure_webui_session_key,
+    fetch_real_session_history, fetch_real_sessions_list, fetch_real_sessions_list_paginated,
+    resolve_session_key_async,
 };
 use super::commands::system::runtime_inventory_event;
 use super::events::normalize_ws_chat_id;
@@ -35,6 +36,24 @@ use tokio::sync::mpsc;
 
 pub(crate) const MAX_WS_REQUEST_ID_LEN: usize = 128;
 const MAX_CONCURRENT_WS_CLIENT_TURNS: usize = 16;
+const WS_CLIENT_CHANNEL_CAPACITY: usize = 8192;
+
+fn set_ws_client_chat(client_id: &str, chat_id: &str) {
+    match crate::channels::get_active_ws_client_chats().lock() {
+        Ok(mut client_chats) => {
+            client_chats.insert(client_id.to_string(), chat_id.to_string());
+        }
+        Err(_) => {}
+    }
+}
+
+fn current_ws_client_chat(client_id: &str, fallback: &str) -> String {
+    crate::channels::get_active_ws_client_chats()
+        .lock()
+        .ok()
+        .and_then(|chats| chats.get(client_id).cloned())
+        .unwrap_or_else(|| fallback.to_string())
+}
 
 pub(crate) fn ws_request_id(envelope: &Value) -> Option<String> {
     let request_id = envelope.get("request_id").and_then(Value::as_str)?.trim();
@@ -97,7 +116,7 @@ pub(crate) async fn handle_socket(socket: WebSocket, state: WsState) {
     let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_WS_CLIENT_TURNS));
 
     let (mut ws_sender, mut ws_receiver) = socket.split();
-    let (tx, mut rx) = mpsc::channel::<Message>(100);
+    let (tx, mut rx) = mpsc::channel::<Message>(WS_CLIENT_CHANNEL_CAPACITY);
 
     tokio::spawn(async move {
         while let Some(msg) = rx.recv().await {
@@ -174,33 +193,36 @@ pub(crate) async fn handle_socket(socket: WebSocket, state: WsState) {
             }
             None => {}
         }
-        let chat_id = envelope
+        let explicit_chat_id = envelope
             .get("chat_id")
             .and_then(|v| v.as_str())
-            .unwrap_or(&default_chat_id)
-            .to_string();
-        match msg_type != "security_response" {
-            true => match crate::channels::get_active_ws_client_chats().lock() {
-                Ok(mut client_chats) => {
-                    client_chats.insert(client_id.clone(), chat_id.clone());
-                }
-                Err(_) => {}
-            },
-            false => {}
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        match (&explicit_chat_id, matches!(msg_type, "attach" | "message")) {
+            (Some(cid), true) => set_ws_client_chat(&client_id, cid),
+            _ => {}
         }
+        let chat_id = explicit_chat_id
+            .unwrap_or_else(|| current_ws_client_chat(&client_id, &default_chat_id));
 
         match msg_type {
             "new_chat" => {
                 let new_id = uuid::Uuid::new_v4().to_string();
+                set_ws_client_chat(&client_id, &new_id);
                 let attached_evt = protocol::attached(&new_id);
                 send_event(&tx, attached_evt).await;
             }
             "attach" => {
                 let attached_evt = protocol::attached(&chat_id);
                 send_event(&tx, attached_evt).await;
-                let history_evt =
-                    fetch_real_session_history(&state.agent_loop.session_manager, &chat_id).await;
-                send_event(&tx, history_evt).await;
+                let session_mgr = state.agent_loop.session_manager.clone();
+                let chat_id_owned = chat_id.clone();
+                let tx_clone = tx.clone();
+                tokio::spawn(async move {
+                    let history_evt = fetch_real_session_history(&session_mgr, &chat_id_owned).await;
+                    send_event(&tx_clone, history_evt).await;
+                });
             }
             "list_sessions" => {
                 let offset = envelope
@@ -211,56 +233,75 @@ pub(crate) async fn handle_socket(socket: WebSocket, state: WsState) {
                     .get("limit")
                     .and_then(Value::as_u64)
                     .map(|v| v as usize);
-                let evt = match (offset, limit) {
-                    (Some(offset), Some(limit)) => {
-                        fetch_real_sessions_list_paginated(
-                            &state.agent_loop.session_manager,
-                            offset,
-                            limit,
-                        )
-                        .await
-                    }
-                    _ => fetch_real_sessions_list(&state.agent_loop.session_manager).await,
-                };
-                send_event(&tx, evt).await;
+                let session_mgr = state.agent_loop.session_manager.clone();
+                let tx_clone = tx.clone();
+                tokio::spawn(async move {
+                    let evt = match (offset, limit) {
+                        (Some(offset), Some(limit)) => {
+                            fetch_real_sessions_list_paginated(&session_mgr, offset, limit).await
+                        }
+                        _ => fetch_real_sessions_list(&session_mgr).await,
+                    };
+                    send_event(&tx_clone, evt).await;
+                });
             }
             "load_history" => {
-                let evt =
-                    fetch_real_session_history(&state.agent_loop.session_manager, &chat_id).await;
-                send_event(&tx, evt).await;
+                let session_mgr = state.agent_loop.session_manager.clone();
+                let chat_id_owned = chat_id.clone();
+                let tx_clone = tx.clone();
+                tokio::spawn(async move {
+                    let evt = fetch_real_session_history(&session_mgr, &chat_id_owned).await;
+                    send_event(&tx_clone, evt).await;
+                });
             }
             "archive_session" | "delete_session" => {
-                let evt = match msg_type == "archive_session" {
-                    true => {
-                        archive_session_event(&state.agent_loop.session_manager, &envelope).await
-                    }
-                    false => {
-                        delete_session_event(&state.agent_loop.session_manager, &envelope).await
-                    }
-                };
-                send_event(&tx, evt).await;
-
-                let sessions_evt =
-                    fetch_real_sessions_list(&state.agent_loop.session_manager).await;
-                send_event(&tx, sessions_evt).await;
-
+                let is_archive = msg_type == "archive_session";
+                let session_mgr = state.agent_loop.session_manager.clone();
+                let envelope_owned = envelope.clone();
                 let config = state.current_config();
-                let inventory_evt =
-                    runtime_inventory_event(&config, Some(&state.agent_loop.tools));
-                send_event(&tx, inventory_evt).await;
+                let tools = state.agent_loop.tools.clone();
+                let tx_clone = tx.clone();
+                tokio::spawn(async move {
+                    let evt = match is_archive {
+                        true => archive_session_event(&session_mgr, &envelope_owned).await,
+                        false => delete_session_event(&session_mgr, &envelope_owned).await,
+                    };
+                    send_event(&tx_clone, evt).await;
+
+                    let sessions_evt = fetch_real_sessions_list(&session_mgr).await;
+                    send_event(&tx_clone, sessions_evt).await;
+
+                    match tokio::task::spawn_blocking(move || {
+                        runtime_inventory_event(&config, Some(&tools))
+                    })
+                    .await
+                    {
+                        Ok(inventory_evt) => send_event(&tx_clone, inventory_evt).await,
+                        Err(_) => {}
+                    }
+                });
             }
             "get_cognitive_memory" => {
-                let evt = cognitive_memory_event().await;
-                send_event(&tx, evt).await;
+                let tx_clone = tx.clone();
+                tokio::spawn(async move {
+                    let evt = cognitive_memory_event().await;
+                    send_event(&tx_clone, evt).await;
+                });
             }
             "get_mcp_servers" => {
                 let live = state.current_config();
-                let evt = mcp_servers_event(&live).await;
-                send_event(&tx, evt).await;
+                let tx_clone = tx.clone();
+                tokio::spawn(async move {
+                    let evt = mcp_servers_event(&live).await;
+                    send_event(&tx_clone, evt).await;
+                });
             }
             "get_logs" => {
-                let evt = logs_event().await;
-                send_event(&tx, evt).await;
+                let tx_clone = tx.clone();
+                tokio::spawn(async move {
+                    let evt = logs_event().await;
+                    send_event(&tx_clone, evt).await;
+                });
             }
             "message" => {
                 handle_message_command(
@@ -362,14 +403,8 @@ async fn handle_message_command(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-    let attachment_refs =
-        persist_attachments(envelope.get("attachments").unwrap_or(&Value::Null)).await;
-    let content = match attachment_refs.is_empty() {
-        true => raw_content,
-        false => format!("{}\n\n{}", attachment_refs.join("\n"), raw_content),
-    };
 
-    match crate::channels::is_stop_command(&content) {
+    match crate::channels::is_stop_command(&raw_content) {
         true => {
             let requested_turn_id = envelope
                 .get("turn_id")
@@ -398,56 +433,69 @@ async fn handle_message_command(
         false => {}
     }
 
-    match crate::channels::session_command_text_response(
-        &state.agent_loop.session_manager,
-        chat_id,
-        &content,
-    )
-    .await
-    {
-        Some(response_text) => {
-            send_delta_and_turn_end(tx, chat_id, response_text).await;
-            return;
-        }
-        None => {}
-    }
+    let attachments_val = envelope.get("attachments").cloned().unwrap_or(Value::Null);
+    let has_attachments = attachments_val
+        .as_array()
+        .is_some_and(|items| !items.is_empty());
 
-    match crate::channels::model_switch_text_response(&content) {
-        Some(response_text) => {
-            send_delta_and_turn_end(tx, chat_id, response_text).await;
+    match (!has_attachments, raw_content.trim().starts_with('/')) {
+        (true, true) => {
+            let trimmed = raw_content.trim();
+            match trimmed == "/servers" {
+                true => {
+                    send_delta_and_turn_end(tx, chat_id, format_background_servers_response())
+                        .await;
+                    return;
+                }
+                false => {}
+            }
+            match trimmed.strip_prefix("/stop-server") {
+                Some(stripped) => {
+                    send_delta_and_turn_end(
+                        tx,
+                        chat_id,
+                        format_stop_server_response(stripped.trim()),
+                    )
+                    .await;
+                    return;
+                }
+                None => {}
+            }
+            match trimmed.strip_prefix("/device") {
+                Some(_) => {
+                    let response = "Device clipboard and app suggestions are currently managed locally. To audit device details, use the CLI `openz`.".to_string();
+                    send_delta_and_turn_end(tx, chat_id, response).await;
+                    return;
+                }
+                None => {}
+            }
+            match crate::channels::session_command_text_response(
+                &state.agent_loop.session_manager,
+                chat_id,
+                &raw_content,
+            )
+            .await
+            {
+                Some(response_text) => {
+                    send_delta_and_turn_end(tx, chat_id, response_text).await;
+                    return;
+                }
+                None => {}
+            }
+            match crate::channels::model_switch_text_response(&raw_content) {
+                Some(response_text) => {
+                    send_delta_and_turn_end(tx, chat_id, response_text).await;
+                    return;
+                }
+                None => {}
+            }
         }
-        None => {}
-    }
-
-    let trimmed = content.trim();
-    match trimmed == "/servers" {
-        true => {
-            send_delta_and_turn_end(tx, chat_id, format_background_servers_response()).await;
-            return;
-        }
-        false => {}
-    }
-    match trimmed.strip_prefix("/stop-server") {
-        Some(stripped) => {
-            send_delta_and_turn_end(tx, chat_id, format_stop_server_response(stripped.trim()))
-                .await;
-            return;
-        }
-        None => {}
-    }
-    match trimmed.strip_prefix("/device") {
-        Some(_) => {
-            let response = "Device clipboard and app suggestions are currently managed locally. To audit device details, use the CLI `openz`.".to_string();
-            send_delta_and_turn_end(tx, chat_id, response).await;
-            return;
-        }
-        None => {}
+        _ => {}
     }
 
     let state_clone = state.clone();
     let tx_clone = tx.clone();
     let chat_id_clone = chat_id.to_string();
-    let content_str = content;
     let sem_clone = semaphore.clone();
     let session_overrides = collect_message_session_overrides(envelope);
 
@@ -459,6 +507,7 @@ async fn handle_message_command(
 
     let turn_id = format!("turn-{}", &uuid::Uuid::new_v4().to_string()[..12]);
     let turn_token = crate::tools::subagent::CancellationToken::new();
+    let turn_token_for_err = turn_token.clone();
     let normalized_chat_id = normalize_ws_chat_id(&chat_id_clone);
     register_ws_turn(
         turn_id.clone(),
@@ -505,10 +554,18 @@ async fn handle_message_command(
                                 }
                             };
 
-                            let session_key = resolve_session_key(
+                            let attachment_refs = persist_attachments(&attachments_val).await;
+                            let content_str = match attachment_refs.is_empty() {
+                                true => raw_content,
+                                false => format!("{}\n\n{}", attachment_refs.join("\n"), raw_content),
+                            };
+
+                            let resolved_key = resolve_session_key_async(
                                 &state_clone.agent_loop.session_manager,
                                 &chat_id_clone,
-                            );
+                            )
+                            .await;
+                            let session_key = ensure_webui_session_key(&resolved_key);
                             match session_overrides.is_empty() {
                                 true => {}
                                 false => {
@@ -553,12 +610,19 @@ async fn handle_message_command(
                                     send_event(&tx_clone, turn_end_evt).await;
                                 }
                                 Err(e) => {
-                                    let err_evt = protocol::error_for_turn(
-                                        chat_id_clone.clone(),
-                                        turn_id_for_events.clone(),
-                                        e.to_string(),
-                                    );
-                                    send_event(&tx_clone, err_evt).await;
+                                    let was_cancelled = turn_token_for_err.is_cancelled()
+                                        || e.to_string().contains("Cancelled by user");
+                                    match was_cancelled {
+                                        true => {}
+                                        false => {
+                                            let err_evt = protocol::error_for_turn(
+                                                chat_id_clone.clone(),
+                                                turn_id_for_events.clone(),
+                                                e.to_string(),
+                                            );
+                                            send_event(&tx_clone, err_evt).await;
+                                        }
+                                    }
                                     let turn_end_evt = protocol::turn_end(
                                         chat_id_clone.clone(),
                                         Some(turn_id_for_events.clone()),

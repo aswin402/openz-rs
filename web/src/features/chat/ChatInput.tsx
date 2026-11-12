@@ -33,7 +33,14 @@ export const ChatInput: React.FC = () => {
 
   const sendMessage = useOpenZStore((s) => s.sendMessage);
   const stopTurn = useOpenZStore((s) => s.stopTurn);
-  const isStreaming = useOpenZStore((s) => s.isStreaming);
+  const isStreaming = useOpenZStore((s) => {
+    const chatId = s.activeChatId;
+    if (!chatId) return false;
+    if (s.activeTurnIds[chatId]) return true;
+    const chatMessages = s.messages[chatId] || [];
+    const lastMsg = chatMessages[chatMessages.length - 1];
+    return Boolean(lastMsg && lastMsg.role === 'assistant' && lastMsg.isStreaming);
+  });
   const activeModel = useOpenZStore((s) => s.activeModel);
   const activeProvider = useOpenZStore((s) => s.activeProvider);
   const providers = useOpenZStore((s) => s.providers);

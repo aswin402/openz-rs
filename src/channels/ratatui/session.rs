@@ -146,9 +146,22 @@ pub async fn save_session_streaming_override(
     session_key: &str,
     streaming: bool,
 ) -> Result<()> {
+    match crate::config::loader::load_config() {
+        Ok(mut cfg) => {
+            cfg.ui_profile_mut("tui").streaming = Some(streaming);
+            let _ = crate::config::loader::save_config(&cfg);
+        }
+        Err(_) => {}
+    }
     let mut overrides = serde_json::Map::new();
     overrides.insert("streaming".to_string(), serde_json::Value::Bool(streaming));
     crate::agent::agent_loop::save_session_overrides(session_manager, session_key, &overrides).await
+}
+
+pub fn save_tui_theme_override(theme_name: &str) -> Result<()> {
+    let mut cfg = crate::config::loader::load_config().unwrap_or_default();
+    cfg.ui_profile_mut("tui").theme = Some(theme_name.to_string());
+    crate::config::loader::save_config(&cfg)
 }
 
 pub async fn apply_session_model_selection(
@@ -158,10 +171,17 @@ pub async fn apply_session_model_selection(
     provider: &str,
     model: &str,
 ) -> Result<()> {
-    let mut cfg = crate::config::loader::load_config()?;
-    cfg.agents.defaults.provider = provider.to_string();
-    cfg.agents.defaults.model = model.to_string();
-    let _resolved = crate::providers::resolver::resolve_provider_full(&cfg, model)?;
+    let mut disk_cfg = crate::config::loader::load_config()?;
+    let mut check_cfg = disk_cfg.with_ui_surface("tui");
+    check_cfg.agents.defaults.provider = provider.to_string();
+    check_cfg.agents.defaults.model = model.to_string();
+    let _resolved = crate::providers::resolver::resolve_provider_full(&check_cfg, model)?;
+    {
+        let tui_profile = disk_cfg.ui_profile_mut("tui");
+        tui_profile.provider = Some(provider.to_string());
+        tui_profile.model = Some(model.to_string());
+    }
+    let _ = crate::config::loader::save_config(&disk_cfg);
     save_session_model_override(session_manager, session_key, provider, model).await?;
     write_tui_marker_in_dir(marker_dir, std::process::id(), session_key, model, provider)?;
     Ok(())

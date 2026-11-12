@@ -21,6 +21,8 @@ enum RatatuiSlashCommand<'a> {
     Help,
     History,
     Model(&'a str),
+    Theme(&'a str),
+    Gateway(&'a str),
     NewSession,
     Settings,
     Streaming,
@@ -57,6 +59,14 @@ impl<'a> RatatuiSlashCommand<'a> {
         }
         match trimmed.strip_prefix("/model") {
             Some(rest) => return Self::Model(rest.trim()),
+            None => {}
+        }
+        match trimmed.strip_prefix("/theme") {
+            Some(rest) => return Self::Theme(rest.trim()),
+            None => {}
+        }
+        match trimmed.strip_prefix("/gateway") {
+            Some(rest) => return Self::Gateway(rest.trim()),
             None => {}
         }
         match trimmed.strip_prefix("/stop-server") {
@@ -168,9 +178,117 @@ pub async fn handle_slash_command(
             }
         }
         RatatuiSlashCommand::NewSession => SlashResult::NewSession,
-        RatatuiSlashCommand::Settings => {
-            let mut effective_cfg = crate::config::loader::load_config()
+        RatatuiSlashCommand::Theme("") => {
+            let mut lines = vec![
+                format!("**Active TUI Theme:** `{}`", app.theme_name),
+                "\n**Available Themes:**".to_string(),
+            ];
+            for (name, desc) in super::theme::Theme::available_themes() {
+                let marker = match *name == app.theme_name {
+                    true => "●",
+                    false => "○",
+                };
+                lines.push(format!("{} `{}` — {}", marker, name, desc));
+            }
+            lines.push("\n*Usage: `/theme <name>` (saved to TUI settings only)*".to_string());
+            assistant_msg(lines.join("\n"))
+        }
+        RatatuiSlashCommand::Theme(raw_theme) => {
+            match super::theme::Theme::canonical_name(raw_theme) {
+                Some(canonical) => {
+                    app.set_theme(canonical);
+                    let _ = super::session::save_tui_theme_override(canonical);
+                    assistant_msg(format!(
+                        "✓ TUI theme switched to `{}` (saved to TUI profile).",
+                        canonical
+                    ))
+                }
+                None => assistant_msg(format!(
+                    "✕ Unknown TUI theme `{}`. Type `/theme` to list available themes.",
+                    raw_theme
+                )),
+            }
+        }
+        RatatuiSlashCommand::Gateway(arg) => {
+            let mut raw_cfg = crate::config::loader::load_config()
                 .unwrap_or_else(|_| agent_loop.config.clone());
+            let mut ws = raw_cfg.channels.websocket.clone().unwrap_or_default();
+            let parts: Vec<&str> = arg.split_whitespace().collect();
+            match parts.as_slice() {
+                [] | ["status"] => {
+                    let live_gw = crate::agent::activity::get_active_gateway_status();
+                    let runtime_line = match live_gw {
+                        Some(gw) => format!(
+                            "• **Live Gateway:** `Running` on `http://{}:{}` (PID {})",
+                            gw.host, gw.port, gw.pid
+                        ),
+                        None => "• **Live Gateway:** `Stopped` (launch with `openz webui`)".to_string(),
+                    };
+                    assistant_msg(
+                        [
+                            "**Gateway & WebUI Configuration:**".to_string(),
+                            runtime_line,
+                            format!(
+                                "• **Gateway Enabled:** `{}`",
+                                enabled_title_label(ws.enabled)
+                            ),
+                            format!("• **Address:** `http://{}:{}`", ws.host, ws.port),
+                            format!(
+                                "• **Start when launching `openz` (TUI):** `{}`",
+                                enabled_title_label(ws.start_on_tui)
+                            ),
+                            format!(
+                                "• **Start at system login (startup):** `{}`",
+                                enabled_title_label(ws.start_on_boot)
+                            ),
+                            "\n*Commands:* `/gateway auto-tui on|off` · `/gateway auto-boot on|off` · or run `openz configure`".to_string(),
+                        ]
+                        .join("\n"),
+                    )
+                }
+                ["auto-tui", state_str] => {
+                    let next = matches!(
+                        state_str.to_ascii_lowercase().as_str(),
+                        "on" | "true" | "1" | "enable" | "enabled"
+                    );
+                    ws.enabled = ws.enabled || next;
+                    ws.start_on_tui = next;
+                    raw_cfg.channels.websocket = Some(ws);
+                    let _ = crate::config::loader::save_config(&raw_cfg);
+                    assistant_msg(format!(
+                        "✓ Gateway auto-start on `openz` TUI launch is now **{}**.",
+                        enabled_lower_label(next)
+                    ))
+                }
+                ["auto-boot", state_str] | ["startup", state_str] => {
+                    let next = matches!(
+                        state_str.to_ascii_lowercase().as_str(),
+                        "on" | "true" | "1" | "enable" | "enabled"
+                    );
+                    ws.enabled = ws.enabled || next;
+                    ws.start_on_boot = next;
+                    let host = ws.host.clone();
+                    let port = ws.port;
+                    raw_cfg.channels.websocket = Some(ws);
+                    let _ = crate::config::loader::save_config(&raw_cfg);
+                    let _ = crate::cli::configure::sync_gateway_systemd_service(
+                        next, false, &host, port,
+                    );
+                    assistant_msg(format!(
+                        "✓ Gateway startup on system login (`openz-gateway.service`) is now **{}**.",
+                        enabled_lower_label(next)
+                    ))
+                }
+                _ => assistant_msg(
+                    "Usage: `/gateway` | `/gateway auto-tui on|off` | `/gateway auto-boot on|off`",
+                ),
+            }
+        }
+        RatatuiSlashCommand::Settings => {
+            let raw_cfg = crate::config::loader::load_config()
+                .unwrap_or_else(|_| agent_loop.config.clone());
+            let ws_cfg = raw_cfg.channels.websocket.clone().unwrap_or_default();
+            let mut effective_cfg = raw_cfg.with_ui_surface("tui");
             match session_manager.load(session_key) {
                 Ok(session) => {
                     crate::agent::agent_loop::apply_session_overrides(
@@ -183,8 +301,10 @@ pub async fn handle_slash_command(
             let defaults = &effective_cfg.agents.defaults;
 
             let mut lines = vec![
-                "**Active Session Settings:**".to_string(),
+                "**Active TUI Session Settings:**".to_string(),
+                "• **UI Surface:** `tui` (isolated from WebUI / Telegram)".to_string(),
                 format!("• **Session Key:** `{}`", session_key),
+                format!("• **Theme:** `{}`", app.theme_name),
                 format!("• **Model:** `{}`", defaults.model),
                 format!("• **Provider:** `{}`", defaults.provider),
                 format!("• **Security Mode:** `{}`", defaults.security_mode),
@@ -204,6 +324,16 @@ pub async fn handle_slash_command(
                 format!(
                     "• **Max Tool Iterations:** `{}`",
                     defaults.max_tool_iterations
+                ),
+                format!(
+                    "• **Gateway Auto-Start on `openz`:** `{}` (`http://{}:{}`)",
+                    enabled_title_label(ws_cfg.enabled && ws_cfg.start_on_tui),
+                    ws_cfg.host,
+                    ws_cfg.port
+                ),
+                format!(
+                    "• **Gateway Startup on System Login:** `{}` (configure with `/gateway`)",
+                    enabled_title_label(ws_cfg.enabled && ws_cfg.start_on_boot)
                 ),
             ];
 
@@ -236,11 +366,14 @@ pub async fn handle_slash_command(
             assistant_msg(lines.join("\n"))
         }
         RatatuiSlashCommand::Streaming => {
+            let fallback_streaming = crate::config::loader::load_config()
+                .map(|c| c.with_ui_surface("tui").agents.defaults.streaming)
+                .unwrap_or(agent_loop.config.agents.defaults.streaming);
             let current_streaming = session_manager
                 .load(session_key)
                 .ok()
                 .and_then(|session| session.metadata.get("streaming").and_then(|v| v.as_bool()))
-                .unwrap_or(agent_loop.config.agents.defaults.streaming);
+                .unwrap_or(fallback_streaming);
             let next_streaming = !current_streaming;
             let _ = super::session::save_session_streaming_override(
                 session_manager,
@@ -250,7 +383,7 @@ pub async fn handle_slash_command(
             .await;
 
             assistant_msg(format!(
-                "Response streaming is now **{}** for this session.",
+                "Response streaming is now **{}** for TUI.",
                 enabled_lower_label(next_streaming)
             ))
         }

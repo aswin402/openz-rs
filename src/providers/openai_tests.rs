@@ -265,3 +265,65 @@ fn test_parse_sse_data_chunks_preserves_reasoning_content_and_tool_calls_in_same
         _ => panic!("expected Done chunk"),
     }
 }
+
+#[test]
+fn test_parse_sse_data_chunks_extracts_reasoning_details_and_upstream_errors() {
+    let minimax_sse = r#"{
+        "choices": [{
+            "delta": {
+                "reasoning_details": [{"text": "Analyzing WebUI stream..."}],
+                "content": "Ready!"
+            },
+            "finish_reason": null
+        }]
+    }"#;
+    let (chunks, is_done) = parse_sse_data_chunks(minimax_sse);
+    assert!(!is_done);
+    assert_eq!(chunks.len(), 2);
+    match &chunks[0] {
+        ChatStreamChunk::Reasoning(r) => assert_eq!(r, "Analyzing WebUI stream..."),
+        _ => panic!("expected Reasoning chunk from reasoning_details"),
+    }
+    match &chunks[1] {
+        ChatStreamChunk::Content(c) => assert_eq!(c, "Ready!"),
+        _ => panic!("expected Content chunk"),
+    }
+
+    let upstream_err = r#"{"base_resp":{"status_code":1004,"status_msg":"insufficient balance"}}"#;
+    let err_res = try_parse_sse_data_chunks(upstream_err);
+    assert!(err_res.is_err());
+    assert!(err_res
+        .unwrap_err()
+        .to_string()
+        .contains("insufficient balance"));
+}
+
+#[test]
+fn test_parse_non_stream_json_response_converts_completion_to_stream_chunks() {
+    let body = r#"{
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "reasoning_content": "Step 1 thought.",
+                "content": "Final non-SSE reply."
+            },
+            "finish_reason": "stop"
+        }]
+    }"#;
+    let chunks = parse_non_stream_json_response(body).expect("valid json completion");
+    assert_eq!(chunks.len(), 3);
+    match &chunks[0] {
+        ChatStreamChunk::Reasoning(r) => assert_eq!(r, "Step 1 thought."),
+        _ => panic!("expected Reasoning chunk"),
+    }
+    match &chunks[1] {
+        ChatStreamChunk::Content(c) => assert_eq!(c, "Final non-SSE reply."),
+        _ => panic!("expected Content chunk"),
+    }
+    match &chunks[2] {
+        ChatStreamChunk::Done {
+            finish_reason: Some(reason),
+        } => assert_eq!(reason, "stop"),
+        _ => panic!("expected Done chunk"),
+    }
+}

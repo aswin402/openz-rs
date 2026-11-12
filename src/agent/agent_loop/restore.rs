@@ -17,6 +17,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     let old_provider = ctx.config.agents.defaults.provider.clone();
     let old_model = ctx.config.agents.defaults.model.clone();
 
+    ctx.config.apply_ui_surface_for_session(ctx.session_key);
     super::apply_session_overrides(&mut ctx.config, &ctx.session.metadata);
 
     let provider_changed = ctx.config.agents.defaults.provider != old_provider

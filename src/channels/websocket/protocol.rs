@@ -758,6 +758,21 @@ pub(crate) fn turn_started(chat_id: impl Into<String>, turn_id: impl Into<String
     .into_json()
 }
 
+pub(crate) fn remote_user_message(
+    chat_id: impl Into<String>,
+    sender: impl Into<String>,
+    content: impl Into<String>,
+    timestamp: i64,
+) -> Value {
+    json!({
+        "event": "remote_user_message",
+        "chat_id": chat_id.into(),
+        "sender": sender.into(),
+        "content": content.into(),
+        "timestamp": timestamp,
+    })
+}
+
 pub(crate) fn turn_end(chat_id: impl Into<String>, turn_id: Option<String>) -> Value {
     WsEvent::TurnEnd {
         chat_id: chat_id.into(),

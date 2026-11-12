@@ -11,7 +11,7 @@ use reqwest::Client;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
 
-pub use messages::{send_text_message, send_text_message_to_target};
+pub use messages::{deliver_remote_reply, send_text_message, send_text_message_to_target};
 pub use state::{
     get_telegram_bot_info, refresh_remote_typing_indicator, register_approval,
     start_typing_indicator, stop_typing_indicator, unregister_approval,
@@ -84,8 +84,28 @@ fn spawn_remote_forward_task(
     client: Client,
 ) {
     tokio::spawn(async move {
+        match crate::agent::activity::remote_target_is_available(&remote_session_key) {
+            false => {
+                state::stop_typing_indicator(chat_id);
+                state::clear_remote_session(chat_id);
+                messages::spawn_telegram_msg(
+                    client,
+                    token,
+                    chat_id,
+                    "⚠️ The selected remote TUI/WebUI session is no longer active. Remote mode was cleared — use /remote to pick an active session.".to_string(),
+                );
+                return;
+            }
+            true => {}
+        }
+
+        let surface_label = match remote_session_key.starts_with("ws:") {
+            true => "WebUI",
+            false => "TUI",
+        };
         let remote_sender = format!("telegram:{}", chat_id);
-        state::start_typing_indicator(chat_id, token.clone(), client.clone());
+        crate::agent::activity::mark_remote_turn_pending(chat_id, &remote_session_key);
+        state::start_remote_typing_indicator(chat_id, token.clone(), client.clone());
         match crate::agent::activity::send_inbox_message(&remote_session_key, &text, &remote_sender)
         {
             Ok(_) => {
@@ -94,10 +114,14 @@ fn spawn_remote_forward_task(
                     client,
                     token,
                     chat_id,
-                    "🔌 Remote command forwarded to selected TUI session. Executing...".to_string(),
+                    format!(
+                        "🔌 Remote command forwarded to selected {} session. Executing...",
+                        surface_label
+                    ),
                 );
             }
             Err(e) => {
+                crate::agent::activity::clear_remote_turn_pending(chat_id);
                 state::stop_typing_indicator(chat_id);
                 state::clear_remote_session(chat_id);
                 messages::spawn_telegram_msg(
@@ -105,7 +129,7 @@ fn spawn_remote_forward_task(
                     token,
                     chat_id,
                     format!(
-                        "❌ Failed to forward remote command: {}\nRemote mode was cleared. Use /remote to select a live TUI session.",
+                        "❌ Failed to forward remote command: {}\nRemote mode was cleared. Use /remote to select a live TUI or WebUI session.",
                         e
                     ),
                 );

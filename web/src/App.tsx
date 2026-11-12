@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useRef } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useOpenZStore } from './store/useOpenZStore';
 import type { WorkspaceView } from './store/useOpenZStore';
+import type { OpenZMessage, OrchestrationRunState } from './types';
 import { useThemeStore } from './store/useThemeStore';
 import { Sidebar } from './components/Sidebar';
 import { ChatMessage } from './features/chat/ChatMessage';
@@ -33,6 +34,9 @@ import {
 import { cn } from './lib/utils';
 import { useResolvedTheme } from './shared/lib/theme';
 
+const EMPTY_MESSAGES: OpenZMessage[] = [];
+const EMPTY_ORCHESTRATION_RUNS: OrchestrationRunState[] = [];
+
 export const App: React.FC = () => {
   const init = useOpenZStore((s) => s.init);
   const activeChatId = useOpenZStore((s) => s.activeChatId);
@@ -42,15 +46,16 @@ export const App: React.FC = () => {
   const isActivityPanelOpen = useOpenZStore((s) => s.isActivityPanelOpen);
   const setIsActivityPanelOpen = useOpenZStore((s) => s.setIsActivityPanelOpen);
   const toggleActivityPanel = useOpenZStore((s) => s.toggleActivityPanel);
-  const messages = useOpenZStore((s) => s.messages);
-  const orchestrationRuns = useOpenZStore((s) => s.orchestrationRuns);
+  const activeMessages = useOpenZStore((s) => s.messages[s.activeChatId] ?? EMPTY_MESSAGES);
+  const activeOrchestrationRuns = useOpenZStore(
+    (s) => s.orchestrationRuns[s.activeChatId] ?? EMPTY_ORCHESTRATION_RUNS,
+  );
+  const updateSettings = useOpenZStore((s) => s.updateSettings);
   const theme = useThemeStore((s) => s.theme);
   const setTheme = useThemeStore((s) => s.setTheme);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  const activeMessages = useMemo(() => messages[activeChatId] || [], [messages, activeChatId]);
-  const activeOrchestrationRuns = useMemo(() => orchestrationRuns[activeChatId] || [], [orchestrationRuns, activeChatId]);
   const resolvedTheme = useResolvedTheme(theme);
 
   useEffect(() => {
@@ -112,10 +117,14 @@ export const App: React.FC = () => {
     }
 
     if (shouldScroll) {
-      container.scrollTo({
-        top: container.scrollHeight,
-        behavior: 'smooth',
-      });
+      if (lastMsg?.isStreaming) {
+        container.scrollTop = container.scrollHeight;
+      } else {
+        container.scrollTo({
+          top: container.scrollHeight,
+          behavior: 'smooth',
+        });
+      }
     }
   }, [activeMessages, activeView]);
 
@@ -148,7 +157,11 @@ export const App: React.FC = () => {
             activeView={activeView}
             activityOpen={false}
             onViewChange={setActiveView}
-            onThemeToggle={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+            onThemeToggle={() => {
+              const nextTheme = resolvedTheme === 'dark' ? 'light' : 'dark';
+              setTheme(nextTheme);
+              updateSettings({ theme: nextTheme });
+            }}
             themeLabel={resolvedTheme === 'dark' ? 'Light theme' : 'Dark theme'}
             themeIcon={resolvedTheme === 'dark' ? Sun : Moon}
             onActivityToggle={() => {

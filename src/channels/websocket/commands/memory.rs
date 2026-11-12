@@ -40,6 +40,8 @@ fn collect_graph_db_nodes_and_edges(
                 "relation_type": row.get::<_, String>(2)?,
                 "confidence": row.get::<_, f64>(3)?,
                 "valid_from": row.get::<_, String>(4)?,
+                "provenance": "extracted",
+                "source": "graph_memory.db",
             }))
         }) {
             Ok(rows) => *edges = rows.filter_map(|row| row.ok()).collect(),
@@ -89,6 +91,8 @@ fn collect_graph_db_nodes_and_edges(
                 "from_name": row.get::<_, String>(0)?,
                 "to_name": row.get::<_, String>(1)?,
                 "relation_type": row.get::<_, String>(2)?,
+                "provenance": "extracted",
+                "source": "code_calls",
             }))
         }) {
             Ok(rows) => edges.extend(rows.filter_map(|row| row.ok())),
@@ -100,7 +104,6 @@ fn collect_graph_db_nodes_and_edges(
 
 fn collect_memory_db_records(
     memory_db: &std::path::Path,
-    nodes: &mut Vec<Value>,
     facts: &mut Vec<Value>,
 ) {
     let conn = match memory_db.exists() {
@@ -109,55 +112,6 @@ fn collect_memory_db_records(
             Err(_) => return,
         },
         false => return,
-    };
-
-    match conn.prepare("SELECT name, content, profile, use_count FROM skills") {
-        Ok(mut statement) => match statement.query_map([], |row| {
-            let name: String = row.get(0)?;
-            let content: String = row.get(1).unwrap_or_default();
-            let profile: Option<String> = row.get(2).unwrap_or(None);
-            let use_count: i64 = row.get(3).unwrap_or(0);
-            Ok((name, content, profile, use_count))
-        }) {
-            Ok(rows) => {
-                for (name, content, profile, use_count) in rows.filter_map(|row| row.ok()) {
-                    nodes.push(serde_json::json!({
-                        "name": name,
-                        "entity_type": "skill",
-                        "observations": format!(
-                            "Profile: {} | Uses: {} | Content: {}",
-                            profile.unwrap_or_else(|| "global".to_string()),
-                            use_count,
-                            content.chars().take(160).collect::<String>()
-                        ),
-                    }));
-                }
-            }
-            Err(_) => {}
-        },
-        Err(_) => {}
-    };
-
-    match conn.prepare("SELECT label, kind, uri, aliases, summary FROM source_bookmarks") {
-        Ok(mut statement) => match statement.query_map([], |row| {
-            let label: String = row.get(0)?;
-            let kind: String = row.get(1).unwrap_or_default();
-            let uri: String = row.get(2)?;
-            let aliases: String = row.get(3).unwrap_or_default();
-            let summary: String = row.get(4).unwrap_or_default();
-            Ok(serde_json::json!({
-                "name": label,
-                "entity_type": "link",
-                "observations": format!(
-                    "Kind: {} | URI: {} | Aliases: {} | Summary: {}",
-                    kind, uri, aliases, summary
-                ),
-            }))
-        }) {
-            Ok(rows) => nodes.extend(rows.filter_map(|row| row.ok())),
-            Err(_) => {}
-        },
-        Err(_) => {}
     };
 
     match conn.prepare(
@@ -188,7 +142,7 @@ pub(crate) async fn cognitive_memory_event() -> Value {
     collect_graph_db_nodes_and_edges(&graph_db, &mut nodes, &mut edges);
 
     let memory_db = crate::config::loader::runtime_db_path("memory.db");
-    collect_memory_db_records(&memory_db, &mut nodes, &mut facts);
+    collect_memory_db_records(&memory_db, &mut facts);
 
     let graph_db_path = graph_db.display().to_string();
     let memory_db_path = memory_db.display().to_string();

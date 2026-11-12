@@ -24,7 +24,17 @@ export function createWorkspaceNotice(
 
 export function savedActiveChatId(): string {
   try {
-    return normalizeChatId(sessionStorage.getItem(UI_STORAGE_KEYS.activeChatId) || '');
+    const raw = sessionStorage.getItem(UI_STORAGE_KEYS.activeChatId) || '';
+    if (!raw) return '';
+    if (
+      raw.startsWith('cli:') ||
+      raw.startsWith('cli_') ||
+      raw.startsWith('telegram:') ||
+      raw.startsWith('telegram_')
+    ) {
+      return '';
+    }
+    return normalizeChatId(raw);
   } catch {
     return '';
   }
@@ -50,12 +60,18 @@ export function forgetActiveChatId() {
 
 export function normalizeChatId(chatId: string): string {
   if (!chatId) return chatId;
-  if (chatId.includes(':')) return chatId;
+  if (chatId.startsWith('ws:') || chatId.startsWith('web:')) return chatId;
+  if (chatId.startsWith('ws_')) return `ws:${chatId.slice(3)}`;
+  if (chatId.startsWith('web_')) return `web:${chatId.slice(4)}`;
+  if (chatId.includes(':')) {
+    const idx = chatId.indexOf(':');
+    return `ws:${chatId.slice(idx + 1)}`;
+  }
 
-  const channelPrefixes = ['ws_', 'cli_', 'telegram_', 'subagent_'];
+  const channelPrefixes = ['cli_', 'telegram_', 'subagent_'];
   const matchedPrefix = channelPrefixes.find((prefix) => chatId.startsWith(prefix));
   if (matchedPrefix) {
-    return `${matchedPrefix.slice(0, -1)}:${chatId.slice(matchedPrefix.length)}`;
+    return `ws:${chatId.slice(matchedPrefix.length)}`;
   }
 
   return `ws:${chatId}`;

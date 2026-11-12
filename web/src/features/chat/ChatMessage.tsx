@@ -110,12 +110,14 @@ const markdownComponents: Components = {
   },
 };
 
-export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
+export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) => {
   const handleSecurityChoice = useOpenZStore((s) => s.handleSecurityChoice);
   const [copied, setCopied] = useState(false);
-  const [showTrace, setShowTrace] = useState(false);
+  const [userToggledTrace, setUserToggledTrace] = useState<boolean | null>(null);
 
   const isUser = message.role === 'user';
+  const isThinkingPhase = Boolean(message.isStreaming && !message.content && message.reasoningContent);
+  const isTraceExpanded = userToggledTrace ?? isThinkingPhase;
 
   const copyContent = () => {
     navigator.clipboard.writeText(message.content);
@@ -178,14 +180,14 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
           {message.reasoningContent && (
             <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs text-amber-200/90">
               <button
-                onClick={() => setShowTrace(!showTrace)}
+                onClick={() => setUserToggledTrace(!isTraceExpanded)}
                 className="flex items-center gap-1.5 font-medium text-amber-400 select-none hover:underline"
               >
-                <Brain className="h-3.5 w-3.5" />
-                <span>Thinking Process</span>
-                {showTrace ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                <Brain className={`h-3.5 w-3.5 ${isThinkingPhase ? 'animate-pulse' : ''}`} />
+                <span>{isThinkingPhase ? 'Thinking...' : 'Thinking Process'}</span>
+                {isTraceExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
               </button>
-              {showTrace && (
+              {isTraceExpanded && (
                 <div className="mt-2 max-h-64 overflow-y-auto font-mono text-[11px] whitespace-pre-wrap opacity-90">
                   {message.reasoningContent}
                 </div>
@@ -285,4 +287,4 @@ export const ChatMessage: React.FC<ChatMessageProps> = ({ message }) => {
       )}
     </div>
   );
-};
+});
