@@ -1,11 +1,35 @@
-/target
-.env
-.env.local
-.env.*.local
-*.log
+# ── Rust / Cargo & Coverage Artifacts ─────────────────────────────────────────
+/target/
+**/*.rs.bk
+*.pdb
+*.profraw
+*.profdata
+profraw/
+lcov.info
+coverage/
 
-# ── Runtime databases / caches (must never live in a repo root) ──
-# SQLite databases and their WAL/SHM companions.
+# ── Frontend / Bun / Node / Vite Artifacts ────────────────────────────────────
+node_modules/
+dist/
+dist-ssr/
+web/node_modules/
+web/dist/
+web/.vite/
+.vite/
+*.tsbuildinfo
+.eslintcache
+.bun/
+
+# ── Environment Variables & Local Secrets ─────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# ── OpenZ Runtime Databases, Caches, Logs & Checkpoints ───────────────────────
+# Runtime state belongs under ~/.openz/ (or $OPENZ_CONFIG_DIR), never in repo root.
 /memory.db
 /memory.db-shm
 /memory.db-wal
@@ -24,27 +48,64 @@
 /openz.db
 /openz.db-shm
 /openz.db-wal
+/embeddings_cache.db
+/embeddings_cache.db-shm
+/embeddings_cache.db-wal
 /embeddings_cache.json
-# Any other stray SQLite artifacts dropped in the working directory.
 *.db
 *.db-wal
 *.db-shm
-
+*.db-journal
+*.db.corrupt.*
 /.fastembed_cache/
-/logs/
-.superpowers/
-.crush/
-.zcode/
-# Workspace-local OpenZ runtime state (<workspace>/.openz/).
+/.openz/
 .openz/
+/logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.zenflow_bak
+*.bak
+*.orig
+*.rej
+*.tmp
 
-# Node dependencies and build artifacts
-node_modules/
-dist/
-web/node_modules/
-web/dist/
-plan/
-.worktrees/
-
-.zcode/
+# ── AI Coding Agents, Worktrees & Local Planning Scratch ──────────────────────
+.agents/
+.aider*
+.claude/
+.cline/
 .codex/
+.continue/
+.crush/
+.cursor/
+.gemini/
+.goose/
+.opencode/
+.roo/
+.sediment/
+.superpowers/
+.windsurf/
+.worktrees/
+worktrees/
+.zcode/
+.zed/
+plan/
+plans/
+docs/superpowers/
+
+# ── OS & Editor Metadata ──────────────────────────────────────────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+Desktop.ini
+*~
+*.swp
+*.swo
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json

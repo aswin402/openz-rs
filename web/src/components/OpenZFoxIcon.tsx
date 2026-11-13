@@ -29,6 +29,53 @@ export const FOX_SILHOUETTE_PATH =
   "C 39.8 24.5, 35.8 18.8, 31.5 12.8 " +
   "C 29.4 9.8, 27.2 8.0, 25.5 8.0 Z"
 
+/**
+ * Builds an inline `data:image/svg+xml` favicon URI of the OpenZ Fox silhouette
+ * so browsers immediately repaint the tab icon and bypass any stale URL-keyed favicon cache.
+ */
+export function buildFoxFaviconDataUri(fillColor: string): string {
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 100 100">` +
+    `<path fill="${fillColor}" d="${FOX_SILHOUETTE_PATH}"/>` +
+    `</svg>`
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+}
+
+/**
+ * Synchronizes `<link rel="icon">` in `document.head` to the OpenZ Fox silhouette,
+ * pruning stale `/favicon.svg` or Vite icon link nodes so Firefox/Zen and Chromium
+ * repaint the tab icon immediately without requiring a browser cache purge.
+ */
+export function syncDocumentFavicon(fillColor: string): void {
+  if (typeof window === "undefined" || !window.document?.head) {
+    return
+  }
+  const head = window.document.head
+  const dataUri = buildFoxFaviconDataUri(fillColor)
+  const existingLinks = Array.from(
+    head.querySelectorAll<HTMLLinkElement>('link[rel="icon"], link[rel="shortcut icon"]')
+  )
+  let primarySvgLink: HTMLLinkElement | null = null
+  for (const link of existingLinks) {
+    if (link.id === "openz-favicon-svg") {
+      primarySvgLink = link
+    } else if (link.id !== "openz-favicon-png" && link.id !== "openz-favicon-ico") {
+      link.remove()
+    }
+  }
+  if (!primarySvgLink) {
+    primarySvgLink = window.document.createElement("link")
+    primarySvgLink.id = "openz-favicon-svg"
+    primarySvgLink.rel = "icon"
+    primarySvgLink.type = "image/svg+xml"
+    primarySvgLink.setAttribute("sizes", "any")
+    head.appendChild(primarySvgLink)
+  }
+  if (primarySvgLink.getAttribute("href") !== dataUri) {
+    primarySvgLink.setAttribute("href", dataUri)
+  }
+}
+
 export interface OpenZFoxIconProps {
   size?: number
   variant?: FoxIconVariant

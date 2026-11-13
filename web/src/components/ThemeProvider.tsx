@@ -5,6 +5,7 @@ import {
   resolveActivePalette,
   useUiCustomizationStore,
 } from '../store/useUiCustomizationStore';
+import { syncDocumentFavicon } from './OpenZFoxIcon';
 
 interface ThemeProviderProps {
   children: React.ReactNode;
@@ -93,6 +94,7 @@ export function ThemeProvider({
       if (window.document.title !== 'OpenZ') {
         window.document.title = 'OpenZ';
       }
+      syncDocumentFavicon(palette.primaryHex);
       let metaTheme = window.document.querySelector('meta[name="theme-color"]');
       if (!metaTheme) {
         metaTheme = window.document.createElement('meta');

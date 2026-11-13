@@ -33,6 +33,7 @@ import {
   summarizeApprovalInline,
   tokenizeDiffLine,
 } from '../components/beui';
+import { FOX_SILHOUETTE_PATH, buildFoxFaviconDataUri } from '../components/OpenZFoxIcon';
 
 describe('useUiCustomizationStore (@beui + shadcn/ui v5)', () => {
   beforeEach(() => {
@@ -387,5 +388,14 @@ describe('zero-regex @beui parsers & adapters', () => {
     });
     expect(summaryFromDesc).toBe('cargo check -p openz');
     expect(formatApprovalArgs({ action: 'list' })).toContain('"action": "list"');
+  });
+
+  test('builds cache-busting inline OpenZ Fox SVG favicon data URI for live browser tabs', () => {
+    const defaultPalette = resolveActivePalette('obsidian-ember', 'dark');
+    const dataUri = buildFoxFaviconDataUri(defaultPalette.primaryHex);
+    expect(dataUri.startsWith('data:image/svg+xml;charset=utf-8,')).toBe(true);
+    const decoded = decodeURIComponent(dataUri.slice('data:image/svg+xml;charset=utf-8,'.length));
+    expect(decoded).toContain(defaultPalette.primaryHex);
+    expect(decoded).toContain(FOX_SILHOUETTE_PATH);
   });
 });

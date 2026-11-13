@@ -268,18 +268,29 @@ fn workspace_openz_runtime_files_are_gitignored() {
     let gitignore = std::fs::read_to_string(format!("{manifest}/.gitignore"))
         .expect(".gitignore must exist at repo root");
     let lower = gitignore.to_lowercase();
-    assert!(
-        lower.contains(".openz/"),
-        ".gitignore must ignore workspace .openz/ runtime dir"
-    );
-    assert!(
-        lower.contains("/memory.db"),
-        ".gitignore must ignore root memory.db"
-    );
-    assert!(
-        lower.contains(".db-wal"),
-        ".gitignore must ignore sqlite -wal companions"
-    );
+    let required_entries = [
+        ".openz/",
+        "/memory.db",
+        ".db-wal",
+        ".db.corrupt.",
+        "*.zenflow_bak",
+        "!.env.example",
+        ".codex/",
+        ".crush/",
+        ".agents/",
+        ".superpowers/",
+        ".zcode/",
+        ".sediment/",
+        ".worktrees/",
+        "docs/superpowers/",
+        "plan/",
+    ];
+    for entry in required_entries {
+        assert!(
+            lower.contains(entry),
+            ".gitignore must contain hygiene rule: {entry}"
+        );
+    }
 }
 
 #[tokio::test]

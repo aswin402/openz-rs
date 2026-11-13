@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.322-orange.svg" alt="Version 0.0.322"/></a>
+  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.323-orange.svg" alt="Version 0.0.323"/></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.82%2B-blue.svg" alt="Rust 1.82+"/></a>
   <a href="https://tokio.rs/"><img src="https://img.shields.io/badge/runtime-tokio-purple.svg" alt="Tokio Async"/></a>
   <a href="https://github.com/aswin402/openz-rs/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-green.svg" alt="License"/></a>
@@ -58,7 +58,7 @@ Most agent frameworks require users to manually select tools, switch providers, 
 
 ## 🆕 Latest Highlights
 
-### 🎨 `@beui/*` + `shadcn/ui` WebUI Studio, Dual-Mode Themes & Full-Page Obsidian Graph (`v0.0.322`)
+### 🎨 `@beui/*` + `shadcn/ui` WebUI Studio, Dual-Mode Themes & Full-Page Obsidian Graph (`v0.0.323`)
 - **Full-Page Obsidian Cognitive Memory Graph**: Edge-to-edge interactive canvas with collapsible floating cards for search & cluster/relation filtering, interactive node checking & isolation, entity/relation provenance inspection, dynamic theme-derived legends, and slide-over Stored Facts & Markdown Vault snapshots.
 - **25-Component `@beui/*` + `shadcn/ui` Suite & Customize UI Studio**: Full-screen `shadcn/ui`-style component gallery with live previews, 13 Agent/Fox & 6 User avatars (`OpenZFoxIcon`), and **13 Dual-Mode (`Light` + `Dark`) WCAG-verified global themes** powered by `colorEngine`.
 - **Durable Settings & Rolling Backups Across Updates**: WebUI themes, light/dark mode, and component customizations persist in both browser storage (`openz-ui-customization`) and `~/.openz/config.json` + `~/.openz/webui_preferences.json`, backed by 15-file rolling snapshots in `~/.openz/backups/` with automatic recovery and one-click `.json` Backup/Restore.
