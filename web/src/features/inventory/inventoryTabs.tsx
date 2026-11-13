@@ -90,7 +90,7 @@ export const CoreTab: React.FC<{ inventory: RuntimeInventory }> = ({ inventory }
               <div className="line-clamp-2 break-words"><span className="font-semibold text-foreground">Prompt:</span> {job.prompt || 'No prompt recorded.'}</div>
               <div>Next: {job.nextRun || 'Not scheduled'} · Last: {job.lastRun || job.lastFinishedAt || 'Never'}</div>
               <div>Runs: {job.runCount} total / {job.failureCount} failed</div>
-              {job.lastError && <div className="break-words text-red-400">{job.lastError}</div>}
+              {job.lastError && <div className="break-words text-destructive">{job.lastError}</div>}
             </div>
           </div>
         ))}
@@ -129,7 +129,7 @@ export const CoreTab: React.FC<{ inventory: RuntimeInventory }> = ({ inventory }
             <div className="mt-2 text-[11px] text-muted-foreground">
               {agent.effectiveProvider}/{agent.effectiveModel} · {agent.capabilities.join(', ') || 'general'}
             </div>
-            {agent.lastError && <div className="mt-1 break-words text-[11px] text-red-400">{agent.lastError}</div>}
+            {agent.lastError && <div className="mt-1 break-words text-[11px] text-destructive">{agent.lastError}</div>}
           </div>
         ))}
         {inventory.subagents.length === 0 && <div className="py-6 text-center text-sm text-muted-foreground">No subagent profiles loaded.</div>}
@@ -255,7 +255,7 @@ export const SessionsTab: React.FC<{
               <select
                 value={channelFilter}
                 onChange={(event) => setChannelFilter(event.target.value)}
-                className="rounded-lg border border-border/60 bg-background/50 px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-amber-500/40"
+                className="rounded-lg border border-border/60 bg-background/50 px-3 py-2 text-xs font-semibold text-foreground focus:outline-none focus:ring-2 focus:ring-primary/40"
               >
                 {channelOptions.map((channel) => (
                   <option key={channel} value={channel}>
@@ -268,7 +268,7 @@ export const SessionsTab: React.FC<{
                   type="checkbox"
                   checked={activeOnly}
                   onChange={(event) => setActiveOnly(event.target.checked)}
-                  className="h-3.5 w-3.5 accent-amber-500"
+                  className="h-3.5 w-3.5 accent-primary"
                 />
                 Active only
               </label>
@@ -422,7 +422,7 @@ export const CronTab: React.FC<{
         <button
           type="button"
           onClick={() => onLoadLogs(undefined, 20)}
-          className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-border/60 bg-background/40 px-3 py-2 text-xs font-semibold text-muted-foreground transition hover:border-amber-500/40 hover:text-foreground"
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg border border-border/60 bg-background/40 px-3 py-2 text-xs font-semibold text-muted-foreground transition hover:border-primary/40 hover:text-foreground"
         >
           <FileText className="h-4 w-4" /> Load Recent Runs
         </button>
@@ -438,7 +438,7 @@ export const CronTab: React.FC<{
               <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
                 <div>{run.started_at}</div>
                 {run.log_path && <div className="break-words font-mono">{run.log_path}</div>}
-                {run.error && <div className="break-words text-red-400">{run.error}</div>}
+                {run.error && <div className="break-words text-destructive">{run.error}</div>}
                 {run.summary && <div className="line-clamp-3 break-words">{run.summary}</div>}
               </div>
             </div>
@@ -469,7 +469,7 @@ export const ChannelsTab: React.FC<{ inventory: RuntimeInventory }> = ({ invento
         <div key={channel.name} className="rounded-xl border border-border/50 bg-background/35 p-4">
           <div className="flex items-center justify-between gap-3">
             <div className="font-semibold capitalize text-foreground">{channel.name}</div>
-            {channel.enabled ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <span className="h-2.5 w-2.5 rounded-full bg-muted" />}
+            {channel.enabled ? <CheckCircle2 className="h-4 w-4 text-success" /> : <span className="h-2.5 w-2.5 rounded-full bg-muted" />}
           </div>
           <div className="mt-3 flex flex-wrap gap-1.5">
             <Badge tone={channel.enabled ? 'green' : 'muted'}>{channel.enabled ? 'enabled' : 'disabled'}</Badge>
@@ -493,10 +493,10 @@ const CronAction: React.FC<{
     onClick={onClick}
     disabled={disabled}
     className={cn(
-      'flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 disabled:cursor-not-allowed disabled:opacity-50',
+      'flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-50',
       danger
-        ? 'border-red-500/30 bg-red-500/10 text-red-400 hover:bg-red-500/15 disabled:hover:bg-red-500/10'
-        : 'border-border/60 bg-background/40 text-muted-foreground hover:border-amber-500/40 hover:text-foreground disabled:hover:border-border/60 disabled:hover:text-muted-foreground',
+        ? 'border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/15 disabled:hover:bg-destructive/10'
+        : 'border-border/60 bg-background/40 text-muted-foreground hover:border-primary/40 hover:text-foreground disabled:hover:border-border/60 disabled:hover:text-muted-foreground',
     )}
   >
     <Icon className="h-3.5 w-3.5" /> {label}

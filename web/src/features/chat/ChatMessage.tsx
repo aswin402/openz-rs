@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -6,285 +6,524 @@ import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
 import type { OpenZMessage } from '../../types';
 import { ToolExecutionCard } from './ToolExecutionCard';
+import { buildMessageActivitySteps } from './AgentActivityPanel';
 import { SecurityGuardPrompt } from '../../components/SecurityGuardPrompt';
+import { ChatTrackRow } from '../../components/ChatTrackRow';
+import {
+  AgentActivity,
+  BeuiAgentAvatar,
+  BeuiAlert,
+  BeuiCitations,
+  BeuiCodeBlock,
+  BeuiDataTable,
+  BeuiFileDiff,
+  BeuiMessageActions,
+  BeuiPlanChecklist,
+  BeuiUserAvatar,
+  ImageGeneration,
+  ReasoningText,
+  StreamingResponse,
+  extractAllMarkdownSources,
+  type BeuiPlanStep,
+} from '../../components/beui';
+import { Badge } from '../../components/ui/badge';
+import { Button } from '../../components/ui/button';
+import { Textarea } from '../../components/ui/textarea';
 import { useOpenZStore } from '../../store/useOpenZStore';
+import { useUiCustomizationStore } from '../../store/useUiCustomizationStore';
 import { extractCodeLanguage, formatFileSize } from '../../shared/lib/format';
-import { User, Copy, Check, Brain, ChevronDown, ChevronRight, Info, FileText, Image as ImageIcon } from 'lucide-react';
+import { cn } from '../../lib/utils';
+import {
+  FileText,
+  Image as ImageIcon,
+  Send,
+  X,
+} from 'lucide-react';
 import 'katex/dist/katex.min.css';
-import 'highlight.js/styles/github-dark.css';
 
 interface ChatMessageProps {
   message: OpenZMessage;
 }
 
-// Helper Component for Markdown Code Block to manage individual copy states and animations
-type MarkdownCodeBlockProps = React.HTMLAttributes<HTMLElement> & {
-  language?: string;
-  children: string;
-};
+interface HastLikeNode {
+  type?: string;
+  tagName?: string;
+  value?: string;
+  children?: HastLikeNode[];
+}
 
-const MarkdownCodeBlock: React.FC<MarkdownCodeBlockProps> = ({ language, children, className, ...props }) => {
-  const [copied, setCopied] = useState(false);
+function extractHastText(node: HastLikeNode | undefined): string {
+  if (!node) return '';
+  if (node.type === 'text' && typeof node.value === 'string') {
+    return node.value;
+  }
+  if (!Array.isArray(node.children)) return '';
+  return node.children.map((child) => extractHastText(child)).join('');
+}
 
-  const handleCopy = () => {
-    const raw = String(children);
-    navigator.clipboard.writeText(raw.endsWith('\n') ? raw.slice(0, -1) : raw);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+function extractHastTable(rawNode: unknown): { headers: string[]; rows: string[][] } | null {
+  const node = rawNode as HastLikeNode | undefined;
+  if (!node || !Array.isArray(node.children)) return null;
+
+  const headers: string[] = [];
+  const rows: string[][] = [];
+
+  const collectCells = (tr: HastLikeNode): string[] => {
+    if (!Array.isArray(tr.children)) return [];
+    return tr.children
+      .filter((cell) => cell.tagName === 'th' || cell.tagName === 'td')
+      .map((cell) => extractHastText(cell).trim());
   };
 
-  return (
-    <div className="relative my-3 rounded-lg bg-zinc-950 font-mono text-xs overflow-hidden border border-zinc-800/80">
-      <div className="flex items-center justify-between border-b border-zinc-800/80 bg-zinc-900/90 px-3 py-1.5 text-[10px] text-zinc-400 select-none">
-        <span className="font-semibold text-amber-500/80">{language || 'code'}</span>
-        <button
-          onClick={handleCopy}
-          className="flex items-center gap-1 text-zinc-400 hover:text-zinc-100 transition duration-150 active:scale-95"
-        >
-          {copied ? (
-            <span className="flex items-center gap-1 text-emerald-400 font-semibold animate-in fade-in zoom-in-95 duration-200">
-              <Check className="h-3 w-3" />
-              <span>Copied!</span>
-            </span>
-          ) : (
-            <span className="flex items-center gap-1 transition-all duration-150">
-              <Copy className="h-3 w-3" />
-              <span>Copy code</span>
-            </span>
-          )}
-        </button>
-      </div>
-      <pre className="p-3 overflow-x-auto text-[12px] text-zinc-200">
-        <code className={className} {...props}>
-          {children}
-        </code>
-      </pre>
-    </div>
-  );
-};
+  for (const section of node.children) {
+    if (section.tagName === 'thead' && Array.isArray(section.children)) {
+      for (const tr of section.children) {
+        if (tr.tagName === 'tr' && headers.length === 0) {
+          headers.push(...collectCells(tr));
+        }
+      }
+    } else if (section.tagName === 'tbody' && Array.isArray(section.children)) {
+      for (const tr of section.children) {
+        if (tr.tagName === 'tr') {
+          const cells = collectCells(tr);
+          if (cells.length > 0) rows.push(cells);
+        }
+      }
+    } else if (section.tagName === 'tr') {
+      const cells = collectCells(section);
+      if (cells.length > 0) {
+        if (headers.length === 0) headers.push(...cells);
+        else rows.push(cells);
+      }
+    }
+  }
 
-const markdownComponents: Components = {
-  code({ node, className, children, ...props }) {
-    void node;
-    const language = extractCodeLanguage(className);
-    const text = String(children);
-    const isBlock = Boolean(language) || text.includes('\n');
+  if (headers.length < 2 || rows.length === 0) return null;
+  return { headers, rows };
+}
 
-    return isBlock ? (
-      <MarkdownCodeBlock
-        className={className}
-        language={language}
-        {...props}
-      >
-        {text}
-      </MarkdownCodeBlock>
-    ) : (
-      <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs font-semibold text-amber-500 dark:text-amber-400" {...props}>
-        {children}
-      </code>
-    );
-  },
-  table({ children }) {
-    return (
-      <div className="my-4 overflow-x-auto rounded-xl border border-border/80 bg-card/40 shadow-sm w-full">
-        <table className="w-full border-collapse text-left text-xs text-foreground/90 min-w-[500px]">
-          {children}
-        </table>
-      </div>
-    );
-  },
-  thead({ children }) {
-    return <thead className="border-b border-border bg-muted/40 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">{children}</thead>;
-  },
-  tbody({ children }) {
-    return <tbody className="divide-y divide-border/60">{children}</tbody>;
-  },
-  tr({ children }) {
-    return <tr className="hover:bg-muted/20 transition-colors">{children}</tr>;
-  },
-  th({ children }) {
-    return <th className="px-4 py-3 font-semibold select-none">{children}</th>;
-  },
-  td({ children }) {
-    return <td className="px-4 py-3 align-middle break-words">{children}</td>;
-  },
-};
+function looksLikeUnifiedDiffBlock(language: string | undefined, text: string): boolean {
+  const lang = (language ?? '').toLowerCase();
+  if (lang === 'diff' || lang === 'patch') return true;
+  if (text.startsWith('diff --git ')) return true;
+  if (
+    (text.startsWith('--- ') || text.includes('\n--- ')) &&
+    text.includes('\n+++ ') &&
+    text.includes('\n@@ ')
+  ) {
+    return true;
+  }
+  return false;
+}
 
 export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) => {
   const handleSecurityChoice = useOpenZStore((s) => s.handleSecurityChoice);
-  const [copied, setCopied] = useState(false);
-  const [userToggledTrace, setUserToggledTrace] = useState<boolean | null>(null);
+  const regenerateMessage = useOpenZStore((s) => s.regenerateMessage);
+  const editAndResendMessage = useOpenZStore((s) => s.editAndResendMessage);
+  const newSession = useOpenZStore((s) => s.newSession);
+
+  const chatWidth = useUiCustomizationStore((s) => s.chatWidth);
+  const thinkingAnimation = useUiCustomizationStore((s) => s.thinkingAnimation);
+  const streamingAnimation = useUiCustomizationStore((s) => s.streamingAnimation);
+  const agentAvatar = useUiCustomizationStore((s) => s.agentAvatar);
+  const userAvatar = useUiCustomizationStore((s) => s.userAvatar);
+  const bubbleStyle = useUiCustomizationStore((s) => s.bubbleStyle);
+  const codeStyle = useUiCustomizationStore((s) => s.codeStyle);
+  const diffLayout = useUiCustomizationStore((s) => s.diffLayout);
+  const citationsStyle = useUiCustomizationStore((s) => s.citationsStyle);
+  const dataTableStyle = useUiCustomizationStore((s) => s.dataTableStyle);
+  const imageGenStyle = useUiCustomizationStore((s) => s.imageGenStyle);
+  const activityStyle = useUiCustomizationStore((s) => s.activityStyle);
+  const planChecklistStyle = useUiCustomizationStore((s) => s.planChecklistStyle);
+  const alertStyle = useUiCustomizationStore((s) => s.alertStyle);
+  const messageActionsStyle = useUiCustomizationStore((s) => s.messageActionsStyle);
+  const showMessageActions = useUiCustomizationStore((s) => s.showMessageActions);
+  const setQuotedReplyText = useUiCustomizationStore((s) => s.setQuotedReplyText);
+
+  const [isEditing, setIsEditing] = useState(false);
+  const [draftEdit, setDraftEdit] = useState(message.content);
 
   const isUser = message.role === 'user';
   const isThinkingPhase = Boolean(message.isStreaming && !message.content && message.reasoningContent);
-  const isTraceExpanded = userToggledTrace ?? isThinkingPhase;
 
-  const copyContent = () => {
-    navigator.clipboard.writeText(message.content);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
+  const markdownComponents = useMemo<Components>(
+    () => ({
+      code({ node, className, children, ...props }) {
+        void node;
+        const language = extractCodeLanguage(className);
+        const text = String(children);
+        const isBlock = Boolean(language) || text.includes('\n');
 
-  // Muted system/tool/notice messages: no avatar, no bubble.
+        if (!isBlock) {
+          return (
+            <code
+              className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs font-semibold text-primary"
+              {...props}
+            >
+              {children}
+            </code>
+          );
+        }
+
+        if (looksLikeUnifiedDiffBlock(language, text)) {
+          return (
+            <div className="my-3 w-full not-prose">
+              <BeuiFileDiff patch={text} defaultView={diffLayout} />
+            </div>
+          );
+        }
+
+        return (
+          <div className="my-3 w-full not-prose">
+            <BeuiCodeBlock
+              language={language || 'text'}
+              code={text}
+              variant={codeStyle}
+              showLineNumbers={codeStyle !== 'compact'}
+            />
+          </div>
+        );
+      },
+      img({ src, alt }) {
+        if (!src) return null;
+        return (
+          <span className="block not-prose">
+            <ImageGeneration
+              src={src}
+              prompt={alt || undefined}
+              status="completed"
+              variant={imageGenStyle}
+            />
+          </span>
+        );
+      },
+      table({ node, children }) {
+        const parsed = extractHastTable(node);
+        if (parsed) {
+          return (
+            <div className="my-3 w-full not-prose">
+              <BeuiDataTable
+                headers={parsed.headers}
+                rows={parsed.rows}
+                variant={dataTableStyle}
+              />
+            </div>
+          );
+        }
+        return (
+          <div className="my-4 w-full overflow-x-auto rounded-xl border border-border/80 bg-card/40">
+            <table className="min-w-[420px] w-full border-collapse text-left text-xs text-foreground/90">
+              {children}
+            </table>
+          </div>
+        );
+      },
+    }),
+    [codeStyle, diffLayout, imageGenStyle, dataTableStyle],
+  );
+
+  const citationData = useMemo(() => {
+    if (isUser || !message.content) {
+      return { bodyText: message.content, refs: [] };
+    }
+    return extractAllMarkdownSources(message.content);
+  }, [isUser, message.content]);
+
+  const inlineActivitySteps = useMemo(() => {
+    if (isUser || activityStyle === 'panel-only') return [];
+    const steps = buildMessageActivitySteps([message]);
+    if (activityStyle === 'always-inline') return steps;
+    return (message.toolCalls?.length ?? 0) >= 2 ? steps : [];
+  }, [isUser, activityStyle, message]);
+
+  const planSteps = useMemo<BeuiPlanStep[]>(() => {
+    if (isUser || !message.toolCalls || message.toolCalls.length < 3) return [];
+    return message.toolCalls.map((tc) => ({
+      id: tc.id,
+      title: tc.name,
+      status:
+        tc.status === 'running' || tc.status === 'awaiting_approval'
+          ? 'running'
+          : tc.status === 'error'
+            ? 'error'
+            : 'completed',
+    }));
+  }, [isUser, message.toolCalls]);
+
   if (message.isNotice || message.role === 'system' || message.role === 'tool') {
     return (
-      <div className="flex w-full justify-center py-2">
-        <div className="flex max-w-2xl items-center gap-2 rounded-lg border border-border/40 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-          <Info className="h-3.5 w-3.5 shrink-0 text-amber-500" />
-          <span className="min-w-0 break-words">{message.content}</span>
-        </div>
-      </div>
+      <ChatTrackRow chatWidth={chatWidth} className="py-1">
+        <BeuiAlert tone="info" compact={alertStyle === 'compact-pill'}>
+          {message.content}
+        </BeuiAlert>
+      </ChatTrackRow>
     );
   }
 
+  const hasWideAssistantBlocks = Boolean(
+    !isUser &&
+      ((message.toolCalls && message.toolCalls.length > 0) ||
+        (message.securityPrompts && message.securityPrompts.length > 0) ||
+        message.content.includes('```')),
+  );
+
+  const bubbleClasses = (() => {
+    switch (bubbleStyle) {
+      case 'editorial':
+        return isUser
+          ? 'bg-muted/70 text-foreground border border-border/60 rounded-xl px-4 py-2.5'
+          : 'bg-transparent border-0 text-foreground px-0.5 py-1 w-full';
+      case 'beui-full':
+        return isUser
+          ? 'bg-primary text-primary-foreground rounded-2xl rounded-tr-xs px-4 py-2.5 shadow-xs'
+          : 'w-full bg-card border border-border/75 text-foreground rounded-2xl rounded-tl-xs px-4 py-3 shadow-xs';
+      case 'beui-card':
+      default:
+        return isUser
+          ? 'bg-primary text-primary-foreground rounded-2xl rounded-tr-xs px-4 py-2.5 shadow-xs'
+          : cn(
+              'bg-card border border-border/75 text-foreground rounded-2xl rounded-tl-xs px-4 py-3 shadow-xs',
+              hasWideAssistantBlocks && 'w-full',
+            );
+    }
+  })();
+
+  const renderAssistantAvatar = () => {
+    if (agentAvatar === 'none') return null;
+    return <BeuiAgentAvatar variant={agentAvatar} className="mt-5" />;
+  };
+
+  const renderUserAvatar = () => {
+    if (userAvatar === 'none') return null;
+    return <BeuiUserAvatar variant={userAvatar} className="mt-5" />;
+  };
+
+  const submitEditedMessage = () => {
+    const trimmed = draftEdit.trim();
+    if (!trimmed) return;
+    setIsEditing(false);
+    editAndResendMessage(message.id, trimmed);
+  };
+
+  const citationsFooter =
+    !isUser && citationData.refs.length > 0 ? (
+      <div className="not-prose">
+        <BeuiCitations
+          refs={citationData.refs}
+          variant={citationsStyle}
+          defaultOpen={citationsStyle === 'cards'}
+        />
+      </div>
+    ) : undefined;
+
   return (
-    <div className={`group relative flex w-full gap-3 py-4 text-sm ${isUser ? 'justify-end' : 'justify-start'}`}>
-      {!isUser && (
-        <div className="flex h-8 w-8 shrink-0 select-none items-center justify-center text-xl leading-none">
-          <span className="bg-gradient-to-r from-amber-500 to-orange-500 bg-clip-text text-transparent">
-            🦊
-          </span>
-        </div>
-      )}
-
-      <div className={`flex w-fit max-w-3xl min-w-0 flex-col gap-1.5 ${isUser ? 'items-end' : 'items-start'}`}>
-        {/* Role & Model Tag */}
-        <div className="flex items-center gap-2 text-[11px] font-medium text-muted-foreground select-none">
+    <ChatTrackRow
+      chatWidth={chatWidth}
+      leftGutter={!isUser ? renderAssistantAvatar() : undefined}
+      rightGutter={isUser ? renderUserAvatar() : undefined}
+      className="t-msg-enter group py-2 text-sm"
+    >
+      <div
+        className={cn(
+          'flex w-full min-w-0 flex-col gap-1.5',
+          isUser ? 'items-end' : 'items-start',
+        )}
+      >
+        <div className="flex select-none items-center gap-2 text-[11px] font-medium text-muted-foreground">
           <span>{isUser ? 'You' : 'OpenZ Agent'}</span>
-          {message.model && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px]">{message.model}</span>}
+          {message.model && (
+            <Badge variant="secondary" className="px-1.5 py-0 font-mono text-[10px]">
+              {message.model}
+            </Badge>
+          )}
           <span className="text-[10px] opacity-70">
-            {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            {new Date(message.timestamp).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+            })}
           </span>
         </div>
 
-        {/* Message Bubble Container */}
-        <div
-          className={`relative w-fit max-w-full min-w-0 rounded-2xl px-4 py-3 leading-relaxed shadow-sm transition-all ${
-            isUser
-              ? 'bg-primary text-primary-foreground rounded-tr-xs'
-              : 'bg-card/70 border border-border/50 text-foreground rounded-tl-xs backdrop-blur-xs'
-          }`}
-        >
-          {/* Loading / Initial thinking state */}
-          {!message.content && !message.reasoningContent && message.isStreaming && (
-            <div className="flex items-center gap-2 text-muted-foreground select-none py-1">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-500 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-600"></span>
-              </span>
-              <span className="text-xs font-semibold animate-pulse text-amber-500/80">Thinking...</span>
-            </div>
-          )}
-
-          {/* Thinking trace collapsible (streamed reasoning or <think> tags) */}
-          {message.reasoningContent && (
-            <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs text-amber-200/90">
-              <button
-                onClick={() => setUserToggledTrace(!isTraceExpanded)}
-                className="flex items-center gap-1.5 font-medium text-amber-400 select-none hover:underline"
+        {isEditing && isUser ? (
+          <div className="w-full rounded-2xl border border-primary/40 bg-card p-3 shadow-xs">
+            <Textarea
+              value={draftEdit}
+              onChange={(e) => setDraftEdit(e.target.value)}
+              rows={Math.min(8, Math.max(2, draftEdit.split('\n').length))}
+              aria-label="Edit message text"
+            />
+            <div className="mt-2 flex items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setIsEditing(false);
+                  setDraftEdit(message.content);
+                }}
               >
-                <Brain className={`h-3.5 w-3.5 ${isThinkingPhase ? 'animate-pulse' : ''}`} />
-                <span>{isThinkingPhase ? 'Thinking...' : 'Thinking Process'}</span>
-                {isTraceExpanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-              </button>
-              {isTraceExpanded && (
-                <div className="mt-2 max-h-64 overflow-y-auto font-mono text-[11px] whitespace-pre-wrap opacity-90">
-                  {message.reasoningContent}
-                </div>
-              )}
+                <X className="size-3" />
+                <span>Cancel</span>
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={submitEditedMessage}
+                disabled={!draftEdit.trim()}
+              >
+                <Send className="size-3" />
+                <span>Save &amp; Resend</span>
+              </Button>
             </div>
-          )}
+          </div>
+        ) : (
+          <div
+            className={cn(
+              'relative max-w-full min-w-0 leading-relaxed',
+              !isUser && (bubbleStyle === 'beui-full' || hasWideAssistantBlocks || bubbleStyle === 'editorial')
+                ? 'w-full'
+                : 'w-fit',
+              bubbleClasses,
+            )}
+          >
+            {!message.content && !message.reasoningContent && message.isStreaming && (
+              <div className="select-none py-0.5">
+                <ReasoningText isStreaming label="Thinking…" variant={thinkingAnimation} />
+              </div>
+            )}
 
-          {/* Tool executions attached to this message */}
-          {message.toolCalls && message.toolCalls.length > 0 && (
-            <div className="my-1 w-full min-w-0">
-              {message.toolCalls.map((tool) => (
-                <ToolExecutionCard key={tool.id} tool={tool} />
-              ))}
-            </div>
-          )}
-
-          {/* Security interception prompts (plural) */}
-          {message.securityPrompts && message.securityPrompts.length > 0 && (
-            <div className="my-1 space-y-1 w-full min-w-0">
-              {message.securityPrompts.map((prompt) => (
-                <SecurityGuardPrompt
-                  key={prompt.id}
-                  prompt={prompt}
-                  onChoice={(choice) => handleSecurityChoice(prompt.id, choice)}
+            {message.reasoningContent && (
+              <div className="mb-2.5 w-full min-w-0">
+                <ReasoningText
+                  text={message.reasoningContent}
+                  isStreaming={isThinkingPhase}
+                  variant={thinkingAnimation}
                 />
-              ))}
-            </div>
-          )}
+              </div>
+            )}
 
-          {message.attachments && message.attachments.length > 0 && (
-            <div className="mb-3 flex flex-wrap gap-2">
-              {message.attachments.map((attachment) => (
-                <div key={attachment.id} className="flex max-w-full items-center gap-2 rounded-lg border border-border/70 bg-muted/50 p-1.5 text-[10px] text-muted-foreground">
-                  {attachment.previewUrl && attachment.mime.startsWith('image/') ? (
-                    <img src={attachment.previewUrl} alt="" className="h-8 w-8 shrink-0 rounded-md object-cover" />
-                  ) : (
-                    <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-background/70 text-amber-500">
-                      {attachment.mime.startsWith('image/') ? <ImageIcon className="h-4 w-4" /> : <FileText className="h-4 w-4" />}
+            {planSteps.length > 0 && (
+              <BeuiPlanChecklist
+                title="Tool Execution Plan"
+                steps={planSteps}
+                variant={planChecklistStyle}
+              />
+            )}
+
+            {inlineActivitySteps.length > 0 && planSteps.length === 0 && (
+              <AgentActivity
+                steps={inlineActivitySteps}
+                isActive={Boolean(message.isStreaming)}
+                mode="inline-collapsible"
+              />
+            )}
+
+            {message.toolCalls && message.toolCalls.length > 0 && (
+              <div className="my-1 w-full min-w-0">
+                {message.toolCalls.map((tool) => (
+                  <ToolExecutionCard key={tool.id} tool={tool} />
+                ))}
+              </div>
+            )}
+
+            {message.securityPrompts && message.securityPrompts.length > 0 && (
+              <div className="my-1 w-full min-w-0 space-y-1">
+                {message.securityPrompts.map((prompt) => (
+                  <SecurityGuardPrompt
+                    key={prompt.id}
+                    prompt={prompt}
+                    onChoice={(choice) => handleSecurityChoice(prompt.id, choice)}
+                  />
+                ))}
+              </div>
+            )}
+
+            {message.attachments && message.attachments.length > 0 && (
+              <div className="mb-3 flex flex-wrap gap-2">
+                {message.attachments.map((attachment) => (
+                  <div
+                    key={attachment.id}
+                    className="flex max-w-full items-center gap-2 rounded-lg border border-border/70 bg-muted/50 p-1.5 text-[10px] text-muted-foreground"
+                  >
+                    {attachment.previewUrl && attachment.mime.startsWith('image/') ? (
+                      <img
+                        src={attachment.previewUrl}
+                        alt=""
+                        className="h-8 w-8 shrink-0 rounded-md object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-background/70 text-primary">
+                        {attachment.mime.startsWith('image/') ? (
+                          <ImageIcon className="h-4 w-4" />
+                        ) : (
+                          <FileText className="h-4 w-4" />
+                        )}
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <div className="max-w-48 truncate font-medium text-foreground/90">
+                        {attachment.name}
+                      </div>
+                      <div className="text-[9px] text-muted-foreground">
+                        {formatFileSize(attachment.size)}
+                      </div>
                     </div>
-                  )}
-                  <div className="min-w-0">
-                    <div className="max-w-48 truncate font-medium text-foreground/90">{attachment.name}</div>
-                    <div className="text-[9px] text-muted-foreground">{formatFileSize(attachment.size)}</div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
 
-          {/* Main Markdown Output */}
-          {message.content && (
-            <div className="prose dark:prose-invert prose-xs max-w-none break-words">
-              <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
-                rehypePlugins={[rehypeHighlight, rehypeKatex]}
-                components={markdownComponents}
-              >
-                {message.content}
-              </ReactMarkdown>
-            </div>
-          )}
+            {message.content && (
+              <div className="prose dark:prose-invert prose-xs max-w-none break-words">
+                {isUser ? (
+                  <ReactMarkdown
+                    remarkPlugins={[remarkGfm]}
+                    rehypePlugins={[rehypeHighlight, rehypeKatex]}
+                    components={markdownComponents}
+                  >
+                    {message.content}
+                  </ReactMarkdown>
+                ) : (
+                  <StreamingResponse
+                    isStreaming={Boolean(message.isStreaming)}
+                    cursorStyle={streamingAnimation}
+                    footer={citationsFooter}
+                  >
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      rehypePlugins={[rehypeHighlight, rehypeKatex]}
+                      components={markdownComponents}
+                    >
+                      {citationData.refs.length > 0 ? citationData.bodyText : message.content}
+                    </ReactMarkdown>
+                  </StreamingResponse>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
-          {/* Streaming Cursor */}
-          {message.isStreaming && (
-            <span className="ml-1 inline-block h-4 w-1.5 animate-pulse rounded bg-amber-500 align-middle" />
-          )}
-        </div>
-
-        {/* Action buttons under the bubble (visible on hover) */}
-        {!message.isStreaming && (
-          <div className="flex items-center gap-2 mt-0.5 opacity-0 group-hover:opacity-100 transition-opacity select-none px-2">
-            <button
-              onClick={copyContent}
-              className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition"
-              title="Copy message"
-            >
-              {copied ? (
-                <>
-                  <Check className="h-3 w-3 text-emerald-500" />
-                  <span className="text-emerald-500 font-semibold">Copied</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="h-3 w-3" />
-                  <span>Copy</span>
-                </>
-              )}
-            </button>
+        {!message.isStreaming && !isEditing && showMessageActions && (
+          <div className="mt-0.5 select-none px-0.5 opacity-0 transition-opacity duration-150 group-hover:opacity-100 focus-within:opacity-100">
+            <BeuiMessageActions
+              text={message.content}
+              isUser={isUser}
+              variant={messageActionsStyle}
+              onRegenerate={!isUser ? () => regenerateMessage(message.id) : undefined}
+              onEdit={
+                isUser
+                  ? () => {
+                      setDraftEdit(message.content);
+                      setIsEditing(true);
+                    }
+                  : undefined
+              }
+              onReply={() => setQuotedReplyText(message.content)}
+              onFork={!isUser ? () => newSession() : undefined}
+            />
           </div>
         )}
       </div>
-
-      {isUser && (
-        <div className="flex h-8 w-8 shrink-0 select-none items-center justify-center rounded-full bg-secondary text-secondary-foreground border border-border">
-          <User className="h-4 w-4" />
-        </div>
-      )}
-    </div>
+    </ChatTrackRow>
   );
 });

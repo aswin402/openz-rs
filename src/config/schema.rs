@@ -682,6 +682,10 @@ pub struct UiProfileSettings {
     pub show_auto_capture_notices: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none", alias = "tui_thought_display")]
     pub tui_thought_display: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "active_theme_id")]
+    pub active_theme_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "ui_customization")]
+    pub ui_customization: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -1269,17 +1273,35 @@ impl Config {
         }
     }
 
+    pub fn ui_explicit_theme(&self, surface: &str) -> Option<String> {
+        self.ui_profile(surface)
+            .and_then(|profile| profile.theme.as_deref())
+            .map(str::trim)
+            .filter(|theme| !theme.is_empty())
+            .map(str::to_string)
+    }
+
+    pub fn ui_active_theme_id(&self, surface: &str) -> Option<String> {
+        self.ui_profile(surface)
+            .and_then(|profile| profile.active_theme_id.as_deref())
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string)
+    }
+
+    pub fn ui_customization(&self, surface: &str) -> Option<serde_json::Value> {
+        self.ui_profile(surface)
+            .and_then(|profile| profile.ui_customization.clone())
+            .filter(serde_json::Value::is_object)
+    }
+
     pub fn ui_theme(&self, surface: &str) -> String {
         let default_theme = match Self::canonical_ui_surface(surface) {
             "webui" => "system",
             _ => "aura_dark",
         };
-        self.ui_profile(surface)
-            .and_then(|profile| profile.theme.as_deref())
-            .map(str::trim)
-            .filter(|theme| !theme.is_empty())
-            .unwrap_or(default_theme)
-            .to_string()
+        self.ui_explicit_theme(surface)
+            .unwrap_or_else(|| default_theme.to_string())
     }
 
     pub fn apply_ui_surface(&mut self, surface: &str) {

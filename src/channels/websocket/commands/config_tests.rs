@@ -263,3 +263,35 @@ async fn websocket_gateway_autostart_settings_persist_and_gate_non_loopback_host
         .unwrap_or(false);
     assert!(has_ws_capability);
 }
+
+#[tokio::test]
+async fn webui_theme_and_ui_customization_roundtrip_without_gateway_token() {
+    let mut disk_cfg = crate::config::schema::Config::default();
+
+    // Fresh config has no explicit WebUI theme yet
+    let initial_event = config_data_event(&disk_cfg).await;
+    assert!(initial_event["defaults"]["theme_explicit"].is_null());
+
+    let ui_patch = serde_json::json!({
+        "defaults": {
+            "theme": "light",
+            "active_theme_id": "catppuccin",
+            "ui_customization": {
+                "activeThemeId": "catppuccin",
+                "chatWidth": "wide",
+                "approvalStyle": "beui-tool-approval"
+            }
+        }
+    });
+    assert!(!config_update_requires_gateway_token(&ui_patch));
+
+    apply_webui_disk_config_update(&mut disk_cfg, &ui_patch);
+    let updated_event = config_updated_event(&disk_cfg);
+    assert_eq!(updated_event["defaults"]["theme"], "light");
+    assert_eq!(updated_event["defaults"]["theme_explicit"], "light");
+    assert_eq!(updated_event["defaults"]["active_theme_id"], "catppuccin");
+    assert_eq!(
+        updated_event["defaults"]["ui_customization"]["chatWidth"],
+        "wide"
+    );
+}

@@ -1,3 +1,10 @@
+import {
+  THEME_FAMILIES,
+  deriveCategoricalPalette,
+  mixHex,
+  relativeLuminance,
+  withHexAlpha,
+} from '../../../shared/lib/colorEngine';
 import { stableHash } from '../graphLayout';
 import type { GraphCluster, LayoutNode } from '../graphLayout';
 import type { EdgeProvenance } from '../graphSemantics';
@@ -47,20 +54,65 @@ export const MAX_RENDERED_EDGES = 1800;
 export const MAX_PARTICLE_EDGES = 720;
 export const MAX_PARTICLES = 240;
 
-const NODE_COLOR_PALETTE: Array<{ main: string; glow: string }> = [
-  { main: '#f59e0b', glow: 'rgba(245, 158, 11, 0.45)' },
-  { main: '#3b82f6', glow: 'rgba(59, 130, 246, 0.42)' },
-  { main: '#10b981', glow: 'rgba(16, 185, 129, 0.42)' },
-  { main: '#ec4899', glow: 'rgba(236, 72, 153, 0.42)' },
-  { main: '#f43f5e', glow: 'rgba(244, 63, 94, 0.42)' },
-  { main: '#a855f7', glow: 'rgba(168, 85, 247, 0.42)' },
-  { main: '#06b6d4', glow: 'rgba(6, 182, 212, 0.42)' },
-  { main: '#f97316', glow: 'rgba(249, 115, 22, 0.42)' },
-  { main: '#38bdf8', glow: 'rgba(56, 189, 248, 0.42)' },
-  { main: '#14b8a6', glow: 'rgba(20, 184, 166, 0.42)' },
-  { main: '#eab308', glow: 'rgba(234, 179, 8, 0.42)' },
-  { main: '#94a3b8', glow: 'rgba(148, 163, 184, 0.34)' },
-];
+interface GraphCanvasTheme {
+  mode: 'dark' | 'light';
+  backgroundHex: string;
+  cardHex: string;
+  sidebarHex: string;
+  foregroundHex: string;
+  mutedForegroundHex: string;
+  primaryHex: string;
+  infoHex: string;
+  nodes: Array<{ main: string; glow: string }>;
+}
+
+let cachedSig = '';
+let cachedTheme: GraphCanvasTheme | null = null;
+
+function readCssHex(style: CSSStyleDeclaration | null, varName: string, fallback: string): string {
+  if (!style) return fallback;
+  const raw = style.getPropertyValue(varName).trim();
+  return raw.startsWith('#') ? raw : fallback;
+}
+
+export function resolveGraphCanvasTheme(): GraphCanvasTheme {
+  const fallback = THEME_FAMILIES[0].dark;
+  const style =
+    typeof document !== 'undefined' ? getComputedStyle(document.documentElement) : null;
+  const backgroundHex = readCssHex(style, '--background', fallback.backgroundHex);
+  const cardHex = readCssHex(style, '--card', fallback.cardHex);
+  const sidebarHex = readCssHex(style, '--sidebar', fallback.sidebarHex);
+  const foregroundHex = readCssHex(style, '--foreground', fallback.foregroundHex);
+  const mutedForegroundHex = readCssHex(style, '--muted-foreground', fallback.mutedForegroundHex);
+  const primaryHex = readCssHex(style, '--primary', fallback.primaryHex);
+  const infoHex = readCssHex(style, '--info', fallback.infoHex);
+
+  const sig = `${backgroundHex}|${primaryHex}|${foregroundHex}|${infoHex}`;
+  if (cachedTheme && cachedSig === sig) {
+    return cachedTheme;
+  }
+
+  const mode: 'dark' | 'light' = relativeLuminance(backgroundHex) > 0.42 ? 'light' : 'dark';
+  const paletteHexes = deriveCategoricalPalette(primaryHex, mode, 12);
+  const glowAlpha = mode === 'dark' ? 0.42 : 0.26;
+
+  cachedSig = sig;
+  cachedTheme = {
+    mode,
+    backgroundHex,
+    cardHex,
+    sidebarHex,
+    foregroundHex,
+    mutedForegroundHex,
+    primaryHex,
+    infoHex,
+    nodes: paletteHexes.map((hex) => ({
+      main: hex,
+      glow: withHexAlpha(hex, glowAlpha),
+    })),
+  };
+  return cachedTheme;
+}
 
 export function prefersReducedMotion(): boolean {
   return typeof window !== 'undefined' && (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false);
@@ -76,15 +128,12 @@ export function colorHash(value: string): number {
 
 export function getNodeColor(type: string): { main: string; glow: string } {
   const key = type.trim().toLowerCase() || 'unknown';
-  return NODE_COLOR_PALETTE[colorHash(key) % NODE_COLOR_PALETTE.length];
+  const { nodes } = resolveGraphCanvasTheme();
+  return nodes[colorHash(key) % nodes.length];
 }
 
 export function colorWithAlpha(color: string, alpha: number): string {
-  const hex = color.replace('#', '');
-  const red = Number.parseInt(hex.slice(0, 2), 16);
-  const green = Number.parseInt(hex.slice(2, 4), 16);
-  const blue = Number.parseInt(hex.slice(4, 6), 16);
-  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+  return withHexAlpha(color, alpha);
 }
 
 export const SPACE_STARS: SpaceStar[] = Array.from({ length: 96 }, (_, index) => {
@@ -143,16 +192,17 @@ export function drawBackground(
   showGrid: boolean,
   showSpaceField: boolean,
 ) {
+  const theme = resolveGraphCanvasTheme();
   context.clearRect(0, 0, width, height);
   const gradient = context.createRadialGradient(width * 0.48, height * 0.42, 20, width * 0.48, height * 0.42, Math.max(width, height) * 0.9);
-  gradient.addColorStop(0, '#111827');
-  gradient.addColorStop(0.52, '#090d17');
-  gradient.addColorStop(1, '#04060b');
+  gradient.addColorStop(0, mixHex(theme.cardHex, theme.primaryHex, theme.mode === 'dark' ? 0.06 : 0.035));
+  gradient.addColorStop(0.55, theme.backgroundHex);
+  gradient.addColorStop(1, mixHex(theme.backgroundHex, theme.sidebarHex, 0.72));
   context.fillStyle = gradient;
   context.fillRect(0, 0, width, height);
 
   if (showGrid) {
-    context.strokeStyle = 'rgba(71, 85, 105, 0.08)';
+    context.strokeStyle = colorWithAlpha(theme.mutedForegroundHex, theme.mode === 'dark' ? 0.12 : 0.16);
     context.lineWidth = 1;
     const gridStep = 56;
     for (let x = 0; x <= width; x += gridStep) {
@@ -170,10 +220,11 @@ export function drawBackground(
   }
 
   if (showSpaceField) {
+    const starMultiplier = theme.mode === 'dark' ? 1 : 0.65;
     SPACE_STARS.forEach((star) => {
       context.beginPath();
       context.arc(star.x * width, star.y * height, star.radius, 0, Math.PI * 2);
-      context.fillStyle = `rgba(226, 232, 240, ${star.alpha})`;
+      context.fillStyle = colorWithAlpha(theme.mutedForegroundHex, star.alpha * starMultiplier);
       context.fill();
     });
   }
@@ -224,8 +275,9 @@ export function drawClusters(
     context.fill();
     context.globalAlpha = 1;
     if (transform.k < 1.15 || isHovered) {
+      const theme = resolveGraphCanvasTheme();
       context.font = '600 10px Inter, system-ui, sans-serif';
-      context.fillStyle = isHovered ? '#f8fafc' : 'rgba(203, 213, 225, 0.7)';
+      context.fillStyle = isHovered ? theme.foregroundHex : colorWithAlpha(theme.mutedForegroundHex, 0.82);
       context.textAlign = 'center';
       context.fillText(cluster.type + ' · ' + cluster.nodeIds.length, cluster.x, cluster.y + cluster.radius + 15);
       context.textAlign = 'start';
@@ -285,6 +337,7 @@ export function drawEdges(
   particlesEnabled: boolean,
   now: number,
 ) {
+  const theme = resolveGraphCanvasTheme();
   edges.forEach((edge, edgeIndex) => {
     const source = edge.source;
     const target = edge.target;
@@ -295,14 +348,14 @@ export function drawEdges(
     const highConfidence = edge.confidence !== null && edge.confidence >= 0.82;
     const sourceColor = getNodeColor(source.type).main;
     const ordinaryAlpha = dimmed
-      ? 0.025
+      ? 0.04
       : edge.confidence === null
-        ? 0.1
-        : 0.1 + edge.confidence * 0.24;
+        ? 0.14
+        : 0.14 + edge.confidence * 0.26;
     const edgeColor = edgeIsHovered
-      ? '#f8fafc'
+      ? theme.foregroundHex
       : edgeIsSelected
-        ? '#67e8f9'
+        ? theme.infoHex
         : connected
           ? colorWithAlpha(activeNode?.color || sourceColor, 0.82)
           : highConfidence
@@ -350,6 +403,7 @@ export function drawNodes(
   canvasWidth: number,
   showGlow: boolean,
   showLabels: boolean,
+  checkedNodeNames?: ReadonlySet<string>,
 ) {
   const maxDegree = Math.max(...nodes.map((node) => node.degree), 0);
   const labelBudget = Math.min(72, Math.max(18, Math.floor(canvasWidth / 18)));
@@ -359,7 +413,7 @@ export function drawNodes(
     (node.name + ' ' + node.type + ' ' + node.observations).toLowerCase().includes(query);
   const labelIds = new Set(
     nodes
-      .filter((node) => hoveredNode?.id === node.id || selectedNode?.id === node.id || matchesSearch(node))
+      .filter((node) => hoveredNode?.id === node.id || selectedNode?.id === node.id || checkedNodeNames?.has(node.id) || matchesSearch(node))
       .map((node) => node.id),
   );
   const maximumLabels = Math.max(labelBudget, labelIds.size);
@@ -376,16 +430,18 @@ export function drawNodes(
     labelIds.add(node.id);
   }
 
+  const theme = resolveGraphCanvasTheme();
   nodes.forEach((node) => {
     const isConnected = activeNode ? connectedIds.has(node.id) : true;
     const isHovered = hoveredNode?.id === node.id;
     const isSelected = selectedNode?.id === node.id;
+    const isChecked = Boolean(checkedNodeNames?.has(node.id));
     const isSearchMatch = matchesSearch(node);
     const palette = getNodeColor(node.type);
     const renderRadius = Math.max(2 / Math.max(transform.k, 0.01), Math.min(14, 3.5 + Math.sqrt(node.degree) * 1.8));
-    const alpha = activeNode && !isConnected ? 0.12 : 0.72 + node.importance * 0.28;
+    const alpha = activeNode && !isConnected ? 0.14 : 0.72 + node.importance * 0.28;
     const isImportant = node.importance >= 0.62;
-    const stronglyEmphasized = isSelected || isSearchMatch;
+    const stronglyEmphasized = isSelected || isChecked || isSearchMatch;
     context.save();
     context.globalAlpha = alpha;
     if (showGlow && (stronglyEmphasized || isHovered || (isConnected && node.degree > 0))) {
@@ -398,12 +454,12 @@ export function drawNodes(
       context.arc(node.x, node.y, glowRadius, 0, Math.PI * 2);
       context.fill();
     }
-    if (isSearchMatch) {
+    if (isSearchMatch || isChecked) {
       context.beginPath();
       context.arc(node.x, node.y, renderRadius + 5, 0, Math.PI * 2);
-      context.strokeStyle = '#7dd3fc';
-      context.lineWidth = 1.3;
-      context.setLineDash([3, 3]);
+      context.strokeStyle = isChecked ? theme.primaryHex : theme.infoHex;
+      context.lineWidth = isChecked ? 1.5 : 1.3;
+      context.setLineDash(isChecked ? [] : [3, 3]);
       context.stroke();
       context.setLineDash([]);
     }
@@ -411,8 +467,8 @@ export function drawNodes(
     context.arc(node.x, node.y, renderRadius + (isSelected ? 1.5 : 0), 0, Math.PI * 2);
     context.fillStyle = palette.main;
     context.fill();
-    context.lineWidth = isHovered || isSelected || isImportant ? 1.8 : 0.7;
-    context.strokeStyle = isHovered || isSelected ? '#f8fafc' : isImportant ? palette.main : '#020617';
+    context.lineWidth = isHovered || isSelected || isChecked || isImportant ? 1.8 : 0.7;
+    context.strokeStyle = isHovered || isSelected || isChecked ? theme.foregroundHex : isImportant ? palette.main : theme.backgroundHex;
     context.stroke();
     if (isImportant && !isSelected) {
       context.beginPath();
@@ -435,9 +491,9 @@ export function drawNodes(
     if (showLabels && labelIds.has(node.id)) {
       context.save();
       context.globalAlpha = alpha;
-      context.font = (isSelected ? '600 ' : '500 ') + (isSelected ? '11px' : '10px') + ' Inter, system-ui, sans-serif';
-      context.fillStyle = isHovered || isSelected ? '#f8fafc' : '#cbd5e1';
-      context.shadowColor = 'rgba(0, 0, 0, 0.95)';
+      context.font = (isSelected || isChecked ? '600 ' : '500 ') + (isSelected || isChecked ? '11px' : '10px') + ' Inter, system-ui, sans-serif';
+      context.fillStyle = isHovered || isSelected || isChecked ? theme.foregroundHex : theme.mutedForegroundHex;
+      context.shadowColor = colorWithAlpha(theme.backgroundHex, 0.92);
       context.shadowBlur = 4;
       const label = node.name.length > 36 ? node.name.slice(0, 33) + '…' : node.name;
       context.fillText(label, node.x + renderRadius + 5, node.y + 3.5);

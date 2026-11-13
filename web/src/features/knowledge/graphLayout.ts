@@ -243,7 +243,7 @@ export function layoutNodes(
       x: point.x,
       y: point.y,
       radius,
-      color: '#94a3b8',
+      color: 'var(--primary)',
     };
   });
 }

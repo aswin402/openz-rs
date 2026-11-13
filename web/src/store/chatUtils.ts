@@ -370,7 +370,7 @@ export function resolveWorkspacePageNotice(
 export function workspaceNoticeBannerClass(
   type?: WorkspaceNotice['type'],
 ): string {
-  if (type === 'error') return 'border-red-500/30 bg-red-500/10 text-red-300';
-  if (type === 'success') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300';
-  return 'border-amber-500/30 bg-amber-500/10 text-amber-400';
+  if (type === 'error') return 'border-destructive/30 bg-destructive/10 text-destructive';
+  if (type === 'success') return 'border-success/30 bg-success/10 text-success';
+  return 'border-primary/30 bg-primary/10 text-primary';
 }

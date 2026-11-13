@@ -168,7 +168,7 @@ export const AgentsView: React.FC = () => {
         <button
           type="button"
           onClick={startNewAgent}
-          className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-amber-400"
+          className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm transition hover:opacity-90"
         >
           <Plus className="h-3.5 w-3.5" /> New Agent
         </button>
@@ -177,7 +177,7 @@ export const AgentsView: React.FC = () => {
       <div className="flex shrink-0 flex-col justify-between gap-4 border-b border-border/50 pb-4 md:flex-row md:items-center">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-extrabold tracking-tight text-foreground">
-            <Bot className="h-5 w-5 text-amber-500" /> Subagent Profiles
+            <Bot className="h-5 w-5 text-primary" /> Subagent Profiles
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">Create, tune, duplicate, and delete custom OpenZ subagent profiles.</p>
         </div>
@@ -189,7 +189,7 @@ export const AgentsView: React.FC = () => {
             placeholder="Search agents..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-lg border border-border/60 bg-card/60 py-1.5 pl-9 pr-4 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+            className="w-full rounded-lg border border-border/60 bg-card/60 py-1.5 pl-9 pr-4 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
           />
         </div>
       </div>
@@ -197,7 +197,7 @@ export const AgentsView: React.FC = () => {
       {pageNotice && (
         <div className={`mt-3 flex shrink-0 items-center justify-between rounded-lg border px-3 py-2 text-xs ${noticeClass}`}>
           <span>{pageNotice.message}</span>
-          <button type="button" onClick={() => { setNotice(null); clearWorkspaceNotice('agents'); }} className="rounded p-0.5 hover:bg-amber-500/10" aria-label="Dismiss notice">
+          <button type="button" onClick={() => { setNotice(null); clearWorkspaceNotice('agents'); }} className="rounded p-0.5 hover:bg-primary/10" aria-label="Dismiss notice">
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
@@ -212,22 +212,22 @@ export const AgentsView: React.FC = () => {
               const selected = agent.name === selectedAgentName;
               const protectedProfile = Boolean(agent.isProtected);
               const itemClass = 'flex w-full items-center gap-3 rounded-lg border p-3 text-left transition ' +
-                (selected ? 'border-amber-500/40 bg-amber-500/10 text-amber-200' : 'border-border/60 bg-card/40 text-foreground hover:border-border hover:bg-muted/20');
+                (selected ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border/60 bg-card/40 text-foreground hover:border-border hover:bg-muted/20');
               const runtime = runtimeByName.get(agent.name);
               const effectiveModel = runtime?.effectiveModel || agent.model;
               return (
                 <button key={agent.name} type="button" onClick={() => openAgent(agent)} className={itemClass}>
-                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-amber-500/20 bg-amber-500/10 text-amber-500">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 text-primary">
                     {protectedProfile ? <ShieldCheck className="h-4 w-4" /> : <Cpu className="h-4 w-4" />}
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="truncate text-xs font-semibold leading-normal">{agent.name}</span>
                       {protectedProfile && <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-semibold text-muted-foreground">core</span>}
-                      {runtime?.supportsVision && <span className="rounded bg-cyan-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-cyan-300">vision</span>}
+                      {runtime?.supportsVision && <span className="rounded bg-info/12 px-1.5 py-0.5 text-[9px] font-semibold text-info">vision</span>}
                     </div>
                     <div className="mt-0.5 truncate text-[10px] text-muted-foreground">{agent.description}</div>
-                    <div className="mt-1 truncate font-mono text-[9px] text-amber-400/80">{effectiveModel}</div>
+                    <div className="mt-1 truncate font-mono text-[9px] text-primary/80">{effectiveModel}</div>
                   </div>
                 </button>
               );
@@ -248,10 +248,10 @@ export const AgentsView: React.FC = () => {
                   >
                     <ArrowLeft className="h-3.5 w-3.5" />
                   </button>
-                  <Bot className="h-4 w-4 shrink-0 text-amber-500" />
+                  <Bot className="h-4 w-4 shrink-0 text-primary" />
                   <span className="truncate text-xs font-bold text-foreground">{isNew ? 'New Subagent' : activeAgent?.name}</span>
                   {isProtected && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">Protected</span>}
-                  {isDirty && !isProtected && <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-400">Unsaved</span>}
+                  {isDirty && !isProtected && <span className="rounded bg-warning/12 px-1.5 py-0.5 text-[10px] font-semibold text-warning">Unsaved</span>}
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                   <button
@@ -283,7 +283,7 @@ export const AgentsView: React.FC = () => {
                     type="button"
                     onClick={handleSave}
                     disabled={!canSave}
-                    className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-amber-400 disabled:opacity-40"
+                    className="flex items-center gap-1.5 rounded-lg bg-primary px-2.5 py-1.5 text-[11px] font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-40"
                   >
                     <Save className="h-3.5 w-3.5" /> Save
                   </button>
@@ -291,7 +291,7 @@ export const AgentsView: React.FC = () => {
                     <button
                       type="button"
                       onClick={handleDelete}
-                      className="flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-red-300 transition hover:bg-red-500/20"
+                      className="flex items-center gap-1.5 rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-[11px] font-semibold text-destructive transition hover:bg-destructive/20"
                     >
                       <Trash2 className="h-3.5 w-3.5" /> Delete
                     </button>
@@ -307,7 +307,7 @@ export const AgentsView: React.FC = () => {
                     onChange={(e) => setDraftName(e.target.value)}
                     placeholder="custom_agent"
                     readOnly={!isNew}
-                    className="mt-1 w-full rounded-lg border border-border/60 bg-background px-2.5 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50 read-only:cursor-not-allowed read-only:opacity-70"
+                    className="mt-1 w-full rounded-lg border border-border/60 bg-background px-2.5 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 read-only:cursor-not-allowed read-only:opacity-70"
                   />
                 </label>
                 <label className="text-[11px] font-semibold text-muted-foreground">
@@ -317,7 +317,7 @@ export const AgentsView: React.FC = () => {
                     onChange={(e) => setDraftModel(e.target.value)}
                     placeholder="default or provider/model"
                     list="subagent-model-options"
-                    className="mt-1 w-full rounded-lg border border-border/60 bg-background px-2.5 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50 disabled:cursor-not-allowed disabled:opacity-70"
+                    className="mt-1 w-full rounded-lg border border-border/60 bg-background px-2.5 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-70"
                   />
                   <datalist id="subagent-model-options">
                     {modelSuggestions.map((model) => <option key={model} value={model} />)}
@@ -330,12 +330,12 @@ export const AgentsView: React.FC = () => {
                     onChange={(e) => setDraftDescription(e.target.value)}
                     placeholder="What this subagent is specialized in"
                     disabled={isProtected}
-                    className="mt-1 w-full rounded-lg border border-border/60 bg-background px-2.5 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50 disabled:cursor-not-allowed disabled:opacity-70"
+                    className="mt-1 w-full rounded-lg border border-border/60 bg-background px-2.5 py-2 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-70"
                   />
                 </label>
                 <div className="text-[11px] text-muted-foreground lg:col-span-2">
                   {isProtected ? 'Core profiles are read-only. Duplicate one to create an editable custom variant.' : nameExists ? (
-                    <span className="text-red-400">A subagent named {normalizedName} already exists.</span>
+                    <span className="text-destructive">A subagent named {normalizedName} already exists.</span>
                   ) : normalizedName ? (
                     <span>Saved as <code>{normalizedName}</code>. {fallbackLimit ? `Fallbacks accept up to ${fallbackLimit} comma-separated model names.` : 'Fallbacks accept comma-separated model names.'}</span>
                   ) : (
@@ -366,7 +366,7 @@ export const AgentsView: React.FC = () => {
                       value={draftFallbacks}
                       onChange={(e) => setDraftFallbacks(e.target.value)}
                       placeholder="model-a, model-b"
-                      className="mt-1 h-24 w-full resize-none rounded-lg border border-border/60 bg-background px-2.5 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50 disabled:cursor-not-allowed disabled:opacity-70"
+                      className="mt-1 h-24 w-full resize-none rounded-lg border border-border/60 bg-background px-2.5 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-70"
                     />
                   </label>
                   <div className="mt-4 space-y-2 rounded-lg border border-border/60 bg-background/50 p-3 text-[11px] text-muted-foreground">
@@ -374,12 +374,12 @@ export const AgentsView: React.FC = () => {
                     <div className="flex items-center justify-between gap-3"><span>Configured</span><span className="truncate font-mono">{activeAgent?.model || 'default'}</span></div>
                     <div className="flex items-center justify-between gap-3"><span>Effective</span><span className="truncate font-mono">{activeRuntime?.effectiveModel || activeAgent?.model || 'default'}</span></div>
                     <div className="flex items-center justify-between gap-3"><span>Provider</span><span>{activeRuntime?.effectiveProvider || activeAgent?.provider || 'auto'}</span></div>
-                    <div className="flex items-center justify-between gap-3"><span>Vision Model</span><span className={activeRuntime?.supportsVision ? 'text-cyan-300' : 'text-muted-foreground'}>{activeRuntime?.supportsVision ? 'yes' : 'no'}</span></div>
+                    <div className="flex items-center justify-between gap-3"><span>Vision Model</span><span className={activeRuntime?.supportsVision ? 'text-info' : 'text-muted-foreground'}>{activeRuntime?.supportsVision ? 'yes' : 'no'}</span></div>
                     <div className="flex items-center justify-between gap-3"><span>Fallbacks</span><span>{activeRuntime?.fallbackCount ?? currentFallbacks.length}</span></div>
                     {(activeRuntime?.fallbacks.length || 0) > 0 && (
                       <div className="space-y-1 border-t border-border/50 pt-2">
                         {(activeRuntime?.fallbacks || []).map((fallback) => (
-                          <div key={fallback} className="truncate font-mono text-[10px] text-amber-300/80">{fallback}</div>
+                          <div key={fallback} className="truncate font-mono text-[10px] text-primary/80">{fallback}</div>
                         ))}
                       </div>
                     )}
@@ -391,7 +391,7 @@ export const AgentsView: React.FC = () => {
                       </div>
                     )}
                     {activeRuntime && activeRuntime.failureCount > 0 && (
-                      <div className="rounded border border-red-500/30 bg-red-500/10 px-2 py-1 text-red-300">
+                      <div className="rounded border border-destructive/30 bg-destructive/10 px-2 py-1 text-destructive">
                         {activeRuntime.failureCount} failures{activeRuntime.lastError ? `: ${activeRuntime.lastError}` : ''}
                       </div>
                     )}

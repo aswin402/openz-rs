@@ -1,6 +1,6 @@
-# OpenZ WebUI
+# OpenZ
 
-React/Vite control center for the OpenZ Rust agent gateway. The WebUI connects over WebSocket, renders chat and agent activity, and exposes settings, skills, memory, inventory, channels, and runtime operations from one console.
+React/Vite interface for the OpenZ Rust agent gateway. Connects over WebSocket, renders chat and agent activity, and exposes settings, skills, full-page Obsidian cognitive memory graph, inventory, channels, and runtime operations from one console.
 
 ## Features
 

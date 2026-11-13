@@ -31,6 +31,8 @@ export interface ChatSlice {
   deleteSession: (chatId: string) => void;
   clearActiveSession: () => void;
   sendMessage: (content: string, attachments?: ChatAttachment[]) => void;
+  regenerateMessage: (messageId: string) => void;
+  editAndResendMessage: (messageId: string, nextContent: string) => void;
   stopTurn: () => void;
   handleSecurityChoice: (reqId: string, choice: 'approve' | 'deny') => void;
 }
@@ -235,6 +237,35 @@ export const createChatSlice: StateCreator<
 
     set({ messages: { ...get().messages, [chatId]: updated } });
     wsService.sendSecurityResponse(reqId, choice === 'approve');
+  },
+
+  regenerateMessage: (messageId) => {
+    const chatId = get().activeChatId;
+    if (!chatId || get().isStreaming) return;
+    const chatMessages = get().messages[chatId] || [];
+    const targetIdx = chatMessages.findIndex((m) => m.id === messageId);
+    if (targetIdx === -1) return;
+    let userIdx = targetIdx;
+    while (userIdx >= 0 && chatMessages[userIdx].role !== 'user') {
+      userIdx--;
+    }
+    if (userIdx < 0) return;
+    const promptText = chatMessages[userIdx].content;
+    const trimmed = chatMessages.slice(0, userIdx);
+    set({ messages: { ...get().messages, [chatId]: trimmed } });
+    get().sendMessage(promptText);
+  },
+
+  editAndResendMessage: (messageId, nextContent) => {
+    const cleaned = nextContent.trim();
+    const chatId = get().activeChatId;
+    if (!chatId || !cleaned || get().isStreaming) return;
+    const chatMessages = get().messages[chatId] || [];
+    const targetIdx = chatMessages.findIndex((m) => m.id === messageId);
+    if (targetIdx === -1) return;
+    const trimmed = chatMessages.slice(0, targetIdx);
+    set({ messages: { ...get().messages, [chatId]: trimmed } });
+    get().sendMessage(cleaned);
   },
   };
 };

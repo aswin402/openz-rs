@@ -2,6 +2,8 @@ import React from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
 import { X, Brain, Database, GitBranch, Key } from 'lucide-react';
 import { MetricCard } from '../shared/ui/MetricCard';
+import { Badge } from './ui/badge';
+import { Button } from './ui/button';
 
 export const CognitiveMemoryModal: React.FC = () => {
   const isMemoryOpen = useOpenZStore((s) => s.isMemoryOpen);
@@ -12,80 +14,92 @@ export const CognitiveMemoryModal: React.FC = () => {
   if (!isMemoryOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-      <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-        <div className="flex items-center justify-between pb-4 border-b border-border/50">
-          <div className="flex items-center gap-2 text-foreground font-semibold text-base">
-            <Brain className="h-5 w-5 text-amber-500" /> Cognitive Memory & Knowledge Graph
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/45 p-4 backdrop-blur-xs">
+      <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border/50 pb-4">
+          <div className="flex items-center gap-2 text-base font-semibold text-foreground">
+            <Brain className="size-5 text-primary" />
+            <span>Cognitive Memory &amp; Knowledge Graph</span>
           </div>
-          <button
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
             onClick={() => setIsMemoryOpen(false)}
-            className="rounded-lg p-1 text-muted-foreground hover:text-foreground hover:bg-muted"
+            aria-label="Close memory modal"
           >
-            <X className="h-4 w-4" />
-          </button>
+            <X className="size-4" />
+          </Button>
         </div>
 
         <div className="mt-4 space-y-4 text-xs">
-          {/* Quick Metrics */}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <MetricCard label="Entities" value={String(stats.entitiesCount)} icon={Brain} />
-            <MetricCard label="Relations" value={String(stats.relationsCount)} icon={GitBranch} accent="text-purple-400" />
-            <MetricCard label="Stored Facts" value={String(stats.factsCount)} icon={Database} accent="text-emerald-400" />
+            <MetricCard
+              label="Relations"
+              value={String(stats.relationsCount)}
+              icon={GitBranch}
+              accent="text-primary"
+            />
+            <MetricCard
+              label="Stored Facts"
+              value={String(stats.factsCount)}
+              icon={Database}
+              accent="text-success"
+            />
           </div>
 
-          {/* Active Working Memory Keys */}
           <div>
-            <div className="mb-2 font-semibold text-foreground flex items-center gap-1.5">
-              <Key className="h-3.5 w-3.5 text-amber-500" /> Active Working Memory Scope
+            <div className="mb-2 flex items-center gap-1.5 font-semibold text-foreground">
+              <Key className="size-3.5 text-primary" />
+              <span>Active Working Memory Scope</span>
             </div>
             {stats.workingMemoryKeys.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-border/50 bg-muted/15 px-3 py-2 text-[11px] text-muted-foreground">
+              <div className="rounded-lg border border-dashed border-border/60 bg-muted/15 px-3 py-2 text-[11px] text-muted-foreground">
                 No active working memory keys in current scope.
               </div>
             ) : (
               <div className="flex flex-wrap gap-1.5">
                 {stats.workingMemoryKeys.map((key) => (
-                  <span
-                    key={key}
-                    className="rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 font-mono text-[11px] text-amber-300"
-                  >
+                  <Badge key={key} variant="secondary" className="font-mono text-[11px]">
                     {key}
-                  </span>
+                  </Badge>
                 ))}
               </div>
             )}
           </div>
 
-          {/* Cognitive Database Paths */}
-          <div className="space-y-2 rounded-lg border border-border/40 bg-black/40 p-3 font-mono text-[11px] text-muted-foreground">
+          <div className="space-y-2 rounded-xl border border-border/60 bg-muted/25 p-3 font-mono text-[11px] text-muted-foreground">
             <div>
-              <div className="font-sans font-semibold text-foreground mb-0.5">Knowledge Graph Database</div>
+              <div className="mb-0.5 font-sans font-semibold text-foreground">
+                Knowledge Graph Database
+              </div>
               <div className="break-all">{stats.paths?.graphDb || 'Waiting for gateway path…'}</div>
             </div>
-            <div className="border-t border-border/30 pt-2">
-              <div className="font-sans font-semibold text-foreground mb-0.5">Cognitive Facts Database</div>
+            <div className="border-t border-border/40 pt-2">
+              <div className="mb-0.5 font-sans font-semibold text-foreground">
+                Cognitive Facts Database
+              </div>
               <div className="break-all">{stats.paths?.memoryDb || 'Waiting for gateway path…'}</div>
             </div>
           </div>
         </div>
 
         <div className="mt-6 flex items-center justify-between gap-2">
-          <button
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
             onClick={() => {
               setIsMemoryOpen(false);
               setActiveView('knowledge');
             }}
-            className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3.5 py-2 text-xs font-semibold text-amber-400 hover:bg-amber-500/20 transition"
           >
             Open Graph View
-          </button>
-          <button
-            onClick={() => setIsMemoryOpen(false)}
-            className="rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:opacity-90"
-          >
+          </Button>
+          <Button type="button" size="sm" onClick={() => setIsMemoryOpen(false)}>
             Done
-          </button>
+          </Button>
         </div>
       </div>
     </div>

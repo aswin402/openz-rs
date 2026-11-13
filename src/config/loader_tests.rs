@@ -329,3 +329,59 @@ fn test_runtime_data_path_helpers() {
     assert_eq!(super::subagents_file(), base.join("subagents.json"));
     assert_eq!(super::activity_file(), base.join("activity.json"));
 }
+
+#[tokio::test]
+async fn save_and_load_config_persists_backups_and_recovers_webui_customization() {
+    let dir = std::env::temp_dir().join(format!(
+        "openz_cfg_webui_backup_recovery_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let mut initial = Config::default();
+    {
+        let webui = initial.ui_profile_mut("webui");
+        webui.theme = Some("light".to_string());
+        webui.active_theme_id = Some("tokyo-night".to_string());
+        webui.ui_customization = Some(serde_json::json!({
+            "activeThemeId": "tokyo-night",
+            "agentAvatar": "fox-classic",
+            "approvalStyle": "beui-tool-approval"
+        }));
+    }
+
+    super::CONFIG_DIR_OVERRIDE
+        .scope(dir.clone(), async {
+            super::save_config(&initial).unwrap();
+        })
+        .await;
+
+    assert!(dir.join("backups").join("config.latest.json").exists());
+    assert!(dir.join("webui_preferences.json").exists());
+    assert!(dir
+        .join("backups")
+        .join("webui_preferences.latest.json")
+        .exists());
+
+    // Simulate config.json missing after external reset; load_config must recover from backups
+    std::fs::remove_file(dir.join("config.json")).unwrap();
+
+    let recovered = super::CONFIG_DIR_OVERRIDE
+        .scope(dir.clone(), async { super::load_config().unwrap() })
+        .await;
+
+    assert_eq!(recovered.ui_explicit_theme("webui").as_deref(), Some("light"));
+    assert_eq!(
+        recovered.ui_active_theme_id("webui").as_deref(),
+        Some("tokyo-night")
+    );
+    assert_eq!(
+        recovered
+            .ui_customization("webui")
+            .and_then(|val| val.get("activeThemeId").and_then(|v| v.as_str()).map(str::to_string))
+            .as_deref(),
+        Some("tokyo-night")
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}

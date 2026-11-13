@@ -45,10 +45,10 @@ interface LauncherCardProps {
   onClick: () => void;
 }
 
-const LauncherCard: React.FC<LauncherCardProps> = ({ label, desc, badge, icon: Icon, accent = 'text-amber-500 bg-amber-500/10 border-amber-500/20', onClick }) => (
+const LauncherCard: React.FC<LauncherCardProps> = ({ label, desc, badge, icon: Icon, accent = 'text-primary bg-primary/10 border-primary/20', onClick }) => (
   <button
     onClick={onClick}
-    className="group flex flex-col justify-between rounded-2xl border border-border/60 bg-card/40 p-5 text-left shadow-sm backdrop-blur-md transition-all duration-300 hover:-translate-y-1 hover:border-amber-500/40 hover:bg-card hover:shadow-md focus:outline-none focus:ring-2 focus:ring-amber-500/50"
+    className="group flex flex-col justify-between rounded-2xl border border-border/60 bg-card/40 p-5 text-left shadow-sm backdrop-blur-md transition-all duration-300 hover:-translate-y-1 hover:border-primary/40 hover:bg-card hover:shadow-md focus:outline-none focus:ring-2 focus:ring-primary/50"
   >
     <div className="w-full">
       <div className="flex items-start justify-between">
@@ -56,15 +56,15 @@ const LauncherCard: React.FC<LauncherCardProps> = ({ label, desc, badge, icon: I
           <Icon className="h-5 w-5" />
         </div>
         {badge && (
-          <span className="rounded-full bg-amber-500/10 px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-amber-500">
+          <span className="rounded-full bg-primary/12 px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-primary">
             {badge}
           </span>
         )}
       </div>
-      <h3 className="mt-4 text-sm font-bold text-foreground transition-colors group-hover:text-amber-500">{label}</h3>
+      <h3 className="mt-4 text-sm font-bold text-foreground transition-colors group-hover:text-primary">{label}</h3>
       <p className="mt-1.5 text-xs text-muted-foreground leading-relaxed">{desc}</p>
     </div>
-    <div className="mt-4 flex items-center gap-1 text-[10px] font-bold text-amber-500 opacity-0 transition-opacity duration-300 group-hover:opacity-100">
+    <div className="mt-4 flex items-center gap-1 text-[10px] font-bold text-primary opacity-0 transition-opacity duration-300 group-hover:opacity-100">
       Launch <span>→</span>
     </div>
   </button>
@@ -108,7 +108,7 @@ export const DashboardView: React.FC = () => {
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-extrabold tracking-tight text-foreground">
-            <Sparkles className="h-5 w-5 text-amber-500 animate-pulse" />
+            <Sparkles className="h-5 w-5 text-primary animate-pulse" />
             Dashboard
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -118,7 +118,7 @@ export const DashboardView: React.FC = () => {
         </div>
         <button
           onClick={newSession}
-          className="flex items-center justify-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs font-semibold text-amber-400 transition hover:bg-amber-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+          className="flex items-center justify-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-4 py-2 text-xs font-semibold text-primary transition hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
         >
           <Plus className="h-4 w-4" /> New Session
         </button>
@@ -131,7 +131,7 @@ export const DashboardView: React.FC = () => {
           value={connectionStatus}
           detail={wsUrl}
           icon={Network}
-          accent={connectionStatus === 'connected' ? 'text-emerald-500' : connectionStatus === 'connecting' ? 'text-amber-500' : 'text-red-500'}
+          accent={connectionStatus === 'connected' ? 'text-success' : connectionStatus === 'connecting' ? 'text-warning' : 'text-destructive'}
           onClick={() => setIsSettingsOpen(true)}
         />
         <MetricCard
@@ -167,14 +167,14 @@ export const DashboardView: React.FC = () => {
             label="Agents"
             desc="Configure LLM profiles, tool sets, instructions, and default credentials."
             icon={Bot}
-            accent="text-indigo-400 bg-indigo-500/10 border-indigo-500/20"
+            accent="text-chart-1 bg-chart-1/12 border-chart-1/25"
             onClick={() => setActiveView('agents')}
           />
           <LauncherCard
             label="Skills"
             desc="Teach custom markdown skills for formatting, design systems, and integrations."
             icon={BookOpen}
-            accent="text-sky-400 bg-sky-500/10 border-sky-500/20"
+            accent="text-info bg-info/12 border-info/25"
             onClick={() => setActiveView('skills')}
           />
           <LauncherCard
@@ -182,7 +182,7 @@ export const DashboardView: React.FC = () => {
             desc="Audit structural memory nodes, relationships, and context compactor graphs."
             icon={BrainCircuit}
             badge="Cognitive"
-            accent="text-emerald-400 bg-emerald-500/10 border-emerald-500/20"
+            accent="text-success bg-success/12 border-success/25"
             onClick={() => setActiveView('knowledge')}
           />
           <LauncherCard
@@ -190,7 +190,7 @@ export const DashboardView: React.FC = () => {
             desc="Inspect runtime paths, tools, cron jobs, channels, and shared OpenZ core metadata."
             icon={Database}
             badge={runtimeInventory ? String(runtimeInventory.counts.tools) : undefined}
-            accent="text-amber-500 bg-amber-500/10 border-amber-500/20"
+            accent="text-primary bg-primary/12 border-primary/25"
             onClick={() => setActiveView('inventory')}
           />
         </div>
@@ -207,7 +207,7 @@ export const DashboardView: React.FC = () => {
             desc="Manage the entity-relation database store and recall facts."
             icon={Database}
             badge={(cognitiveStats.entitiesCount + cognitiveStats.factsCount) > 0 ? String(cognitiveStats.entitiesCount + cognitiveStats.factsCount) : undefined}
-            accent="text-amber-500 bg-amber-500/10 border-amber-500/20"
+            accent="text-chart-2 bg-chart-2/12 border-chart-2/25"
             onClick={() => {
               setIsMemoryOpen(true);
               wsService.requestCognitiveMemory();
@@ -218,7 +218,7 @@ export const DashboardView: React.FC = () => {
             desc="Configure and inspect connected Model Context Protocol tool servers."
             icon={Cpu}
             badge={mcpStats.total > 0 ? `${mcpStats.loaded}/${mcpStats.total}` : undefined}
-            accent="text-rose-400 bg-rose-500/10 border-rose-500/20"
+            accent="text-chart-3 bg-chart-3/12 border-chart-3/25"
             onClick={() => {
               setIsMcpsOpen(true);
               wsService.requestMcpServers();
@@ -231,7 +231,7 @@ export const DashboardView: React.FC = () => {
               : 'Configure background channel listeners from the gateway.'}
             icon={Server}
             badge={servers.length > 0 ? String(servers.length) : undefined}
-            accent="text-cyan-400 bg-cyan-500/10 border-cyan-500/20"
+            accent="text-chart-4 bg-chart-4/12 border-chart-4/25"
             onClick={() => {
               setIsServersOpen(true);
               wsService.requestServers();
@@ -242,7 +242,7 @@ export const DashboardView: React.FC = () => {
             desc="Stream server traces and debug logs in real time."
             icon={ScrollText}
             badge={logs.length > 0 ? String(logs.length) : undefined}
-            accent="text-fuchsia-400 bg-fuchsia-500/10 border-fuchsia-500/20"
+            accent="text-chart-5 bg-chart-5/12 border-chart-5/25"
             onClick={() => {
               setIsLogsOpen(true);
               wsService.requestLogs();
@@ -274,7 +274,7 @@ export const DashboardView: React.FC = () => {
         {/* Providers card */}
         <div className="rounded-2xl border border-border/60 bg-card/45 p-6 backdrop-blur-md">
           <div className="flex items-center gap-2 mb-4 border-b border-border/40 pb-2 select-none">
-            <Cpu className="h-4 w-4 text-amber-500" />
+            <Cpu className="h-4 w-4 text-primary" />
             <h2 className="text-sm font-bold text-foreground">LLM Provider Integrations</h2>
           </div>
           <div className="space-y-3.5 max-h-[260px] overflow-y-auto pr-1">
@@ -292,7 +292,7 @@ export const DashboardView: React.FC = () => {
                     </span>
                   </div>
                   <span className={`px-2.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider select-none ${
-                    isConfigured ? 'bg-emerald-500/10 text-emerald-400' : 'bg-muted text-muted-foreground'
+                    isConfigured ? 'bg-success/12 text-success' : 'bg-muted text-muted-foreground'
                   }`}>
                     {isConfigured ? 'Ready' : 'Not Setup'}
                   </span>
@@ -305,7 +305,7 @@ export const DashboardView: React.FC = () => {
         {/* Bot Channels card */}
         <div className="rounded-2xl border border-border/60 bg-card/45 p-6 backdrop-blur-md">
           <div className="flex items-center gap-2 mb-4 border-b border-border/40 pb-2 select-none">
-            <Server className="h-4 w-4 text-amber-500" />
+            <Server className="h-4 w-4 text-primary" />
             <h2 className="text-sm font-bold text-foreground">Active Bot Listeners</h2>
           </div>
           <div className="space-y-4">
@@ -328,7 +328,7 @@ export const DashboardView: React.FC = () => {
                     </span>
                   </div>
                   <div className="flex items-center gap-2 select-none">
-                    <span className={isEnabled ? 'px-2.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider bg-amber-500/10 text-amber-400' : 'px-2.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider bg-muted text-muted-foreground'}>
+                    <span className={isEnabled ? 'px-2.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider bg-primary/12 text-primary' : 'px-2.5 py-0.5 rounded-full text-[9px] font-bold tracking-wider bg-muted text-muted-foreground'}>
                       {isEnabled ? 'Enabled' : 'Disabled'}
                     </span>
                   </div>
@@ -351,21 +351,21 @@ const ToggleRow: React.FC<{
 }> = ({ label, desc, on, onToggle, icon: Icon }) => (
   <button
     onClick={onToggle}
-    className="flex items-center justify-between rounded-xl border border-border/60 bg-card/60 p-4 text-left shadow-sm transition hover:border-amber-500/40 hover:bg-card"
+    className="flex items-center justify-between rounded-xl border border-border/60 bg-card/60 p-4 text-left shadow-sm transition hover:border-primary/40 hover:bg-card"
   >
     <div className="flex items-center gap-3">
-      <Icon className="h-4 w-4 text-amber-500" />
+      <Icon className="h-4 w-4 text-primary" />
       <div>
         <div className="text-sm font-semibold text-foreground">{label}</div>
         <div className="text-[11px] text-muted-foreground">{desc}</div>
       </div>
     </div>
     <span
-      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${on ? 'bg-amber-500' : 'bg-muted'}`}
+      className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${on ? 'bg-primary' : 'bg-muted'}`}
       aria-label={on ? 'Enabled' : 'Disabled'}
     >
       <span
-        className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${on ? 'left-[18px]' : 'left-0.5'}`}
+        className={`absolute top-0.5 h-4 w-4 rounded-full shadow transition-all ${on ? 'left-[18px] bg-primary-foreground' : 'left-0.5 bg-card'}`}
       />
     </span>
   </button>

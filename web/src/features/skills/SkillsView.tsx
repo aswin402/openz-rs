@@ -147,7 +147,7 @@ export const SkillsView: React.FC = () => {
           <button
             type="button"
             onClick={startNewSkill}
-            className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-amber-400"
+            className="flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-semibold text-primary-foreground shadow-sm transition hover:opacity-90"
           >
             <Plus className="h-3.5 w-3.5" /> New Skill
           </button>
@@ -164,7 +164,7 @@ export const SkillsView: React.FC = () => {
       <div className="flex shrink-0 flex-col justify-between gap-4 border-b border-border/50 pb-4 md:flex-row md:items-center">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-extrabold tracking-tight text-foreground">
-            <BookOpen className="h-5 w-5 text-amber-500" /> AI Agent Skills
+            <BookOpen className="h-5 w-5 text-primary" /> AI Agent Skills
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">Browse, edit, create, and delete runtime skills stored by OpenZ.</p>
         </div>
@@ -176,7 +176,7 @@ export const SkillsView: React.FC = () => {
             placeholder="Search skills..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-lg border border-border/60 bg-card/60 py-1.5 pl-9 pr-4 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50"
+            className="w-full rounded-lg border border-border/60 bg-card/60 py-1.5 pl-9 pr-4 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
           />
         </div>
       </div>
@@ -184,7 +184,7 @@ export const SkillsView: React.FC = () => {
       {pageNotice && (
         <div className={`mt-3 flex shrink-0 items-center justify-between rounded-lg border px-3 py-2 text-xs ${noticeClass}`}>
           <span>{pageNotice.message}</span>
-          <button type="button" onClick={() => { setNotice(null); clearWorkspaceNotice('skills'); }} className="rounded p-0.5 hover:bg-amber-500/10" aria-label="Dismiss notice">
+          <button type="button" onClick={() => { setNotice(null); clearWorkspaceNotice('skills'); }} className="rounded p-0.5 hover:bg-primary/10" aria-label="Dismiss notice">
             <X className="h-3.5 w-3.5" />
           </button>
         </div>
@@ -199,11 +199,11 @@ export const SkillsView: React.FC = () => {
               const isSelected = skill.name === selectedSkill;
               const itemClass = 'flex w-full items-center gap-3 rounded-lg border p-3 text-left transition ' +
                 (isSelected
-                  ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+                  ? 'border-primary/40 bg-primary/10 text-primary'
                   : 'border-border/60 bg-card/40 text-foreground hover:border-border hover:bg-muted/20');
               const iconBoxClass = 'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border ' +
-                (isSelected ? 'border-amber-500/20 bg-amber-500/20' : 'border-border/80 bg-muted/40');
-              const iconClass = 'h-4 w-4 ' + (isSelected ? 'text-amber-400' : 'text-muted-foreground');
+                (isSelected ? 'border-primary/20 bg-primary/15' : 'border-border/80 bg-muted/40');
+              const iconClass = 'h-4 w-4 ' + (isSelected ? 'text-primary' : 'text-muted-foreground');
               return (
                 <button key={skill.name} onClick={() => openSkill(skill)} className={itemClass}>
                   <div className={iconBoxClass}>
@@ -213,7 +213,7 @@ export const SkillsView: React.FC = () => {
                     <div className="flex items-center gap-2">
                       <div className="truncate text-xs font-semibold leading-normal">{skill.name}</div>
                       {skill.isProtected ? <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] font-semibold text-muted-foreground">read-only</span> : null}
-                      {skill.validationErrors?.length ? <span className="rounded bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-red-300">invalid</span> : null}
+                      {skill.validationErrors?.length ? <span className="rounded bg-destructive/12 px-1.5 py-0.5 text-[9px] font-semibold text-destructive">invalid</span> : null}
                     </div>
                     <div className="mt-0.5 truncate text-[10px] text-muted-foreground">{skillSummary(skill.content)}</div>
                     <div className="mt-1 flex items-center gap-1.5 text-[9px] font-medium text-muted-foreground/80">
@@ -240,12 +240,12 @@ export const SkillsView: React.FC = () => {
                   >
                     <ArrowLeft className="h-3.5 w-3.5" />
                   </button>
-                  <FileText className="h-4 w-4 shrink-0 text-amber-500" />
+                  <FileText className="h-4 w-4 shrink-0 text-primary" />
                   <span className="truncate text-xs font-bold text-foreground">{isNew ? 'New Skill' : activeSkill?.name}</span>
                   {!isNew && activeSkill?.scope && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">{activeSkill.scope}</span>}
                   {isProtected && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">Read-only</span>}
-                  {activeValidationErrors.length > 0 && <span className="rounded bg-red-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-red-300">Invalid</span>}
-                  {isDirty && <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-400">Unsaved</span>}
+                  {activeValidationErrors.length > 0 && <span className="rounded bg-destructive/12 px-1.5 py-0.5 text-[10px] font-semibold text-destructive">Invalid</span>}
+                  {isDirty && <span className="rounded bg-warning/12 px-1.5 py-0.5 text-[10px] font-semibold text-warning">Unsaved</span>}
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
                   <button
@@ -269,7 +269,7 @@ export const SkillsView: React.FC = () => {
                     type="button"
                     onClick={handleSave}
                     disabled={!canSave}
-                    className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-2.5 py-1.5 text-[11px] font-semibold text-white transition hover:bg-amber-400 disabled:opacity-40"
+                    className="flex items-center gap-1.5 rounded-lg bg-primary px-2.5 py-1.5 text-[11px] font-semibold text-primary-foreground transition hover:opacity-90 disabled:opacity-40"
                   >
                     <Save className="h-3.5 w-3.5" /> Save
                   </button>
@@ -277,7 +277,7 @@ export const SkillsView: React.FC = () => {
                     <button
                       type="button"
                       onClick={handleDelete}
-                      className="flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1.5 text-[11px] font-semibold text-red-300 transition hover:bg-red-500/20"
+                      className="flex items-center gap-1.5 rounded-lg border border-destructive/30 bg-destructive/10 px-2.5 py-1.5 text-[11px] font-semibold text-destructive transition hover:bg-destructive/20"
                     >
                       <Trash2 className="h-3.5 w-3.5" /> Delete
                     </button>
@@ -293,12 +293,12 @@ export const SkillsView: React.FC = () => {
                     onChange={(e) => setDraftName(e.target.value)}
                     placeholder="skill_name"
                     readOnly={!isNew}
-                    className="mt-1 w-full rounded-lg border border-border/60 bg-background px-2.5 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/50 read-only:cursor-not-allowed read-only:opacity-70"
+                    className="mt-1 w-full rounded-lg border border-border/60 bg-background px-2.5 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 read-only:cursor-not-allowed read-only:opacity-70"
                   />
                 </label>
                 <div className="flex flex-col justify-end gap-1 text-[11px] text-muted-foreground">
                   {nameExists ? (
-                    <span className="text-red-400">A skill named {normalizedName} already exists.</span>
+                    <span className="text-destructive">A skill named {normalizedName} already exists.</span>
                   ) : normalizedName ? (
                     <span>Saved as <code>{normalizedName}</code></span>
                   ) : (
@@ -311,7 +311,7 @@ export const SkillsView: React.FC = () => {
               </div>
 
               {activeValidationErrors.length > 0 && (
-                <div className="border-b border-red-500/20 bg-red-500/10 px-4 py-2 text-[11px] text-red-300">
+                <div className="border-b border-destructive/25 bg-destructive/10 px-4 py-2 text-[11px] text-destructive">
                   {activeValidationErrors.join(' ')}
                 </div>
               )}

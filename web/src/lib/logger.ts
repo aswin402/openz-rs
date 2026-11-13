@@ -1,17 +1,32 @@
+import { THEME_FAMILIES } from "../shared/lib/colorEngine"
+
 type LogLevel = "info" | "warn" | "error" | "debug"
 
 const isDev = import.meta.env.DEV
 
-const styles: Record<LogLevel, string> = {
-  info: "color: #3b82f6; font-weight: 600;",
-  warn: "color: #f59e0b; font-weight: 600;",
-  error: "color: #ef4444; font-weight: 600;",
-  debug: "color: #10b981; font-weight: 600;",
+const fallbackPalette = THEME_FAMILIES[0].dark
+
+const cssVarByLevel: Record<LogLevel, { varName: string; fallback: string }> = {
+  info: { varName: "--info", fallback: fallbackPalette.infoHex },
+  warn: { varName: "--warning", fallback: fallbackPalette.warningHex },
+  error: { varName: "--destructive", fallback: fallbackPalette.destructiveHex },
+  debug: { varName: "--success", fallback: fallbackPalette.successHex },
+}
+
+const resolveLevelStyle = (level: LogLevel): string => {
+  const spec = cssVarByLevel[level]
+  if (typeof document === "undefined") {
+    return `color: ${spec.fallback}; font-weight: 600;`
+  }
+  const computed = getComputedStyle(document.documentElement)
+    .getPropertyValue(spec.varName)
+    .trim()
+  return `color: ${computed || spec.fallback}; font-weight: 600;`
 }
 
 const formatMessage = (level: LogLevel, message: string) => {
   const prefix = `[WEB] ${level.toUpperCase()}`
-  return [`%c${prefix} %c${message}`, styles[level], "color: inherit; font-weight: normal;"]
+  return [`%c${prefix} %c${message}`, resolveLevelStyle(level), "color: inherit; font-weight: normal;"]
 }
 
 function log(level: LogLevel, message: string, data?: unknown) {

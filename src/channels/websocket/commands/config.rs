@@ -119,6 +119,9 @@ pub(crate) async fn config_data_event(config: &crate::config::schema::Config) ->
         serde_json::json!({
             "ui_surface": "webui",
             "theme": effective.ui_theme("webui"),
+            "theme_explicit": config.ui_explicit_theme("webui"),
+            "active_theme_id": config.ui_active_theme_id("webui"),
+            "ui_customization": config.ui_customization("webui"),
             "model": d.model,
             "provider": d.provider,
             "temperature": d.temperature,
@@ -302,7 +305,39 @@ fn apply_webui_profile_update(
         None => {}
     }
     match defaults.get("theme").and_then(Value::as_str) {
-        Some(value) => profile.theme = Some(value.to_string()),
+        Some(value) => profile.theme = non_empty_trimmed_option(value),
+        None => {}
+    }
+    match defaults
+        .get("active_theme_id")
+        .or_else(|| defaults.get("activeThemeId"))
+        .and_then(Value::as_str)
+    {
+        Some(value) => profile.active_theme_id = non_empty_trimmed_option(value),
+        None => {}
+    }
+    match defaults
+        .get("ui_customization")
+        .or_else(|| defaults.get("uiCustomization"))
+        .filter(|value| value.is_object())
+    {
+        Some(value) => {
+            let mut merged = profile
+                .ui_customization
+                .as_ref()
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            match value.as_object() {
+                Some(patch_obj) => {
+                    for (key, item) in patch_obj {
+                        merged.insert(key.clone(), item.clone());
+                    }
+                }
+                None => {}
+            }
+            profile.ui_customization = Some(Value::Object(merged));
+        }
         None => {}
     }
     match (
@@ -560,6 +595,9 @@ pub(crate) fn config_updated_event(config: &crate::config::schema::Config) -> Va
         serde_json::json!({
             "ui_surface": "webui",
             "theme": effective.ui_theme("webui"),
+            "theme_explicit": config.ui_explicit_theme("webui"),
+            "active_theme_id": config.ui_active_theme_id("webui"),
+            "ui_customization": config.ui_customization("webui"),
             "model": defaults.model,
             "provider": defaults.provider,
             "temperature": defaults.temperature,

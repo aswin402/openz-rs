@@ -11,7 +11,7 @@ export interface MetricCardProps {
   children?: ReactNode;
 }
 
-export const MetricCard: FC<MetricCardProps> = ({ label, value, detail, icon: Icon, accent = 'text-amber-500', onClick, children }) => {
+export const MetricCard: FC<MetricCardProps> = ({ label, value, detail, icon: Icon, accent = 'text-primary', onClick, children }) => {
   const content = (
     <>
       <div className="flex items-center justify-between">
@@ -25,7 +25,7 @@ export const MetricCard: FC<MetricCardProps> = ({ label, value, detail, icon: Ic
   );
   const className = cn(
     'w-full rounded-xl border border-border/60 bg-card/60 p-4 text-left shadow-sm',
-    onClick && 'cursor-pointer transition hover:border-amber-500/40 hover:bg-card',
+    onClick && 'cursor-pointer transition hover:border-primary/40 hover:bg-card',
   );
 
   return onClick ? <button type="button" onClick={onClick} className={className}>{content}</button> : <div className={className}>{content}</div>;

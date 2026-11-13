@@ -263,12 +263,17 @@ pub async fn handle_changelog() -> Result<()> {
         green = AURA_GREEN,
         reset = COLOR_RESET
     );
-    println!("    • Adds attachment-aware WebUI chat with previews and persisted metadata.");
     println!(
-        "    • Adds live Skills, Agents, Knowledge, Settings, and Dashboard workspace controls."
+        "    • Full-page Obsidian Cognitive Memory Graph with floating control, search, node checklist, and inspector cards."
     );
     println!(
-        "    • Improves agent activity and tool execution cards with timing, previews, and copy controls."
+        "    • 25-component @beui + shadcn/ui Customize UI Studio with 13 dual-mode (Light + Dark) global themes and Fox avatars."
+    );
+    println!(
+        "    • Durable WebUI settings, theme, and customization persistence across updates with rolling ~/.openz/backups/ recovery."
+    );
+    println!(
+        "    • Minimal single-line post-approval tool permission pills and standalone OpenZ Fox web branding."
     );
 
     println!(

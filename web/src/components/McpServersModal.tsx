@@ -1,13 +1,19 @@
 import React from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
-import { X, Cpu } from 'lucide-react';
+import { Cpu, X } from 'lucide-react';
 import type { McpServerInfo } from '../types/openz';
+import { BeuiAlert } from './beui';
+import { Badge } from './ui/badge';
+import { Button } from './ui/button';
 
-const STATUS_BADGE: Record<McpServerInfo['status'], { label: string; cls: string; dot: string }> = {
-  connected: { label: 'Connected', cls: 'bg-emerald-500/20 text-emerald-400', dot: 'bg-emerald-400' },
-  starting: { label: 'Starting', cls: 'bg-amber-500/20 text-amber-300', dot: 'bg-amber-400' },
-  disabled: { label: 'Disabled', cls: 'bg-muted text-muted-foreground', dot: 'bg-muted-foreground' },
-  error: { label: 'Error', cls: 'bg-red-500/20 text-red-400', dot: 'bg-red-400' },
+const STATUS_VARIANT: Record<
+  McpServerInfo['status'],
+  'success' | 'warning' | 'secondary' | 'destructive'
+> = {
+  connected: 'success',
+  starting: 'warning',
+  disabled: 'secondary',
+  error: 'destructive',
 };
 
 export const McpServersModal: React.FC = () => {
@@ -18,46 +24,50 @@ export const McpServersModal: React.FC = () => {
   if (!isMcpsOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-      <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-        <div className="flex items-center justify-between pb-4 border-b border-border/50">
-          <div className="flex items-center gap-2 text-foreground font-semibold text-base">
-            <Cpu className="h-5 w-5 text-amber-500" /> Connected MCP Servers & Tools
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/45 p-4 backdrop-blur-xs">
+      <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border/50 pb-4">
+          <div className="flex items-center gap-2 text-base font-semibold text-foreground">
+            <Cpu className="size-5 text-primary" />
+            <span>Connected MCP Servers &amp; Native Tools</span>
           </div>
-          <button
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
             onClick={() => setIsMcpsOpen(false)}
-            className="rounded-lg p-1 text-muted-foreground hover:text-foreground hover:bg-muted"
+            aria-label="Close MCP modal"
           >
-            <X className="h-4 w-4" />
-          </button>
+            <X className="size-4" />
+          </Button>
         </div>
 
         <div className="mt-4 space-y-2.5 text-xs">
           {mcpServers.length === 0 ? (
-            <div className="py-6 text-center text-muted-foreground">
-              No external MCP servers configured. OpenZ uses its built-in native tools (filesystem, shell, semantic search, reasoning) by default.
-            </div>
+            <BeuiAlert tone="info" title="Native Rust Tooling Active">
+              No external stdio MCP servers configured. OpenZ executes its 240+ native tools
+              (filesystem, shell, semantic search, cognitive memory, browser) directly in-process.
+            </BeuiAlert>
           ) : (
             mcpServers.map((server) => (
               <div
                 key={server.name}
-                className="flex items-center justify-between rounded-xl border border-border/60 bg-muted/30 p-3"
+                className="flex items-center justify-between rounded-xl border border-border/65 bg-muted/25 p-3"
               >
                 <div>
-                  <div className="font-semibold text-foreground flex items-center gap-2">
-                    {server.name}
-                    <span
-                      className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-normal ${STATUS_BADGE[server.status].cls}`}
-                    >
-                      <span className={`h-1.5 w-1.5 rounded-full ${STATUS_BADGE[server.status].dot} ${server.status === 'starting' ? 'animate-pulse' : ''}`} />
-                      {STATUS_BADGE[server.status].label}
-                    </span>
+                  <div className="flex items-center gap-2 font-semibold text-foreground">
+                    <span>{server.name}</span>
+                    <Badge variant={STATUS_VARIANT[server.status]} className="capitalize">
+                      {server.status}
+                    </Badge>
                   </div>
-                  <div className="font-mono text-[11px] text-muted-foreground mt-1">{server.command}</div>
+                  <div className="mt-1 font-mono text-[11px] text-muted-foreground">
+                    {server.command}
+                  </div>
                 </div>
                 <div className="text-right">
-                  <span className="font-bold text-amber-500 text-sm">{server.toolsCount}</span>
-                  <div className="text-[10px] text-muted-foreground">Registered Tools</div>
+                  <span className="text-sm font-bold text-primary">{server.toolsCount}</span>
+                  <div className="text-[10px] text-muted-foreground">Tools</div>
                 </div>
               </div>
             ))
@@ -65,12 +75,9 @@ export const McpServersModal: React.FC = () => {
         </div>
 
         <div className="mt-6 flex justify-end">
-          <button
-            onClick={() => setIsMcpsOpen(false)}
-            className="rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:opacity-90"
-          >
+          <Button type="button" size="sm" onClick={() => setIsMcpsOpen(false)}>
             Close
-          </button>
+          </Button>
         </div>
       </div>
     </div>

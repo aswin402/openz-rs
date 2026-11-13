@@ -150,6 +150,8 @@ impl Tool for ManageBackupsTool {
 
                 let config_val = read_optional_json_file(&openz_dir.join("config.json"))?;
                 let subagents_val = read_optional_json_file(&openz_dir.join("subagents.json"))?;
+                let webui_prefs_val =
+                    read_optional_json_file(&openz_dir.join("webui_preferences.json"))?;
                 let skills_dir = openz_dir.join("skills");
 
                 let mut skills_map = serde_json::Map::new();
@@ -183,6 +185,7 @@ impl Tool for ManageBackupsTool {
                     "timestamp": chrono::Utc::now().to_rfc3339(),
                     "config": config_val,
                     "subagents": subagents_val,
+                    "webui_preferences": webui_prefs_val,
                     "skills": skills_map
                 });
 
@@ -263,6 +266,11 @@ impl Tool for ManageBackupsTool {
                     &backup_data,
                     "subagents",
                     &openz_dir.join("subagents.json"),
+                )?;
+                write_optional_json_backup_section(
+                    &backup_data,
+                    "webui_preferences",
+                    &openz_dir.join("webui_preferences.json"),
                 )?;
 
                 match backup_data.get("skills").and_then(|v| v.as_object()) {

@@ -8,7 +8,7 @@ export const Panel: FC<{
 }> = ({ title, icon: Icon, children }) => (
   <section className="rounded-2xl border border-border/60 bg-card/45 p-5 shadow-sm backdrop-blur-md">
     <div className="mb-4 flex items-center gap-2 border-b border-border/40 pb-2">
-      <Icon className="h-4 w-4 text-amber-500" />
+      <Icon className="h-4 w-4 text-primary" />
       <h2 className="text-sm font-bold text-foreground">{title}</h2>
     </div>
     {children}

@@ -1,6 +1,8 @@
 import React from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
 import { X, Server, Square } from 'lucide-react';
+import { Badge } from './ui/badge';
+import { Button } from './ui/button';
 
 export const ServersModal: React.FC = () => {
   const isServersOpen = useOpenZStore((s) => s.isServersOpen);
@@ -12,28 +14,31 @@ export const ServersModal: React.FC = () => {
   if (!isServersOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
-      <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-        <div className="flex items-center justify-between pb-4 border-b border-border/50">
-          <div className="flex items-center gap-2 text-foreground font-semibold text-base">
-            <Server className="h-5 w-5 text-amber-500" /> Background Bots & Servers
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/45 p-4 backdrop-blur-xs">
+      <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-2xl">
+        <div className="flex items-center justify-between border-b border-border/50 pb-4">
+          <div className="flex items-center gap-2 text-base font-semibold text-foreground">
+            <Server className="size-5 text-primary" />
+            <span>Background Bots &amp; Servers</span>
           </div>
-          <button
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
             onClick={() => setIsServersOpen(false)}
-            className="rounded-lg p-1 text-muted-foreground hover:text-foreground hover:bg-muted"
+            aria-label="Close servers modal"
           >
-            <X className="h-4 w-4" />
-          </button>
+            <X className="size-4" />
+          </Button>
         </div>
 
-        <div className="mt-4 space-y-4 text-xs max-h-[50vh] overflow-y-auto pr-1">
-          {/* Active Subprocesses Section */}
+        <div className="mt-4 max-h-[50vh] space-y-4 overflow-y-auto pr-1 text-xs">
           <div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2 select-none">
+            <div className="mb-2 select-none text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
               Active Processes
             </div>
             {servers.length === 0 ? (
-              <div className="py-4 text-center text-muted-foreground border border-dashed border-border/60 rounded-xl bg-muted/10">
+              <div className="rounded-xl border border-dashed border-border/60 bg-muted/15 py-4 text-center text-muted-foreground">
                 No active background subprocesses running.
               </div>
             ) : (
@@ -41,58 +46,57 @@ export const ServersModal: React.FC = () => {
                 {servers.map((server) => (
                   <div
                     key={server.id}
-                    className="flex items-center justify-between rounded-xl border border-border/60 bg-muted/30 p-3 gap-4"
+                    className="flex items-center justify-between gap-4 rounded-xl border border-border/60 bg-muted/25 p-3"
                   >
                     <div className="min-w-0 flex-1">
-                      <div className="font-semibold text-foreground flex items-center gap-2">
-                        <span className="text-amber-500">#{server.id}</span>
+                      <div className="flex items-center gap-2 font-semibold text-foreground">
+                        <span className="text-primary">#{server.id}</span>
                         <span className="capitalize">{server.kind}</span>
-                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground">
+                        <Badge variant="outline" className="font-mono text-[10px]">
                           PID: {server.pid}
-                        </span>
+                        </Badge>
                       </div>
-                      <div className="font-mono text-[10px] text-muted-foreground mt-1 truncate" title={server.command}>
+                      <div
+                        className="mt-1 truncate font-mono text-[10px] text-muted-foreground"
+                        title={server.command}
+                      >
                         {server.command}
                       </div>
                     </div>
-                    <button
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      size="xs"
                       onClick={() => stopServer(server.id)}
-                      className="flex h-8 items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-2.5 py-1 text-[11px] font-semibold text-red-400 hover:bg-red-500/25 hover:text-red-300 transition"
                     >
-                      <Square className="h-3 w-3 fill-current" /> Stop
-                    </button>
+                      <Square className="size-3 fill-current" />
+                      <span>Stop</span>
+                    </Button>
                   </div>
                 ))}
               </div>
             )}
           </div>
 
-          {/* Configured Channels Section */}
-          <div className="pt-3 border-t border-border/40">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground mb-2 select-none">
+          <div className="border-t border-border/40 pt-3">
+            <div className="mb-2 select-none text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
               Configured Channels
             </div>
             <div className="space-y-2">
               {channels.map((chan) => (
                 <div
                   key={chan.name}
-                  className="flex items-center justify-between rounded-xl border border-border/60 bg-muted/30 p-3"
+                  className="flex items-center justify-between rounded-xl border border-border/60 bg-muted/25 p-3"
                 >
                   <div>
-                    <div className="font-semibold text-foreground capitalize flex items-center gap-2">
-                      {chan.name}
-                      <span
-                        className={`rounded px-1.5 py-0.5 text-[9px] font-normal ${
-                          chan.enabled
-                            ? 'bg-emerald-500/20 text-emerald-400'
-                            : 'bg-muted text-muted-foreground'
-                        }`}
-                      >
+                    <div className="flex items-center gap-2 font-semibold capitalize text-foreground">
+                      <span>{chan.name}</span>
+                      <Badge variant={chan.enabled ? 'success' : 'secondary'}>
                         {chan.enabled ? 'Enabled' : 'Disabled'}
-                      </span>
+                      </Badge>
                     </div>
-                    <div className="text-[10px] text-muted-foreground mt-1">
-                      {chan.token_configured ? '🔑 API Token Configured' : '⚠️ No Token Set'}
+                    <div className="mt-1 text-[10px] text-muted-foreground">
+                      {chan.token_configured ? 'API Token Configured' : 'No Token Set'}
                     </div>
                   </div>
                 </div>
@@ -103,21 +107,21 @@ export const ServersModal: React.FC = () => {
 
         <div className="mt-6 flex justify-between gap-2">
           {servers.length > 0 ? (
-            <button
+            <Button
+              type="button"
+              variant="destructive"
+              size="sm"
               onClick={() => stopServer('all')}
-              className="flex items-center gap-1.5 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-2 text-xs font-semibold text-red-400 hover:bg-red-500/20"
             >
-              <Square className="h-3.5 w-3.5 fill-current" /> Stop All Servers
-            </button>
+              <Square className="size-3.5 fill-current" />
+              <span>Stop All Servers</span>
+            </Button>
           ) : (
             <div />
           )}
-          <button
-            onClick={() => setIsServersOpen(false)}
-            className="rounded-lg bg-primary px-4 py-2 text-xs font-semibold text-primary-foreground hover:opacity-90"
-          >
+          <Button type="button" size="sm" onClick={() => setIsServersOpen(false)}>
             Close
-          </button>
+          </Button>
         </div>
       </div>
     </div>

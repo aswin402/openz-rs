@@ -27,13 +27,13 @@ export const WorkspacePlaceholder: React.FC<WorkspacePlaceholderProps> = ({ kind
   return (
     <div className="flex h-full flex-col items-center justify-center px-6 text-center">
       <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-border/60 bg-card/60 shadow-sm">
-        <Icon className="h-7 w-7 text-amber-500" />
+        <Icon className="h-7 w-7 text-primary" />
       </div>
       <h1 className="mt-5 text-xl font-extrabold tracking-tight text-foreground">{content.title}</h1>
       <p className="mt-2 max-w-sm text-sm leading-relaxed text-muted-foreground">{content.desc}</p>
       <button
         onClick={() => setActiveView('chats')}
-        className="mt-6 flex items-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs font-semibold text-amber-400 transition hover:bg-amber-500/20"
+        className="mt-6 flex items-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-4 py-2 text-xs font-semibold text-primary transition hover:bg-primary/20"
       >
         <MessageSquare className="h-4 w-4" /> Back to chats
       </button>

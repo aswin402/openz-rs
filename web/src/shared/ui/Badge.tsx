@@ -5,9 +5,9 @@ type BadgeTone = 'amber' | 'green' | 'red' | 'muted';
 
 export const Badge: FC<{ children: ReactNode; tone?: BadgeTone }> = ({ children, tone = 'muted' }) => {
   const classes: Record<BadgeTone, string> = {
-    amber: 'bg-amber-500/10 text-amber-400',
-    green: 'bg-emerald-500/10 text-emerald-400',
-    red: 'bg-red-500/10 text-red-400',
+    amber: 'bg-primary/12 text-primary',
+    green: 'bg-success/12 text-success',
+    red: 'bg-destructive/12 text-destructive',
     muted: 'bg-muted/70 text-muted-foreground',
   };
   return <span className={cn('rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider', classes[tone])}>{children}</span>;

@@ -437,16 +437,221 @@ fn store_config_cache(
     config
 }
 
+const MAX_AUTO_CONFIG_BACKUPS: usize = 15;
+
+fn write_atomic_private_text(path: &Path, content: &str) -> Result<()> {
+    let dir = path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(config_dir);
+    match dir.exists() {
+        false => {
+            fs::create_dir_all(&dir)
+                .with_context(|| format!("Failed to create directory at {:?}", dir))?;
+        }
+        true => {}
+    }
+
+    let temp_name = format!(
+        "{}.tmp.{}",
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("file.json"),
+        uuid::Uuid::new_v4()
+    );
+    let temp_path = dir.join(temp_name);
+    #[cfg(unix)]
+    {
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let mut temp_file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temp_path)
+            .with_context(|| format!("Failed to create temporary file at {:?}", temp_path))?;
+        temp_file
+            .write_all(content.as_bytes())
+            .with_context(|| format!("Failed to write temporary file to {:?}", temp_path))?;
+        temp_file
+            .sync_all()
+            .with_context(|| format!("Failed to sync temporary file at {:?}", temp_path))?;
+    }
+    #[cfg(not(unix))]
+    {
+        fs::write(&temp_path, content)
+            .with_context(|| format!("Failed to write temporary file to {:?}", temp_path))?;
+    }
+
+    match fs::rename(&temp_path, path) {
+        Ok(()) => {}
+        Err(err) => {
+            let _ = fs::remove_file(&temp_path);
+            return Err(err).context(format!(
+                "Failed to rename temporary file to {:?}",
+                path
+            ));
+        }
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    Ok(())
+}
+
+fn prune_rolling_auto_backups(backups_dir: &Path) {
+    let mut auto_files: Vec<(String, PathBuf)> = backups_dir
+        .exists()
+        .then(|| fs::read_dir(backups_dir).ok())
+        .flatten()
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| {
+            let entry_path = entry.path();
+            let name = entry_path.file_name()?.to_str()?.to_string();
+            let matches_pattern = entry_path.is_file()
+                && name.starts_with("config_auto_")
+                && name.ends_with(".json");
+            matches_pattern.then_some((name, entry_path))
+        })
+        .collect();
+
+    auto_files.sort_by(|left, right| right.0.cmp(&left.0));
+    for (_, stale_path) in auto_files.into_iter().skip(MAX_AUTO_CONFIG_BACKUPS) {
+        let _ = fs::remove_file(stale_path);
+    }
+}
+
+fn persist_config_and_webui_backups(dir: &Path, serialized_config: &str, config: &Config) {
+    let backups_dir = dir.join("backups");
+    match fs::create_dir_all(&backups_dir) {
+        Ok(()) => {}
+        Err(_) => return,
+    }
+
+    let _ = write_atomic_private_text(&backups_dir.join("config.latest.json"), serialized_config);
+    let stamp = chrono::Utc::now().format("%Y%m%d_%H%M%S_%3f").to_string();
+    let _ = write_atomic_private_text(
+        &backups_dir.join(format!("config_auto_{stamp}.json")),
+        serialized_config,
+    );
+    prune_rolling_auto_backups(&backups_dir);
+
+    match config.ui_settings.webui.as_ref() {
+        Some(webui_profile) => {
+            let payload = serde_json::json!({
+                "version": "1.0",
+                "updatedAt": chrono::Utc::now().to_rfc3339(),
+                "webui": webui_profile,
+            });
+            match serde_json::to_string_pretty(&payload) {
+                Ok(text) => {
+                    let _ = write_atomic_private_text(&dir.join("webui_preferences.json"), &text);
+                    let _ = write_atomic_private_text(
+                        &backups_dir.join("webui_preferences.latest.json"),
+                        &text,
+                    );
+                }
+                Err(_) => {}
+            }
+        }
+        None => {}
+    }
+}
+
+fn recover_webui_profile_from_dir(
+    dir: &Path,
+) -> Option<crate::config::schema::UiProfileSettings> {
+    let candidates = [
+        dir.join("webui_preferences.json"),
+        dir.join("backups").join("webui_preferences.latest.json"),
+    ];
+    candidates.into_iter().find_map(|candidate| {
+        let raw = fs::read_to_string(candidate).ok()?;
+        let parsed: serde_json::Value = serde_json::from_str(&raw).ok()?;
+        let section = parsed.get("webui").unwrap_or(&parsed);
+        let profile: crate::config::schema::UiProfileSettings =
+            serde_json::from_value(section.clone()).ok()?;
+        (profile != crate::config::schema::UiProfileSettings::default()).then_some(profile)
+    })
+}
+
+fn parse_backup_config_value(raw_str: &str) -> Option<Config> {
+    let raw_val: serde_json::Value = serde_json::from_str(raw_str).ok()?;
+    let target = match raw_val.get("config").filter(|v| v.is_object()) {
+        Some(inner) => inner.clone(),
+        None => raw_val,
+    };
+    let mut cfg: Config = serde_json::from_value(target).ok()?;
+    let _ = migrate_config(&mut cfg);
+    Some(cfg)
+}
+
+fn recover_config_from_backups_dir(dir: &Path) -> Option<Config> {
+    let backups_dir = dir.join("backups");
+    let latest_path = backups_dir.join("config.latest.json");
+    let direct = fs::read_to_string(&latest_path)
+        .ok()
+        .and_then(|raw| parse_backup_config_value(&raw));
+
+    let mut recovered = direct.or_else(|| {
+        let mut candidates: Vec<(String, PathBuf)> = backups_dir
+            .exists()
+            .then(|| fs::read_dir(&backups_dir).ok())
+            .flatten()
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|entry| {
+                let entry_path = entry.path();
+                let name = entry_path.file_name()?.to_str()?.to_string();
+                let is_candidate = entry_path.is_file()
+                    && name.ends_with(".json")
+                    && (name.starts_with("config_auto_") || name.starts_with("backup_"));
+                is_candidate.then_some((name, entry_path))
+            })
+            .collect();
+        candidates.sort_by(|left, right| right.0.cmp(&left.0));
+        candidates.into_iter().find_map(|(_, candidate_path)| {
+            let raw = fs::read_to_string(candidate_path).ok()?;
+            parse_backup_config_value(&raw)
+        })
+    })?;
+
+    match recovered.ui_settings.webui.is_none() {
+        true => {
+            recovered.ui_settings.webui = recover_webui_profile_from_dir(dir);
+        }
+        false => {}
+    }
+
+    Some(recovered)
+}
+
 pub fn load_config() -> Result<Config> {
     let path = config_path();
+    let dir = path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(config_dir);
 
     let current_modified = match path.exists() {
         true => read_file_mtime(&path),
         false => {
-            let default_config = Config::default();
-            let _ = save_config(&default_config);
+            let mut initial_config = recover_config_from_backups_dir(&dir).unwrap_or_default();
+            match initial_config.ui_settings.webui.is_none() {
+                true => {
+                    initial_config.ui_settings.webui = recover_webui_profile_from_dir(&dir);
+                }
+                false => {}
+            }
+            let _ = save_config(&initial_config);
             let mtime = read_file_mtime(&path);
-            return Ok(store_config_cache(path, default_config, mtime));
+            return Ok(store_config_cache(path, initial_config, mtime));
         }
     };
 
@@ -472,14 +677,20 @@ pub fn load_config() -> Result<Config> {
                 path.with_extension(format!("corrupt.{}", chrono::Utc::now().timestamp()));
             let _ = fs::copy(&path, &backup_path);
             tracing::error!(
-                "Failed to parse config.json ({:?}). A backup was created at {:?}. Reverting to defaults.",
+                "Failed to parse config.json ({:?}). A backup was created at {:?}. Attempting recovery from backups.",
                 e,
                 backup_path
             );
-            let default_config = Config::default();
-            let _ = save_config(&default_config);
+            let mut fallback_config = recover_config_from_backups_dir(&dir).unwrap_or_default();
+            match fallback_config.ui_settings.webui.is_none() {
+                true => {
+                    fallback_config.ui_settings.webui = recover_webui_profile_from_dir(&dir);
+                }
+                false => {}
+            }
+            let _ = save_config(&fallback_config);
             let mtime = read_file_mtime(&path);
-            return Ok(store_config_cache(path, default_config, mtime));
+            return Ok(store_config_cache(path, fallback_config, mtime));
         }
     };
 
@@ -487,12 +698,24 @@ pub fn load_config() -> Result<Config> {
     let mut config: Config = serde_json::from_value(raw_json)
         .with_context(|| format!("Failed to parse config file at {:?}", path))?;
 
-    let migrated = migrate_config(&mut config) || legacy_aliases_used;
+    let webui_restored = match config.ui_settings.webui.is_none() {
+        true => match recover_webui_profile_from_dir(&dir) {
+            Some(profile) => {
+                config.ui_settings.webui = Some(profile);
+                true
+            }
+            None => false,
+        },
+        false => false,
+    };
+
+    let migrated = migrate_config(&mut config) || legacy_aliases_used || webui_restored;
     let final_modified = match migrated {
         true => {
             tracing::info!(
                 path = %path.display(),
                 legacy_aliases_used,
+                webui_restored,
                 "Migrating OpenZ config to the canonical schema"
             );
             let _ = save_config(&config);
@@ -531,69 +754,9 @@ pub fn save_config_to_path(path: &Path, config: &Config) -> Result<()> {
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_else(config_dir);
-    match dir.exists() {
-        false => {
-            fs::create_dir_all(&dir)
-                .with_context(|| format!("Failed to create config directory at {:?}", dir))?;
-        }
-        true => {}
-    }
-
     let content = serde_json::to_string_pretty(config)?;
-
-    // Write atomically: write to a temporary file first, then rename it
-    let temp_name = format!(
-        "{}.tmp.{}",
-        path.file_name().and_then(|n| n.to_str()).unwrap_or("config.json"),
-        uuid::Uuid::new_v4()
-    );
-    let temp_path = dir.join(temp_name);
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-
-        let mut temp_file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&temp_path)
-            .with_context(|| {
-                format!("Failed to create temporary config file at {:?}", temp_path)
-            })?;
-        temp_file
-            .write_all(content.as_bytes())
-            .with_context(|| {
-                format!("Failed to write temporary config file to {:?}", temp_path)
-            })?;
-        temp_file
-            .sync_all()
-            .with_context(|| {
-                format!("Failed to sync temporary config file at {:?}", temp_path)
-            })?;
-    }
-    #[cfg(not(unix))]
-    {
-        fs::write(&temp_path, content)
-            .with_context(|| format!("Failed to write temporary config file to {:?}", temp_path))?;
-    }
-
-    match fs::rename(&temp_path, path) {
-        Ok(()) => {}
-        Err(e) => {
-            let _ = fs::remove_file(&temp_path);
-            return Err(e).context(format!(
-                "Failed to rename temporary config file to {:?}",
-                path
-            ));
-        }
-    }
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
-    }
+    write_atomic_private_text(path, &content)?;
+    persist_config_and_webui_backups(&dir, &content, config);
 
     // Invalidate the cache so the next load gets the newly saved file
     {

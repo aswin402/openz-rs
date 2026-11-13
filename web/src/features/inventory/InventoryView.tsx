@@ -60,7 +60,7 @@ export const InventoryView: React.FC = () => {
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-extrabold tracking-tight text-foreground">
-            <Archive className="h-5 w-5 text-amber-500" />
+            <Archive className="h-5 w-5 text-primary" />
             Core Inventory
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -70,7 +70,7 @@ export const InventoryView: React.FC = () => {
         <button
           type="button"
           onClick={() => wsService.requestRuntimeInventory()}
-          className="flex items-center justify-center gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-xs font-semibold text-amber-400 transition hover:bg-amber-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+          className="flex items-center justify-center gap-2 rounded-xl border border-primary/30 bg-primary/10 px-4 py-2 text-xs font-semibold text-primary transition hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
         >
           <RefreshCw className="h-4 w-4" /> Refresh
         </button>
@@ -81,10 +81,10 @@ export const InventoryView: React.FC = () => {
           className={cn(
             'mb-4 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm',
             notice.type === 'error'
-              ? 'border-red-500/30 bg-red-500/10 text-red-300'
+              ? 'border-destructive/30 bg-destructive/10 text-destructive'
               : notice.type === 'success'
-                ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
-                : 'border-amber-500/30 bg-amber-500/10 text-amber-300',
+                ? 'border-success/30 bg-success/10 text-success'
+                : 'border-primary/30 bg-primary/10 text-primary',
           )}
         >
           <span>{notice.message}</span>
@@ -116,9 +116,9 @@ export const InventoryView: React.FC = () => {
                   type="button"
                   onClick={() => setActiveTab(tab.id)}
                   className={cn(
-                    'flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50',
+                    'flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
                     activeTab === tab.id
-                      ? 'bg-amber-500/15 text-amber-400'
+                      ? 'bg-primary/15 text-primary'
                       : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
                   )}
                 >

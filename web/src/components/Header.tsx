@@ -60,7 +60,7 @@ export const Header: React.FC = () => {
       <div className="flex items-center gap-3">
         <button
           onClick={handleMenuClick}
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground hover:bg-muted transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+          className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground hover:bg-muted transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
           title={isSidebarOpen ? 'Close session list' : 'Toggle sidebar'}
           aria-label="Toggle sidebar"
         >
@@ -73,10 +73,10 @@ export const Header: React.FC = () => {
           <span
             className={`h-2 w-2 rounded-full ${
               connectionStatus === 'connected'
-                ? 'bg-emerald-500 shadow-sm shadow-emerald-500/50'
+                ? 'bg-success shadow-sm shadow-success/50'
                 : connectionStatus === 'connecting'
-                ? 'bg-amber-500 animate-ping'
-                : 'bg-red-500'
+                ? 'bg-warning animate-ping'
+                : 'bg-destructive'
             }`}
           />
           <span className="text-muted-foreground capitalize text-[10px] hidden sm:inline">
@@ -92,7 +92,7 @@ export const Header: React.FC = () => {
           <select
             value={activeModelValue}
             onChange={handleModelChange}
-            className="h-8 max-w-[200px] rounded-lg border border-border/60 bg-muted/40 px-2.5 py-1 text-xs font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-amber-500/40"
+            className="h-8 max-w-[200px] rounded-lg border border-border/60 bg-muted/40 px-2.5 py-1 text-xs font-medium text-foreground focus:outline-none focus:ring-1 focus:ring-primary/40"
             aria-label="Active model"
           >
             {groups.length === 0 && <option value="">No models loaded</option>}
@@ -113,7 +113,7 @@ export const Header: React.FC = () => {
             setIsMemoryOpen(true);
             wsService.requestCognitiveMemory();
           }}
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground hover:bg-muted transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+          className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground hover:bg-muted transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
           title="Cognitive Memory & Working Memory"
         >
           <Brain className="h-4 w-4" />
@@ -124,7 +124,7 @@ export const Header: React.FC = () => {
             setIsMcpsOpen(true);
             wsService.requestMcpServers();
           }}
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground hover:bg-muted transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+          className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground hover:bg-muted transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
           title="Connected MCP Servers"
         >
           <Cpu className="h-4 w-4" />
@@ -135,7 +135,7 @@ export const Header: React.FC = () => {
             setIsLogsOpen(true);
             wsService.requestLogs();
           }}
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground hover:bg-muted transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+          className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground hover:bg-muted transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
           title="Live Runtime Logs"
         >
           <ScrollText className="h-4 w-4" />
@@ -143,7 +143,7 @@ export const Header: React.FC = () => {
 
         <button
           onClick={handleThemeClick}
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground hover:bg-muted transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+          className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground hover:bg-muted transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
           title={resolvedTheme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
         >
           {resolvedTheme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -151,7 +151,7 @@ export const Header: React.FC = () => {
 
         <button
           onClick={() => setIsSettingsOpen(true)}
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground hover:bg-muted transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50"
+          className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground hover:bg-muted transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
           title="Gateway & Agent Settings"
         >
           <Settings className="h-4 w-4" />

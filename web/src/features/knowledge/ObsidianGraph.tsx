@@ -46,6 +46,17 @@ import { GraphControls } from './graph/GraphControls';
 import { GraphLegend } from './graph/GraphLegend';
 import { GraphNodeList } from './graph/GraphNodeList';
 import { formatObservations } from '../../shared/lib/format';
+import { useResolvedTheme } from '../../shared/lib/theme';
+import { useThemeStore } from '../../store/useThemeStore';
+import { useUiCustomizationStore } from '../../store/useUiCustomizationStore';
+
+export interface ObsidianGraphHandle {
+  zoomIn: () => void;
+  zoomOut: () => void;
+  fitToView: () => void;
+  resetLayout: () => void;
+  focusNodeByName: (nodeName: string) => void;
+}
 
 export interface ObsidianGraphProps {
   nodes: CognitiveNode[];
@@ -55,6 +66,9 @@ export interface ObsidianGraphProps {
   searchQuery?: string;
   selectedNodeName?: string | null;
   selectedEdgeKey?: string | null;
+  checkedNodeNames?: ReadonlySet<string>;
+  display?: GraphDisplayState;
+  onDisplayChange?: (key: keyof GraphDisplayState, value: boolean) => void;
   onSelectNode?: (nodeName: string | null) => void;
   onSelectEdge?: (edgeKey: string | null) => void;
   onModeChange?: (mode: GraphMode) => void;
@@ -65,6 +79,9 @@ export interface ObsidianGraphProps {
     renderedNodes: number;
     renderedEdges: number;
   }) => void;
+  controlsRef?: React.MutableRefObject<ObsidianGraphHandle | null>;
+  fullBleed?: boolean;
+  showBuiltInChrome?: boolean;
   className?: string;
   height?: number | string;
 }
@@ -117,10 +134,16 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
   searchQuery,
   selectedNodeName,
   selectedEdgeKey,
+  checkedNodeNames,
+  display: controlledDisplay,
+  onDisplayChange: onControlledDisplayChange,
   onSelectNode,
   onSelectEdge,
   onModeChange,
   onVisibleStatsChange,
+  controlsRef,
+  fullBleed = false,
+  showBuiltInChrome = true,
   className,
   height = 560,
 }) => {
@@ -155,7 +178,21 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
   const [selectedNode, setSelectedNode] = useState<RenderNode | null>(null);
   const [visibleStatus, setVisibleStatus] = useState({ visible: 0, edges: 0 });
   const [showSettings, setShowSettings] = useState(false);
-  const [display, setDisplay] = useState<GraphDisplayState>({ ...DEFAULT_GRAPH_DISPLAY });
+  const [localDisplay, setLocalDisplay] = useState<GraphDisplayState>({ ...DEFAULT_GRAPH_DISPLAY });
+  const display = controlledDisplay ?? localDisplay;
+  const handleDisplayChange = useCallback(
+    (key: keyof GraphDisplayState, value: boolean) => {
+      if (onControlledDisplayChange) {
+        onControlledDisplayChange(key, value);
+      } else {
+        setLocalDisplay((current) => ({ ...current, [key]: value }));
+      }
+    },
+    [onControlledDisplayChange],
+  );
+  const activeThemeId = useUiCustomizationStore((s) => s.activeThemeId);
+  const themeMode = useThemeStore((s) => s.theme);
+  const resolvedThemeMode = useResolvedTheme(themeMode);
 
   const activeMode = mode ?? localMode;
   const activeSearch = searchQuery ?? localSearch;
@@ -313,6 +350,30 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
     setSettleFrames(12);
     fitToView();
   }, [fitToView, setSettleFrames]);
+
+  const focusNodeByName = useCallback(
+    (nodeName: string) => {
+      const targetNode = layoutRef.current.get(nodeName) || null;
+      if (!targetNode) return;
+      updateSelection(targetNode);
+      focusNode(targetNode);
+    },
+    [focusNode, updateSelection],
+  );
+
+  useEffect(() => {
+    if (!controlsRef) return undefined;
+    controlsRef.current = {
+      zoomIn: () => zoomAroundCenter(1.2),
+      zoomOut: () => zoomAroundCenter(0.83),
+      fitToView,
+      resetLayout,
+      focusNodeByName,
+    };
+    return () => {
+      controlsRef.current = null;
+    };
+  }, [controlsRef, fitToView, focusNodeByName, resetLayout, zoomAroundCenter]);
 
   const getGraphCoords = useCallback((screenX: number, screenY: number) => {
     return graphPointFromScreen(canvasRef.current, transformRef.current, screenX, screenY);
@@ -607,6 +668,9 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
 
       const activeNode = hoveredNodeRef.current || selectedNodeRef.current;
       const connectedIds = collectConnectedNodeIds(activeNode, edgesRef.current);
+      if (checkedNodeNames && checkedNodeNames.size > 0) {
+        checkedNodeNames.forEach((checkedId) => connectedIds.add(checkedId));
+      }
       drawOrbits(context, activeNode, visibleNodesRef.current, connectedIds, display.showOrbits);
 
       const selectedEdge = (selectedEdgeKey ? edgeDetailsRef.current.get(selectedEdgeKey) : null) ?? null;
@@ -633,6 +697,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
         canvasWidth,
         display.showGlow,
         display.showLabels,
+        checkedNodeNames,
       );
       context.restore();
 
@@ -693,7 +758,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
       animationFrameRef.current = null;
       requestRenderRef.current = () => undefined;
     };
-  }, [activeMode, activeSearch, activeSelectionName, display, focusNode, graphData, graphSemantics, onSelectEdge, reportVisibleStats, selectedEdgeKey, setSettleFrames, viewportFor]);
+  }, [activeMode, activeSearch, activeSelectionName, activeThemeId, checkedNodeNames, display, focusNode, graphData, graphSemantics, onSelectEdge, reportVisibleStats, resolvedThemeMode, selectedEdgeKey, setSettleFrames, viewportFor]);
 
   const hasData = graphData.nodes.length > 0;
   const selectedInfo = selectedNode || hoveredNode;
@@ -702,14 +767,18 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
   return (
     <div
       ref={containerRef}
-      className={cn('relative w-full overflow-hidden rounded-2xl border border-border/80 bg-slate-950 shadow-2xl', className)}
+      className={cn(
+        'relative w-full overflow-hidden bg-background',
+        fullBleed ? 'h-full rounded-none border-0 shadow-none' : 'rounded-2xl border border-border/80 shadow-xl',
+        className,
+      )}
       style={{ height }}
     >
       {!hasData && (
-        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-slate-950 px-6 text-center">
-          <BrainCircuit className="mb-4 h-12 w-12 text-slate-700" />
-          <div className="text-sm font-semibold text-slate-400">No persisted graph records</div>
-          <p className="mt-2 max-w-sm text-xs leading-relaxed text-slate-600">
+        <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-background px-6 text-center">
+          <BrainCircuit className="mb-4 h-12 w-12 text-muted-foreground/45" />
+          <div className="text-sm font-semibold text-foreground/85">No persisted graph records</div>
+          <p className="mt-2 max-w-sm text-xs leading-relaxed text-muted-foreground">
             OpenZ will show entities and relationships here as they are written to cognitive memory.
           </p>
         </div>
@@ -739,7 +808,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
         {graphData.nodes.length} records loaded; {visibleStatus.visible} visible; {visibleStatus.edges} visible relations; {modeLabel}.
       </span>
 
-      {hasData && (
+      {hasData && showBuiltInChrome && (
         <>
           <GraphControls
             activeMode={activeMode}
@@ -752,7 +821,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
             onToggleSettings={() => setShowSettings((visible) => !visible)}
             onCloseSettings={() => setShowSettings(false)}
             display={display}
-            onDisplayChange={(key, value) => setDisplay((current) => ({ ...current, [key]: value }))}
+            onDisplayChange={handleDisplayChange}
             onZoom={zoomAroundCenter}
             onFit={fitToView}
             onReset={resetLayout}
@@ -772,36 +841,36 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
           />
 
           {selectedInfo && (
-            <div className="absolute bottom-3 left-3 z-10 max-w-[calc(100%-1.5rem)] rounded-xl border border-white/10 bg-slate-950/94 p-3 shadow-2xl backdrop-blur-md sm:max-w-sm">
+            <div className="absolute bottom-3 left-3 z-10 max-w-[calc(100%-1.5rem)] rounded-xl border border-border/75 bg-card/94 p-3 shadow-xl backdrop-blur-md sm:max-w-sm">
               <div className="flex items-center gap-2">
                 <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: getNodeColor(selectedInfo.type).main }} />
-                <span className="truncate text-xs font-semibold text-slate-100">{selectedInfo.name}</span>
-                <span className="rounded bg-white/5 px-1.5 py-0.5 font-mono text-[9px] uppercase text-slate-500">{selectedInfo.type}</span>
-                <button type="button" onClick={() => updateSelection(null)} className="ml-auto rounded p-1 text-slate-500 hover:text-slate-200" aria-label="Clear selected entity"><X className="h-3 w-3" /></button>
+                <span className="truncate text-xs font-semibold text-foreground">{selectedInfo.name}</span>
+                <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[9px] uppercase text-muted-foreground">{selectedInfo.type}</span>
+                <button type="button" onClick={() => updateSelection(null)} className="ml-auto rounded p-1 text-muted-foreground hover:text-foreground" aria-label="Clear selected entity"><X className="h-3 w-3" /></button>
               </div>
-              <div className="mt-2 line-clamp-2 text-[10px] leading-relaxed text-slate-500">{formatObservations(selectedInfo.observations)}</div>
-              <div className="mt-2 flex items-center gap-2 text-[9px] font-mono text-slate-600">
+              <div className="mt-2 line-clamp-2 text-[10px] leading-relaxed text-muted-foreground">{formatObservations(selectedInfo.observations)}</div>
+              <div className="mt-2 flex items-center gap-2 text-[9px] font-mono text-muted-foreground">
                 <span>{selectedInfo.degree} relations</span>
-                <button type="button" onClick={() => setGraphMode('neighborhood')} className="rounded bg-amber-500/10 px-2 py-1 font-semibold text-amber-300 hover:bg-amber-500/20">Focus neighborhood</button>
+                <button type="button" onClick={() => setGraphMode('neighborhood')} className="rounded bg-primary/12 px-2 py-1 font-semibold text-primary hover:bg-primary/20">Focus neighborhood</button>
               </div>
             </div>
           )}
 
           {hoveredEdge && !selectedInfo && (
-            <div className="pointer-events-none absolute bottom-3 left-3 z-10 max-w-[calc(100%-1.5rem)] rounded-xl border border-cyan-400/20 bg-slate-950/94 px-3 py-2 text-[10px] shadow-2xl backdrop-blur sm:max-w-sm">
-              <div className="flex items-center gap-2 text-slate-100">
-                <span className="h-2 w-2 shrink-0 rounded-full bg-cyan-300 shadow-[0_0_10px_rgba(103,232,249,0.8)]" />
+            <div className="pointer-events-none absolute bottom-3 left-3 z-10 max-w-[calc(100%-1.5rem)] rounded-xl border border-info/30 bg-card/94 px-3 py-2 text-[10px] shadow-xl backdrop-blur sm:max-w-sm">
+              <div className="flex items-center gap-2 text-foreground">
+                <span className="h-2 w-2 shrink-0 rounded-full bg-info" />
                 <span className="truncate font-semibold">{hoveredEdge.source.name} → {hoveredEdge.target.name}</span>
               </div>
-              <div className="mt-1.5 flex flex-wrap items-center gap-1.5 font-mono text-[9px] text-slate-500">
-                <span className="rounded bg-white/5 px-1.5 py-0.5 text-cyan-300">{hoveredEdge.type}</span>
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5 font-mono text-[9px] text-muted-foreground">
+                <span className="rounded bg-info/12 px-1.5 py-0.5 text-info">{hoveredEdge.type}</span>
                 <span>Confidence: {formatConfidence(hoveredEdge.confidence)}</span>
                 <span>Provenance: {formatProvenance(hoveredEdge.provenance)}</span>
               </div>
             </div>
           )}
 
-          <div className="pointer-events-none absolute bottom-3 left-1/2 hidden -translate-x-1/2 rounded-full border border-white/10 bg-slate-950/70 px-3 py-1 text-[9px] text-slate-600 backdrop-blur sm:block">
+          <div className="pointer-events-none absolute bottom-3 left-1/2 hidden -translate-x-1/2 rounded-full border border-border/75 bg-card/80 px-3 py-1 text-[9px] text-muted-foreground backdrop-blur sm:block">
             <span className="mr-1.5">Drag to pan</span>·<span className="mx-1.5">scroll to zoom</span>·<span>click a cluster to explore</span>
           </div>
         </>

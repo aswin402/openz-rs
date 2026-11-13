@@ -6,7 +6,16 @@ import { wsService } from '../../services/websocket';
 import { createWorkspaceNotice } from '../chatUtils';
 import type { StoreEventContext } from '../eventContext';
 import { EMPTY_MCP_STATS, normalizeMcpStats } from '../slices/memorySlice';
-import { useThemeStore } from '../useThemeStore';
+import {
+  registerThemeSyncListener,
+  useThemeStore,
+} from '../useThemeStore';
+import {
+  DEFAULT_CUSTOMIZATION,
+  extractSnapshot,
+  registerUiCustomizationSyncListener,
+  useUiCustomizationStore,
+} from '../useUiCustomizationStore';
 
 function mergeProviders(
   current: ProviderModelOption[],
@@ -41,12 +50,16 @@ function applyCapabilitiesAndDefaultsPatch(
       model?: string;
       provider?: string;
       theme?: string;
+      theme_explicit?: string | null;
+      active_theme_id?: string | null;
+      ui_customization?: Record<string, unknown> | null;
       caveman_mode?: boolean;
       streaming?: boolean;
       max_tokens?: number;
       temperature?: number;
     };
   },
+  isInitialSnapshot = false,
 ) {
   if (payload.capabilities && typeof payload.capabilities === 'object') {
     set({ capabilities: normalizeWebUiCapabilities(payload.capabilities as Record<string, unknown>) });
@@ -59,9 +72,44 @@ function applyCapabilitiesAndDefaultsPatch(
       cavemanMode: !!payload.defaults.caveman_mode,
       streamingMode: payload.defaults.streaming !== false,
     });
-    const rawTheme = payload.defaults.theme;
-    if (rawTheme === 'light' || rawTheme === 'dark' || rawTheme === 'system') {
-      useThemeStore.getState().setTheme(rawTheme);
+
+    const explicitTheme = payload.defaults.theme_explicit;
+    const serverThemeId = payload.defaults.active_theme_id;
+    const serverCustomization = payload.defaults.ui_customization;
+    const hasServerUiState =
+      Boolean(explicitTheme) ||
+      Boolean(serverThemeId) ||
+      Boolean(serverCustomization && typeof serverCustomization === 'object');
+
+    if (
+      explicitTheme === 'light' ||
+      explicitTheme === 'dark' ||
+      explicitTheme === 'system'
+    ) {
+      useThemeStore.getState().hydrateTheme(explicitTheme);
+    }
+
+    if (serverCustomization || serverThemeId) {
+      useUiCustomizationStore
+        .getState()
+        .hydrateFromGateway(serverCustomization ?? {}, serverThemeId);
+    }
+
+    // When connecting to a gateway that does not yet have persisted WebUI preferences,
+    // push local browser customizations & theme up so they are backed up on disk immediately.
+    if (isInitialSnapshot && !hasServerUiState) {
+      const localSnapshot = extractSnapshot(useUiCustomizationStore.getState());
+      const localTheme = useThemeStore.getState().theme;
+      const hasNonDefaultLocal =
+        localTheme !== 'system' ||
+        JSON.stringify(localSnapshot) !== JSON.stringify(DEFAULT_CUSTOMIZATION);
+      if (hasNonDefaultLocal) {
+        wsService.updateConfig({
+          theme: localTheme,
+          active_theme_id: localSnapshot.activeThemeId,
+          ui_customization: localSnapshot as unknown as Record<string, unknown>,
+        });
+      }
     }
   }
 }
@@ -86,6 +134,25 @@ function emitWorkspaceUpdateNotice(
 
 export function registerConfigEvents(ctx: StoreEventContext) {
   const { set, get } = ctx;
+
+  // Automatically persist every theme & UI customization change to Gateway + ~/.openz/backups
+  registerThemeSyncListener((theme) => {
+    const snapshot = extractSnapshot(useUiCustomizationStore.getState());
+    wsService.updateConfig({
+      theme,
+      active_theme_id: snapshot.activeThemeId,
+      ui_customization: snapshot as unknown as Record<string, unknown>,
+    });
+  });
+
+  registerUiCustomizationSyncListener((snapshot) => {
+    const theme = useThemeStore.getState().theme;
+    wsService.updateConfig({
+      theme,
+      active_theme_id: snapshot.activeThemeId,
+      ui_customization: snapshot as unknown as Record<string, unknown>,
+    });
+  });
 
   wsService.on('models_list', (payload) => {
     if (Array.isArray(payload.providers)) {
@@ -112,7 +179,7 @@ export function registerConfigEvents(ctx: StoreEventContext) {
   });
 
   wsService.on('config_data', (payload) => {
-    applyCapabilitiesAndDefaultsPatch(ctx, payload);
+    applyCapabilitiesAndDefaultsPatch(ctx, payload, true);
     if (payload.providers) {
       set({ providersConfig: payload.providers });
     }
@@ -149,13 +216,13 @@ export function registerConfigEvents(ctx: StoreEventContext) {
   });
 
   wsService.on('config_updated', (payload) => {
-    applyCapabilitiesAndDefaultsPatch(ctx, payload);
+    applyCapabilitiesAndDefaultsPatch(ctx, payload, false);
     if (payload.defaults) {
       set({
         workspaceNotice: createWorkspaceNotice(
           'settings',
           'success',
-          'Settings saved and refreshed from gateway.',
+          'Settings saved and backed up to ~/.openz.',
         ),
       });
     }

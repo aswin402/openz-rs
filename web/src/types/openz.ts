@@ -348,6 +348,9 @@ export interface AgentDefaultsConfig {
   model: string;
   provider: string;
   theme?: 'light' | 'dark' | 'system' | string;
+  theme_explicit?: 'light' | 'dark' | 'system' | string | null;
+  active_theme_id?: string | null;
+  ui_customization?: JsonObject | null;
   ui_surface?: string;
   temperature: number;
   max_tokens: number;
