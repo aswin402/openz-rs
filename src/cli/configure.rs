@@ -227,6 +227,9 @@ pub async fn handle_configure() -> Result<()> {
             true => "enabled",
             false => "disabled",
         };
+        let permission_mode = crate::agent::security::SecurityGuard::normalize_security_mode(
+            &config.agents.defaults.security_mode,
+        );
 
         let configure_options = vec![
             "Providers".to_string(),
@@ -239,6 +242,7 @@ pub async fn handle_configure() -> Result<()> {
                 "TUI (thoughts: {})",
                 config.agents.defaults.tui_thought_display
             ),
+            format!("Ask Permission (approval: {permission_mode})"),
             format!("Sandbox (seccomp) ({sandbox_status})"),
             "Browser (Firefox)".to_string(),
             "Exit".to_string(),
@@ -274,8 +278,9 @@ pub async fn handle_configure() -> Result<()> {
             4 => handle_whatsapp_submenu(&mut config).await?,
             5 => handle_email_submenu(&mut config).await?,
             6 => handle_tui_submenu(&mut config).await?,
-            7 => handle_sandbox_submenu(&mut config).await?,
-            8 => handle_browser_submenu(&mut config).await?,
+            7 => handle_permission_submenu(&mut config).await?,
+            8 => handle_sandbox_submenu(&mut config).await?,
+            9 => handle_browser_submenu(&mut config).await?,
             _ => break,
         }
 
@@ -885,6 +890,84 @@ async fn handle_browser_submenu(config: &mut Config) -> Result<()> {
         "{}✓ Firefox browser ports saved.{}",
         EMERALD_GREEN, COLOR_RESET
     );
+    Ok(())
+}
+
+pub(crate) fn apply_security_mode_update(config: &mut Config, mode: &str) {
+    let normalized =
+        crate::agent::security::SecurityGuard::normalize_security_mode(mode).to_string();
+    config.agents.defaults.security_mode = normalized.clone();
+    for profile in config.ui_settings.iter_mut() {
+        match profile.security_mode.is_some() {
+            true => profile.security_mode = Some(normalized.clone()),
+            false => {}
+        }
+    }
+}
+
+async fn handle_permission_submenu(config: &mut Config) -> Result<()> {
+    println!(
+        "\n{}────────────────────────────────────────────────────────────{}",
+        LIGHT_WHITE, COLOR_RESET
+    );
+    println!(
+        "{}--- Ask Permission / Approval Level ---{}",
+        COLOR_BOLD, COLOR_RESET
+    );
+    println!(
+        "  • {}Low (Default — More Freedom + Secure){}: Asks permission ONLY for high-risk actions (rm, rm -rf, sudo/chmod, shutdown/reboot, | sh, db_write, secrets, external paths).",
+        EMERALD_GREEN, COLOR_RESET
+    );
+    println!(
+        "  • {}Medium (Balanced — High + Moderate Risk){}: Low rules + git push, curl/wget/scp downloads, package installs, kill, cargo clean, remote PR & delete actions.",
+        AURA_GOLD, COLOR_RESET
+    );
+    println!(
+        "  • {}High (Strict — Ask on Edits & Writes){}: Medium rules + workspace write_file, patch_file, replace_lines, media/doc writes, git commit, and local mutations.",
+        HEADING_BLUE, COLOR_RESET
+    );
+    println!();
+
+    let current = crate::agent::security::SecurityGuard::normalize_security_mode(
+        &config.agents.defaults.security_mode,
+    );
+    let options = vec![
+        "Low (Default — High-Risk Only: rm, rm -rf, sudo, shutdown, external paths)".to_string(),
+        "Medium (High + Moderate Risk: + git push, downloads, kill, package installs)".to_string(),
+        "High (Strict: + write_file, patch_file, replace_lines, git commit, local edits)"
+            .to_string(),
+        "Back".to_string(),
+    ];
+
+    let choice = match select_menu_custom(
+        &format!("Select Ask Permission level (current: {current}):"),
+        &options,
+        &config.agents.defaults.model,
+        Some("Ask Permission Policy"),
+        true,
+    )? {
+        Some(idx) => idx,
+        None => return Ok(()),
+    };
+
+    let selected = match choice {
+        0 => "low",
+        1 => "medium",
+        2 => "high",
+        _ => return Ok(()),
+    };
+
+    apply_security_mode_update(config, selected);
+    save_config(config)?;
+    println!(
+        "{}✓ Ask Permission level set to `{}`.{}",
+        EMERALD_GREEN, selected, COLOR_RESET
+    );
+    println!(
+        "{}────────────────────────────────────────────────────────────{}",
+        LIGHT_WHITE, COLOR_RESET
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
     Ok(())
 }
 

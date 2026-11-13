@@ -5,11 +5,10 @@ fn webui_capabilities_include_runtime_policy() {
     let config = crate::config::schema::Config::default();
     let capabilities = crate::channels::websocket::webui_capabilities(&config);
     assert_eq!(capabilities["version"], 1);
-    assert!(capabilities["securityModes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|mode| mode["value"] == "normal"));
+    let security_modes = capabilities["securityModes"].as_array().unwrap();
+    assert!(security_modes.iter().any(|mode| mode["value"] == "low"));
+    assert!(security_modes.iter().any(|mode| mode["value"] == "medium"));
+    assert!(security_modes.iter().any(|mode| mode["value"] == "high"));
     assert!(capabilities["providers"]
         .as_array()
         .unwrap()

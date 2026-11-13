@@ -10,20 +10,73 @@ static TRUSTED_SESSION_TOOLS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new()
 
 const FORBIDDEN_DEVICE_BINS: &[&str] = &["dd", "mkfs", "fdisk", "format", "parted"];
 const SYSTEM_POWER_BINS: &[&str] = &["shutdown", "reboot", "poweroff", "halt"];
-const PRIVILEGE_BINS: &[&str] = &["sudo", "su", "chmod", "chown", "eval", "source"];
-const RAW_DELETE_BINS: &[&str] = &["rm", "rmdir", "unlink"];
-const NORMAL_DESTRUCTIVE_BINS: &[&str] = &[
-    "rm", "rmdir", "unlink", "dd", "mkfs", "fdisk", "format", "parted",
+const PRIVILEGE_BINS: &[&str] = &[
+    "sudo", "su", "doas", "pkexec", "chmod", "chown", "chgrp", "eval", "source",
+];
+const RAW_DELETE_BINS: &[&str] = &["rm", "rmdir", "unlink", "shred"];
+const LOW_DESTRUCTIVE_BINS: &[&str] = &[
+    "rm", "rmdir", "unlink", "shred", "dd", "mkfs", "fdisk", "format", "parted",
+];
+const LOW_DANGEROUS_PHRASES: &[&str] = &[
+    "git reset --hard",
+    "git clean -f",
+    "git clean -fd",
+    "git clean -fx",
+    "git clean -df",
+    "git push --force",
+    "git push -f",
+    "systemctl stop",
+    "systemctl disable",
+    "systemctl poweroff",
+    "systemctl reboot",
 ];
 const STRICT_XARGS_TARGETS: &[&str] = &["rm", "kill", "chmod", "chown"];
+const LOW_XARGS_TARGETS: &[&str] = &["rm", "rmdir", "unlink", "shred", "chmod", "chown", "chgrp"];
 const STRICT_CLEAN_PHRASES: &[&str] = &[
     "cargo clean",
     "npm run clean",
     "bun run clean",
     "yarn clean",
 ];
+const MEDIUM_REMOTE_PHRASES: &[&str] = &[
+    "git push",
+    "gh pr create",
+    "gh pr merge",
+    "gh release",
+    "gh repo delete",
+    "cargo publish",
+    "npm publish",
+    "bun publish",
+    "docker push",
+    "podman push",
+    "docker system prune",
+    "pip install",
+    "pip3 install",
+    "cargo install",
+    "npm install -g",
+    "npm i -g",
+    "bun add -g",
+    "bun i -g",
+];
+const MEDIUM_PACKAGE_BINS: &[&str] = &[
+    "apt", "apt-get", "pacman", "dnf", "yum", "zypper", "apk", "brew", "snap", "flatpak",
+];
 const PROCESS_CONTROL_BINS: &[&str] = &["kill", "killall", "pkill"];
-const NETWORK_TRANSFER_BINS: &[&str] = &["curl", "wget", "scp", "rsync", "sftp", "nc", "netcat"];
+const NETWORK_TRANSFER_BINS: &[&str] = &[
+    "curl", "wget", "scp", "rsync", "sftp", "nc", "netcat", "ssh", "socat", "aria2c",
+];
+const HIGH_SHELL_MUTATION_BINS: &[&str] = &["mv", "tee", "truncate", "touch", "mkdir"];
+const HIGH_SHELL_MUTATION_PHRASES: &[&str] = &[
+    "git commit",
+    "git checkout",
+    "git switch",
+    "git merge",
+    "git rebase",
+    "git cherry-pick",
+    "git stash",
+    "git tag",
+    "sed -i",
+];
 const SHELL_PIPE_TARGETS: &[&str] = &[
     "sh", "bash", "zsh", "dash", "ksh", "fish", "python", "python3", "perl", "ruby", "node", "php",
 ];
@@ -492,13 +545,44 @@ impl SecurityGuard {
             "write_file" => Some("Write File"),
             "patch_file" => Some("Patch File"),
             "replace_lines" => Some("Replace Lines"),
+            "zenflow_edit" => Some("Zenflow Edit"),
             _ => None,
         }
     }
 
-    /// Check if a tool call is sensitive and needs user approval.
+    /// Normalize security/approval mode strings (`low`, `medium`, `high`),
+    /// preserving compatibility with legacy aliases (`loose`, `normal`, `strict`).
+    pub fn normalize_security_mode(security_mode: &str) -> &'static str {
+        match security_mode.trim().to_ascii_lowercase().as_str() {
+            "high" | "strict" => "high",
+            "medium" | "normal" => "medium",
+            "low" | "loose" => "low",
+            _ => "low",
+        }
+    }
+
+    /// True when `SecurityGuard` inspects per-call arguments rather than treating
+    /// every invocation of the tool identically.
+    pub fn has_granular_argument_policy(tool_name: &str) -> bool {
+        let canonical = crate::tools::canonical_tool_name(tool_name);
+        matches!(
+            canonical.as_str(),
+            "exec_command"
+                | "curate_skill"
+                | "manage_config"
+                | "manage_mcp"
+                | "manage_backups"
+                | "manage_sessions"
+                | "manage_whitelist"
+                | "git_manager"
+                | "git_provider"
+                | "onpkg"
+        )
+    }
+
+    /// Check whether a tool call is sensitive under the strictest (`high`) detector.
     pub fn is_sensitive(tool_name: &str, arguments: &Value) -> bool {
-        Self::is_sensitive_with_mode(tool_name, arguments, "strict")
+        Self::is_sensitive_with_mode(tool_name, arguments, "high")
     }
 
     fn command_has_forbidden_delete(command: &[String]) -> bool {
@@ -527,7 +611,7 @@ impl SecurityGuard {
             .unwrap_or(false)
     }
 
-    /// Check if a command is strictly forbidden and should be rejected instantly without prompting.
+    /// Check whether a command is strictly forbidden and must be rejected instantly without prompting.
     pub fn is_forbidden(tool_name: &str, arguments: &Value) -> bool {
         let canonical_name = crate::tools::canonical_tool_name(tool_name);
         match (canonical_name.as_str(), Self::tool_command_arg(arguments)) {
@@ -535,7 +619,6 @@ impl SecurityGuard {
                 Self::unwrap_command_payloads(cmd).into_iter().any(|payload| {
                     let cmd_lower = payload.to_lowercase();
                     Self::has_any_bin(&cmd_lower, FORBIDDEN_DEVICE_BINS)
-                        || Self::has_any_bin(&cmd_lower, SYSTEM_POWER_BINS)
                         || Self::split_commands(&Self::parse_arguments(&payload))
                             .iter()
                             .any(|command| Self::command_has_forbidden_delete(command))
@@ -564,41 +647,179 @@ impl SecurityGuard {
                 .unwrap_or(false)
     }
 
+    fn has_git_force_or_hard_wipe(payload: &str) -> bool {
+        Self::split_commands(&Self::parse_arguments(payload))
+            .iter()
+            .any(|command| {
+                Self::first_executable_index(command)
+                    .map(|idx| {
+                        let exec_lower = command[idx].to_lowercase();
+                        let bin_name = exec_lower.split('/').next_back().unwrap_or(&exec_lower);
+                        bin_name == "git" && {
+                            let tail = &command[idx + 1..];
+                            let sub_opt = tail
+                                .iter()
+                                .find(|tok| !tok.starts_with('-'))
+                                .map(|s| s.to_ascii_lowercase());
+                            match sub_opt.as_deref() {
+                                Some("push") => tail.iter().any(|arg| {
+                                    let lower = arg.to_ascii_lowercase();
+                                    lower == "-f" || lower.starts_with("--force")
+                                }),
+                                Some("reset") => tail
+                                    .iter()
+                                    .any(|arg| arg.eq_ignore_ascii_case("--hard")),
+                                Some("clean") => tail.iter().any(|arg| {
+                                    arg.starts_with('-')
+                                        && !arg.starts_with("--")
+                                        && arg.chars().any(|ch| ch == 'f' || ch == 'F')
+                                }),
+                                Some("branch") => tail.iter().any(|arg| arg == "-D"),
+                                _ => false,
+                            }
+                        }
+                    })
+                    .unwrap_or(false)
+            })
+    }
+
+    fn has_file_write_redirection(payload: &str) -> bool {
+        Self::parse_arguments(payload)
+            .windows(2)
+            .any(|pair| matches!(pair[0].as_str(), ">" | ">>") && pair[1] != "/dev/null")
+    }
+
     fn payload_is_sensitive(payload: &str, mode: &str) -> bool {
+        let normalized_mode = Self::normalize_security_mode(mode);
         let cmd_lower = payload.to_lowercase();
-        let always_sensitive = Self::has_any_bin(&cmd_lower, PRIVILEGE_BINS)
+        let low_sensitive = Self::has_any_bin(&cmd_lower, PRIVILEGE_BINS)
             || Self::has_any_bin(&cmd_lower, SYSTEM_POWER_BINS)
+            || Self::has_any_bin(&cmd_lower, LOW_DESTRUCTIVE_BINS)
+            || (Self::has_bin(&cmd_lower, "xargs")
+                && Self::has_any_bin(&cmd_lower, LOW_XARGS_TARGETS))
+            || (Self::has_bin(&cmd_lower, "find")
+                && cmd_lower.split_whitespace().any(|tok| tok == "-delete"))
+            || Self::has_git_force_or_hard_wipe(payload)
+            || LOW_DANGEROUS_PHRASES
+                .iter()
+                .any(|phrase| cmd_lower.contains(phrase))
             || cmd_lower
                 .split('|')
                 .skip(1)
                 .any(|part| Self::has_any_bin(part, SHELL_PIPE_TARGETS));
 
-        always_sensitive
-            || match mode {
-                "loose" => false,
-                "strict" => {
-                    Self::has_any_bin(&cmd_lower, NORMAL_DESTRUCTIVE_BINS)
-                        || (Self::has_bin(&cmd_lower, "xargs")
-                            && Self::has_any_bin(&cmd_lower, STRICT_XARGS_TARGETS))
-                        || STRICT_CLEAN_PHRASES
-                            .iter()
-                            .any(|phrase| cmd_lower.contains(phrase))
-                        || Self::has_any_bin(&cmd_lower, PROCESS_CONTROL_BINS)
-                        || Self::has_any_bin(&cmd_lower, NETWORK_TRANSFER_BINS)
-                }
-                _ => {
-                    Self::has_any_bin(&cmd_lower, NORMAL_DESTRUCTIVE_BINS)
-                        || (Self::has_bin(&cmd_lower, "xargs")
-                            && Self::has_any_bin(&cmd_lower, RAW_DELETE_BINS))
-                }
+        let medium_sensitive = || {
+            Self::has_any_bin(&cmd_lower, NETWORK_TRANSFER_BINS)
+                || Self::has_any_bin(&cmd_lower, PROCESS_CONTROL_BINS)
+                || Self::has_any_bin(&cmd_lower, MEDIUM_PACKAGE_BINS)
+                || (Self::has_bin(&cmd_lower, "xargs")
+                    && Self::has_any_bin(&cmd_lower, STRICT_XARGS_TARGETS))
+                || STRICT_CLEAN_PHRASES
+                    .iter()
+                    .any(|phrase| cmd_lower.contains(phrase))
+                || MEDIUM_REMOTE_PHRASES
+                    .iter()
+                    .any(|phrase| cmd_lower.contains(phrase))
+        };
+
+        let high_sensitive = || {
+            Self::has_any_bin(&cmd_lower, HIGH_SHELL_MUTATION_BINS)
+                || HIGH_SHELL_MUTATION_PHRASES
+                    .iter()
+                    .any(|phrase| cmd_lower.contains(phrase))
+                || Self::has_file_write_redirection(payload)
+        };
+
+        low_sensitive
+            || match normalized_mode {
+                "low" => false,
+                "medium" => medium_sensitive(),
+                _ => medium_sensitive() || high_sensitive(),
             }
     }
 
-    /// Check if a tool call is sensitive and needs user approval, considering a specific security mode.
+    fn tool_action_arg(arguments: &Value) -> String {
+        ["action", "command", "operation", "subcommand", "mode"]
+            .iter()
+            .find_map(|key| arguments.get(*key).and_then(Value::as_str))
+            .unwrap_or_default()
+            .trim()
+            .to_ascii_lowercase()
+    }
+
+    fn is_read_only_tool_action(tool_name: &str, action: &str) -> bool {
+        match tool_name {
+            "manage_config" => matches!(
+                action,
+                "" | "get" | "show" | "view" | "list" | "status" | "inspect"
+            ),
+            "curate_skill"
+            | "manage_mcp"
+            | "manage_backups"
+            | "manage_sessions"
+            | "manage_whitelist"
+            | "git_manager"
+            | "git_provider"
+            | "onpkg" => matches!(
+                action,
+                "list"
+                    | "get"
+                    | "show"
+                    | "view"
+                    | "status"
+                    | "diff"
+                    | "log"
+                    | "blame"
+                    | "branches"
+                    | "inspect"
+                    | "check"
+                    | "search"
+                    | "info"
+                    | "verify"
+                    | "verify_chain"
+                    | "list_prs"
+                    | "list_issues"
+                    | "get_pr"
+                    | "get_issue"
+            ),
+            _ => false,
+        }
+    }
+
+    fn tool_has_unsafe_target_path(
+        tool_name: &str,
+        arguments: &Value,
+        writes_disk: bool,
+    ) -> bool {
+        match tool_name {
+            "retrieve_original" => arguments
+                .get("ccr_id")
+                .and_then(Value::as_str)
+                .or_else(|| Self::tool_path_arg(arguments))
+                .map(|raw| match raw.strip_prefix("file://") {
+                    Some(file_path) => !Self::is_safe_path(file_path),
+                    None => {
+                        let looks_like_path = raw.starts_with('/')
+                            || raw.starts_with('~')
+                            || raw.contains("..");
+                        looks_like_path && !Self::is_safe_path(raw)
+                    }
+                })
+                .unwrap_or(false),
+            _ => (Self::path_edit_label(tool_name).is_some() || writes_disk)
+                .then(|| Self::tool_path_arg(arguments))
+                .flatten()
+                .map(|path_str| !Self::is_safe_path(path_str))
+                .unwrap_or(false),
+        }
+    }
+
+    /// Check whether a tool call requires interactive user approval under `security_mode`
+    /// (`low` default, `medium`, or `high`).
     pub fn is_sensitive_with_mode(tool_name: &str, arguments: &Value, security_mode: &str) -> bool {
         let canonical_name = crate::tools::canonical_tool_name(tool_name);
         let tool_name = canonical_name.as_str();
-        let mode = security_mode.to_lowercase();
+        let mode = Self::normalize_security_mode(security_mode);
 
         match tool_name {
             "exec_command" => Self::tool_command_arg(arguments)
@@ -606,28 +827,79 @@ impl SecurityGuard {
                 .map(|cmd| {
                     Self::unwrap_command_payloads(cmd)
                         .iter()
-                        .any(|payload| Self::payload_is_sensitive(payload, &mode))
+                        .any(|payload| Self::payload_is_sensitive(payload, mode))
                 })
                 .unwrap_or(false),
-            "manage_config" => {
-                let action = arguments
-                    .get("action")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or_default();
-                let has_cred_action = action == "set_credential"
-                    || CREDENTIAL_ARG_KEYS
-                        .iter()
-                        .any(|key| arguments.get(*key).is_some())
-                    || crate::core::secrets::contains_secret_material(arguments);
-                has_cred_action
-                    || crate::tools::ToolMetadata::infer(tool_name).requires_risk_approval()
-            }
             _ => {
-                let unsafe_path = Self::path_edit_label(tool_name)
-                    .and_then(|_| Self::tool_path_arg(arguments))
-                    .map(|path_str| !Self::is_safe_path(path_str))
-                    .unwrap_or(false);
-                unsafe_path || crate::tools::ToolMetadata::infer(tool_name).requires_risk_approval()
+                let meta = crate::tools::ToolMetadata::infer(tool_name);
+                let action = Self::tool_action_arg(arguments);
+                let unsafe_path =
+                    Self::tool_has_unsafe_target_path(tool_name, arguments, meta.writes_disk);
+                let has_cred_action = tool_name == "manage_config"
+                    && (action == "set_credential"
+                        || CREDENTIAL_ARG_KEYS
+                            .iter()
+                            .any(|key| arguments.get(*key).is_some())
+                        || crate::core::secrets::contains_secret_material(arguments));
+                let is_read_only_action =
+                    !has_cred_action && Self::is_read_only_tool_action(tool_name, &action);
+
+                let low_tool_sensitive = unsafe_path
+                    || has_cred_action
+                    || tool_name == "db_write"
+                    || (tool_name == "manage_whitelist" && !is_read_only_action);
+
+                let medium_tool_sensitive = || {
+                    !is_read_only_action
+                        && (matches!(
+                            tool_name,
+                            "manage_config"
+                                | "git_provider"
+                                | "manage_mcp"
+                                | "telegram_send_message"
+                                | "telegram_send_file"
+                                | "send_remote_input"
+                                | "clear_memory"
+                                | "delete_entities"
+                                | "delete_relations"
+                                | "delete_observations"
+                                | "rollback_database_branch"
+                                | "schedule_job"
+                                | "remove_job"
+                                | "run_job_now"
+                                | "delete_subagent"
+                        ) || (tool_name == "curate_skill"
+                            && matches!(action.as_str(), "delete" | "remove"))
+                            || (tool_name == "manage_backups"
+                                && matches!(action.as_str(), "restore" | "delete" | "remove"))
+                            || (tool_name == "manage_sessions"
+                                && matches!(action.as_str(), "delete" | "remove" | "clear")))
+                };
+
+                let high_tool_sensitive = || {
+                    !is_read_only_action
+                        && (Self::path_edit_label(tool_name).is_some()
+                            || meta.writes_disk
+                            || meta.requires_risk_approval()
+                            || matches!(
+                                tool_name,
+                                "compiler_auto_heal"
+                                    | "python_sandbox"
+                                    | "wasm_sandbox"
+                                    | "git_manager"
+                                    | "onpkg"
+                                    | "curate_skill"
+                                    | "manage_backups"
+                                    | "manage_sessions"
+                            ))
+                };
+
+                low_tool_sensitive
+                    || match mode {
+                        "low" => false,
+                        "medium" => medium_tool_sensitive(),
+                        _ => medium_tool_sensitive() || high_tool_sensitive(),
+                    }
             }
         }
     }

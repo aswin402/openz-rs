@@ -126,19 +126,29 @@ fn low_disk_allows_read_only_tools() {
 }
 
 #[test]
-fn high_risk_tools_require_approval() {
-    let defaults = defaults();
+fn high_risk_tools_respect_security_mode_tier() {
+    let low_defaults = defaults();
+    assert_eq!(low_defaults.security_mode, "low");
     let runtime = RuntimeResourceSnapshot {
         free_disk_gb: Some(100.0),
         active_process_tools: 0,
     };
-    let decision = ToolResourcePolicy::evaluate(
+    let low_decision = ToolResourcePolicy::evaluate(
         &metadata(ToolRisk::High, false, false, false),
-        &defaults,
+        &low_defaults,
         &runtime,
     );
-    assert_eq!(decision.as_str(), "require_approval");
-    assert!(decision
+    assert_eq!(low_decision, ToolResourceDecision::Allow);
+
+    let mut high_defaults = defaults();
+    high_defaults.security_mode = "high".to_string();
+    let high_decision = ToolResourcePolicy::evaluate(
+        &metadata(ToolRisk::High, false, false, false),
+        &high_defaults,
+        &runtime,
+    );
+    assert_eq!(high_decision.as_str(), "require_approval");
+    assert!(high_decision
         .reason()
         .is_some_and(|reason| reason.contains("high risk")));
 }

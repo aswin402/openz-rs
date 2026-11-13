@@ -104,9 +104,9 @@ pub(crate) fn webui_capabilities(config: &crate::config::schema::Config) -> serd
         .collect::<Vec<_>>();
 
     let security_modes = [
-        ("strict", "Strict"),
-        ("normal", "Normal"),
-        ("loose", "Loose"),
+        ("low", "Low — High-Risk Only (Default)"),
+        ("medium", "Medium — High + Moderate Risk"),
+        ("high", "High — Strict (Ask on Edits & Writes)"),
     ]
     .into_iter()
     .map(|(value, label)| serde_json::json!({ "value": value, "label": label }))

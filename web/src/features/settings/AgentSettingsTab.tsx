@@ -8,13 +8,20 @@ import {
   Key,
   Link,
   Radio,
+  Shield,
   ShieldAlert,
   Sliders,
   Zap,
 } from 'lucide-react';
 import type { AgentDefaultsConfig, OpenZConfigPatch } from '../../types';
 import { CustomSelect, NumberInput } from './CustomSelect';
-import type { SelectGroup, SelectOption, SettingsForm } from './settingsSchema';
+import {
+  normalizeSecurityMode,
+  PERMISSION_TIER_DESCRIPTORS,
+  type SelectGroup,
+  type SelectOption,
+  type SettingsForm,
+} from './settingsSchema';
 import { cn } from '../../lib/utils';
 
 export interface AgentSettingsTabProps {
@@ -170,6 +177,68 @@ export const AgentSettingsTab: React.FC<AgentSettingsTabProps> = ({
             </div>
           </section>
 
+          {/* Card 2.5: Ask Permission / Approval Policy (Low, Medium, High) */}
+          <section className="rounded-2xl border border-border/70 bg-card/60 p-5 shadow-xs">
+            <div className="mb-4 flex items-center gap-2.5 border-b border-border/40 pb-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/15 text-primary">
+                <Shield className="h-4 w-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">
+                  Ask Permission Policy (Low / Medium / High)
+                </h3>
+                <p className="text-[11px] text-muted-foreground">
+                  Choose when OpenZ asks interactive permission before executing shell commands or mutating tools. Catastrophic wipes (rm -rf /, dd, mkfs) remain hard-blocked in every mode.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+              {PERMISSION_TIER_DESCRIPTORS.map((tier) => {
+                const activeMode = normalizeSecurityMode(
+                  form.security_mode ?? settings.security_mode,
+                );
+                const selected = activeMode === tier.value;
+                return (
+                  <button
+                    key={tier.value}
+                    type="button"
+                    onClick={() => onFieldChange('security_mode', tier.value)}
+                    aria-pressed={selected}
+                    className={cn(
+                      'flex flex-col justify-between rounded-xl border p-3.5 text-left transition-all',
+                      selected
+                        ? 'border-primary bg-primary/10 shadow-xs'
+                        : 'border-border/70 bg-background/50 hover:border-border hover:bg-muted/30',
+                    )}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold text-foreground">{tier.title}</span>
+                        <span
+                          className={cn(
+                            'rounded-full px-2 py-0.5 text-[10px] font-medium',
+                            selected
+                              ? 'bg-primary text-primary-foreground'
+                              : 'bg-muted text-muted-foreground',
+                          )}
+                        >
+                          {tier.badge}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+                        {tier.summary}
+                      </p>
+                    </div>
+                    <p className="mt-2.5 border-t border-border/50 pt-2 font-mono text-[10px] leading-relaxed text-foreground/80">
+                      Gates: {tier.examples}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
           {/* Card 3: Generation Limits, Security & Browser Automation Ports */}
           <section className="rounded-2xl border border-border/70 bg-card/60 p-5 shadow-xs">
             <div className="mb-4 flex items-center gap-2.5 border-b border-border/40 pb-3">
@@ -242,8 +311,8 @@ export const AgentSettingsTab: React.FC<AgentSettingsTabProps> = ({
                 onChange={(value) => onFieldChange('tool_output_limit', value)}
               />
               <CustomSelect
-                label="Security Guard Mode"
-                value={String(form.security_mode ?? settings.security_mode)}
+                label="Ask Permission Level"
+                value={normalizeSecurityMode(form.security_mode ?? settings.security_mode)}
                 onChange={(value) => onFieldChange('security_mode', value)}
                 options={securityModeOptions}
               />

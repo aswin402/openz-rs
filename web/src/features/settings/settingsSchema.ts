@@ -19,6 +19,56 @@ export interface SelectOption {
   label: string;
 }
 
+export type SecurityPermissionMode = 'low' | 'medium' | 'high';
+
+export function normalizeSecurityMode(raw: unknown): SecurityPermissionMode {
+  const normalized = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  if (normalized === 'high' || normalized === 'strict') return 'high';
+  if (normalized === 'medium' || normalized === 'normal') return 'medium';
+  return 'low';
+}
+
+export const DEFAULT_SECURITY_MODE_OPTIONS: SelectOption[] = [
+  { value: 'low', label: 'Low — High-Risk Only (Default)' },
+  { value: 'medium', label: 'Medium — High + Moderate Risk' },
+  { value: 'high', label: 'High — Strict (Ask on Edits & Writes)' },
+];
+
+export interface PermissionTierDescriptor {
+  value: SecurityPermissionMode;
+  title: string;
+  badge: string;
+  summary: string;
+  examples: string;
+}
+
+export const PERMISSION_TIER_DESCRIPTORS: readonly PermissionTierDescriptor[] = [
+  {
+    value: 'low',
+    title: 'Low',
+    badge: 'Default • Freedom + Secure',
+    summary:
+      'Runs workspace file edits, builds, searches, and local commits freely; asks permission only for genuinely high-risk actions.',
+    examples: 'rm / rm -rf, sudo / chmod, shutdown / reboot, | sh, db_write, secrets, external paths',
+  },
+  {
+    value: 'medium',
+    title: 'Medium',
+    badge: 'Balanced',
+    summary:
+      'Low rules plus approval before pushing externally, downloading via shell, installing packages, or deleting state.',
+    examples: 'Low + git push, curl / wget / scp, pip / cargo install, kill, cargo clean, remote PRs',
+  },
+  {
+    value: 'high',
+    title: 'High',
+    badge: 'Strict',
+    summary:
+      'Medium rules plus approval before every workspace file write, patch, media/document write, and local Git mutation.',
+    examples: 'Medium + write_file, patch_file, replace_lines, git commit, opendoc / openmedia writes',
+  },
+];
+
 export interface SelectGroup {
   label: string;
   options: SelectOption[];
@@ -42,7 +92,7 @@ const AGENT_SETTING_FIELDS: readonly AgentSettingFieldDescriptor[] = [
   { key: 'max_messages', kind: 'number' },
   { key: 'max_tool_iterations', kind: 'number' },
   { key: 'tool_timeout_secs', kind: 'number' },
-  { key: 'security_mode', kind: 'string' },
+  { key: 'security_mode', kind: 'string', fallback: 'low' },
   { key: 'workspace', kind: 'string' },
   { key: 'context_limit', kind: 'nullable_number', fallback: '' },
   { key: 'tool_output_limit', kind: 'nullable_number', fallback: '' },
@@ -56,7 +106,10 @@ export function settingsToForm(settings: AgentDefaultsConfig): SettingsForm {
   const form: SettingsForm = {};
   for (const field of AGENT_SETTING_FIELDS) {
     const raw = settings[field.key];
-    form[field.key] = (raw ?? field.fallback ?? '') as string | number | boolean;
+    form[field.key] =
+      field.key === 'security_mode'
+        ? normalizeSecurityMode(raw ?? field.fallback)
+        : ((raw ?? field.fallback ?? '') as string | number | boolean);
   }
   return form;
 }
@@ -68,6 +121,9 @@ function isFieldChanged(
 ): boolean {
   const formValue = form[field.key];
   const currentValue = settings[field.key];
+  if (field.key === 'security_mode') {
+    return normalizeSecurityMode(formValue) !== normalizeSecurityMode(currentValue);
+  }
   if (field.kind === 'number') {
     return Number(formValue) !== currentValue;
   }

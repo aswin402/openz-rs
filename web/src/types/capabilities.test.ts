@@ -5,7 +5,7 @@ test('normalizes missing or malformed capability payloads to safe defaults', () 
   const capabilities = normalizeWebUiCapabilities({
     version: 'old',
     providers: [{ name: 'anthropic', configKey: 'anthropic', display: 'Anthropic' }],
-    securityModes: [{ value: 'normal', label: 'Normal' }],
+    securityModes: [{ value: 'low', label: 'Low — High-Risk Only (Default)' }],
     channels: [{
       name: 'whatsapp',
       label: 'WhatsApp',
@@ -30,7 +30,9 @@ test('normalizes missing or malformed capability payloads to safe defaults', () 
     available: false,
     apiBaseEditable: false,
   }]);
-  expect(capabilities.securityModes).toEqual([{ value: 'normal', label: 'Normal' }]);
+  expect(capabilities.securityModes).toEqual([
+    { value: 'low', label: 'Low — High-Risk Only (Default)' },
+  ]);
   expect(capabilities.channels[0]?.defaults.webhook_port).toBe(8090);
   expect(capabilities.browser).toEqual({
     firefoxWebdriverPort: 0,

@@ -238,7 +238,7 @@ fn default_tool_timeout_secs() -> u64 {
 }
 
 fn default_security_mode() -> String {
-    "normal".to_string()
+    "low".to_string()
 }
 
 fn default_caveman_mode() -> bool {
@@ -710,6 +710,22 @@ pub struct UiSettingsConfig {
     pub email: Option<UiProfileSettings>,
     #[serde(flatten)]
     pub others: HashMap<String, UiProfileSettings>,
+}
+
+impl UiSettingsConfig {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut UiProfileSettings> {
+        [
+            self.tui.as_mut(),
+            self.webui.as_mut(),
+            self.telegram.as_mut(),
+            self.discord.as_mut(),
+            self.whatsapp.as_mut(),
+            self.email.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        .chain(self.others.values_mut())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

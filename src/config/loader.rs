@@ -384,6 +384,21 @@ const REMOVED_MCP_SERVERS: &[&str] = &[
     "sediment",
 ];
 
+fn migrate_security_mode_value(mode: &mut String) -> bool {
+    let migrated = match mode.trim().to_ascii_lowercase().as_str() {
+        "strict" => Some("high"),
+        "normal" | "loose" | "" => Some("low"),
+        _ => None,
+    };
+    match migrated {
+        Some(next) => {
+            *mode = next.to_string();
+            true
+        }
+        None => false,
+    }
+}
+
 pub fn migrate_config(config: &mut Config) -> bool {
     let removed_any = REMOVED_MCP_SERVERS
         .iter()
@@ -398,7 +413,16 @@ pub fn migrate_config(config: &mut Config) -> bool {
         })
         .is_some();
 
-    removed_any || timeout_migrated
+    let default_sec_migrated = migrate_security_mode_value(&mut config.agents.defaults.security_mode);
+    let profiles_sec_migrated = config.ui_settings.iter_mut().fold(false, |acc, profile| {
+        let changed = match profile.security_mode.as_mut() {
+            Some(mode) => migrate_security_mode_value(mode),
+            None => false,
+        };
+        changed || acc
+    });
+
+    removed_any || timeout_migrated || default_sec_migrated || profiles_sec_migrated
 }
 
 struct ConfigCache {

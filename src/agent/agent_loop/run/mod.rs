@@ -679,7 +679,12 @@ async fn dispatch_tool_call(
                     crate::tools::resource_policy::ToolResourceDecision::RequireApproval {
                         reason,
                     } => {
-                        let approved = match approval.approval_requested {
+                        let already_cleared_by_guard = approval.approval_requested
+                            || (reason == "high risk tool requires approval"
+                                && crate::agent::security::SecurityGuard::has_granular_argument_policy(
+                                    &call.name,
+                                ));
+                        let approved = match already_cleared_by_guard {
                             true => true,
                             false => crate::agent::security::ask_approval(
                                 ctx.session_key,

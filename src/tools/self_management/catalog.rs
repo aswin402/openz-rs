@@ -315,7 +315,19 @@ impl ToolCatalogTool {
                     let decision = crate::tools::resource_policy::ToolResourcePolicy::evaluate(
                         &metadata, defaults, runtime,
                     );
-                    match decision {
+                    let effective_decision = match &decision {
+                        crate::tools::resource_policy::ToolResourceDecision::RequireApproval {
+                            reason,
+                        } => match reason == "high risk tool requires approval"
+                            && crate::agent::security::SecurityGuard::has_granular_argument_policy(
+                                &canonical_name,
+                            ) {
+                            true => crate::tools::resource_policy::ToolResourceDecision::Allow,
+                            false => decision,
+                        },
+                        _ => decision,
+                    };
+                    match effective_decision {
                         crate::tools::resource_policy::ToolResourceDecision::Block { reason } => (
                             None,
                             serde_json::json!({

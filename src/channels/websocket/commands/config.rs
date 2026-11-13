@@ -364,7 +364,11 @@ fn apply_webui_profile_update(
         None => {}
     }
     match defaults.get("security_mode").and_then(Value::as_str) {
-        Some(value) => profile.security_mode = Some(value.to_string()),
+        Some(value) => {
+            let normalized =
+                crate::agent::security::SecurityGuard::normalize_security_mode(value).to_string();
+            profile.security_mode = Some(normalized);
+        }
         None => {}
     }
     match defaults.get("bot_name").and_then(Value::as_str) {

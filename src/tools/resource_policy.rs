@@ -155,6 +155,10 @@ impl ToolResourcePolicy {
         defaults: &AgentDefaults,
         runtime: &RuntimeResourceSnapshot,
     ) -> ToolResourceDecision {
+        let normalized_mode = crate::agent::security::SecurityGuard::normalize_security_mode(
+            &defaults.security_mode,
+        );
+        let is_high_mode = normalized_mode == "high";
         let network_blocked = metadata.uses_network && !defaults.allow_network_tools;
         let low_disk = metadata
             .writes_disk
@@ -163,7 +167,8 @@ impl ToolResourcePolicy {
             .filter(|free_disk_gb| *free_disk_gb < defaults.min_free_disk_gb);
         let process_limit_reached = metadata.spawns_process
             && runtime.active_process_tools >= defaults.max_concurrent_process_tools;
-        let expensive_approval = defaults.warn_before_expensive_tools
+        let expensive_approval = is_high_mode
+            && defaults.warn_before_expensive_tools
             && metadata.uses_network
             && (metadata.writes_disk || metadata.spawns_process);
 
@@ -172,7 +177,7 @@ impl ToolResourcePolicy {
             low_disk,
             process_limit_reached,
             metadata.requires_conservative_approval(),
-            metadata.requires_risk_approval(),
+            is_high_mode && metadata.requires_risk_approval(),
             expensive_approval,
         ) {
             (true, _, _, _, _, _) => ToolResourceDecision::Block {

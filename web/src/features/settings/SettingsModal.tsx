@@ -22,6 +22,7 @@ import type { JsonObject } from '../../types';
 import { resolveProviderDescriptors } from '../../config/providers';
 import {
   buildDefaultsPatch,
+  DEFAULT_SECURITY_MODE_OPTIONS,
   hasDefaultsChanged,
   jsonObjectToChannels,
   jsonObjectToProviders,
@@ -300,9 +301,7 @@ export const SettingsModal: React.FC = () => {
   const securityModeOptions =
     capabilities.securityModes.length > 0
       ? capabilities.securityModes
-      : settings?.security_mode
-        ? [{ value: settings.security_mode, label: settings.security_mode }]
-        : [];
+      : DEFAULT_SECURITY_MODE_OPTIONS;
 
   const currentMeta =
     NAV_SECTIONS.find((s) => s.id === activeSection) ?? NAV_SECTIONS[0];
