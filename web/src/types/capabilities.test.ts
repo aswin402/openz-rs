@@ -6,6 +6,7 @@ test('normalizes missing or malformed capability payloads to safe defaults', () 
     version: 'old',
     providers: [{ name: 'anthropic', configKey: 'anthropic', display: 'Anthropic' }],
     securityModes: [{ value: 'low', label: 'Low — High-Risk Only (Default)' }],
+    toolRoutingModes: [{ value: 'adaptive', label: 'Adaptive — Auto Model-Aware (Default)' }],
     channels: [{
       name: 'whatsapp',
       label: 'WhatsApp',
@@ -33,6 +34,9 @@ test('normalizes missing or malformed capability payloads to safe defaults', () 
   expect(capabilities.securityModes).toEqual([
     { value: 'low', label: 'Low — High-Risk Only (Default)' },
   ]);
+  expect(capabilities.toolRoutingModes).toEqual([
+    { value: 'adaptive', label: 'Adaptive — Auto Model-Aware (Default)' },
+  ]);
   expect(capabilities.channels[0]?.defaults.webhook_port).toBe(8090);
   expect(capabilities.browser).toEqual({
     firefoxWebdriverPort: 0,
@@ -49,6 +53,7 @@ test('normalizes absent capabilities without leaving undefined nested fields', (
   expect(capabilities.version).toBe(0);
   expect(capabilities.providers).toEqual([]);
   expect(capabilities.securityModes).toEqual([]);
+  expect(capabilities.toolRoutingModes).toEqual([]);
   expect(capabilities.channels).toEqual([]);
   expect(capabilities.browser).toEqual({
     firefoxWebdriverPort: 0,

@@ -2,10 +2,13 @@ import { describe, expect, it } from 'bun:test';
 import {
   buildDefaultsPatch,
   DEFAULT_SECURITY_MODE_OPTIONS,
+  DEFAULT_TOOL_ROUTING_MODE_OPTIONS,
   hasDefaultsChanged,
   normalizeSecurityMode,
+  normalizeToolRoutingMode,
   PERMISSION_TIER_DESCRIPTORS,
   settingsToForm,
+  TOOL_ROUTING_MODE_DESCRIPTORS,
 } from './settingsSchema';
 import type { AgentDefaultsConfig } from '../../types';
 
@@ -57,5 +60,36 @@ describe('settingsSchema Ask Permission tiers', () => {
     const mediumForm = { ...form, security_mode: 'medium' };
     expect(hasDefaultsChanged(mediumForm, SAMPLE_SETTINGS)).toBe(true);
     expect(buildDefaultsPatch(mediumForm, SAMPLE_SETTINGS)).toEqual({ security_mode: 'medium' });
+  });
+
+  it('normalizes and patches tool_routing_mode across adaptive, minimal, balanced, and expanded', () => {
+    expect(normalizeToolRoutingMode('adaptive')).toBe('adaptive');
+    expect(normalizeToolRoutingMode('pi')).toBe('minimal');
+    expect(normalizeToolRoutingMode('lean')).toBe('minimal');
+    expect(normalizeToolRoutingMode('balanced')).toBe('balanced');
+    expect(normalizeToolRoutingMode('expanded')).toBe('expanded');
+    expect(normalizeToolRoutingMode(undefined)).toBe('adaptive');
+    expect(DEFAULT_TOOL_ROUTING_MODE_OPTIONS.map((opt) => opt.value)).toEqual([
+      'adaptive',
+      'minimal',
+      'balanced',
+      'expanded',
+    ]);
+    expect(TOOL_ROUTING_MODE_DESCRIPTORS.map((desc) => desc.value)).toEqual([
+      'adaptive',
+      'minimal',
+      'balanced',
+      'expanded',
+    ]);
+
+    const form = settingsToForm(SAMPLE_SETTINGS);
+    expect(form.tool_routing_mode).toBe('adaptive');
+    expect(hasDefaultsChanged(form, SAMPLE_SETTINGS)).toBe(false);
+
+    const minimalForm = { ...form, tool_routing_mode: 'minimal' };
+    expect(hasDefaultsChanged(minimalForm, SAMPLE_SETTINGS)).toBe(true);
+    expect(buildDefaultsPatch(minimalForm, SAMPLE_SETTINGS)).toEqual({
+      tool_routing_mode: 'minimal',
+    });
   });
 });

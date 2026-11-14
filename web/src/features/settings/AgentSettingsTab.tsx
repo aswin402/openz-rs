@@ -17,7 +17,9 @@ import type { AgentDefaultsConfig, OpenZConfigPatch } from '../../types';
 import { CustomSelect, NumberInput } from './CustomSelect';
 import {
   normalizeSecurityMode,
+  normalizeToolRoutingMode,
   PERMISSION_TIER_DESCRIPTORS,
+  TOOL_ROUTING_MODE_DESCRIPTORS,
   type SelectGroup,
   type SelectOption,
   type SettingsForm,
@@ -32,6 +34,7 @@ export interface AgentSettingsTabProps {
   modelGroups: SelectGroup[];
   providerOptions: SelectOption[];
   securityModeOptions: SelectOption[];
+  toolRoutingModeOptions: SelectOption[];
   onUrlChange: (value: string) => void;
   onTokenChange: (value: string) => void;
   onFieldChange: (key: string, value: string | number | boolean) => void;
@@ -46,6 +49,7 @@ export const AgentSettingsTab: React.FC<AgentSettingsTabProps> = ({
   modelGroups,
   providerOptions,
   securityModeOptions,
+  toolRoutingModeOptions,
   onUrlChange,
   onTokenChange,
   onFieldChange,
@@ -239,6 +243,68 @@ export const AgentSettingsTab: React.FC<AgentSettingsTabProps> = ({
             </div>
           </section>
 
+          {/* Card 2.75: Dynamic JIT Tool Router Mode */}
+          <section className="rounded-2xl border border-border/70 bg-card/60 p-5 shadow-xs">
+            <div className="mb-4 flex items-center gap-2.5 border-b border-border/40 pb-3">
+              <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/15 text-primary">
+                <Zap className="h-4 w-4" />
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold text-foreground">
+                  Dynamic JIT Tool Router (Adaptive / Minimal / Balanced / Expanded)
+                </h3>
+                <p className="text-[11px] text-muted-foreground">
+                  Controls how OpenZ scopes its 240 native tools per turn, preserving LLM KV prompt caches via monotonic append-only expansion while discovering long-tail tools through tool_catalog.
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-4">
+              {TOOL_ROUTING_MODE_DESCRIPTORS.map((descriptor) => {
+                const activeRoutingMode = normalizeToolRoutingMode(
+                  form.tool_routing_mode ?? settings.tool_routing_mode,
+                );
+                const selected = activeRoutingMode === descriptor.value;
+                return (
+                  <button
+                    key={descriptor.value}
+                    type="button"
+                    onClick={() => onFieldChange('tool_routing_mode', descriptor.value)}
+                    aria-pressed={selected}
+                    className={cn(
+                      'flex flex-col justify-between rounded-xl border p-3.5 text-left transition-all',
+                      selected
+                        ? 'border-primary bg-primary/10 shadow-xs'
+                        : 'border-border/70 bg-background/50 hover:border-border hover:bg-muted/30',
+                    )}
+                  >
+                    <div>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-xs font-bold text-foreground">{descriptor.title}</span>
+                        <span
+                          className={cn(
+                            'rounded-full px-2 py-0.5 text-[10px] font-medium',
+                            selected
+                              ? 'bg-primary text-primary-foreground'
+                              : 'bg-muted text-muted-foreground',
+                          )}
+                        >
+                          {descriptor.badge}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+                        {descriptor.summary}
+                      </p>
+                    </div>
+                    <p className="mt-2.5 border-t border-border/50 pt-2 font-mono text-[10px] leading-relaxed text-foreground/80">
+                      {descriptor.budget}
+                    </p>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
           {/* Card 3: Generation Limits, Security & Browser Automation Ports */}
           <section className="rounded-2xl border border-border/70 bg-card/60 p-5 shadow-xs">
             <div className="mb-4 flex items-center gap-2.5 border-b border-border/40 pb-3">
@@ -315,6 +381,14 @@ export const AgentSettingsTab: React.FC<AgentSettingsTabProps> = ({
                 value={normalizeSecurityMode(form.security_mode ?? settings.security_mode)}
                 onChange={(value) => onFieldChange('security_mode', value)}
                 options={securityModeOptions}
+              />
+              <CustomSelect
+                label="Tool Router Mode"
+                value={normalizeToolRoutingMode(
+                  form.tool_routing_mode ?? settings.tool_routing_mode,
+                )}
+                onChange={(value) => onFieldChange('tool_routing_mode', value)}
+                options={toolRoutingModeOptions}
               />
               <CustomSelect
                 label="Gateway Theme Mode"

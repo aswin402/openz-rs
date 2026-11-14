@@ -35,6 +35,21 @@ pub fn model_name_suggests_strong(model: &str) -> bool {
         || (model_lc.contains("nemotron") && model_lc.contains("ultra"))
 }
 
+pub fn is_compact_tool_budget_model(model: &str) -> bool {
+    (!model_name_suggests_strong(model)) && {
+        let lowered = model.to_lowercase();
+        let tokens: Vec<&str> = lowered
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .filter(|s| !s.is_empty())
+            .collect();
+        SMALL_MODEL_KEYWORDS
+            .iter()
+            .chain(EXPERIMENTAL_MODEL_KEYWORDS.iter())
+            .chain(std::iter::once(&"free"))
+            .any(|needle| tokens.contains(needle))
+    }
+}
+
 pub fn classify_model_risk(provider: &str, model: &str) -> ModelRisk {
     let model_lc = model.trim().to_lowercase();
     let known = provider_models_by_name(provider)

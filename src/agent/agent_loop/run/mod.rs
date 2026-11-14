@@ -885,11 +885,30 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             &ctx.turn_errors,
             run.iterations,
         );
-        let tools_openai = loop_ref.tools.to_openai_format_for_prompt(&routing_prompt);
+        let routing_budgets = config
+            .agents
+            .defaults
+            .layered_tool_routing
+            .resolve_budgets(&config.agents.defaults.model);
+        let (pending_tools, _) = loop_ref.tools.current_turn_scope();
+        let explicit_mount_set: std::collections::HashSet<String> =
+            pending_tools.into_iter().collect();
+        let fresh_tools_openai = loop_ref
+            .tools
+            .to_openai_format_for_prompt_with_config(&routing_prompt, Some(&config));
+        let tools_openai = run.tool_window.resolve_iteration_tools(
+            fresh_tools_openai,
+            &explicit_mount_set,
+            routing_budgets.preserve_prefix_cache,
+            routing_budgets.max_expanded_tools,
+            routing_budgets.max_provider_tools,
+        );
         let _ = (config.agents.defaults.show_tool_router_status
             && !crate::agent::style::spinner::is_silent())
         .then(|| {
-            let summary = loop_ref.tools.tool_router_status_line(&routing_prompt);
+            let summary = loop_ref
+                .tools
+                .tool_router_status_line_with_config(&routing_prompt, Some(&config));
             crate::tui_println!("{}◎ {}{}", AURA_PURPLE, summary, COLOR_RESET);
         });
 

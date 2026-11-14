@@ -217,6 +217,10 @@ struct ToolRouteCacheKey {
     pending_domains: Vec<String>,
     sticky_tools: Vec<String>,
     capability_policy: Option<crate::orchestrator::spec::CapabilityPolicy>,
+    routing_enabled: bool,
+    effective_mode: String,
+    initial_visible_tools: usize,
+    max_expanded_tools: usize,
 }
 
 #[derive(Clone)]
@@ -761,7 +765,34 @@ impl ToolRegistry {
         entries
     }
 
+    fn resolve_routing_budgets(
+        &self,
+        config_override: Option<&Config>,
+    ) -> (
+        crate::config::schema::ToolRoutingConfig,
+        crate::config::schema::ResolvedToolBudgets,
+    ) {
+        let cfg_ref = config_override.or_else(|| self.context.as_ref().map(|(cfg, _, _)| cfg));
+        let routing_cfg = cfg_ref
+            .map(|cfg| cfg.agents.defaults.layered_tool_routing.clone())
+            .unwrap_or_default();
+        let active_model = cfg_ref
+            .map(|cfg| cfg.agents.defaults.model.as_str())
+            .unwrap_or("");
+        let budgets = routing_cfg.resolve_budgets(active_model);
+        (routing_cfg, budgets)
+    }
+
     pub fn route_for_prompt(&self, prompt: &str) -> ToolRouteAnalysis {
+        self.route_for_prompt_with_config(prompt, None)
+    }
+
+    pub fn route_for_prompt_with_config(
+        &self,
+        prompt: &str,
+        config_override: Option<&Config>,
+    ) -> ToolRouteAnalysis {
+        let (routing_cfg, budgets) = self.resolve_routing_budgets(config_override);
         let filter = self.filter_scope.lock().ok().and_then(|g| g.clone());
         let (pending_tools, pending_domains) = self.current_turn_scope();
         let sticky_tools = self.current_sticky_tools();
@@ -777,6 +808,10 @@ impl ToolRegistry {
             pending_domains,
             sticky_tools: sticky_tools.clone(),
             capability_policy,
+            routing_enabled: routing_cfg.enabled,
+            effective_mode: budgets.effective_mode.to_string(),
+            initial_visible_tools: budgets.initial_visible_tools,
+            max_expanded_tools: budgets.max_expanded_tools,
         };
         let cached = self.route_cache.lock().ok().and_then(|cache| {
             cache.as_ref().and_then(|(cached_key, cached_route)| {
@@ -788,23 +823,21 @@ impl ToolRegistry {
             None => {}
         }
 
-        let routing_cfg = self
-            .context
-            .as_ref()
-            .map(|(cfg, _, _)| cfg.agents.defaults.layered_tool_routing.clone())
-            .unwrap_or_default();
-        let max_visible = match routing_cfg.enabled {
-            true => routing_cfg.max_visible_tools,
-            false => usize::MAX,
-        };
         let intent = crate::agent::agent_loop::intent::classify_turn_intent(prompt);
-        let mut scope =
-            crate::tools::scope::ToolScopeEngine::default().decide(&intent, max_visible);
+        let mut scope = crate::tools::scope::ToolScopeEngine::default()
+            .decide(&intent, budgets.initial_visible_tools);
+        let minimal_pinned: HashSet<String> = routing_cfg
+            .always_visible_tools
+            .iter()
+            .filter(|name| name.as_str() == "tool_catalog")
+            .cloned()
+            .collect();
         let always_visible_set: HashSet<String> =
-            routing_cfg.always_visible_tools.iter().cloned().collect();
-        scope
-            .allowed_names
-            .extend(routing_cfg.always_visible_tools);
+            match (budgets.effective_mode == "minimal", !minimal_pinned.is_empty()) {
+                (true, true) => minimal_pinned,
+                _ => routing_cfg.always_visible_tools.iter().cloned().collect(),
+            };
+        scope.allowed_names.extend(always_visible_set.iter().cloned());
         let pending_scope = self
             .pending_scope
             .lock()
@@ -829,8 +862,9 @@ impl ToolRegistry {
             true => scope
                 .max_visible_tools
                 .saturating_add(pending_scope.tools.len())
-                .min(48),
-            false => scope.max_visible_tools,
+                .min(budgets.max_expanded_tools)
+                .min(budgets.max_provider_tools),
+            false => budgets.max_provider_tools,
         };
 
         let mut entries: Vec<ToolRouteEntry> = static_tools
@@ -950,15 +984,24 @@ impl ToolRegistry {
     }
 
     pub fn tool_router_status_line(&self, prompt: &str) -> String {
-        let route = self.route_for_prompt(prompt);
+        self.tool_router_status_line_with_config(prompt, None)
+    }
+
+    pub fn tool_router_status_line_with_config(
+        &self,
+        prompt: &str,
+        config_override: Option<&Config>,
+    ) -> String {
+        let (_, budgets) = self.resolve_routing_budgets(config_override);
+        let route = self.route_for_prompt_with_config(prompt, config_override);
         let total = route.entries.len();
         let domains = match route.selected_domains.is_empty() {
             true => "none".to_string(),
             false => route.selected_domains.join(", "),
         };
         format!(
-            "Tool Router selected {}/{} tools: {} · dropped {}",
-            route.selected_count, total, domains, route.dropped_count
+            "Tool Router selected {}/{} tools [mode={}]: {} · dropped {}",
+            route.selected_count, total, budgets.effective_mode, domains, route.dropped_count
         )
     }
 
@@ -980,26 +1023,28 @@ impl ToolRegistry {
     }
 
     pub fn to_openai_format_for_prompt(&self, prompt: &str) -> Vec<serde_json::Value> {
+        self.to_openai_format_for_prompt_with_config(prompt, None)
+    }
+
+    pub fn to_openai_format_for_prompt_with_config(
+        &self,
+        prompt: &str,
+        config_override: Option<&Config>,
+    ) -> Vec<serde_json::Value> {
         let filter = self.filter_scope.lock().ok().and_then(|g| g.clone());
         let static_tools = self.read_tools();
         let static_names: HashSet<String> = static_tools.keys().cloned().collect();
         drop(static_tools);
-        let routing_cfg = self
-            .context
-            .as_ref()
-            .map(|(cfg, _, _)| cfg.agents.defaults.layered_tool_routing.clone())
-            .unwrap_or_default();
-        let max_visible = match routing_cfg.enabled {
-            true => routing_cfg.max_visible_tools,
-            false => usize::MAX,
-        };
+        let (routing_cfg, budgets) = self.resolve_routing_budgets(config_override);
         let intent = crate::agent::agent_loop::intent::classify_turn_intent(prompt);
-        let scope = crate::tools::scope::ToolScopeEngine::default().decide(&intent, max_visible);
+        let scope = crate::tools::scope::ToolScopeEngine::default()
+            .decide(&intent, budgets.initial_visible_tools);
         let pending_scope = self
             .pending_scope
             .lock()
             .map(|pending| pending.clone())
             .unwrap_or_default();
+        let explicit_subagent_domain = pending_scope.domains.contains("subagent") || !routing_cfg.enabled;
         let include_subagents = scope.packs.iter().any(|pack| {
             matches!(
                 pack,
@@ -1008,17 +1053,24 @@ impl ToolRegistry {
             )
         }) || prompt_explicitly_requests_profile(prompt, "vision_agent")
             || prompt_contains_image_reference(prompt)
-            || pending_scope.domains.contains("subagent")
+            || explicit_subagent_domain
             || pending_scope.domains.contains("orchestrator")
             || pending_scope.tools.contains("vision_agent");
         let mut subagent_tools = match include_subagents {
-            true => self.dynamic_subagent_tools_for_prompt(filter.as_ref(), &static_names, prompt),
+            true => self.dynamic_subagent_tools_for_prompt(
+                filter.as_ref(),
+                &static_names,
+                prompt,
+                &pending_scope,
+                explicit_subagent_domain,
+            ),
             false => Vec::new(),
         };
-        let route = self.route_for_prompt(prompt);
+        let route = self.route_for_prompt_with_config(prompt, config_override);
         let total_tools = route.entries.len() + subagent_tools.len();
         tracing::debug!(
             total_registered = total_tools,
+            effective_mode = budgets.effective_mode,
             selected_static = route.selected_count,
             dropped_static = route.dropped_count,
             selected_domains = ?route.selected_domains,
@@ -1052,11 +1104,16 @@ impl ToolRegistry {
             let tier_b = !routing::is_core_tool(name_b);
             tier_a.cmp(&tier_b).then_with(|| name_a.cmp(name_b))
         });
+        selected.truncate(budgets.max_provider_tools);
+        let remaining_provider_slots = budgets.max_provider_tools.saturating_sub(selected.len());
         let max_subagent_slots = match routing_cfg.enabled {
-            true => routing_cfg.max_visible_tools.max(24),
-            false => 128usize.saturating_sub(selected.len()),
+            true => budgets
+                .max_subagent_tools
+                .saturating_add(pending_scope.tools.len())
+                .min(remaining_provider_slots),
+            false => remaining_provider_slots,
         };
-        subagent_tools.truncate(max_subagent_slots.min(128usize.saturating_sub(selected.len())));
+        subagent_tools.truncate(max_subagent_slots);
         selected.extend(subagent_tools);
         selected
     }
@@ -1066,6 +1123,8 @@ impl ToolRegistry {
         filter: Option<&Vec<String>>,
         static_names: &std::collections::HashSet<String>,
         prompt: &str,
+        pending_scope: &PendingToolScope,
+        explicit_subagent_domain: bool,
     ) -> Vec<serde_json::Value> {
         let active_subagent = crate::tools::subagent::ACTIVE_SUBAGENT
             .try_with(|s| s.clone())
@@ -1078,6 +1137,7 @@ impl ToolRegistry {
         let prompt_lower = prompt.to_ascii_lowercase();
         let prompt_tokens: std::collections::HashSet<String> =
             routing::tokenize(prompt).into_iter().collect();
+        let has_image_ref = prompt_contains_image_reference(prompt);
 
         let mut scored_subagent_tools: Vec<(i32, String, serde_json::Value)> = self
             .context
@@ -1109,7 +1169,7 @@ impl ToolRegistry {
                     .unwrap_or(true)
             })
             .filter(|profile| !static_names.contains(&profile.name))
-            .map(|profile| {
+            .filter_map(|profile| {
                 let name_lower = profile.name.to_ascii_lowercase();
                 let spaced = name_lower.replace('_', " ");
                 let direct_bonus = match (
@@ -1128,18 +1188,28 @@ impl ToolRegistry {
                     .iter()
                     .filter(|tok| prompt_tokens.contains(*tok))
                     .count() as i32;
-                let profile_metadata =
-                    crate::tools::subagent::subagent_tool_metadata(&profile.name);
-                let score = direct_bonus + (token_overlap * 50);
-                let schema = serde_json::json!({
-                    "type": "function",
-                    "function": {
-                        "name": profile.name,
-                        "description": format_tool_description(&profile.description, &profile_metadata),
-                        "parameters": crate::tools::subagent::delegate_profile_parameters_schema()
-                    }
-                });
-                (score, profile.name, schema)
+                let explicitly_mounted = pending_scope.tools.contains(&name_lower);
+                let vision_needed = profile.name == "vision_agent" && has_image_ref;
+                let score = direct_bonus
+                    + (token_overlap * 50)
+                    + match explicitly_mounted || vision_needed {
+                        true => 1_200,
+                        false => 0,
+                    };
+                let relevant = score > 0 || explicit_subagent_domain;
+                relevant.then(|| {
+                    let profile_metadata =
+                        crate::tools::subagent::subagent_tool_metadata(&profile.name);
+                    let schema = serde_json::json!({
+                        "type": "function",
+                        "function": {
+                            "name": profile.name,
+                            "description": format_tool_description(&profile.description, &profile_metadata),
+                            "parameters": crate::tools::subagent::delegate_profile_parameters_schema()
+                        }
+                    });
+                    (score, profile.name, schema)
+                })
             })
             .collect();
         scored_subagent_tools.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));

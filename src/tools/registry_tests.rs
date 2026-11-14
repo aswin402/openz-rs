@@ -798,4 +798,92 @@ async fn dynamic_subagent_tool_schema_includes_json_schema_timeout_and_usage_hin
     assert_eq!(props["json_schema"]["additionalProperties"], serde_json::json!(true));
 }
 
+#[tokio::test]
+async fn adaptive_mode_scales_between_minimal_compact_models_and_balanced_frontier_models() {
+    let config = Config::default();
+    let provider = Arc::new(crate::providers::openai::OpenAIProvider::new(
+        "test".to_string(),
+        "http://localhost".to_string(),
+        "test".to_string(),
+    ));
+    let sessions = SessionManager::new(
+        std::env::temp_dir().join(format!("openz_adaptive_mode_sessions_{}", uuid::Uuid::new_v4())),
+    );
+    let registry = ToolRegistry::new_with_context(config.clone(), provider.clone(), sessions.clone());
+    crate::cli::tools::register_all_tools(&registry, &config, provider, sessions).unwrap();
+
+    let mut compact_cfg = config.clone();
+    compact_cfg.agents.defaults.model = "llama-3.1-8b-instant".to_string();
+    compact_cfg.agents.defaults.layered_tool_routing.mode = "adaptive".to_string();
+    let compact_tools = registry.to_openai_format_for_prompt_with_config(
+        "Fix the bug in src/main.rs and run cargo test",
+        Some(&compact_cfg),
+    );
+    let compact_names: Vec<String> = compact_tools
+        .iter()
+        .filter_map(|t| t["function"]["name"].as_str().map(String::from))
+        .collect();
+    assert!(
+        compact_names.len() <= 8,
+        "Compact model in adaptive mode must stay within minimal budget (<= 8), got {}: {:?}",
+        compact_names.len(),
+        compact_names
+    );
+    assert!(compact_names.contains(&"read_file".to_string()));
+    assert!(compact_names.contains(&"patch_file".to_string()));
+    assert!(compact_names.contains(&"tool_catalog".to_string()));
+
+    let mut frontier_cfg = config;
+    frontier_cfg.agents.defaults.model = "anthropic/claude-3-5-sonnet".to_string();
+    frontier_cfg.agents.defaults.layered_tool_routing.mode = "adaptive".to_string();
+    let frontier_tools = registry.to_openai_format_for_prompt_with_config(
+        "Fix the bug in src/main.rs and run cargo test",
+        Some(&frontier_cfg),
+    );
+    assert!(
+        frontier_tools.len() > compact_names.len() && frontier_tools.len() <= 20,
+        "Frontier model in adaptive mode should expand to balanced budget (9..=20), got {}",
+        frontier_tools.len()
+    );
+}
+
+#[tokio::test]
+async fn disabled_routing_and_expanded_modes_respect_provider_128_tool_cap() {
+    let config = Config::default();
+    let provider = Arc::new(crate::providers::openai::OpenAIProvider::new(
+        "test".to_string(),
+        "http://localhost".to_string(),
+        "test".to_string(),
+    ));
+    let sessions = SessionManager::new(
+        std::env::temp_dir().join(format!("openz_provider_cap_sessions_{}", uuid::Uuid::new_v4())),
+    );
+    let registry = ToolRegistry::new_with_context(config.clone(), provider.clone(), sessions.clone());
+    crate::cli::tools::register_all_tools(&registry, &config, provider, sessions).unwrap();
+
+    let mut disabled_cfg = config.clone();
+    disabled_cfg.agents.defaults.layered_tool_routing.enabled = false;
+    let disabled_tools = registry.to_openai_format_for_prompt_with_config(
+        "delegate to coding_agent and inspect src/main.rs",
+        Some(&disabled_cfg),
+    );
+    assert!(
+        disabled_tools.len() <= 128,
+        "Unscoped routing must never exceed OpenAI/Groq 128-tool provider limit, got {}",
+        disabled_tools.len()
+    );
+
+    let mut expanded_cfg = config;
+    expanded_cfg.agents.defaults.layered_tool_routing.mode = "expanded".to_string();
+    let expanded_tools = registry.to_openai_format_for_prompt_with_config(
+        "Inspect src/main.rs, check git status, and run cargo test",
+        Some(&expanded_cfg),
+    );
+    assert!(
+        expanded_tools.len() > 20 && expanded_tools.len() <= 48,
+        "Expanded mode should expose wider working set (21..=48), got {}",
+        expanded_tools.len()
+    );
+}
+
 

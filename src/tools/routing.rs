@@ -401,15 +401,45 @@ pub(crate) fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
 }
 
+const PI_CORE_ACTION_BONUS: i32 = 1_450;
+const SECONDARY_PRIMITIVE_BONUS: i32 = 1_150;
+const CORE_TOOL_FALLBACK_BONUS: i32 = 750;
+
+pub(crate) fn is_pi_core_action_primitive(name: &str) -> bool {
+    matches!(
+        name,
+        "tool_catalog"
+            | "read_file"
+            | "patch_file"
+            | "write_file"
+            | "exec_command"
+            | "grep_search"
+    )
+}
+
+pub(crate) fn is_primary_agent_primitive(name: &str) -> bool {
+    is_pi_core_action_primitive(name)
+        || matches!(
+            name,
+            "find_files" | "delegate_task" | "request_tool_scope" | "openz_inventory"
+        )
+}
+
 pub(crate) fn tool_selection_score_with_bm25(
     name: &str,
     metadata: &ToolMetadata,
     selected_domains: &BTreeSet<&'static str>,
     bm25_score: f32,
 ) -> i32 {
-    let core_bonus = match is_core_tool(name) {
-        true => 1_000,
-        false => 0,
+    let core_bonus = match (
+        is_pi_core_action_primitive(name),
+        is_primary_agent_primitive(name),
+        is_core_tool(name),
+    ) {
+        (true, _, _) => PI_CORE_ACTION_BONUS,
+        (false, true, _) => SECONDARY_PRIMITIVE_BONUS,
+        (false, false, true) => CORE_TOOL_FALLBACK_BONUS,
+        (false, false, false) => 0,
     };
     let domain_bonus = match selected_domains.contains(metadata.domain) {
         true => 500,

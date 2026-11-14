@@ -297,12 +297,12 @@ impl Tool for DelegateProfileTool {
                 announce_branch: false,
             };
 
-            match run_subagent_attempt(
+            match Box::pin(run_subagent_attempt(
                 &child_agent,
                 &self.parent_provider,
                 &self.cancellation_token,
                 attempt,
-            )
+            ))
             .await
             {
                 SubagentRunOutcome::Success(val) => return Ok(val),

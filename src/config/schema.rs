@@ -73,19 +73,128 @@ pub struct ProvidersConfig {
     pub others: HashMap<String, ProviderConfig>,
 }
 
+pub const DEFAULT_TOOL_ROUTING_MODE: &str = "adaptive";
+pub const DEFAULT_MINIMAL_VISIBLE_TOOLS: usize = 8;
+pub const DEFAULT_MAX_VISIBLE_TOOLS: usize = 20;
+pub const DEFAULT_EXPANDED_VISIBLE_TOOLS: usize = 36;
+pub const DEFAULT_MAX_EXPANDED_TOOLS: usize = 48;
+pub const DEFAULT_MAX_PROVIDER_TOOLS: usize = 128;
+pub const DEFAULT_MAX_SUBAGENT_TOOLS: usize = 6;
+pub const COMPACT_MODEL_SUBAGENT_TOOLS: usize = 2;
+pub const EXPANDED_MODE_SUBAGENT_TOOLS: usize = 12;
+
+pub const TOOL_ROUTING_MODES: &[&str] = &["minimal", "adaptive", "balanced", "expanded"];
+
+const TOOL_ROUTING_MODE_ALIASES: &[(&str, &str)] = &[
+    ("minimal", "minimal"),
+    ("lean", "minimal"),
+    ("pi", "minimal"),
+    ("compact", "minimal"),
+    ("adaptive", "adaptive"),
+    ("auto", "adaptive"),
+    ("smart", "adaptive"),
+    ("balanced", "balanced"),
+    ("standard", "balanced"),
+    ("default", "balanced"),
+    ("expanded", "expanded"),
+    ("wide", "expanded"),
+    ("max", "expanded"),
+    ("full", "expanded"),
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolvedToolBudgets {
+    pub effective_mode: &'static str,
+    pub initial_visible_tools: usize,
+    pub max_expanded_tools: usize,
+    pub max_provider_tools: usize,
+    pub max_subagent_tools: usize,
+    pub preserve_prefix_cache: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ToolRoutingConfig {
     pub enabled: bool,
+    pub mode: String,
+    #[serde(alias = "minimal_visible_tools")]
+    pub minimal_visible_tools: usize,
+    #[serde(alias = "max_visible_tools")]
     pub max_visible_tools: usize,
+    #[serde(alias = "expanded_visible_tools")]
+    pub expanded_visible_tools: usize,
+    #[serde(alias = "max_expanded_tools")]
+    pub max_expanded_tools: usize,
+    #[serde(alias = "max_provider_tools")]
+    pub max_provider_tools: usize,
+    #[serde(alias = "max_subagent_tools")]
+    pub max_subagent_tools: usize,
+    #[serde(alias = "preserve_prefix_cache")]
+    pub preserve_prefix_cache: bool,
+    #[serde(alias = "always_visible_tools")]
     pub always_visible_tools: Vec<String>,
+}
+
+impl ToolRoutingConfig {
+    pub fn normalize_mode(raw: &str) -> &'static str {
+        let key = raw.trim().to_ascii_lowercase();
+        TOOL_ROUTING_MODE_ALIASES
+            .iter()
+            .find_map(|(alias, canonical)| (*alias == key).then_some(*canonical))
+            .unwrap_or(DEFAULT_TOOL_ROUTING_MODE)
+    }
+
+    pub fn resolve_budgets(&self, active_model: &str) -> ResolvedToolBudgets {
+        let provider_cap = self.max_provider_tools.clamp(1, DEFAULT_MAX_PROVIDER_TOOLS);
+        let balanced = self.max_visible_tools.clamp(1, provider_cap);
+        let minimal = self.minimal_visible_tools.clamp(1, balanced);
+        let expanded = self.expanded_visible_tools.max(balanced).clamp(1, provider_cap);
+        let expanded_cap = self.max_expanded_tools.max(balanced).clamp(1, provider_cap);
+        let base_subagents = self.max_subagent_tools.clamp(0, provider_cap);
+        let compact_subagents = COMPACT_MODEL_SUBAGENT_TOOLS.min(base_subagents);
+        let expanded_subagents = base_subagents
+            .max(EXPANDED_MODE_SUBAGENT_TOOLS)
+            .min(provider_cap);
+
+        let configured_mode = Self::normalize_mode(&self.mode);
+        let compact_model = crate::providers::risk::is_compact_tool_budget_model(active_model);
+        let effective_mode = match (self.enabled, configured_mode, compact_model) {
+            (false, _, _) => "unscoped",
+            (true, "adaptive", true) => "minimal",
+            (true, "adaptive", false) => "balanced",
+            (true, explicit, _) => explicit,
+        };
+
+        let (initial_visible_tools, max_expanded_tools, max_subagent_tools) = match effective_mode {
+            "unscoped" => (provider_cap, provider_cap, expanded_subagents),
+            "minimal" => (minimal, balanced.min(expanded_cap), compact_subagents),
+            "expanded" => (expanded, expanded_cap.max(expanded), expanded_subagents),
+            _ => (balanced, expanded_cap, base_subagents),
+        };
+
+        ResolvedToolBudgets {
+            effective_mode,
+            initial_visible_tools,
+            max_expanded_tools,
+            max_provider_tools: provider_cap,
+            max_subagent_tools,
+            preserve_prefix_cache: self.preserve_prefix_cache,
+        }
+    }
 }
 
 impl Default for ToolRoutingConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            max_visible_tools: 20,
+            mode: DEFAULT_TOOL_ROUTING_MODE.to_string(),
+            minimal_visible_tools: DEFAULT_MINIMAL_VISIBLE_TOOLS,
+            max_visible_tools: DEFAULT_MAX_VISIBLE_TOOLS,
+            expanded_visible_tools: DEFAULT_EXPANDED_VISIBLE_TOOLS,
+            max_expanded_tools: DEFAULT_MAX_EXPANDED_TOOLS,
+            max_provider_tools: DEFAULT_MAX_PROVIDER_TOOLS,
+            max_subagent_tools: DEFAULT_MAX_SUBAGENT_TOOLS,
+            preserve_prefix_cache: true,
             always_visible_tools: vec![
                 "request_tool_scope".to_string(),
                 "tool_catalog".to_string(),
@@ -662,6 +771,8 @@ pub struct UiProfileSettings {
     pub caveman_mode: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none", alias = "security_mode")]
     pub security_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "tool_routing_mode")]
+    pub tool_routing_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", alias = "bot_name")]
     pub bot_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1352,6 +1463,13 @@ impl Config {
         }
         match profile.security_mode {
             Some(v) => defaults.security_mode = v,
+            None => {}
+        }
+        match profile.tool_routing_mode {
+            Some(v) => {
+                defaults.layered_tool_routing.mode =
+                    ToolRoutingConfig::normalize_mode(&v).to_string();
+            }
             None => {}
         }
         match profile.bot_name {

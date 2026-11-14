@@ -786,6 +786,27 @@ impl SecurityGuard {
         }
     }
 
+    fn any_target_path_unsafe(arguments: &Value) -> bool {
+        const BATCH_PATH_ARRAY_KEYS: &[&str] = &["files", "patches", "operations"];
+        let top_unsafe = Self::tool_path_arg(arguments)
+            .map(|path_str| !Self::is_safe_path(path_str))
+            .unwrap_or(false);
+        let nested_unsafe = BATCH_PATH_ARRAY_KEYS.iter().any(|arr_key| {
+            arguments
+                .get(*arr_key)
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items.iter().any(|item| {
+                        Self::tool_path_arg(item)
+                            .map(|path_str| !Self::is_safe_path(path_str))
+                            .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false)
+        });
+        top_unsafe || nested_unsafe
+    }
+
     fn tool_has_unsafe_target_path(
         tool_name: &str,
         arguments: &Value,
@@ -807,10 +828,7 @@ impl SecurityGuard {
                 })
                 .unwrap_or(false),
             _ => (Self::path_edit_label(tool_name).is_some() || writes_disk)
-                .then(|| Self::tool_path_arg(arguments))
-                .flatten()
-                .map(|path_str| !Self::is_safe_path(path_str))
-                .unwrap_or(false),
+                && Self::any_target_path_unsafe(arguments),
         }
     }
 

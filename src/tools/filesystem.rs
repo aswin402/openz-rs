@@ -514,8 +514,8 @@ struct WriteFileArgs {
     content: String,
 }
 
-#[derive(Deserialize)]
-struct PatchFileArgs {
+#[derive(Deserialize, Clone)]
+struct PatchFileEntry {
     #[serde(
         alias = "file_path",
         alias = "filePath",
@@ -553,6 +553,50 @@ struct PatchFileArgs {
     replacement: Option<String>,
     #[serde(default)]
     edits: Option<Vec<SearchReplaceEdit>>,
+}
+
+#[derive(Deserialize)]
+struct PatchFileArgs {
+    #[serde(
+        default,
+        alias = "file_path",
+        alias = "filePath",
+        alias = "target_file",
+        alias = "targetFile",
+        alias = "file"
+    )]
+    path: Option<String>,
+    #[serde(
+        default,
+        alias = "diff",
+        alias = "unified_diff",
+        alias = "unifiedDiff",
+        alias = "content"
+    )]
+    patch: Option<String>,
+    #[serde(
+        default,
+        alias = "old_text",
+        alias = "oldText",
+        alias = "old_str",
+        alias = "oldStr",
+        alias = "search",
+        alias = "find"
+    )]
+    target: Option<String>,
+    #[serde(
+        default,
+        alias = "new_text",
+        alias = "newText",
+        alias = "new_str",
+        alias = "newStr",
+        alias = "replace"
+    )]
+    replacement: Option<String>,
+    #[serde(default)]
+    edits: Option<Vec<SearchReplaceEdit>>,
+    #[serde(default, alias = "patches", alias = "operations")]
+    files: Option<Vec<PatchFileEntry>>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -1263,6 +1307,80 @@ impl Tool for ListDirTool {
     }
 }
 
+fn compute_patched_file_content(
+    content: &str,
+    entry: &PatchFileEntry,
+) -> Result<(String, &'static str)> {
+    let mut search_replace_edits: Vec<SearchReplaceEdit> = entry.edits.clone().unwrap_or_default();
+    let _ = entry
+        .target
+        .clone()
+        .zip(entry.replacement.clone())
+        .map(|(target, replacement)| {
+            search_replace_edits.push(SearchReplaceEdit {
+                target,
+                replacement,
+            })
+        });
+    let _ = entry
+        .patch
+        .as_deref()
+        .map(parse_conflict_marker_edits)
+        .filter(|parsed| !parsed.is_empty())
+        .map(|parsed| search_replace_edits.extend(parsed));
+
+    match (!search_replace_edits.is_empty(), entry.patch.as_deref()) {
+        (true, _) => {
+            let updated = search_replace_edits
+                .iter()
+                .try_fold(content.to_string(), |acc, edit| {
+                    apply_single_search_replace(&acc, edit)
+                })?;
+            Ok((updated, "search_replace"))
+        }
+        (false, Some(patch_str)) => {
+            let exact_attempt = diffy::Patch::from_str(patch_str)
+                .map_err(|e| anyhow!("Failed to parse patch: {}", e))
+                .and_then(|parsed| {
+                    diffy::apply(content, &parsed)
+                        .map_err(|e| anyhow!("Failed to apply patch: {}", e))
+                });
+            match exact_attempt {
+                Ok(applied) => Ok((applied, "exact_diff")),
+                Err(exact_err) => apply_fuzzy_unified_diff(content, patch_str)
+                    .map(|applied| (applied, "fuzzy_diff"))
+                    .map_err(|_| exact_err),
+            }
+        }
+        (false, None) => Err(anyhow!(
+            "patch_file requires either 'patch' (unified diff) or 'target'+'replacement' / 'edits'"
+        )),
+    }
+}
+
+fn summarize_patched_file(
+    path: &std::path::Path,
+    original_content: &str,
+    patched_content: &str,
+    mode: &str,
+) -> serde_json::Value {
+    let (changed_start, changed_end) = changed_line_bounds(original_content, patched_content);
+    let patched_lines: Vec<String> = patched_content.lines().map(str::to_string).collect();
+    let updated_window = format_hashline_window(&patched_lines, changed_start, changed_end, 8, 48);
+    let diagnostics = compute_structural_diagnostics(patched_content);
+
+    serde_json::json!({
+        "status": "success",
+        "mode": mode,
+        "path": path.to_string_lossy(),
+        "applied_start_line": changed_start + 1,
+        "applied_end_line": changed_end,
+        "new_line_count": patched_lines.len(),
+        "updated_window": updated_window,
+        "diagnostics": diagnostics
+    })
+}
+
 pub struct PatchFileTool;
 
 #[async_trait::async_trait]
@@ -1272,14 +1390,14 @@ impl Tool for PatchFileTool {
     }
 
     fn description(&self) -> &str {
-        "Apply a unified diff patch (exact or fuzzy whitespace-tolerant) or search-and-replace blocks to a file without rewriting it entirely."
+        "Apply unified diff patches (exact or fuzzy whitespace-tolerant) or search-and-replace blocks to a single file ('path') or atomically across multiple files ('files') without rewriting entire files."
     }
 
     fn parameters(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "description": "Absolute or relative path to the file to modify. Aliases accepted: file_path, filePath." },
+                "path": { "type": "string", "description": "Absolute or relative path to modify in single-file mode. Aliases: file_path, filePath." },
                 "patch": { "type": "string", "description": "Unified diff patch content or SEARCH/REPLACE conflict blocks to apply." },
                 "target": { "type": "string", "description": "Optional search block to find when using direct search-and-replace mode. Aliases: old_text, search." },
                 "replacement": { "type": "string", "description": "Optional replacement text when using direct search-and-replace mode. Aliases: new_text, replace." },
@@ -1294,81 +1412,160 @@ impl Tool for PatchFileTool {
                         },
                         "required": ["target", "replacement"]
                     }
+                },
+                "files": {
+                    "type": "array",
+                    "description": "Optional atomic multi-file patch batch [{path, patch?, target?, replacement?, edits?}]. Pre-validates all hunks in memory before writing any file.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": { "type": "string" },
+                            "patch": { "type": "string" },
+                            "target": { "type": "string" },
+                            "replacement": { "type": "string" },
+                            "edits": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "target": { "type": "string" },
+                                        "replacement": { "type": "string" }
+                                    },
+                                    "required": ["target", "replacement"]
+                                }
+                            }
+                        },
+                        "required": ["path"]
+                    }
                 }
-            },
-            "required": ["path"]
+            }
         })
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let collapsed = collapse_alias_groups(arguments, PATCH_FILE_GROUPS);
+        let mut collapsed = collapse_alias_groups(arguments, PATCH_FILE_GROUPS);
+        for batch_key in ["files", "patches", "operations"] {
+            let normalized_items = collapsed
+                .get(batch_key)
+                .and_then(|v| v.as_array())
+                .map(|items| {
+                    items
+                        .iter()
+                        .map(|item| collapse_alias_groups(item, PATCH_FILE_GROUPS))
+                        .collect::<Vec<_>>()
+                });
+            let _ = normalized_items.map(|items| {
+                collapsed[batch_key] = serde_json::Value::Array(items);
+            });
+        }
         let args: PatchFileArgs = serde_json::from_value(collapsed)
             .map_err(|e| anyhow!("Invalid patch_file arguments: {}", e))?;
 
-        let path = resolve_path(&args.path);
-        crate::config::loader::verify_safe_path(&path)?;
-        let _file_mutation_guard = acquire_file_mutation_lock(&path).await;
-
-        let content = fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read file at {:?}", path))?;
-
-        let mut search_replace_edits: Vec<SearchReplaceEdit> = args.edits.unwrap_or_default();
-        args.target
-            .zip(args.replacement)
-            .map(|(target, replacement)| {
-                search_replace_edits.push(SearchReplaceEdit { target, replacement })
-            });
-        args.patch
-            .as_deref()
-            .map(parse_conflict_marker_edits)
-            .filter(|parsed| !parsed.is_empty())
-            .map(|parsed| search_replace_edits.extend(parsed));
-
-        let (patched_content, mode) = match (!search_replace_edits.is_empty(), args.patch.as_deref()) {
-            (true, _) => {
-                let updated = search_replace_edits
-                    .iter()
-                    .try_fold(content.clone(), |acc, edit| apply_single_search_replace(&acc, edit))?;
-                Ok((updated, "search_replace"))
-            }
-            (false, Some(patch_str)) => {
-                let exact_attempt = diffy::Patch::from_str(patch_str)
-                    .map_err(|e| anyhow!("Failed to parse patch: {}", e))
-                    .and_then(|parsed| {
-                        diffy::apply(&content, &parsed)
-                            .map_err(|e| anyhow!("Failed to apply patch: {}", e))
-                    });
-                match exact_attempt {
-                    Ok(applied) => Ok((applied, "exact_diff")),
-                    Err(exact_err) => apply_fuzzy_unified_diff(&content, patch_str)
-                        .map(|applied| (applied, "fuzzy_diff"))
-                        .map_err(|_| exact_err),
+        match args.files.filter(|items| !items.is_empty()) {
+            Some(entries) => {
+                let mut resolved_entries: Vec<(std::path::PathBuf, PatchFileEntry)> =
+                    Vec::with_capacity(entries.len());
+                let mut ordered_lock_targets: std::collections::BTreeMap<
+                    std::path::PathBuf,
+                    std::path::PathBuf,
+                > = std::collections::BTreeMap::new();
+                for entry in entries {
+                    let resolved = resolve_path(&entry.path);
+                    crate::config::loader::verify_safe_path(&resolved)?;
+                    let lock_key = normalized_file_lock_key(&resolved);
+                    ordered_lock_targets
+                        .entry(lock_key)
+                        .or_insert_with(|| resolved.clone());
+                    resolved_entries.push((resolved, entry));
                 }
+
+                let mut _guards = Vec::with_capacity(ordered_lock_targets.len());
+                for (_, lock_path) in &ordered_lock_targets {
+                    _guards.push(acquire_file_mutation_lock(lock_path).await);
+                }
+
+                // Stage (original_content, current_content, last_mode, display_path) in memory
+                // so a failure on file K leaves files 0..K-1 completely untouched on disk.
+                let mut staged_order: Vec<std::path::PathBuf> = Vec::new();
+                let mut staged_files: std::collections::HashMap<
+                    std::path::PathBuf,
+                    (String, String, &'static str, std::path::PathBuf),
+                > = std::collections::HashMap::new();
+
+                for (resolved_path, entry) in &resolved_entries {
+                    let key = normalized_file_lock_key(resolved_path);
+                    let current_text = match staged_files.get(&key) {
+                        Some((_, staged_text, _, _)) => staged_text.clone(),
+                        None => {
+                            let disk_text = fs::read_to_string(resolved_path)
+                                .with_context(|| format!("Failed to read file at {:?}", resolved_path))?;
+                            staged_order.push(key.clone());
+                            staged_files.insert(
+                                key.clone(),
+                                (
+                                    disk_text.clone(),
+                                    disk_text.clone(),
+                                    "search_replace",
+                                    resolved_path.clone(),
+                                ),
+                            );
+                            disk_text
+                        }
+                    };
+                    let (next_text, applied_mode) = compute_patched_file_content(&current_text, entry)
+                        .with_context(|| format!("Failed to patch {:?}", resolved_path))?;
+                    let _ = staged_files.get_mut(&key).map(|slot| {
+                        slot.1 = next_text;
+                        slot.2 = applied_mode;
+                    });
+                }
+
+                let mut results = Vec::with_capacity(staged_order.len());
+                for key in &staged_order {
+                    match staged_files.get(key) {
+                        Some((orig, patched, mode, target_path)) => {
+                            fs::write(target_path, patched).with_context(|| {
+                                format!("Failed to write patched content to file at {:?}", target_path)
+                            })?;
+                            results.push(summarize_patched_file(target_path, orig, patched, mode));
+                        }
+                        None => {}
+                    }
+                }
+
+                Ok(serde_json::json!({
+                    "status": "success",
+                    "mode": "multi_file",
+                    "files_modified": results.len(),
+                    "results": results
+                }))
             }
-            (false, None) => Err(anyhow!(
-                "patch_file requires either 'patch' (unified diff) or 'target'+'replacement' / 'edits'"
-            )),
-        }?;
+            None => {
+                let raw_path = args.path.ok_or_else(|| {
+                    anyhow!("patch_file requires either 'path' (single file) or 'files' (multi-file batch)")
+                })?;
+                let path = resolve_path(&raw_path);
+                crate::config::loader::verify_safe_path(&path)?;
+                let _file_mutation_guard = acquire_file_mutation_lock(&path).await;
 
-        fs::write(&path, &patched_content)
-            .with_context(|| format!("Failed to write patched content to file at {:?}", path))?;
+                let content = fs::read_to_string(&path)
+                    .with_context(|| format!("Failed to read file at {:?}", path))?;
+                let single_entry = PatchFileEntry {
+                    path: raw_path,
+                    patch: args.patch,
+                    target: args.target,
+                    replacement: args.replacement,
+                    edits: args.edits,
+                };
+                let (patched_content, mode) = compute_patched_file_content(&content, &single_entry)?;
 
-        let (changed_start, changed_end) = changed_line_bounds(&content, &patched_content);
-        let patched_lines: Vec<String> = patched_content.lines().map(str::to_string).collect();
-        let updated_window =
-            format_hashline_window(&patched_lines, changed_start, changed_end, 8, 48);
-        let diagnostics = compute_structural_diagnostics(&patched_content);
+                fs::write(&path, &patched_content).with_context(|| {
+                    format!("Failed to write patched content to file at {:?}", path)
+                })?;
 
-        Ok(serde_json::json!({
-            "status": "success",
-            "mode": mode,
-            "path": path.to_string_lossy(),
-            "applied_start_line": changed_start + 1,
-            "applied_end_line": changed_end,
-            "new_line_count": patched_lines.len(),
-            "updated_window": updated_window,
-            "diagnostics": diagnostics
-        }))
+                Ok(summarize_patched_file(&path, &content, &patched_content, mode))
+            }
+        }
     }
 }
 

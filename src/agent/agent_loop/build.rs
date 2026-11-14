@@ -536,38 +536,8 @@ fn runtime_tool_discipline_rules() -> &'static str {
             - Deliverables & Artifact Storage (OpenZ Vault): When the user requests the creation of a website, web application, script, document, image, video, presentation, or dataset, write the generated files into the OpenZ Vault under the appropriate category folder (websites, scripts, images, videos, documents, presentations, data, diagrams, templates, exports). If the user asks where their creations are or how to customize the vault, explain that the vault is located at the configured path, customizable in config.json under 'vault.path' or via the OPENZ_VAULT_DIR environment variable."
 }
 
-use crate::providers::risk::model_name_suggests_strong;
-
 fn is_weak_or_risky_model(model: &str) -> bool {
-    (!model_name_suggests_strong(model)) && {
-        let m = model.to_lowercase();
-        let tokens: Vec<&str> = m
-            .split(|c: char| !c.is_ascii_alphanumeric())
-            .filter(|s| !s.is_empty())
-            .collect();
-        [
-            "1b",
-            "2b",
-            "3b",
-            "4b",
-            "6b",
-            "7b",
-            "8b",
-            "9b",
-            "small",
-            "mini",
-            "lite",
-            "free",
-            "preview",
-            "experimental",
-            "beta",
-            "pickle",
-            "mimo",
-            "hy3",
-        ]
-        .iter()
-        .any(|needle| tokens.contains(needle))
-    }
+    crate::providers::risk::is_compact_tool_budget_model(model)
 }
 
 fn weak_model_operating_rules(model: &str) -> String {
@@ -1301,9 +1271,25 @@ const TOOL_NAMESPACE_CATEGORIES: &[(&str, &str)] = &[
     ("docs_", "Local & Crates Docs Tools"),
 ];
 
+const MAX_INLINE_CORE_PREVIEW_TOOLS: usize = 24;
+const MAX_INLINE_NAMESPACE_PREVIEW_TOOLS: usize = 6;
+
+fn format_compact_tool_preview(names: &[String], max_inline: usize) -> String {
+    let overflow = names.len().saturating_sub(max_inline);
+    let shown = &names[..names.len().min(max_inline)];
+    match overflow > 0 {
+        true => format!(
+            "{}, ... (+{} more; search or mount via 'tool_catalog')",
+            shown.join(", "),
+            overflow
+        ),
+        false => shown.join(", "),
+    }
+}
+
 fn get_dynamic_tools_guideline(registry: &crate::tools::ToolRegistry) -> String {
     let tools = registry.get_static_tools();
-    let mut core_tools = Vec::new();
+    let mut core_tools: Vec<(bool, String)> = Vec::new();
     let mut grouped: Vec<Vec<String>> = vec![Vec::new(); TOOL_NAMESPACE_CATEGORIES.len()];
 
     for t in tools {
@@ -1314,26 +1300,31 @@ fn get_dynamic_tools_guideline(registry: &crate::tools::ToolRegistry) -> String 
             .position(|(prefix, _)| name.starts_with(prefix));
         match matched_idx {
             Some(idx) => grouped[idx].push(formatted),
-            None => core_tools.push(formatted),
+            None => core_tools.push((!crate::tools::routing::is_core_tool(name), formatted)),
         }
     }
 
     core_tools.sort();
+    let ordered_core: Vec<String> = core_tools.into_iter().map(|(_, f)| f).collect();
     for list in &mut grouped {
         list.sort();
     }
 
     let mut out = String::new();
     out.push_str("You have native tools for files, shell execution, and other utilities. The following tools are registered in your environment:\n");
-    let _ = (!core_tools.is_empty()).then(|| {
+    let _ = (!ordered_core.is_empty()).then(|| {
         out.push_str(&format!(
             "            - Core Tools: {}\n",
-            core_tools.join(", ")
+            format_compact_tool_preview(&ordered_core, MAX_INLINE_CORE_PREVIEW_TOOLS)
         ));
     });
     for ((_, label), list) in TOOL_NAMESPACE_CATEGORIES.iter().zip(grouped.iter()) {
         let _ = (!list.is_empty()).then(|| {
-            out.push_str(&format!("            - {}: {}\n", label, list.join(", ")));
+            out.push_str(&format!(
+                "            - {}: {}\n",
+                label,
+                format_compact_tool_preview(list, MAX_INLINE_NAMESPACE_PREVIEW_TOOLS)
+            ));
         });
     }
     out.push_str("            - MCP server integration managed via 'manage_mcp' tool.");

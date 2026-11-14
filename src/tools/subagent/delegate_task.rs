@@ -23,6 +23,14 @@ pub struct DelegateTaskTool {
     pub capability_policy: Option<CapabilityPolicy>,
 }
 
+fn normalize_profile_slug(raw: &str) -> String {
+    raw.trim()
+        .to_ascii_lowercase()
+        .chars()
+        .map(|ch| matches!(ch, '-' | ' ').then_some('_').unwrap_or(ch))
+        .collect()
+}
+
 #[async_trait::async_trait]
 impl Tool for DelegateTaskTool {
     fn name(&self) -> &str {
@@ -30,7 +38,7 @@ impl Tool for DelegateTaskTool {
     }
 
     fn description(&self) -> &str {
-        "Delegate a specific subtask or research item to a focused subagent. The subagent runs in an isolated workspace, executes tools to accomplish the goal, and returns a summary."
+        "Delegate a specific subtask or research item to a focused subagent (general-purpose or a specialist 'profile' such as planner, researcher, coding_agent, reviewer, debugger, or vision_agent). Runs in an isolated context and returns a summary."
     }
 
     fn parameters(&self) -> Value {
@@ -40,6 +48,10 @@ impl Tool for DelegateTaskTool {
                 "goal": {
                     "type": "string",
                     "description": "The specific goal/task for the subagent to accomplish. Be clear and detailed."
+                },
+                "profile": {
+                    "type": "string",
+                    "description": "Optional specialist subagent profile name (e.g., 'planner', 'researcher', 'coding_agent', 'reviewer', 'debugger', 'vision_agent'). Omit or pass 'general' for a general-purpose subagent."
                 },
                 "context": {
                     "type": "string",
@@ -64,6 +76,48 @@ impl Tool for DelegateTaskTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
+        let requested_profile = super::extract_string_arg(
+            arguments,
+            &["profile", "agent", "subagent", "subagent_type", "role"],
+        )
+        .map(|s| normalize_profile_slug(&s))
+        .filter(|slug| !slug.is_empty() && !matches!(slug.as_str(), "general" | "default" | "auto"));
+
+        match requested_profile {
+            Some(target_slug) => {
+                let profiles = crate::subagents::load_profiles()?;
+                let matched_profile = profiles
+                    .iter()
+                    .find(|p| normalize_profile_slug(&p.name) == target_slug)
+                    .cloned();
+                return match matched_profile {
+                    Some(profile) => {
+                        let profile_tool = super::DelegateProfileTool {
+                            config: self.config.clone(),
+                            parent_provider: self.parent_provider.clone(),
+                            session_manager: self.session_manager.clone(),
+                            profile,
+                            parent_tools: self.parent_tools.clone(),
+                            cancellation_token: self.cancellation_token.clone(),
+                            capability_policy: self.capability_policy.clone(),
+                        };
+                        profile_tool.call(arguments).await
+                    }
+                    None => {
+                        let mut available: Vec<String> =
+                            profiles.into_iter().map(|p| p.name).collect();
+                        available.sort();
+                        Err(anyhow!(
+                            "Unknown subagent profile '{}'. Available profiles: {}",
+                            target_slug,
+                            available.join(", ")
+                        ))
+                    }
+                };
+            }
+            None => {}
+        }
+
         crate::agent::style::spinner::IS_SILENT.scope(crate::agent::style::is_silent(), async {
         let current_depth = DELEGATION_DEPTH.try_with(|d| *d).unwrap_or(0);
         match current_depth >= 3 {
@@ -224,12 +278,12 @@ impl Tool for DelegateTaskTool {
             announce_branch: true,
         };
 
-        match run_subagent_attempt(
+        match Box::pin(run_subagent_attempt(
             &child_agent,
             &self.parent_provider,
             &self.cancellation_token,
             attempt,
-        )
+        ))
         .await
         {
             SubagentRunOutcome::Success(val) => Ok(val),

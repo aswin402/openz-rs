@@ -129,6 +129,7 @@ pub(crate) async fn config_data_event(config: &crate::config::schema::Config) ->
             "streaming": d.streaming,
             "caveman_mode": d.caveman_mode,
             "security_mode": d.security_mode,
+            "tool_routing_mode": crate::config::schema::ToolRoutingConfig::normalize_mode(&d.layered_tool_routing.mode),
             "workspace": d.workspace,
             "bot_name": d.bot_name,
             "max_messages": d.max_messages,
@@ -371,6 +372,18 @@ fn apply_webui_profile_update(
         }
         None => {}
     }
+    match defaults
+        .get("tool_routing_mode")
+        .or_else(|| defaults.get("toolRoutingMode"))
+        .and_then(Value::as_str)
+    {
+        Some(value) => {
+            let normalized =
+                crate::config::schema::ToolRoutingConfig::normalize_mode(value).to_string();
+            profile.tool_routing_mode = Some(normalized);
+        }
+        None => {}
+    }
     match defaults.get("bot_name").and_then(Value::as_str) {
         Some(value) => profile.bot_name = Some(value.to_string()),
         None => {}
@@ -609,6 +622,7 @@ pub(crate) fn config_updated_event(config: &crate::config::schema::Config) -> Va
             "streaming": defaults.streaming,
             "caveman_mode": defaults.caveman_mode,
             "security_mode": defaults.security_mode,
+            "tool_routing_mode": crate::config::schema::ToolRoutingConfig::normalize_mode(&defaults.layered_tool_routing.mode),
             "workspace": defaults.workspace,
             "bot_name": defaults.bot_name,
             "max_messages": defaults.max_messages,

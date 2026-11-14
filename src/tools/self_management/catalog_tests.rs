@@ -414,3 +414,56 @@ async fn test_tool_catalog_pipeline_variable_chaining_and_annotations() {
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[tokio::test]
+async fn test_tool_catalog_surgical_mount_avoids_broad_domain_flooding_and_supports_12_step_ptc() {
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_surgical_catalog_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let sample_file = temp_dir.join("ptc.txt");
+    std::fs::write(&sample_file, "ok\n").unwrap();
+
+    let registry = crate::tools::ToolRegistry::new();
+    registry.register(std::sync::Arc::new(crate::tools::filesystem::ReadFileTool));
+    registry.register(std::sync::Arc::new(crate::tools::filesystem::WriteFileTool));
+    registry.register(std::sync::Arc::new(crate::tools::filesystem::ListDirTool));
+    registry.register(std::sync::Arc::new(crate::tools::grep::GrepSearchTool));
+
+    let catalog = ToolCatalogTool::new(registry.clone());
+    let search_res = catalog
+        .call(&serde_json::json!({
+            "query": "read file",
+            "mount": true,
+            "mount_limit": 1,
+            "limit": 2
+        }))
+        .await
+        .unwrap();
+    assert!(search_res["tool_count"].as_u64().unwrap() <= 2);
+    assert!(search_res["total_matches"].as_u64().unwrap() >= 1);
+
+    let (mounted_tools, mounted_domains) = registry.current_turn_scope();
+    assert_eq!(mounted_tools.len(), 1);
+    assert!(
+        mounted_domains.is_empty(),
+        "Surgical query mount must not flood pending_scope.domains unless mount_domains is requested"
+    );
+
+    // Execute a 10-step (> old 8-step cap) read-only PTC batch in 1 turn
+    let steps: Vec<serde_json::Value> = (0..10)
+        .map(|idx| {
+            serde_json::json!({
+                "id": format!("step_{idx}"),
+                "tool": "read_file",
+                "arguments": { "path": sample_file.to_str().unwrap() }
+            })
+        })
+        .collect();
+    let ptc_res = catalog
+        .call(&serde_json::json!({ "batch_execute": steps }))
+        .await
+        .unwrap();
+    assert_eq!(ptc_res["batch_executed_count"].as_u64(), Some(10));
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}

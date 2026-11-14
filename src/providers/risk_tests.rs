@@ -45,3 +45,13 @@ fn model_risk_classifies_known_standard_model() {
     assert_eq!(risk.tier, "standard");
     assert!(risk.reasons.is_empty());
 }
+
+#[test]
+fn compact_tool_budget_classifier_distinguishes_compact_and_frontier_models() {
+    assert!(is_compact_tool_budget_model("llama-3.1-8b-instant"));
+    assert!(is_compact_tool_budget_model("gemini-2.5-flash-lite"));
+    assert!(is_compact_tool_budget_model("qwen-2.5-7b-free"));
+    assert!(!is_compact_tool_budget_model("anthropic/claude-3-5-sonnet"));
+    assert!(!is_compact_tool_budget_model("gpt-4o"));
+    assert!(!is_compact_tool_budget_model("deepseek-v4-flash-free"));
+}

@@ -96,6 +96,10 @@ plan/
 plans/
 docs/superpowers/
 
+# ── Local Maintainer Scripts ──────────────────────────────────────────────────
+/localinstall.sh
+/localupdate.sh
+
 # ── OS & Editor Metadata ──────────────────────────────────────────────────────
 .DS_Store
 .AppleDouble

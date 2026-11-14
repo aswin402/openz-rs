@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.324-orange.svg" alt="Version 0.0.324"/></a>
+  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.325-orange.svg" alt="Version 0.0.325"/></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.82%2B-blue.svg" alt="Rust 1.82+"/></a>
   <a href="https://tokio.rs/"><img src="https://img.shields.io/badge/runtime-tokio-purple.svg" alt="Tokio Async"/></a>
   <a href="https://github.com/aswin402/openz-rs/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-green.svg" alt="License"/></a>
@@ -88,7 +88,7 @@ Most agent frameworks require users to manually select tools, switch providers, 
 ### 1. Prerequisites & Supported Environments
 - **OS**: Linux (x86_64 / aarch64), macOS, or Windows.
 - **Rust Toolchain**: Rust **1.82+** (`cargo`, `rustc`) and Protocol Buffers compiler (`protoc` for `build.rs` gRPC compilation).
-- **Linux Fontconfig Note**: Set `RUST_FONTCONFIG_DLOPEN=1` when compiling on Linux systems without `libfontconfig1-dev` pkg-config headers (`localinstall.sh`, `localupdate.sh`, and `justfile` set this automatically).
+- **Linux Fontconfig Note**: Set `RUST_FONTCONFIG_DLOPEN=1` when compiling on Linux systems without `libfontconfig1-dev` pkg-config headers (`.cargo/config.toml` and `justfile` set this automatically).
 - **Optional**: Node.js 18+ & `npm` (to build the `web/` React/Vite WebUI bundle), `just` command runner, Chromium/Firefox for browser automation tools.
 
 ### 2. Installation & Build
@@ -107,11 +107,11 @@ The release binary will be written to `target/release/openz`.
 #### Local System Installation
 
 ```bash
-# Recommended: balanced CPU/RAM installer (also builds ~/.openz/web/dist if npm is present)
-./localinstall.sh --balanced
+# Recommended: balanced CPU/RAM global install
+RUST_FONTCONFIG_DLOPEN=1 cargo install --path . --locked --profile release-balanced -j 1
 
-# Low-resource machines (1 job, low-RAM profile, optional target/ cleanup):
-./localinstall.sh --low-resource --clean-target
+# Build & sync WebUI bundle (optional)
+cd web && npm install && npm run build && mkdir -p ~/.openz/web/dist && cp -a dist/. ~/.openz/web/dist/ && cd ..
 ```
 
 ### 3. Initial Setup & Launch

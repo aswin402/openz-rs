@@ -616,7 +616,7 @@ pub async fn execute_subagent_run(
                                 });
                                 Err(anyhow::anyhow!("Subagent task cancelled"))
                             }
-                            res = child_agent_ref.run(p_ref, c_ref) => res,
+                            res = Box::pin(child_agent_ref.run(p_ref, c_ref)) => res,
                         }
                     })
                     .await

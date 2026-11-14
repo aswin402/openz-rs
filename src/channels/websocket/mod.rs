@@ -112,6 +112,16 @@ pub(crate) fn webui_capabilities(config: &crate::config::schema::Config) -> serd
     .map(|(value, label)| serde_json::json!({ "value": value, "label": label }))
     .collect::<Vec<_>>();
 
+    let tool_routing_modes = [
+        ("adaptive", "Adaptive — Auto Model-Aware (Default)"),
+        ("minimal", "Minimal — Pi-Style Lean Core (~8 tools)"),
+        ("balanced", "Balanced — Intent Packs (~20 tools)"),
+        ("expanded", "Expanded — Wide Working Set (~36 tools)"),
+    ]
+    .into_iter()
+    .map(|(value, label)| serde_json::json!({ "value": value, "label": label }))
+    .collect::<Vec<_>>();
+
     let channels = vec![
         serde_json::json!({
             "name": "websocket",
@@ -172,6 +182,7 @@ pub(crate) fn webui_capabilities(config: &crate::config::schema::Config) -> serd
     protocol::capabilities(
         providers,
         security_modes,
+        tool_routing_modes,
         channels,
         config.browser.firefox_webdriver_port,
         config.browser.firefox_attach_port,

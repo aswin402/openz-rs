@@ -23,6 +23,7 @@ import { resolveProviderDescriptors } from '../../config/providers';
 import {
   buildDefaultsPatch,
   DEFAULT_SECURITY_MODE_OPTIONS,
+  DEFAULT_TOOL_ROUTING_MODE_OPTIONS,
   hasDefaultsChanged,
   jsonObjectToChannels,
   jsonObjectToProviders,
@@ -302,6 +303,10 @@ export const SettingsModal: React.FC = () => {
     capabilities.securityModes.length > 0
       ? capabilities.securityModes
       : DEFAULT_SECURITY_MODE_OPTIONS;
+  const toolRoutingModeOptions =
+    capabilities.toolRoutingModes.length > 0
+      ? capabilities.toolRoutingModes
+      : DEFAULT_TOOL_ROUTING_MODE_OPTIONS;
 
   const currentMeta =
     NAV_SECTIONS.find((s) => s.id === activeSection) ?? NAV_SECTIONS[0];
@@ -509,6 +514,7 @@ export const SettingsModal: React.FC = () => {
                 modelGroups={finalModelGroups}
                 providerOptions={uniqueProviders}
                 securityModeOptions={securityModeOptions}
+                toolRoutingModeOptions={toolRoutingModeOptions}
                 onUrlChange={setUrlInput}
                 onTokenChange={setTokenInput}
                 onFieldChange={setField}

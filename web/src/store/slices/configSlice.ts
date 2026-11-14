@@ -24,6 +24,7 @@ const EMPTY_CAPABILITIES: WebUiCapabilities = {
   version: 0,
   providers: [],
   securityModes: [],
+  toolRoutingModes: [],
   channels: [],
   browser: {
     firefoxWebdriverPort: 0,

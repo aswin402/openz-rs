@@ -49,6 +49,11 @@ const EXPLICIT_MUTATION_KEYWORDS: &[&str] = &[
     "create a file",
     "write a file",
     "rm -",
+    "fix",
+    "edit",
+    "patch",
+    "modify",
+    "refactor",
 ];
 
 const LOCAL_EXECUTION_KEYWORDS: &[&str] = &[
@@ -58,6 +63,11 @@ const LOCAL_EXECUTION_KEYWORDS: &[&str] = &[
     "check",
     "compile",
     "build",
+    "fix",
+    "edit",
+    "patch",
+    "modify",
+    "refactor",
     "run command",
     "exec_command",
     "write_file",
@@ -187,9 +197,10 @@ fn is_local_repo_query(lower: &str) -> bool {
 }
 
 fn is_explicit_mutation_or_exec(lower: &str) -> bool {
-    EXPLICIT_MUTATION_KEYWORDS
-        .iter()
-        .any(|needle| contains_phrase_bounded(lower, needle))
+    is_local_execution_query(lower)
+        || EXPLICIT_MUTATION_KEYWORDS
+            .iter()
+            .any(|needle| contains_phrase_bounded(lower, needle))
 }
 
 fn is_local_execution_query(lower: &str) -> bool {

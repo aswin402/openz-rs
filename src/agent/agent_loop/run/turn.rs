@@ -8,6 +8,83 @@ use std::collections::HashSet;
 
 use super::super::TurnContext;
 
+/// Monotonic append-only tool window for a single user turn.
+///
+/// Locks the Iteration 0 tool prefix `0..K` in exact position so Anthropic,
+/// OpenAI, DeepSeek, and OpenRouter KV prompt caches remain warm across
+/// multi-step tool loops while newly unlocked or hot-mounted tools append strictly
+/// to the tail.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct TurnToolWindow {
+    ordered_tools: Vec<serde_json::Value>,
+    seen_names: HashSet<String>,
+}
+
+impl TurnToolWindow {
+    pub(crate) fn resolve_iteration_tools(
+        &mut self,
+        fresh_tools: Vec<serde_json::Value>,
+        explicit_mount_names: &HashSet<String>,
+        preserve_prefix_cache: bool,
+        max_expanded_tools: usize,
+        max_provider_tools: usize,
+    ) -> Vec<serde_json::Value> {
+        let provider_cap = max_provider_tools.max(1);
+        let expanded_cap = max_expanded_tools.max(1).min(provider_cap);
+        match preserve_prefix_cache {
+            false => {
+                let mut direct = fresh_tools;
+                direct.truncate(provider_cap);
+                direct
+            }
+            true => {
+                match self.ordered_tools.is_empty() {
+                    true => {
+                        for schema in fresh_tools.into_iter().take(provider_cap) {
+                            let name = schema["function"]["name"]
+                                .as_str()
+                                .unwrap_or("")
+                                .to_ascii_lowercase();
+                            let inserted = (!name.is_empty()) && self.seen_names.insert(name);
+                            let _ = inserted.then(|| self.ordered_tools.push(schema));
+                        }
+                    }
+                    false => {
+                        let mut prioritized_candidates: Vec<(bool, usize, String, serde_json::Value)> =
+                            fresh_tools
+                                .into_iter()
+                                .enumerate()
+                                .filter_map(|(idx, schema)| {
+                                    let name = schema["function"]["name"]
+                                        .as_str()
+                                        .unwrap_or("")
+                                        .to_ascii_lowercase();
+                                    let unseen = (!name.is_empty()) && (!self.seen_names.contains(&name));
+                                    unseen.then(|| {
+                                        let is_explicit = explicit_mount_names.contains(&name);
+                                        (!is_explicit, idx, name, schema)
+                                    })
+                                })
+                                .collect();
+                        prioritized_candidates.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+                        for (not_explicit, _, name, schema) in prioritized_candidates {
+                            let is_explicit = !not_explicit;
+                            let target_cap = match is_explicit {
+                                true => provider_cap,
+                                false => expanded_cap.max(self.ordered_tools.len()).min(provider_cap),
+                            };
+                            let has_room = self.ordered_tools.len() < target_cap;
+                            let _ = (has_room && self.seen_names.insert(name))
+                                .then(|| self.ordered_tools.push(schema));
+                        }
+                    }
+                }
+                self.ordered_tools.clone()
+            }
+        }
+    }
+}
+
 /// State that belongs to one Run phase and must survive across provider/tool
 /// iterations without being mixed into the durable TurnContext.
 pub(crate) struct RunContext {
@@ -23,6 +100,7 @@ pub(crate) struct RunContext {
     pub(crate) direct_page_only: bool,
     pub(crate) direct_page_fetched: bool,
     pub(crate) turn_cancel: crate::tools::subagent::CancellationToken,
+    pub(crate) tool_window: TurnToolWindow,
 }
 
 impl RunContext {
@@ -42,6 +120,7 @@ impl RunContext {
             turn_cancel: super::super::current_turn_cancellation_context()
                 .map(|context| context.token)
                 .unwrap_or_default(),
+            tool_window: TurnToolWindow::default(),
         }
     }
 }
@@ -194,4 +273,68 @@ pub(super) async fn acquire_provider_turn_lock(
         }
     })
     .await?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TurnToolWindow;
+    use std::collections::HashSet;
+
+    fn mock_tool(name: &str) -> serde_json::Value {
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": format!("Mock {name}"),
+                "parameters": { "type": "object", "properties": {} }
+            }
+        })
+    }
+
+    fn extract_names(tools: &[serde_json::Value]) -> Vec<String> {
+        tools
+            .iter()
+            .filter_map(|t| t["function"]["name"].as_str().map(String::from))
+            .collect()
+    }
+
+    #[test]
+    fn turn_tool_window_locks_iteration_zero_prefix_and_appends_new_tools_monotonically() {
+        let mut window = TurnToolWindow::default();
+        let no_mounts = HashSet::new();
+
+        let iter0 = window.resolve_iteration_tools(
+            vec![
+                mock_tool("read_file"),
+                mock_tool("tool_catalog"),
+                mock_tool("patch_file"),
+            ],
+            &no_mounts,
+            true,
+            8,
+            128,
+        );
+        assert_eq!(extract_names(&iter0), vec!["read_file", "tool_catalog", "patch_file"]);
+
+        // Iteration 1: router drops patch_file and reorders, while unlocking cargo_manager and opendoc_create_xlsx
+        let mut explicit = HashSet::new();
+        explicit.insert("opendoc_create_xlsx".to_string());
+        let iter1 = window.resolve_iteration_tools(
+            vec![
+                mock_tool("cargo_manager"),
+                mock_tool("tool_catalog"),
+                mock_tool("opendoc_create_xlsx"),
+            ],
+            &explicit,
+            true,
+            4,
+            128,
+        );
+
+        // Prefix [0..3] stays 100% identical for KV-cache reuse; explicit mount appends cleanly!
+        assert_eq!(
+            extract_names(&iter1),
+            vec!["read_file", "tool_catalog", "patch_file", "opendoc_create_xlsx"]
+        );
+    }
 }

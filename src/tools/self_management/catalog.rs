@@ -212,6 +212,13 @@ fn attach_step_telemetry(mut step_res: Value, step_id: Option<&str>, duration_ms
     step_res
 }
 
+const DEFAULT_QUERY_RESULT_LIMIT: usize = 12;
+const MAX_QUERY_RESULT_LIMIT: usize = 60;
+const DEFAULT_QUERY_SCHEMA_COUNT: usize = 6;
+const DEFAULT_QUERY_MOUNT_LIMIT: usize = 6;
+const MAX_QUERY_MOUNT_LIMIT: usize = 16;
+const HARD_MAX_BATCH_STEPS: usize = 16;
+
 pub struct ToolCatalogTool {
     registry: crate::tools::ToolRegistry,
 }
@@ -455,14 +462,28 @@ impl Tool for ToolCatalogTool {
                 },
                 "mount": {
                     "type": "boolean",
-                    "description": "If true (default when query is provided), automatically hot-mounts the top matched tools into active context for immediate execution in subsequent steps."
+                    "description": "Whether to hot-mount top matched tools into active context (defaults to true when query is provided)."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Optional max number of tool entries returned (defaults to 12 when query is set; unbounded when browsing without query)."
+                },
+                "mount_limit": {
+                    "type": "integer",
+                    "description": "Optional max number of top BM25 matches to surgically hot-mount into active context (default 6, max 16)."
+                },
+                "mount_domains": {
+                    "type": "array",
+                    "description": "Optional explicit domain packs to mount alongside matched tools (empty by default to preserve token budget).",
+                    "items": { "type": "string" }
                 },
                 "batch_execute": {
                     "type": "array",
-                    "description": "Optional list of up to 8 safe tool calls [{tool, arguments}] to execute immediately in a single turn without an extra LLM round-trip.",
+                    "description": "Optional PTC pipeline of up to 16 safe tool calls [{id?, tool, arguments}] executed in a single turn without extra LLM round-trips (supports $prev, $steps[i], and {{step_id.field}} references).",
                     "items": {
                         "type": "object",
                         "properties": {
+                            "id": { "type": "string", "description": "Optional step identifier for downstream {{id.field}} interpolation." },
                             "tool": { "type": "string", "description": "Tool name or alias to execute." },
                             "arguments": { "type": "object", "description": "JSON arguments object for the tool." }
                         },
@@ -569,6 +590,25 @@ impl Tool for ToolCatalogTool {
                     .map(|value| runtime.active_process_tools = value as usize);
             });
 
+        let explicit_limit = arguments
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as usize);
+        let mount_limit = arguments
+            .get("mount_limit")
+            .and_then(|v| v.as_u64())
+            .map(|n| (n as usize).clamp(1, MAX_QUERY_MOUNT_LIMIT))
+            .unwrap_or(DEFAULT_QUERY_MOUNT_LIMIT);
+        let explicit_mount_domains: Vec<String> = arguments
+            .get("mount_domains")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str().map(str::trim))
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect();
+
         let mut batch_results = Vec::new();
         let mut batch_mounted_tools = Vec::new();
         let mut batch_execution_mode: Option<&'static str> = None;
@@ -576,7 +616,7 @@ impl Tool for ToolCatalogTool {
         match arguments.get("batch_execute").and_then(|v| v.as_array()) {
             Some(steps) => {
                 let batch_started = std::time::Instant::now();
-                let capped: Vec<&Value> = steps.iter().take(8).collect();
+                let capped: Vec<&Value> = steps.iter().take(HARD_MAX_BATCH_STEPS).collect();
                 let has_pipeline_refs = capped.iter().any(|step| {
                     step.get("arguments")
                         .or_else(|| step.get("args"))
@@ -747,9 +787,17 @@ impl Tool for ToolCatalogTool {
             })
             .collect();
 
-        (explicit_include_schema.is_none() && query_str.is_some()).then(|| {
+        let total_matches = entries.len();
+        let effective_limit = match (explicit_limit, query_str.is_some()) {
+            (Some(req_limit), _) => req_limit.clamp(1, MAX_QUERY_RESULT_LIMIT.max(total_matches)),
+            (None, true) => DEFAULT_QUERY_RESULT_LIMIT,
+            (None, false) => total_matches.max(1),
+        };
+        entries.truncate(effective_limit);
+
+        let _ = (explicit_include_schema.is_none() && query_str.is_some()).then(|| {
             let static_tools = self.registry.read_tools();
-            for entry in entries.iter_mut().take(8) {
+            for entry in entries.iter_mut().take(DEFAULT_QUERY_SCHEMA_COUNT) {
                 let _ = entry["name"]
                     .as_str()
                     .and_then(|name| static_tools.get(name))
@@ -760,20 +808,15 @@ impl Tool for ToolCatalogTool {
         });
 
         let mut mounted_tools = batch_mounted_tools;
-        let mut mounted_domains = Vec::new();
-        (mount && query_str.is_some()).then(|| {
-            for entry in entries.iter().take(8) {
-                entry["name"]
+        let mounted_domains = explicit_mount_domains;
+        let _ = (mount && query_str.is_some()).then(|| {
+            for entry in entries.iter().take(mount_limit) {
+                let _ = entry["name"]
                     .as_str()
                     .map(|name| mounted_tools.push(name.to_string()));
-                entry["domain"].as_str().map(|domain| {
-                    let domain_string = domain.to_string();
-                    (!mounted_domains.contains(&domain_string))
-                        .then(|| mounted_domains.push(domain_string));
-                });
             }
         });
-        (!mounted_tools.is_empty()).then(|| {
+        let _ = (!mounted_tools.is_empty() || !mounted_domains.is_empty()).then(|| {
             self.registry
                 .request_tool_scope(mounted_tools.clone(), mounted_domains.clone());
         });
@@ -781,10 +824,10 @@ impl Tool for ToolCatalogTool {
         let mut domains = std::collections::BTreeMap::<String, usize>::new();
         let mut risks = std::collections::BTreeMap::<String, usize>::new();
         for entry in &entries {
-            entry["domain"].as_str().map(|domain| {
+            let _ = entry["domain"].as_str().map(|domain| {
                 *domains.entry(domain.to_string()).or_default() += 1;
             });
-            entry["risk"].as_str().map(|risk| {
+            let _ = entry["risk"].as_str().map(|risk| {
                 *risks.entry(risk.to_string()).or_default() += 1;
             });
         }
@@ -798,6 +841,7 @@ impl Tool for ToolCatalogTool {
         let mut response = serde_json::json!({
             "success": true,
             "tool_count": entries.len(),
+            "total_matches": total_matches,
             "exposed_count": exposed_count,
             "selected_domains": self.registry.selected_domains_for_prompt(prompt),
             "domains": domains,

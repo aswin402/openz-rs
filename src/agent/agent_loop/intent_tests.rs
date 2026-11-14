@@ -44,3 +44,10 @@ fn specialist_subagent_profile_mentions_route_to_orchestration() {
     assert_eq!(decision.intent, TurnIntent::Orchestration);
     assert_eq!(decision.knowledge_policy, KnowledgePolicy::UseLocalContext);
 }
+
+#[test]
+fn repo_edit_and_test_request_routes_to_local_execution() {
+    let decision = classify_turn_intent("Fix the bug in src/main.rs and run cargo test");
+    assert_eq!(decision.intent, TurnIntent::LocalExecution);
+    assert_eq!(decision.knowledge_policy, KnowledgePolicy::UseLocalContext);
+}

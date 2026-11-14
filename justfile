@@ -2,13 +2,13 @@
 default:
     @just --list
 
-# Build and install the global binary with balanced resources and cargo-pretty TUI under cgroup CPU/RAM cap
+# Build and install the global binary with balanced resources under cgroup CPU/RAM cap
 build:
-    systemd-run --user --scope -q -p CPUQuota=150% -p MemoryHigh=4200M -p MemoryMax=5200M nice -n 19 ionice -c 3 env OPENZ_BUILD_JOBS=1 bash localupdate.sh --balanced
+    systemd-run --user --scope -q -p CPUQuota=150% -p MemoryHigh=4200M -p MemoryMax=5200M nice -n 19 ionice -c 3 bash -c 'if [ -f localupdate.sh ]; then OPENZ_BUILD_JOBS=1 bash localupdate.sh --balanced; else RUST_FONTCONFIG_DLOPEN=1 CARGO_BUILD_JOBS=1 cargo install --path . --locked --profile release-balanced -j 1; fi'
 
-# Alias for `just build` — run the cargo-pretty TUI update manager under cgroup CPU/RAM cap
+# Alias for `just build` — update the installed binary under cgroup CPU/RAM cap
 update:
-    systemd-run --user --scope -q -p CPUQuota=150% -p MemoryHigh=4200M -p MemoryMax=5200M nice -n 19 ionice -c 3 env OPENZ_BUILD_JOBS=1 bash localupdate.sh --balanced
+    systemd-run --user --scope -q -p CPUQuota=150% -p MemoryHigh=4200M -p MemoryMax=5200M nice -n 19 ionice -c 3 bash -c 'if [ -f localupdate.sh ]; then OPENZ_BUILD_JOBS=1 bash localupdate.sh --balanced; else RUST_FONTCONFIG_DLOPEN=1 CARGO_BUILD_JOBS=1 cargo install --path . --locked --profile release-balanced -j 1; fi'
 
 # Compile a specific package/crate using cargo-pretty when available (uses 1 job under cgroup cap)
 compile package="openz":
@@ -61,6 +61,6 @@ format:
 clean:
     cargo clean
 
-# Reclaim multi-GB stale openz binary/rlib artifacts while preserving upstream dependency caches
+# Reclaim multi-GB stale openz binary/rlib artifacts and inactive profile caches while preserving active upstream dependency caches
 prune-target:
-    rm -rf target/release target/debug/deps/openz-* target/debug/deps/libopenz-* target/release-balanced/deps/openz-* target/release-balanced/deps/libopenz-* target/version_sync_tests_runner
+    bash -c 'if [ -f localupdate.sh ]; then bash localupdate.sh --prune-only; else rm -rf target/release target/debug/deps/openz-* target/debug/deps/libopenz-* target/release-balanced/deps/openz-* target/release-balanced/deps/libopenz-* target/version_sync_tests_runner; fi'

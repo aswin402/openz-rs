@@ -232,6 +232,7 @@ export interface WebUiCapabilities {
   version: number;
   providers: ProviderCapability[];
   securityModes: Array<{ value: string; label: string }>;
+  toolRoutingModes: Array<{ value: string; label: string }>;
   channels: ChannelCapability[];
   browser: BrowserCapabilities;
   attachments: AttachmentCapabilities;
@@ -275,6 +276,14 @@ export function normalizeWebUiCapabilities(value: unknown): WebUiCapabilities {
     : [];
   const securityModes = Array.isArray(source?.securityModes)
     ? source.securityModes.flatMap((value) => {
+        const row = capabilityRecord(value);
+        const mode = capabilityString(row?.value);
+        const label = capabilityString(row?.label);
+        return mode && label ? [{ value: mode, label }] : [];
+      })
+    : [];
+  const toolRoutingModes = Array.isArray(source?.toolRoutingModes)
+    ? source.toolRoutingModes.flatMap((value) => {
         const row = capabilityRecord(value);
         const mode = capabilityString(row?.value);
         const label = capabilityString(row?.label);
@@ -327,6 +336,7 @@ export function normalizeWebUiCapabilities(value: unknown): WebUiCapabilities {
     version: capabilityNumber(source?.version),
     providers,
     securityModes,
+    toolRoutingModes,
     channels,
     browser: {
       firefoxWebdriverPort: capabilityNumber(browserSource?.firefoxWebdriverPort),
@@ -357,6 +367,7 @@ export interface AgentDefaultsConfig {
   streaming: boolean;
   caveman_mode: boolean;
   security_mode: string;
+  tool_routing_mode?: string;
   workspace: string;
   bot_name: string;
   max_messages: number;

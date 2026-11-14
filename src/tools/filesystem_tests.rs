@@ -636,3 +636,64 @@ async fn test_concurrent_file_mutations_are_serialized_without_data_loss() -> Re
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())
 }
+
+#[tokio::test]
+async fn test_patch_file_multi_file_atomic_prevalidation_and_commit() -> Result<()> {
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_multi_file_patch_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir)?;
+    let file_a = temp_dir.join("alpha.rs");
+    let file_b = temp_dir.join("beta.rs");
+    std::fs::write(&file_a, "pub const ALPHA: u32 = 1;\n")?;
+    std::fs::write(&file_b, "pub const BETA: u32 = 2;\n")?;
+
+    // 1. Atomic rollback when second file hunk fails: file_a must remain untouched on disk!
+    let failed_batch = PatchFileTool
+        .call(&serde_json::json!({
+            "files": [
+                {
+                    "path": file_a.to_str().unwrap(),
+                    "target": "ALPHA: u32 = 1",
+                    "replacement": "ALPHA: u32 = 99"
+                },
+                {
+                    "path": file_b.to_str().unwrap(),
+                    "target": "NON_EXISTENT_HUNK",
+                    "replacement": "BETA: u32 = 200"
+                }
+            ]
+        }))
+        .await;
+    assert!(failed_batch.is_err(), "Failing second file hunk must abort entire batch");
+    assert_eq!(
+        std::fs::read_to_string(&file_a)?,
+        "pub const ALPHA: u32 = 1;\n",
+        "First file must not be partially written when a later file in batch fails"
+    );
+
+    // 2. Valid multi-file batch commits both files in 1 tool call
+    let ok_batch = PatchFileTool
+        .call(&serde_json::json!({
+            "files": [
+                {
+                    "filePath": file_a.to_str().unwrap(),
+                    "old_text": "ALPHA: u32 = 1",
+                    "new_text": "ALPHA: u32 = 10"
+                },
+                {
+                    "filePath": file_b.to_str().unwrap(),
+                    "old_text": "BETA: u32 = 2",
+                    "new_text": "BETA: u32 = 20"
+                }
+            ]
+        }))
+        .await?;
+    assert_eq!(ok_batch["status"], "success");
+    assert_eq!(ok_batch["mode"], "multi_file");
+    assert_eq!(ok_batch["files_modified"], 2);
+    assert_eq!(std::fs::read_to_string(&file_a)?, "pub const ALPHA: u32 = 10;\n");
+    assert_eq!(std::fs::read_to_string(&file_b)?, "pub const BETA: u32 = 20;\n");
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(())
+}

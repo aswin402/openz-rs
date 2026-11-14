@@ -303,3 +303,58 @@ async fn test_delegate_task_accepts_task_and_prompt_aliases() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn test_delegate_task_routes_specialist_profile_and_rejects_unknown_profile() -> Result<()> {
+    let _guard = cancel_test_guard().await;
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_profile_dispatch_test_{}", uuid::Uuid::new_v4()));
+    let _ = std::fs::create_dir_all(&temp_dir);
+
+    std::env::set_var("OPENZ_USE_MOCK_PROVIDER", "1");
+    let (started_tx, _started_rx) = tokio::sync::watch::channel(false);
+    let (_release_tx, release_rx) = tokio::sync::watch::channel(true);
+
+    let provider = Arc::new(BlockingMockProvider {
+        started_tx,
+        release_rx,
+    });
+
+    let tool = DelegateTaskTool {
+        config: Config::default(),
+        parent_provider: provider,
+        session_manager: SessionManager::new(temp_dir.clone()),
+        parent_tools: Vec::new(),
+        cancellation_token: CancellationToken::new(),
+        capability_policy: None,
+    };
+
+    let planner_res = crate::config::loader::CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            tool.call(&serde_json::json!({
+                "goal": "Outline a two-step refactor plan",
+                "profile": "planner"
+            }))
+            .await
+        })
+        .await?;
+    assert_eq!(planner_res["status"], "success");
+    assert_eq!(planner_res["lifecycle"]["code"], "completed");
+
+    let unknown_err = crate::config::loader::CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            tool.call(&serde_json::json!({
+                "goal": "Run non-existent specialist",
+                "profile": "non_existent_specialist_xyz"
+            }))
+            .await
+        })
+        .await
+        .expect_err("unknown profile must return helpful error");
+    assert!(unknown_err.to_string().contains("Unknown subagent profile"));
+    assert!(unknown_err.to_string().contains("planner"));
+
+    std::env::remove_var("OPENZ_USE_MOCK_PROVIDER");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(())
+}
+

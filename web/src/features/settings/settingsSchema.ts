@@ -20,18 +20,55 @@ export interface SelectOption {
 }
 
 export type SecurityPermissionMode = 'low' | 'medium' | 'high';
+export type ToolRoutingMode = 'minimal' | 'adaptive' | 'balanced' | 'expanded';
+
+const SECURITY_MODE_ALIASES: Readonly<Record<string, SecurityPermissionMode>> = {
+  low: 'low',
+  loose: 'low',
+  medium: 'medium',
+  normal: 'medium',
+  high: 'high',
+  strict: 'high',
+};
 
 export function normalizeSecurityMode(raw: unknown): SecurityPermissionMode {
   const normalized = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
-  if (normalized === 'high' || normalized === 'strict') return 'high';
-  if (normalized === 'medium' || normalized === 'normal') return 'medium';
-  return 'low';
+  return SECURITY_MODE_ALIASES[normalized] ?? 'low';
+}
+
+const TOOL_ROUTING_MODE_ALIASES: Readonly<Record<string, ToolRoutingMode>> = {
+  minimal: 'minimal',
+  lean: 'minimal',
+  pi: 'minimal',
+  compact: 'minimal',
+  adaptive: 'adaptive',
+  auto: 'adaptive',
+  smart: 'adaptive',
+  balanced: 'balanced',
+  standard: 'balanced',
+  default: 'balanced',
+  expanded: 'expanded',
+  wide: 'expanded',
+  max: 'expanded',
+  full: 'expanded',
+};
+
+export function normalizeToolRoutingMode(raw: unknown): ToolRoutingMode {
+  const normalized = typeof raw === 'string' ? raw.trim().toLowerCase() : '';
+  return TOOL_ROUTING_MODE_ALIASES[normalized] ?? 'adaptive';
 }
 
 export const DEFAULT_SECURITY_MODE_OPTIONS: SelectOption[] = [
   { value: 'low', label: 'Low — High-Risk Only (Default)' },
   { value: 'medium', label: 'Medium — High + Moderate Risk' },
   { value: 'high', label: 'High — Strict (Ask on Edits & Writes)' },
+];
+
+export const DEFAULT_TOOL_ROUTING_MODE_OPTIONS: SelectOption[] = [
+  { value: 'adaptive', label: 'Adaptive — Auto Model-Aware (Default)' },
+  { value: 'minimal', label: 'Minimal — Pi-Style Lean Core (~8 tools)' },
+  { value: 'balanced', label: 'Balanced — Intent Packs (~20 tools)' },
+  { value: 'expanded', label: 'Expanded — Wide Working Set (~36 tools)' },
 ];
 
 export interface PermissionTierDescriptor {
@@ -41,6 +78,49 @@ export interface PermissionTierDescriptor {
   summary: string;
   examples: string;
 }
+
+export interface ToolRoutingModeDescriptor {
+  value: ToolRoutingMode;
+  title: string;
+  badge: string;
+  summary: string;
+  budget: string;
+}
+
+export const TOOL_ROUTING_MODE_DESCRIPTORS: readonly ToolRoutingModeDescriptor[] = [
+  {
+    value: 'adaptive',
+    title: 'Adaptive',
+    badge: 'Default • Model-Aware',
+    summary:
+      'Automatically selects Minimal (~8 tools) on compact/lite/free models and Balanced (~20 tools) on frontier models, preserving KV prompt cache prefixes across steps.',
+    budget: '8 tools (compact) • 20 tools (frontier) • <= 128 cap',
+  },
+  {
+    value: 'minimal',
+    title: 'Minimal',
+    badge: 'Pi-Style Lean Core',
+    summary:
+      'Starts every turn with ~8 foundational coding primitives plus surgical tool_catalog JIT hot-mounting and PTC batch pipelines.',
+    budget: '~8 initial tools • expands up to 20 on demand',
+  },
+  {
+    value: 'balanced',
+    title: 'Balanced',
+    badge: 'Intent Packs',
+    summary:
+      'Exposes ~20 intent-classified domain tools per turn with BM25 lexical discovery and session working-set continuity.',
+    budget: '~20 initial tools • expands up to 48 on demand',
+  },
+  {
+    value: 'expanded',
+    title: 'Expanded',
+    badge: 'Wide Working Set',
+    summary:
+      'Mounts ~36 tools upfront across multiple domains for heavy cross-domain workflows while enforcing the 128-tool provider limit.',
+    budget: '~36 initial tools • expands up to 48 (<= 128 cap)',
+  },
+];
 
 export const PERMISSION_TIER_DESCRIPTORS: readonly PermissionTierDescriptor[] = [
   {
@@ -93,6 +173,7 @@ const AGENT_SETTING_FIELDS: readonly AgentSettingFieldDescriptor[] = [
   { key: 'max_tool_iterations', kind: 'number' },
   { key: 'tool_timeout_secs', kind: 'number' },
   { key: 'security_mode', kind: 'string', fallback: 'low' },
+  { key: 'tool_routing_mode', kind: 'string', fallback: 'adaptive' },
   { key: 'workspace', kind: 'string' },
   { key: 'context_limit', kind: 'nullable_number', fallback: '' },
   { key: 'tool_output_limit', kind: 'nullable_number', fallback: '' },
@@ -102,14 +183,30 @@ const AGENT_SETTING_FIELDS: readonly AgentSettingFieldDescriptor[] = [
   { key: 'firefox_attach_port', kind: 'number' },
 ];
 
+const SPECIAL_STRING_NORMALIZERS: Readonly<
+  Partial<Record<keyof AgentDefaultsConfig, (raw: unknown) => string>>
+> = {
+  security_mode: normalizeSecurityMode,
+  tool_routing_mode: normalizeToolRoutingMode,
+};
+
+const FIELD_COERCERS: Readonly<
+  Record<AgentSettingFieldKind, (raw: string | number | boolean) => unknown>
+> = {
+  string: (raw) => String(raw),
+  number: (raw) => Number(raw),
+  nullable_number: (raw) => (raw === '' ? null : Number(raw)),
+  boolean: (raw) => Boolean(raw),
+};
+
 export function settingsToForm(settings: AgentDefaultsConfig): SettingsForm {
   const form: SettingsForm = {};
   for (const field of AGENT_SETTING_FIELDS) {
     const raw = settings[field.key];
-    form[field.key] =
-      field.key === 'security_mode'
-        ? normalizeSecurityMode(raw ?? field.fallback)
-        : ((raw ?? field.fallback ?? '') as string | number | boolean);
+    const normalizer = SPECIAL_STRING_NORMALIZERS[field.key];
+    form[field.key] = normalizer
+      ? normalizer(raw ?? field.fallback)
+      : ((raw ?? field.fallback ?? '') as string | number | boolean);
   }
   return form;
 }
@@ -121,19 +218,17 @@ function isFieldChanged(
 ): boolean {
   const formValue = form[field.key];
   const currentValue = settings[field.key];
-  if (field.key === 'security_mode') {
-    return normalizeSecurityMode(formValue) !== normalizeSecurityMode(currentValue);
-  }
-  if (field.kind === 'number') {
-    return Number(formValue) !== currentValue;
-  }
-  if (field.kind === 'nullable_number') {
-    return String(formValue ?? '') !== String(currentValue ?? '');
-  }
-  if (field.kind === 'boolean') {
-    return Boolean(formValue ?? field.fallback) !== Boolean(currentValue ?? field.fallback);
-  }
-  return formValue !== (currentValue ?? field.fallback);
+  const normalizer = SPECIAL_STRING_NORMALIZERS[field.key];
+  const comparators: Readonly<Record<AgentSettingFieldKind, () => boolean>> = {
+    number: () => Number(formValue) !== currentValue,
+    nullable_number: () => String(formValue ?? '') !== String(currentValue ?? ''),
+    boolean: () => Boolean(formValue ?? field.fallback) !== Boolean(currentValue ?? field.fallback),
+    string: () =>
+      normalizer
+        ? normalizer(formValue) !== normalizer(currentValue ?? field.fallback)
+        : formValue !== (currentValue ?? field.fallback),
+  };
+  return comparators[field.kind]();
 }
 
 export function hasDefaultsChanged(
@@ -149,22 +244,15 @@ export function buildDefaultsPatch(
   form: SettingsForm,
   settings: AgentDefaultsConfig | null,
 ): Record<string, unknown> {
-  const patch: Record<string, unknown> = {};
-  if (!settings) return patch;
-  for (const field of AGENT_SETTING_FIELDS) {
-    const raw = form[field.key];
-    if (raw === undefined || !isFieldChanged(field, form, settings)) continue;
-    if (field.kind === 'number') {
-      patch[field.key] = Number(raw);
-    } else if (field.kind === 'nullable_number') {
-      patch[field.key] = raw === '' ? null : Number(raw);
-    } else if (field.kind === 'boolean') {
-      patch[field.key] = Boolean(raw);
-    } else {
-      patch[field.key] = raw;
-    }
-  }
-  return patch;
+  return settings
+    ? AGENT_SETTING_FIELDS.reduce<Record<string, unknown>>((patch, field) => {
+        const raw = form[field.key];
+        const changed = raw !== undefined && isFieldChanged(field, form, settings);
+        const normalizer = SPECIAL_STRING_NORMALIZERS[field.key];
+        const nextValue = normalizer ? normalizer(raw) : FIELD_COERCERS[field.kind](raw);
+        return changed ? { ...patch, [field.key]: nextValue } : patch;
+      }, {})
+    : {};
 }
 
 export function validateSettingsForm(

@@ -73,6 +73,7 @@ pub(crate) struct WsLogEntry {
 pub(crate) fn capabilities(
     providers: Vec<Value>,
     security_modes: Vec<Value>,
+    tool_routing_modes: Vec<Value>,
     channels: Vec<Value>,
     firefox_webdriver_port: u16,
     firefox_attach_port: u16,
@@ -87,6 +88,7 @@ pub(crate) fn capabilities(
         "version": 1,
         "providers": providers,
         "securityModes": security_modes,
+        "toolRoutingModes": tool_routing_modes,
         "channels": channels,
         "browser": {
             "firefoxWebdriverPort": firefox_webdriver_port,

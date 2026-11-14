@@ -800,4 +800,35 @@ fn test_newline_and_substitution_whitelist_bypass_and_pipe_targets() {
         &json!({"command": "find /tmp/test -name '*.tmp' | xargs rm -f"}),
         "normal",
     ));
+
+    // Multi-file patch_file inside workspace is free in low mode, gated in high mode,
+    // and gated in low mode when any nested file targets outside safe roots.
+    let safe_multi_patch = json!({
+        "files": [
+            { "path": "src/main.rs", "target": "a", "replacement": "b" },
+            { "path": "src/lib.rs", "target": "c", "replacement": "d" }
+        ]
+    });
+    assert!(!SecurityGuard::is_sensitive_with_mode(
+        "patch_file",
+        &safe_multi_patch,
+        "low",
+    ));
+    assert!(SecurityGuard::is_sensitive_with_mode(
+        "patch_file",
+        &safe_multi_patch,
+        "high",
+    ));
+
+    let unsafe_multi_patch = json!({
+        "files": [
+            { "path": "src/main.rs", "target": "a", "replacement": "b" },
+            { "filePath": "/etc/hosts", "target": "localhost", "replacement": "hijack" }
+        ]
+    });
+    assert!(SecurityGuard::is_sensitive_with_mode(
+        "patch_file",
+        &unsafe_multi_patch,
+        "low",
+    ));
 }

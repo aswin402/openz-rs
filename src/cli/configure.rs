@@ -230,6 +230,9 @@ pub async fn handle_configure() -> Result<()> {
         let permission_mode = crate::agent::security::SecurityGuard::normalize_security_mode(
             &config.agents.defaults.security_mode,
         );
+        let tool_routing_mode = crate::config::schema::ToolRoutingConfig::normalize_mode(
+            &config.agents.defaults.layered_tool_routing.mode,
+        );
 
         let configure_options = vec![
             "Providers".to_string(),
@@ -243,6 +246,7 @@ pub async fn handle_configure() -> Result<()> {
                 config.agents.defaults.tui_thought_display
             ),
             format!("Ask Permission (approval: {permission_mode})"),
+            format!("Tool Router (mode: {tool_routing_mode})"),
             format!("Sandbox (seccomp) ({sandbox_status})"),
             "Browser (Firefox)".to_string(),
             "Exit".to_string(),
@@ -279,8 +283,9 @@ pub async fn handle_configure() -> Result<()> {
             5 => handle_email_submenu(&mut config).await?,
             6 => handle_tui_submenu(&mut config).await?,
             7 => handle_permission_submenu(&mut config).await?,
-            8 => handle_sandbox_submenu(&mut config).await?,
-            9 => handle_browser_submenu(&mut config).await?,
+            8 => handle_tool_routing_submenu(&mut config).await?,
+            9 => handle_sandbox_submenu(&mut config).await?,
+            10 => handle_browser_submenu(&mut config).await?,
             _ => break,
         }
 
@@ -961,6 +966,88 @@ async fn handle_permission_submenu(config: &mut Config) -> Result<()> {
     save_config(config)?;
     println!(
         "{}✓ Ask Permission level set to `{}`.{}",
+        EMERALD_GREEN, selected, COLOR_RESET
+    );
+    println!(
+        "{}────────────────────────────────────────────────────────────{}",
+        LIGHT_WHITE, COLOR_RESET
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    Ok(())
+}
+
+pub(crate) fn apply_tool_routing_mode_update(config: &mut Config, mode: &str) {
+    let normalized = crate::config::schema::ToolRoutingConfig::normalize_mode(mode).to_string();
+    config.agents.defaults.layered_tool_routing.mode = normalized.clone();
+    for profile in config.ui_settings.iter_mut() {
+        match profile.tool_routing_mode.is_some() {
+            true => profile.tool_routing_mode = Some(normalized.clone()),
+            false => {}
+        }
+    }
+}
+
+async fn handle_tool_routing_submenu(config: &mut Config) -> Result<()> {
+    println!(
+        "\n{}────────────────────────────────────────────────────────────{}",
+        LIGHT_WHITE, COLOR_RESET
+    );
+    println!(
+        "{}--- Dynamic JIT Tool Router Mode ---{}",
+        COLOR_BOLD, COLOR_RESET
+    );
+    println!(
+        "  • {}Adaptive (Default — Model-Aware){}: Automatically uses Minimal (~8 core tools) on compact/lite/free models and Balanced (~20 scoped tools) on frontier models, with KV-cache-safe monotonic expansion.",
+        EMERALD_GREEN, COLOR_RESET
+    );
+    println!(
+        "  • {}Minimal (Pi-Style Lean Core){}: Starts every turn with ~8 foundational primitives + tool_catalog JIT hot-mounting for ultra-clean context.",
+        AURA_GOLD, COLOR_RESET
+    );
+    println!(
+        "  • {}Balanced (Intent-Scoped Packs){}: Exposes up to ~20 intent-matched tools per turn with BM25 discovery.",
+        HEADING_BLUE, COLOR_RESET
+    );
+    println!(
+        "  • {}Expanded (Wide Multi-Domain Working Set){}: Exposes up to ~36–48 tools upfront for broad cross-domain sessions (always capped <= 128).",
+        AURA_PURPLE, COLOR_RESET
+    );
+    println!();
+
+    let current = crate::config::schema::ToolRoutingConfig::normalize_mode(
+        &config.agents.defaults.layered_tool_routing.mode,
+    );
+    let options = vec![
+        "Adaptive (Default — Auto Minimal on compact models, Balanced on strong models)".to_string(),
+        "Minimal (Pi-Style Lean Core: ~8 core primitives + JIT tool_catalog search)".to_string(),
+        "Balanced (Intent Packs: ~20 scoped tools per turn)".to_string(),
+        "Expanded (Wide Working Set: ~36–48 tools across domains)".to_string(),
+        "Back".to_string(),
+    ];
+
+    let choice = match select_menu_custom(
+        &format!("Select Tool Router mode (current: {current}):"),
+        &options,
+        &config.agents.defaults.model,
+        Some("Dynamic JIT Tool Router"),
+        true,
+    )? {
+        Some(idx) => idx,
+        None => return Ok(()),
+    };
+
+    let selected = match choice {
+        0 => "adaptive",
+        1 => "minimal",
+        2 => "balanced",
+        3 => "expanded",
+        _ => return Ok(()),
+    };
+
+    apply_tool_routing_mode_update(config, selected);
+    save_config(config)?;
+    println!(
+        "{}✓ Tool Router mode set to `{}`.{}",
         EMERALD_GREEN, selected, COLOR_RESET
     );
     println!(

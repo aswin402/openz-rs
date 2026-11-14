@@ -1,6 +1,6 @@
 [package]
 name = "openz"
-version = "0.0.324"
+version = "0.0.325"
 edition = "2021"
 
 [lib]
@@ -137,6 +137,7 @@ tonic-build = "0.11"
 opt-level = 3           # Maximize runtime optimizations
 codegen-units = 1       # Reduces compiler RAM usage and yields better optimizations
 lto = "thin"            # Link-Time Optimization: reduces peak linker memory usage and final ROM size
+incremental = false     # Never persist multi-GB incremental dep-graphs for release builds
 debug = false           # Exclude debug symbols to minimize compile RAM usage
 strip = true            # Strip symbols and debug info from the final binary (significantly reduces ROM footprint)
 
@@ -146,6 +147,7 @@ opt-level = "z"         # Optimize aggressively for binary size
 lto = "fat"             # Fat LTO for maximum dead-code elimination
 panic = "abort"         # Removes unwinding tables (~10-20% binary size reduction)
 codegen-units = 1
+incremental = false
 strip = true
 debug = false
 
@@ -154,6 +156,7 @@ inherits = "release"
 opt-level = 2           # Faster to compile than full release while still optimized for daily local updates
 codegen-units = 2       # Capped at 2 LLVM codegen threads to prevent laptop CPU/RAM spikes during local updates
 lto = false             # Avoid ThinLTO linker memory/time spikes during local updates
+incremental = false     # Prevent multi-GB incremental cache accumulation even when CARGO_INCREMENTAL=1 is set
 strip = true
 debug = false
 
@@ -162,6 +165,7 @@ inherits = "release"
 opt-level = 1           # Minimize compile pressure for low-memory machines
 codegen-units = 1
 lto = false             # Low-resource mode prioritizes finishing without linker spikes
+incremental = false     # Prevent incremental dep-graph disk growth on constrained hosts
 strip = true
 debug = false
 
@@ -186,6 +190,6 @@ codegen-units = 64      # Split the 624-file openz crate into 64 tiny (~3.5MB) u
 codegen-units = 64      # Split openz test compilation into 64 tiny units while keeping upstream deps cached
 
 [profile.release-balanced.package.openz]
-codegen-units = 64      # Split openz balanced release compilation into 64 tiny units while keeping upstream deps cached
+codegen-units = 32      # Balance low single-job LLVM IR memory with smaller .rlib archive & linker footprint
 
 

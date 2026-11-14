@@ -261,8 +261,8 @@ fn print_disk_report(data_dir: &Path) {
         DiskItem::new(
             "repo target/ build cache",
             cwd.join("target"),
-            20,
-            50,
+            10,
+            25,
             Some("Run: openz doctor --clean-target  (or cargo clean)"),
         ),
         DiskItem::new(
@@ -371,6 +371,25 @@ fn print_disk_report(data_dir: &Path) {
             }
         }
         None => println!("   • Free space on current filesystem: unavailable on this platform"),
+    }
+
+    let tmp_dir = std::env::temp_dir();
+    let tmp_probe = nearest_existing_path(&tmp_dir);
+    match available_bytes(tmp_probe) {
+        Some(tmp_bytes) => {
+            println!(
+                "   • Free space on temp directory ({}): {}",
+                tmp_dir.display(),
+                format_bytes(tmp_bytes)
+            );
+            match tmp_bytes < gib(2) {
+                true => println!(
+                    "⚠️  Warning: temp directory has less than 2 GiB free; point TMPDIR to a disk-backed folder before large builds."
+                ),
+                false => {}
+            }
+        }
+        None => {}
     }
 
     match worst {
