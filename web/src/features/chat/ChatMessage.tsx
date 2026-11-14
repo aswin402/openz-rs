@@ -6,7 +6,7 @@ import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
 import type { OpenZMessage } from '../../types';
 import { ToolExecutionCard } from './ToolExecutionCard';
-import { buildMessageActivitySteps } from './AgentActivityPanel';
+import { buildMessageActivitySteps } from '../activity/activityAdapters';
 import { SecurityGuardPrompt } from '../../components/SecurityGuardPrompt';
 import { ChatTrackRow } from '../../components/ChatTrackRow';
 import {
@@ -24,6 +24,8 @@ import {
   ReasoningText,
   StreamingResponse,
   extractAllMarkdownSources,
+  type AgentActivityStep,
+  type BeuiActivityPlacement,
   type BeuiPlanStep,
 } from '../../components/beui';
 import { Badge } from '../../components/ui/badge';
@@ -116,6 +118,17 @@ function looksLikeUnifiedDiffBlock(language: string | undefined, text: string): 
   return false;
 }
 
+const INLINE_PLACEMENT_PREDICATES: Record<
+  BeuiActivityPlacement,
+  (msg: OpenZMessage, steps: ReadonlyArray<AgentActivityStep>) => boolean
+> = {
+  'panel-only': () => false,
+  'streaming-only': (msg, steps) => Boolean(msg.isStreaming) && steps.length > 0,
+  'always-inline': (_msg, steps) => steps.length > 0,
+  'beui-timeline': (msg, steps) =>
+    steps.length >= 2 || (Boolean(msg.isStreaming) && steps.length > 0),
+};
+
 export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) => {
   const handleSecurityChoice = useOpenZStore((s) => s.handleSecurityChoice);
   const regenerateMessage = useOpenZStore((s) => s.regenerateMessage);
@@ -134,6 +147,12 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
   const dataTableStyle = useUiCustomizationStore((s) => s.dataTableStyle);
   const imageGenStyle = useUiCustomizationStore((s) => s.imageGenStyle);
   const activityStyle = useUiCustomizationStore((s) => s.activityStyle);
+  const activityVariant = useUiCustomizationStore((s) => s.activityVariant);
+  const activityOrbStyle = useUiCustomizationStore((s) => s.activityOrbStyle);
+  const activityDensity = useUiCustomizationStore((s) => s.activityDensity);
+  const activityMaxHeight = useUiCustomizationStore((s) => s.activityMaxHeight);
+  const activityAutoCollapse = useUiCustomizationStore((s) => s.activityAutoCollapse);
+  const activityShowDetails = useUiCustomizationStore((s) => s.activityShowDetails);
   const planChecklistStyle = useUiCustomizationStore((s) => s.planChecklistStyle);
   const alertStyle = useUiCustomizationStore((s) => s.alertStyle);
   const messageActionsStyle = useUiCustomizationStore((s) => s.messageActionsStyle);
@@ -230,10 +249,13 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
   }, [isUser, message.content]);
 
   const inlineActivitySteps = useMemo(() => {
-    if (isUser || activityStyle === 'panel-only') return [];
-    const steps = buildMessageActivitySteps([message]);
-    if (activityStyle === 'always-inline') return steps;
-    return (message.toolCalls?.length ?? 0) >= 2 ? steps : [];
+    if (isUser) return [];
+    const steps = buildMessageActivitySteps([message], {
+      chronological: true,
+      limit: 64,
+    });
+    const shouldRender = INLINE_PLACEMENT_PREDICATES[activityStyle](message, steps);
+    return shouldRender ? steps : [];
   }, [isUser, activityStyle, message]);
 
   const planSteps = useMemo<BeuiPlanStep[]>(() => {
@@ -410,11 +432,18 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
               />
             )}
 
-            {inlineActivitySteps.length > 0 && planSteps.length === 0 && (
+            {inlineActivitySteps.length > 0 && (
               <AgentActivity
                 steps={inlineActivitySteps}
                 isActive={Boolean(message.isStreaming)}
                 mode="inline-collapsible"
+                variant={activityVariant}
+                orbStyle={activityOrbStyle}
+                density={activityDensity}
+                maxHeight={activityMaxHeight}
+                autoCollapse={activityAutoCollapse}
+                showDetails={activityShowDetails}
+                startedAt={message.timestamp}
               />
             )}
 

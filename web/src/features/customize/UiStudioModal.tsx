@@ -51,9 +51,15 @@ import {
   type CustomizeUiSectionId,
 } from '../../store/useUiCustomizationStore';
 import {
+  ACTIVITY_DENSITY_OPTIONS,
+  ACTIVITY_MAX_HEIGHT_OPTIONS,
+  ACTIVITY_ORB_OPTIONS,
+  ACTIVITY_PLACEMENT_OPTIONS,
+  ACTIVITY_VARIANT_OPTIONS,
   AGENT_AVATAR_OPTIONS,
   AgentActivity,
   ApprovalCard,
+  BeuiActivityOrb,
   BeuiAgentAvatar,
   BeuiAlert,
   BeuiCitations,
@@ -189,7 +195,8 @@ const MENU_ITEMS: StudioMenuEntry[] = [
     group: 'Agent & Reasoning',
     label: 'Agent Activity',
     pkg: '@beui/agent-activity',
-    description: 'Live multi-step agent timeline feed for tool calls, notices, and orchestration.',
+    description:
+      'Adaptive beui.dev stream with reactive Thought Orb, 4 variants, density, viewport clamp, and multi-surface feeds.',
     icon: Activity,
   },
   {
@@ -1539,59 +1546,323 @@ export const UiStudioModal: React.FC = () => {
 
             {/* 11. AGENT ACTIVITY (@beui/agent-activity) */}
             {activeSection === 'agent-activity' && (
-              <div className="grid grid-cols-1 gap-6">
-                {(
-                  [
-                    {
-                      id: 'beui-timeline',
-                      title: 'BEUI Smart Inline + Panel Timeline',
-                      desc: 'Shows collapsible inline step timeline on multi-tool turns plus right-hand panel.',
-                      isDefault: true,
-                    },
-                    {
-                      id: 'always-inline',
-                      title: 'Always Inline Timeline',
-                      desc: 'Embeds @beui/agent-activity inside every assistant turn with tool or notice events.',
-                      isDefault: false,
-                    },
-                    {
-                      id: 'panel-only',
-                      title: 'Right Panel Only',
-                      desc: 'Keeps chat bubbles minimal and displays activity exclusively in the right drawer.',
-                      isDefault: false,
-                    },
-                  ] as const
-                ).map((opt) => (
-                  <VariantPreviewCard
-                    key={opt.id}
-                    title={opt.title}
-                    description={opt.desc}
-                    selected={state.activityStyle === opt.id}
-                    isDefault={opt.isDefault}
-                    onSelect={() => applyCustomization({ activityStyle: opt.id })}
-                  >
-                    <AgentActivity
-                      isActive={opt.id !== 'panel-only'}
-                      mode={opt.id === 'always-inline' ? 'timeline' : 'inline-collapsible'}
-                      steps={[
+              <div className="space-y-8">
+                {/* Live Interactive Configuration Preview */}
+                <div className="rounded-2xl border border-primary/30 bg-card/65 p-4 shadow-2xs">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                      <Activity className="size-3.5 text-primary" />
+                      <span>Live Preview — Active Configuration Across WebUI Surfaces</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Badge variant="secondary" className="font-mono text-[10px]">
+                        {state.activityVariant}
+                      </Badge>
+                      <Badge variant="outline" className="font-mono text-[10px]">
+                        {state.activityOrbStyle}
+                      </Badge>
+                      <Badge variant="outline" className="font-mono text-[10px]">
+                        {state.activityDensity}
+                      </Badge>
+                      <Badge variant="outline" className="font-mono text-[10px]">
+                        {state.activityMaxHeight}
+                      </Badge>
+                    </div>
+                  </div>
+                  <AgentActivity
+                    isActive
+                    mode="inline-collapsible"
+                    defaultOpen
+                    variant={state.activityVariant}
+                    orbStyle={state.activityOrbStyle}
+                    density={state.activityDensity}
+                    maxHeight={state.activityMaxHeight}
+                    autoCollapse={state.activityAutoCollapse}
+                    showDetails={state.activityShowDetails}
+                    steps={[
+                      {
+                        id: 'preview-think',
+                        kind: 'reasoning',
+                        contentType: 'reasoning',
+                        title: 'Synthesizing multi-surface execution plan',
+                        detail: 'Mapping @beui/agent-activity options across Chat, Drawer, Dashboard, Subagents, Inventory & Logs.',
+                        payload:
+                          '1. Evaluate active turn tool calls and subagent delegations\n2. Stream live elapsed durations\n3. Apply configured variant, orb indicator, and viewport clamp',
+                        actor: 'openz-core',
+                        status: 'info',
+                        timestamp: Date.now() - 4200,
+                      },
+                      {
+                        id: 'preview-search',
+                        kind: 'search',
+                        contentType: 'search',
+                        title: 'ast_grep',
+                        detail: 'Scanned 260 registered tools and verified 0 regex invariants',
+                        payload: 'Arguments:\n{\n  "pattern": "ToolRegistry",\n  "lang": "rust"\n}\n\nOutput:\nMatched 14 modules in 92ms',
+                        meta: 'workspace',
+                        status: 'success',
+                        durationMs: 92,
+                        durationLabel: '92ms',
+                        timestamp: Date.now() - 2800,
+                      },
+                      {
+                        id: 'preview-subagent',
+                        kind: 'tool',
+                        contentType: 'tool',
+                        title: 'delegate_task',
+                        detail: 'Running parallel architecture verification across WebUI views',
+                        actor: 'reviewer',
+                        meta: 'parallel',
+                        status: 'running',
+                        durationMs: 640,
+                        durationLabel: '640ms',
+                        timestamp: Date.now() - 900,
+                      },
+                    ]}
+                  />
+                </div>
+
+                {/* 1. Visual Stream Variant */}
+                <div>
+                  <h2 className="mb-1 text-sm font-semibold text-foreground">
+                    1. Activity Stream Visual Variant
+                  </h2>
+                  <p className="mb-4 text-xs text-muted-foreground">
+                    Applies across Chat turns, the Activity Drawer, Dashboard feed, Subagents, Inventory, and Structured Logs.
+                  </p>
+                  <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                    {ACTIVITY_VARIANT_OPTIONS.map((opt) => (
+                      <VariantPreviewCard
+                        key={opt.id}
+                        title={opt.title}
+                        description={opt.description}
+                        selected={state.activityVariant === opt.id}
+                        isDefault={Boolean(opt.isDefault)}
+                        onSelect={() => applyCustomization({ activityVariant: opt.id })}
+                      >
+                        <AgentActivity
+                          isActive={opt.id === 'orb-card'}
+                          mode={opt.id === 'orb-card' ? 'inline-collapsible' : 'timeline'}
+                          defaultOpen
+                          variant={opt.id}
+                          orbStyle={state.activityOrbStyle}
+                          density="compact"
+                          maxHeight="compact"
+                          showDetails={state.activityShowDetails}
+                          steps={[
+                            {
+                              id: `${opt.id}-1`,
+                              kind: 'search',
+                              title: 'semantic_search',
+                              detail: 'Indexed 18 memory nodes',
+                              status: 'success',
+                              durationLabel: '64ms',
+                              timestamp: Date.now() - 1800,
+                            },
+                            {
+                              id: `${opt.id}-2`,
+                              kind: 'tool',
+                              title: 'cargo_check',
+                              detail: 'Type-checking workspace crates',
+                              actor: 'builder',
+                              status: 'running',
+                              durationLabel: '420ms',
+                              timestamp: Date.now() - 400,
+                            },
+                          ]}
+                        />
+                      </VariantPreviewCard>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 2. Reactive Thought-Orb Indicator */}
+                <div>
+                  <h2 className="mb-1 text-sm font-semibold text-foreground">
+                    2. Reactive Thought-Orb Indicator
+                  </h2>
+                  <p className="mb-4 text-xs text-muted-foreground">
+                    Choose how active thinking, search, tool, security, and completion phases animate in headers.
+                  </p>
+                  <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+                    {ACTIVITY_ORB_OPTIONS.map((opt) => (
+                      <VariantPreviewCard
+                        key={opt.id}
+                        title={opt.title}
+                        description={opt.description}
+                        selected={state.activityOrbStyle === opt.id}
+                        isDefault={Boolean(opt.isDefault)}
+                        onSelect={() => applyCustomization({ activityOrbStyle: opt.id })}
+                      >
+                        <div className="flex items-center justify-around rounded-xl border border-border/60 bg-background/60 px-3 py-3">
+                          {(
+                            [
+                              { phase: 'reasoning', label: 'Think', active: true },
+                              { phase: 'search', label: 'Search', active: true },
+                              { phase: 'tool', label: 'Tool', active: true },
+                              { phase: 'complete', label: 'Done', active: false },
+                            ] as const
+                          ).map((sample) => (
+                            <div
+                              key={sample.phase}
+                              className="flex flex-col items-center gap-1.5 text-[10px] text-muted-foreground"
+                            >
+                              <BeuiActivityOrb
+                                phase={sample.phase}
+                                isActive={sample.active}
+                                styleVariant={opt.id}
+                                size="md"
+                              />
+                              <span>{sample.label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </VariantPreviewCard>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 3. Inline vs Drawer Placement */}
+                <div>
+                  <h2 className="mb-1 text-sm font-semibold text-foreground">
+                    3. Chat Turn Placement &amp; Visibility
+                  </h2>
+                  <p className="mb-4 text-xs text-muted-foreground">
+                    Control when @beui/agent-activity renders inline inside chat turns versus the right-hand Activity Drawer.
+                  </p>
+                  <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                    {ACTIVITY_PLACEMENT_OPTIONS.map((opt) => (
+                      <VariantPreviewCard
+                        key={opt.id}
+                        title={opt.title}
+                        description={opt.description}
+                        selected={state.activityStyle === opt.id}
+                        isDefault={Boolean(opt.isDefault)}
+                        onSelect={() => applyCustomization({ activityStyle: opt.id })}
+                      >
+                        <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/60 px-3 py-2 text-xs">
+                          <span className="font-medium text-foreground">{opt.shortLabel} Mode</span>
+                          <Badge variant={opt.id === 'panel-only' ? 'outline' : 'secondary'}>
+                            {opt.id === 'panel-only' ? 'Drawer Only' : 'Inline + Drawer'}
+                          </Badge>
+                        </div>
+                      </VariantPreviewCard>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 4. Density & Scroll Viewport Height */}
+                <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                  <div className="rounded-2xl border border-border/70 bg-card/55 p-4">
+                    <h3 className="mb-1 text-xs font-semibold text-foreground">
+                      Row Spacing Density
+                    </h3>
+                    <p className="mb-3 text-[11px] text-muted-foreground">
+                      Adjust vertical rhythm and excerpt clamping inside activity lists.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {ACTIVITY_DENSITY_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => applyCustomization({ activityDensity: opt.id })}
+                          className={cn(
+                            'rounded-xl border px-3 py-2.5 text-left transition-colors',
+                            state.activityDensity === opt.id
+                              ? 'border-primary/50 bg-primary/10 text-foreground'
+                              : 'border-border/60 bg-background/50 text-muted-foreground hover:border-border hover:text-foreground',
+                          )}
+                        >
+                          <div className="text-xs font-semibold">{opt.title}</div>
+                          <div className="mt-0.5 text-[10.5px] opacity-80">{opt.description}</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-border/70 bg-card/55 p-4">
+                    <h3 className="mb-1 text-xs font-semibold text-foreground">
+                      Scrollable Viewport Max-Height
+                    </h3>
+                    <p className="mb-3 text-[11px] text-muted-foreground">
+                      Clamp long tool/log runs inside an internal scroll container.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {ACTIVITY_MAX_HEIGHT_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => applyCustomization({ activityMaxHeight: opt.id })}
+                          className={cn(
+                            'rounded-xl border px-3 py-2 text-left transition-colors',
+                            state.activityMaxHeight === opt.id
+                              ? 'border-primary/50 bg-primary/10 text-foreground'
+                              : 'border-border/60 bg-background/50 text-muted-foreground hover:border-border hover:text-foreground',
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-1 text-xs font-semibold">
+                            <span>{opt.shortLabel}</span>
+                            {opt.isDefault && (
+                              <span className="text-[9px] font-mono text-primary">default</span>
+                            )}
+                          </div>
+                          <div className="mt-0.5 line-clamp-1 text-[10px] opacity-80">
+                            {opt.title}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 5. Behavior & Workspace Surface Toggles */}
+                <div className="rounded-2xl border border-border/70 bg-card/55 p-4">
+                  <h3 className="mb-3 text-xs font-semibold text-foreground">
+                    Stream Behavior &amp; Multi-Surface Visibility
+                  </h3>
+                  <div className="space-y-3">
+                    {(
+                      [
                         {
-                          id: 'a1',
-                          kind: 'reasoning',
-                          title: 'Planned verification steps',
-                          status: 'info',
+                          key: 'activityAutoCollapse',
+                          label: 'Auto-Collapse Inline Card on Completion',
+                          desc: 'Automatically folds inline chat activity into a summary bar once a turn finishes without errors.',
+                          checked: state.activityAutoCollapse,
                         },
                         {
-                          id: 'a2',
-                          kind: 'tool',
-                          title: 'ast_grep',
-                          detail: 'Scanned 24 Rust modules',
-                          status: 'success',
-                          durationLabel: '95ms',
+                          key: 'activityShowDetails',
+                          label: 'Show Step Excerpts, Durations & Expandable Payloads',
+                          desc: 'Displays argument/output snippets, live duration badges, and click-to-expand payload inspection.',
+                          checked: state.activityShowDetails,
                         },
-                      ]}
-                    />
-                  </VariantPreviewCard>
-                ))}
+                        {
+                          key: 'showDashboardActivity',
+                          label: 'Show Live Agent Activity Stream on Dashboard',
+                          desc: 'Embeds a unified @beui/agent-activity feed across active sessions, orchestrations, cron jobs, and logs on the Dashboard.',
+                          checked: state.showDashboardActivity,
+                        },
+                      ] as const
+                    ).map((toggle) => (
+                      <label
+                        key={toggle.key}
+                        className="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-border/55 bg-background/45 px-3.5 py-2.5"
+                      >
+                        <div>
+                          <div className="text-xs font-semibold text-foreground">
+                            {toggle.label}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">{toggle.desc}</div>
+                        </div>
+                        <Switch
+                          checked={toggle.checked}
+                          onCheckedChange={(checked) =>
+                            applyCustomization({ [toggle.key]: Boolean(checked) })
+                          }
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
 

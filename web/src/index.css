@@ -316,6 +316,42 @@
   }
 }
 
+@keyframes beui-orb-wave {
+  0%,
+  100% {
+    opacity: 0.28;
+    transform: scale(0.76);
+  }
+  45% {
+    opacity: 1;
+    transform: scale(1.18);
+  }
+}
+
+@keyframes beui-orb-ring {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.92);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.14);
+  }
+}
+
+.beui-orb-dot-active {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: beui-orb-wave 1.35s var(--t-ease-spring) infinite;
+}
+
+.beui-orb-ring-active {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: beui-orb-ring 1.8s ease-in-out infinite;
+}
+
 .t-msg-enter {
   animation: t-fade-up var(--t-base) var(--t-ease-spring) both;
 }
@@ -377,7 +413,9 @@
   }
   .t-msg-enter,
   .t-modal-panel,
-  .t-popover {
+  .t-popover,
+  .beui-orb-dot-active,
+  .beui-orb-ring-active {
     animation: none !important;
   }
   .t-press:active {

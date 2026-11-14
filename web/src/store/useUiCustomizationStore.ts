@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 import type {
+  BeuiActivityDensity,
+  BeuiActivityMaxHeight,
+  BeuiActivityOrbStyle,
+  BeuiActivityPlacement,
+  BeuiActivityVariant,
   BeuiAgentAvatarVariant,
   BeuiCitationsVariant,
   BeuiCodeBlockVariant,
@@ -105,7 +110,7 @@ export type UserAvatarChoice = BeuiUserAvatarVariant;
 export type BubbleStyleChoice = "beui-card" | "beui-full" | "editorial";
 export type ApprovalStyleChoice = "beui-tool-approval" | "beui-approval-card";
 export type ImageGenStyleChoice = "beui-frame" | "minimal";
-export type ActivityStyleChoice = "beui-timeline" | "always-inline" | "panel-only";
+export type ActivityStyleChoice = BeuiActivityPlacement;
 export type AlertStyleChoice = "beui-alert" | "compact-pill";
 
 export type GatewaySettingsSectionId = "agent" | "providers" | "channels";
@@ -153,6 +158,13 @@ export interface UiCustomizationSnapshot {
   streamingAnimation: BeuiStreamingCursorStyle;
   thinkingAnimation: BeuiReasoningVariant;
   activityStyle: ActivityStyleChoice;
+  activityVariant: BeuiActivityVariant;
+  activityOrbStyle: BeuiActivityOrbStyle;
+  activityDensity: BeuiActivityDensity;
+  activityMaxHeight: BeuiActivityMaxHeight;
+  activityAutoCollapse: boolean;
+  activityShowDetails: boolean;
+  showDashboardActivity: boolean;
   planChecklistStyle: BeuiPlanChecklistVariant;
   subagentCardStyle: BeuiSubagentCardVariant;
   codeStyle: BeuiCodeBlockVariant;
@@ -185,6 +197,13 @@ export const DEFAULT_CUSTOMIZATION: UiCustomizationSnapshot = {
   streamingAnimation: "beui-pulse",
   thinkingAnimation: "card",
   activityStyle: "beui-timeline",
+  activityVariant: "orb-card",
+  activityOrbStyle: "dotted-orb",
+  activityDensity: "comfortable",
+  activityMaxHeight: "standard",
+  activityAutoCollapse: true,
+  activityShowDetails: true,
+  showDashboardActivity: true,
   planChecklistStyle: "card",
   subagentCardStyle: "card",
   codeStyle: "framed",
@@ -303,6 +322,13 @@ export function extractSnapshot(state: UiCustomizationSnapshot): UiCustomization
     streamingAnimation: state.streamingAnimation,
     thinkingAnimation: state.thinkingAnimation,
     activityStyle: state.activityStyle,
+    activityVariant: state.activityVariant,
+    activityOrbStyle: state.activityOrbStyle,
+    activityDensity: state.activityDensity,
+    activityMaxHeight: state.activityMaxHeight,
+    activityAutoCollapse: state.activityAutoCollapse,
+    activityShowDetails: state.activityShowDetails,
+    showDashboardActivity: state.showDashboardActivity,
     planChecklistStyle: state.planChecklistStyle,
     subagentCardStyle: state.subagentCardStyle,
     codeStyle: state.codeStyle,

@@ -31,6 +31,7 @@ import {
 import { Button } from './components/ui/button';
 import { cn } from './lib/utils';
 import {
+  Activity,
   Archive,
   BookOpen,
   Bot,
@@ -143,6 +144,17 @@ export const App: React.FC = () => {
         },
       },
       {
+        id: 'customize-activity',
+        group: 'Customize UI (@beui)',
+        label: 'Customize Agent Activity (@beui/agent-activity)',
+        subtitle: 'Configure Thought Orb, 4 stream variants, density, maxHeight & multi-surface feeds',
+        icon: Activity,
+        onSelect: () => {
+          setActiveCustomizeSection('agent-activity');
+          setIsCustomizeOpen(true);
+        },
+      },
+      {
         id: 'customize-code',
         group: 'Customize UI (@beui)',
         label: 'Customize Code Block & File Diff',
@@ -151,6 +163,17 @@ export const App: React.FC = () => {
         onSelect: () => {
           setActiveCustomizeSection('code-block');
           setIsCustomizeOpen(true);
+        },
+      },
+      {
+        id: 'toggle-activity-drawer',
+        group: 'Actions',
+        label: isActivityPanelOpen ? 'Hide Agent Activity Drawer' : 'Open Agent Activity Drawer',
+        subtitle: 'Inspect live session tool calls, searches, approvals, and subagent runs',
+        icon: isActivityPanelOpen ? PanelRightClose : PanelRightOpen,
+        onSelect: () => {
+          setActiveView('chats');
+          toggleActivityPanel();
         },
       },
       {
@@ -242,6 +265,8 @@ export const App: React.FC = () => {
     setIsLogsOpen,
     setActiveView,
     selectSession,
+    isActivityPanelOpen,
+    toggleActivityPanel,
   ]);
 
   const renderWorkspace = () => {

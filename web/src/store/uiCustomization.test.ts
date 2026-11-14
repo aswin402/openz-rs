@@ -21,6 +21,11 @@ import {
   resolveModelContextWindow,
 } from '../shared/lib/runtimeMetrics';
 import {
+  ACTIVITY_DENSITY_OPTIONS,
+  ACTIVITY_MAX_HEIGHT_OPTIONS,
+  ACTIVITY_ORB_OPTIONS,
+  ACTIVITY_PLACEMENT_OPTIONS,
+  ACTIVITY_VARIANT_OPTIONS,
   AGENT_AVATAR_OPTIONS,
   USER_AVATAR_OPTIONS,
   extractAllMarkdownSources,
@@ -30,9 +35,20 @@ import {
   orchestrationRunToSubagentProps,
   parseCitationSegments,
   parseUnifiedDiff,
+  resolveActivityPhase,
+  resolveMaxHeightPx,
+  resolveStepContentType,
   summarizeApprovalInline,
   tokenizeDiffLine,
 } from '../components/beui';
+import {
+  buildInventoryActivitySteps,
+  buildLogActivitySteps,
+  buildMessageActivitySteps,
+  buildOrchestrationActivitySteps,
+  buildUnifiedDashboardActivitySteps,
+  classifyToolContentType,
+} from '../features/activity/activityAdapters';
 import { FOX_SILHOUETTE_PATH, buildFoxFaviconDataUri } from '../components/OpenZFoxIcon';
 
 describe('useUiCustomizationStore (@beui + shadcn/ui v5)', () => {
@@ -62,6 +78,13 @@ describe('useUiCustomizationStore (@beui + shadcn/ui v5)', () => {
     expect(state.streamingAnimation).toBe('beui-pulse');
     expect(state.thinkingAnimation).toBe('card');
     expect(state.activityStyle).toBe('beui-timeline');
+    expect(state.activityVariant).toBe('orb-card');
+    expect(state.activityOrbStyle).toBe('dotted-orb');
+    expect(state.activityDensity).toBe('comfortable');
+    expect(state.activityMaxHeight).toBe('standard');
+    expect(state.activityAutoCollapse).toBe(true);
+    expect(state.activityShowDetails).toBe(true);
+    expect(state.showDashboardActivity).toBe(true);
     expect(state.planChecklistStyle).toBe('card');
     expect(state.subagentCardStyle).toBe('card');
     expect(state.codeStyle).toBe('framed');
@@ -123,7 +146,14 @@ describe('useUiCustomizationStore (@beui + shadcn/ui v5)', () => {
       showMessageActions: false,
       streamingAnimation: 'block-cursor',
       thinkingAnimation: 'inline',
-      activityStyle: 'always-inline',
+      activityStyle: 'streaming-only',
+      activityVariant: 'trace-log',
+      activityOrbStyle: 'fox-pulse',
+      activityDensity: 'compact',
+      activityMaxHeight: 'tall',
+      activityAutoCollapse: false,
+      activityShowDetails: false,
+      showDashboardActivity: false,
       planChecklistStyle: 'compact-steps',
       subagentCardStyle: 'tree',
       codeStyle: 'minimal',
@@ -155,7 +185,14 @@ describe('useUiCustomizationStore (@beui + shadcn/ui v5)', () => {
     expect(updated.showMessageActions).toBe(false);
     expect(updated.streamingAnimation).toBe('block-cursor');
     expect(updated.thinkingAnimation).toBe('inline');
-    expect(updated.activityStyle).toBe('always-inline');
+    expect(updated.activityStyle).toBe('streaming-only');
+    expect(updated.activityVariant).toBe('trace-log');
+    expect(updated.activityOrbStyle).toBe('fox-pulse');
+    expect(updated.activityDensity).toBe('compact');
+    expect(updated.activityMaxHeight).toBe('tall');
+    expect(updated.activityAutoCollapse).toBe(false);
+    expect(updated.activityShowDetails).toBe(false);
+    expect(updated.showDashboardActivity).toBe(false);
     expect(updated.planChecklistStyle).toBe('compact-steps');
     expect(updated.subagentCardStyle).toBe('tree');
     expect(updated.codeStyle).toBe('minimal');
@@ -397,5 +434,123 @@ describe('zero-regex @beui parsers & adapters', () => {
     const decoded = decodeURIComponent(dataUri.slice('data:image/svg+xml;charset=utf-8,'.length));
     expect(decoded).toContain(defaultPalette.primaryHex);
     expect(decoded).toContain(FOX_SILHOUETTE_PATH);
+  });
+
+  test('resolves @beui/agent-activity phases, options, and multi-surface streams without regex', () => {
+    expect(ACTIVITY_PLACEMENT_OPTIONS.length).toBe(4);
+    expect(ACTIVITY_VARIANT_OPTIONS.length).toBe(4);
+    expect(ACTIVITY_ORB_OPTIONS.length).toBe(3);
+    expect(ACTIVITY_DENSITY_OPTIONS.length).toBe(2);
+    expect(ACTIVITY_MAX_HEIGHT_OPTIONS.length).toBe(4);
+
+    expect(resolveMaxHeightPx('compact')).toBe(176);
+    expect(resolveMaxHeightPx('standard')).toBe(264);
+    expect(resolveMaxHeightPx('tall')).toBe(384);
+    expect(resolveMaxHeightPx('unlimited')).toBe(0);
+    expect(resolveMaxHeightPx(220)).toBe(220);
+
+    expect(classifyToolContentType('semantic_search')).toBe('search');
+    expect(classifyToolContentType('cargo_check')).toBe('tool');
+
+    const msgSteps = buildMessageActivitySteps(
+      [
+        {
+          id: 'm1',
+          role: 'assistant',
+          content: '',
+          timestamp: 1000,
+          isStreaming: true,
+          model: 'claude-sonnet-4-5',
+          reasoningContent: 'Evaluating tool graph\nChecking types',
+          toolCalls: [
+            {
+              id: 't1',
+              name: 'ast_grep',
+              args: { pattern: 'AgentActivity' },
+              status: 'success',
+              durationMs: 85,
+              startedAt: 1100,
+            },
+            {
+              id: 't2',
+              name: 'delegate_task',
+              args: { profile: 'reviewer', task: 'Verify UI' },
+              status: 'running',
+              startedAt: 1200,
+            },
+          ],
+        },
+      ],
+      { chronological: true },
+    );
+
+    expect(msgSteps.length).toBe(3);
+    expect(resolveStepContentType(msgSteps[1])).toBe('search');
+    expect(msgSteps[2].actor).toBe('reviewer');
+    expect(resolveActivityPhase(msgSteps, true)).toBe('tool');
+
+    const orchSteps = buildOrchestrationActivitySteps(
+      [
+        {
+          id: 'r1',
+          goal: 'Audit WebUI surfaces',
+          mode: 'parallel',
+          status: 'running',
+          startedAt: 2000,
+          steps: [
+            { id: 's1', agent: 'researcher', status: 'success', output: 'Done' },
+            { id: 's2', agent: 'reviewer', status: 'running' },
+          ],
+        },
+      ],
+      { agentName: 'reviewer' },
+    );
+    expect(orchSteps.length).toBe(1);
+    expect(orchSteps[0].actor).toBe('reviewer');
+
+    const logSteps = buildLogActivitySteps(
+      [
+        {
+          id: 'l1',
+          timestamp: '2026-11-14T20:00:00Z',
+          level: 'WARN',
+          target: 'openz::channels::websocket',
+          message: 'Client reconnected cleanly',
+        },
+      ],
+      { levelFilter: 'WARN', query: 'reconnected' },
+    );
+    expect(logSteps.length).toBe(1);
+    expect(logSteps[0].title).toBe('websocket');
+    expect(logSteps[0].status).toBe('pending');
+
+    const invSteps = buildInventoryActivitySteps(null, []);
+    expect(invSteps.length).toBe(0);
+
+    const unified = buildUnifiedDashboardActivitySteps({
+      messagesByChat: {
+        chat1: [
+          {
+            id: 'm2',
+            role: 'assistant',
+            content: 'Ready',
+            timestamp: 3000,
+            toolCalls: [{ id: 't3', name: 'web_search', status: 'success', durationMs: 120 }],
+          },
+        ],
+      },
+      activeChatId: 'chat1',
+      orchestrationRunsByChat: {},
+      logs: [
+        {
+          id: 'l2',
+          timestamp: '2026-11-14T20:01:00Z',
+          level: 'INFO',
+          target: 'openz::gateway',
+          message: 'Gateway listening',
+        },
+      ],
+    });
+    expect(unified.length).toBe(2);
   });
 });

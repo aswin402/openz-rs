@@ -1,8 +1,11 @@
 import React, { useMemo, useState } from 'react';
 import { useOpenZStore } from '../../store/useOpenZStore';
+import { useUiCustomizationStore } from '../../store/useUiCustomizationStore';
 import { resolveWorkspacePageNotice, workspaceNoticeBannerClass } from '../../store/chatUtils';
 import type { SubagentInfo } from '../../types/openz';
-import { ArrowLeft, Bot, Check, Copy, Cpu, Edit3, Plus, Save, Search, ShieldCheck, Trash2, X } from 'lucide-react';
+import { AgentActivity } from '../../components/beui';
+import { buildOrchestrationActivitySteps } from '../activity/activityAdapters';
+import { Activity, ArrowLeft, Bot, Check, Copy, Cpu, Edit3, Plus, Save, Search, ShieldCheck, SlidersHorizontal, Trash2, X } from 'lucide-react';
 
 import { normalizeIdentifier } from '../../shared/lib/format';
 
@@ -30,6 +33,16 @@ export const AgentsView: React.FC = () => {
   const deleteSubagent = useOpenZStore((s) => s.deleteSubagent);
   const workspaceNotice = useOpenZStore((s) => s.workspaceNotice);
   const clearWorkspaceNotice = useOpenZStore((s) => s.clearWorkspaceNotice);
+  const orchestrationRunsByChat = useOpenZStore((s) => s.orchestrationRuns);
+  const messagesByChat = useOpenZStore((s) => s.messages);
+  const isStreaming = useOpenZStore((s) => s.isStreaming);
+
+  const activityVariant = useUiCustomizationStore((s) => s.activityVariant);
+  const activityOrbStyle = useUiCustomizationStore((s) => s.activityOrbStyle);
+  const activityDensity = useUiCustomizationStore((s) => s.activityDensity);
+  const activityShowDetails = useUiCustomizationStore((s) => s.activityShowDetails);
+  const setActiveCustomizeSection = useUiCustomizationStore((s) => s.setActiveCustomizeSection);
+  const setIsCustomizeOpen = useUiCustomizationStore((s) => s.setIsCustomizeOpen);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedAgentName, setSelectedAgentName] = useState<string | null>(null);
   const [draftName, setDraftName] = useState('');
@@ -53,6 +66,29 @@ export const AgentsView: React.FC = () => {
 
   const activeAgent = sortedAgents.find((agent) => agent.name === selectedAgentName);
   const activeRuntime = activeAgent ? runtimeByName.get(activeAgent.name) : undefined;
+  const allRuns = useMemo(() => Object.values(orchestrationRunsByChat).flat(), [orchestrationRunsByChat]);
+  const allMessages = useMemo(() => Object.values(messagesByChat).flat(), [messagesByChat]);
+
+  const profileActivitySteps = useMemo(
+    () =>
+      activeAgent
+        ? buildOrchestrationActivitySteps(allRuns, {
+            agentName: activeAgent.name,
+            messages: allMessages,
+            limit: 16,
+          })
+        : [],
+    [activeAgent, allRuns, allMessages],
+  );
+
+  const globalActivitySteps = useMemo(
+    () =>
+      buildOrchestrationActivitySteps(allRuns, {
+        messages: allMessages,
+        limit: 16,
+      }),
+    [allRuns, allMessages],
+  );
   const normalizedName = normalizeAgentName(draftName);
   const isNew = selectedAgentName === '__new__';
   const fallbackLimit = activeAgent?.fallbackLimit ?? sortedAgents.find((agent) => agent.fallbackLimit)?.fallbackLimit;
@@ -344,7 +380,7 @@ export const AgentsView: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[1fr_260px]">
+              <div className="grid min-h-0 flex-1 overflow-hidden lg:grid-cols-[1fr_296px]">
                 <div className="min-h-0 overflow-hidden">
                   {mode === 'edit' && !isProtected ? (
                     <textarea
@@ -359,14 +395,14 @@ export const AgentsView: React.FC = () => {
                     </div>
                   )}
                 </div>
-                <div className="border-t border-border/60 bg-muted/20 p-4 lg:border-l lg:border-t-0">
+                <div className="overflow-y-auto border-t border-border/60 bg-muted/20 p-4 lg:border-l lg:border-t-0">
                   <label className="text-[11px] font-semibold text-muted-foreground">
                     Fallback Models
                     <textarea
                       value={draftFallbacks}
                       onChange={(e) => setDraftFallbacks(e.target.value)}
                       placeholder="model-a, model-b"
-                      className="mt-1 h-24 w-full resize-none rounded-lg border border-border/60 bg-background px-2.5 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-70"
+                      className="mt-1 h-20 w-full resize-none rounded-lg border border-border/60 bg-background px-2.5 py-2 font-mono text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50 disabled:cursor-not-allowed disabled:opacity-70"
                     />
                   </label>
                   <div className="mt-4 space-y-2 rounded-lg border border-border/60 bg-background/50 p-3 text-[11px] text-muted-foreground">
@@ -396,14 +432,86 @@ export const AgentsView: React.FC = () => {
                       </div>
                     )}
                   </div>
+
+                  {!isNew && activeAgent && (
+                    <div className="mt-4">
+                      <div className="mb-1.5 flex items-center justify-between text-[11px] font-semibold text-foreground">
+                        <span className="flex items-center gap-1.5">
+                          <Activity className="h-3.5 w-3.5 text-primary" />
+                          <span>Profile Activity</span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setActiveCustomizeSection('agent-activity');
+                            setIsCustomizeOpen(true);
+                          }}
+                          className="text-[10px] text-muted-foreground hover:text-primary"
+                          title="Customize Agent Activity"
+                        >
+                          <SlidersHorizontal className="h-3 w-3" />
+                        </button>
+                      </div>
+                      <AgentActivity
+                        steps={profileActivitySteps}
+                        isActive={isStreaming}
+                        mode="inline-collapsible"
+                        defaultOpen
+                        variant={activityVariant}
+                        orbStyle={activityOrbStyle}
+                        density="compact"
+                        maxHeight="compact"
+                        showDetails={activityShowDetails}
+                        title={`${activeAgent.name} runs`}
+                        emptyLabel={`No recent delegations recorded for ${activeAgent.name}.`}
+                      />
+                    </div>
+                  )}
                 </div>
               </div>
             </>
           ) : (
-            <div className="flex h-full flex-col items-center justify-center p-6 text-center">
-              <Bot className="mb-3 h-10 w-10 text-muted-foreground/40" />
-              <h2 className="text-sm font-bold text-foreground">Select or Create a Subagent</h2>
-              <p className="mt-1 max-w-xs text-xs text-muted-foreground">Pick a profile on the left, duplicate a core profile, or create a new custom one.</p>
+            <div className="flex h-full flex-col justify-between overflow-y-auto p-6">
+              <div className="flex flex-1 flex-col items-center justify-center py-6 text-center">
+                <Bot className="mb-3 h-10 w-10 text-muted-foreground/40" />
+                <h2 className="text-sm font-bold text-foreground">Select or Create a Subagent</h2>
+                <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+                  Pick a profile on the left, duplicate a core profile, or create a new custom one.
+                </p>
+              </div>
+
+              <div className="border-t border-border/50 pt-4">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                    <Activity className="h-3.5 w-3.5 text-primary" />
+                    <span>Live Subagent Orchestration &amp; Delegation Feed</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveCustomizeSection('agent-activity');
+                      setIsCustomizeOpen(true);
+                    }}
+                    className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/60 px-2 py-1 text-[10px] font-semibold text-muted-foreground hover:text-foreground"
+                  >
+                    <SlidersHorizontal className="h-3 w-3" />
+                    <span>Options</span>
+                  </button>
+                </div>
+                <AgentActivity
+                  steps={globalActivitySteps}
+                  isActive={isStreaming}
+                  mode="inline-collapsible"
+                  defaultOpen
+                  variant={activityVariant}
+                  orbStyle={activityOrbStyle}
+                  density={activityDensity}
+                  maxHeight="compact"
+                  showDetails={activityShowDetails}
+                  title="All Subagent Delegations"
+                  emptyLabel="Delegated tasks and multi-agent orchestrations appear here in real time."
+                />
+              </div>
             </div>
           )}
         </div>
