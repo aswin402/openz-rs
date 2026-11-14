@@ -56,7 +56,8 @@ export const HeroWelcome: React.FC = () => {
           typeof entityCount === 'number' && typeof relationCount === 'number'
             ? `Inspect ${entityCount} graph entities & ${relationCount} relations in memory`
             : 'Inspect knowledge graph entities, relations & working memory',
-        prompt: '/memory',
+        prompt:
+          'Inspect my cognitive knowledge graph entities, relations, and working memory.',
         icon: Brain,
       },
       {

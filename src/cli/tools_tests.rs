@@ -180,7 +180,8 @@ async fn tool_registry_exposes_every_registered_tool() {
     assert!(names.contains(&"web_search".to_string()));
     assert!(names.contains(&"searchxyz_browser_search".to_string()));
     assert!(names.contains(&"opendoc_open_document".to_string()));
-    assert_eq!(names.len(), 240, "expected 240 canonical native tools");
+    assert!(names.contains(&"opencaveman".to_string()));
+    assert_eq!(names.len(), 241, "expected 241 canonical native tools");
 
     for (legacy_alias, expected_canonical) in [
         ("ping", "diagnose_system"),

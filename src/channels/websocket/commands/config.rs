@@ -116,6 +116,7 @@ pub(crate) async fn config_data_event(config: &crate::config::schema::Config) ->
     let skills = crate::agent::skills::load_skill_views().unwrap_or_default();
     let defaults = {
         let d = &effective.agents.defaults;
+        let caveman_stats = opencaveman::load_stats_ledger(&crate::config::runtime_data_dir());
         serde_json::json!({
             "ui_surface": "webui",
             "theme": effective.ui_theme("webui"),
@@ -128,6 +129,8 @@ pub(crate) async fn config_data_event(config: &crate::config::schema::Config) ->
             "max_tokens": d.max_tokens,
             "streaming": d.streaming,
             "caveman_mode": d.caveman_mode,
+            "caveman_level": opencaveman::normalize_level_slug(&d.caveman_level),
+            "caveman_stats": caveman_stats,
             "security_mode": d.security_mode,
             "tool_routing_mode": crate::config::schema::ToolRoutingConfig::normalize_mode(&d.layered_tool_routing.mode),
             "workspace": d.workspace,
@@ -362,6 +365,16 @@ fn apply_webui_profile_update(
     }
     match defaults.get("caveman_mode").and_then(Value::as_bool) {
         Some(value) => profile.caveman_mode = Some(value),
+        None => {}
+    }
+    match defaults
+        .get("caveman_level")
+        .or_else(|| defaults.get("cavemanLevel"))
+        .and_then(Value::as_str)
+    {
+        Some(value) => {
+            profile.caveman_level = Some(opencaveman::normalize_level_slug(value).to_string());
+        }
         None => {}
     }
     match defaults.get("security_mode").and_then(Value::as_str) {
@@ -608,6 +621,7 @@ pub(crate) fn apply_webui_disk_config_update(
 pub(crate) fn config_updated_event(config: &crate::config::schema::Config) -> Value {
     let effective = config.with_ui_surface("webui");
     let defaults = &effective.agents.defaults;
+    let caveman_stats = opencaveman::load_stats_ledger(&crate::config::runtime_data_dir());
     super::super::protocol::config_updated(
         serde_json::json!({
             "ui_surface": "webui",
@@ -621,6 +635,8 @@ pub(crate) fn config_updated_event(config: &crate::config::schema::Config) -> Va
             "max_tokens": defaults.max_tokens,
             "streaming": defaults.streaming,
             "caveman_mode": defaults.caveman_mode,
+            "caveman_level": opencaveman::normalize_level_slug(&defaults.caveman_level),
+            "caveman_stats": caveman_stats,
             "security_mode": defaults.security_mode,
             "tool_routing_mode": crate::config::schema::ToolRoutingConfig::normalize_mode(&defaults.layered_tool_routing.mode),
             "workspace": defaults.workspace,

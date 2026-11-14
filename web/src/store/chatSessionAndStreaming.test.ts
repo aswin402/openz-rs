@@ -94,7 +94,11 @@ test('unsolicited background delta or non-active chat turn never sets isStreamin
 
 test('sendMessage forwards streaming and caveman_mode overrides and preserves in-flight stream across delayed session_history', () => {
   ensureRegistered();
-  const captured: Array<{ chatId: string; content: string; options?: { streaming?: boolean; cavemanMode?: boolean } }> = [];
+  const captured: Array<{
+    chatId: string;
+    content: string;
+    options?: { streaming?: boolean; cavemanMode?: boolean; cavemanLevel?: string };
+  }> = [];
   const origSendMessage = wsService.sendMessage.bind(wsService);
   wsService.sendMessage = ((chatId, content, _model, _provider, _attachments, options) => {
     captured.push({ chatId, content, options });
@@ -110,6 +114,7 @@ test('sendMessage forwards streaming and caveman_mode overrides and preserves in
       isStreaming: false,
       streamingMode: true,
       cavemanMode: false,
+      cavemanLevel: 'ultra',
     });
 
     useOpenZStore.getState().sendMessage('Explain async streaming');
@@ -117,7 +122,7 @@ test('sendMessage forwards streaming and caveman_mode overrides and preserves in
     expect(captured[0]).toEqual({
       chatId: 'ws:stream-1',
       content: 'Explain async streaming',
-      options: { streaming: true, cavemanMode: false },
+      options: { streaming: true, cavemanMode: false, cavemanLevel: 'ultra' },
     });
 
     const emit = (wsService as unknown as { emit: (event: string, payload: unknown) => void }).emit.bind(wsService);
@@ -242,4 +247,57 @@ test('remote_user_message appends remote prompt and streams live response in tar
   expect(finalState.isStreaming).toBe(false);
   expect(finalState.messages['ws:remote-1']?.length).toBe(2);
   expect(finalState.messages['ws:remote-1']?.[1]?.content).toBe('All systems nominal.');
+});
+
+test('clearActiveSession and stopTurn use typed WebSocket commands without slash commands', () => {
+  ensureRegistered();
+  const clearedChats: string[] = [];
+  const stoppedTurns: Array<{ chatId: string; turnId?: string }> = [];
+  const sentMessages: Array<{ chatId: string; content: string }> = [];
+
+  const origClear = wsService.clearSession.bind(wsService);
+  const origStop = wsService.sendStop.bind(wsService);
+  const origSend = wsService.sendMessage.bind(wsService);
+
+  wsService.clearSession = ((chatId) => {
+    clearedChats.push(chatId);
+  }) as typeof wsService.clearSession;
+  wsService.sendStop = ((chatId, turnId) => {
+    stoppedTurns.push({ chatId, turnId });
+    return 'req-stop-1';
+  }) as typeof wsService.sendStop;
+  wsService.sendMessage = ((chatId, content) => {
+    sentMessages.push({ chatId, content });
+    return 'req-msg-1';
+  }) as typeof wsService.sendMessage;
+
+  try {
+    useOpenZStore.setState({
+      sessions: [
+        { id: 'ws:typed-1', title: 'Typed Session', createdAt: 1, lastMessageAt: 1, messageCount: 2 },
+      ],
+      activeChatId: 'ws:typed-1',
+      messages: {
+        'ws:typed-1': [
+          { id: 'u-1', role: 'user', content: 'Hello', timestamp: 1 },
+          { id: 'a-1', role: 'assistant', content: 'Streaming...', timestamp: 2, isStreaming: true },
+        ],
+      },
+      activeTurnIds: { 'ws:typed-1': 'turn-typed-9' },
+      isStreaming: true,
+    });
+
+    useOpenZStore.getState().stopTurn();
+    expect(stoppedTurns).toEqual([{ chatId: 'ws:typed-1', turnId: 'turn-typed-9' }]);
+    expect(sentMessages).toEqual([]);
+
+    useOpenZStore.getState().clearActiveSession();
+    expect(clearedChats).toEqual(['ws:typed-1']);
+    expect(sentMessages).toEqual([]);
+    expect(useOpenZStore.getState().messages['ws:typed-1']).toEqual([]);
+  } finally {
+    wsService.clearSession = origClear;
+    wsService.sendStop = origStop;
+    wsService.sendMessage = origSend;
+  }
 });

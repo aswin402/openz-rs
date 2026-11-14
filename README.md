@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.326-orange.svg" alt="Version 0.0.326"/></a>
+  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.327-orange.svg" alt="Version 0.0.327"/></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.82%2B-blue.svg" alt="Rust 1.82+"/></a>
   <a href="https://tokio.rs/"><img src="https://img.shields.io/badge/runtime-tokio-purple.svg" alt="Tokio Async"/></a>
   <a href="https://github.com/aswin402/openz-rs/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-green.svg" alt="License"/></a>
@@ -18,7 +18,7 @@
 
 ---
 
-OpenZ is a local-first AI agent runtime built in Rust. It combines an interactive terminal agent (Ratatui TUI), **240 native in-process tools**, durable SQLite cognitive memory (`~/.openz/memory.db`), browser-backed research, document/media automation pipelines, multi-channel communication (Ratatui TUI, WebUI, Telegram, Discord, WhatsApp, Email), and isolated subagents into one fast desktop-oriented binary.
+OpenZ is a local-first AI agent runtime built in Rust. It combines an interactive terminal agent (Ratatui TUI), **241 native in-process tools**, durable SQLite cognitive memory (`~/.openz/memory.db`), browser-backed research, document/media automation pipelines, multi-channel communication (Ratatui TUI, WebUI, Telegram, Discord, WhatsApp, Email), and isolated subagents into one fast desktop-oriented binary.
 
 Maintainer: **Aswin** ([@aswin402](https://github.com/aswin402)) — Rebranded from `nanobot`.
 
@@ -57,6 +57,11 @@ Most agent frameworks require users to manually select tools, switch providers, 
 ---
 
 ## 🆕 Latest Highlights
+
+### ⚡ Native `opencaveman` Crate, `@assistant-ui` Tool/Approval Elements & 10-Style Telemetry Deck (`v0.0.327`)
+- **Native `opencaveman` Workspace Crate & Tool**: Full in-process Rust token compression engine (`lite`, `full`, `ultra`, `wenyan_lite`, `wenyan_full`, `wenyan_ultra`) with `pulldown-cmark` AST-guarded Markdown/code compaction, auto-clarity safety bypasses, commit/review formatters, 6 seeded procedural skills, TUI `/settings` menu, and a dedicated WebUI **Settings → Caveman** workspace alongside a one-click composer toggle.
+- **Official `@assistant-ui` Tool Call & Approval Card**: Replaced legacy tool and approval cards with `@assistant-ui/elements-tool-call` (`ToolCall` with live `tw-shimmer` status, query pill, and collapsible `Request`/`Result` inspector) and `@assistant-ui/elements-approval-card` (`ApprovalCard` with `request` → `running` → `ToolCall` handoff, `denied` receipts, and destructive command emphasis).
+- **10-Style `@beui/animated-toast-stack` & Official `@beui/agent-activity`**: Added 10 distinct toast deck styles across 6 viewport placements with a Notification Center popover, paired with official `@beui/agent-activity` timelines and ANSI-clean structured telemetry.
 
 ### 🎨 `@beui/*` + `shadcn/ui` WebUI Studio, Dual-Mode Themes & Full-Page Obsidian Graph (`v0.0.323`)
 - **Full-Page Obsidian Cognitive Memory Graph**: Edge-to-edge interactive canvas with collapsible floating cards for search & cluster/relation filtering, interactive node checking & isolation, entity/relation provenance inspection, dynamic theme-derived legends, and slide-over Stored Facts & Markdown Vault snapshots.

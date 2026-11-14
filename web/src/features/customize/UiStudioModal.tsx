@@ -3,6 +3,7 @@ import {
   Activity,
   AlertCircle,
   ArrowLeft,
+  Bell,
   Bot,
   BookOpen,
   Braces,
@@ -51,14 +52,24 @@ import {
   type CustomizeUiSectionId,
 } from '../../store/useUiCustomizationStore';
 import {
+  TOAST_CATEGORY_TOGGLE_OPTIONS,
+  useToastStore,
+} from '../../store/useToastStore';
+import {
+  APPROVAL_CARD_STYLE_OPTIONS,
+  TOOL_CALL_STYLE_OPTIONS,
+} from '../../components/assistant-ui/elements';
+import { SecurityGuardPrompt } from '../../components/SecurityGuardPrompt';
+import { ToolExecutionCard } from '../../components/ToolExecutionCard';
+import {
   ACTIVITY_DENSITY_OPTIONS,
   ACTIVITY_MAX_HEIGHT_OPTIONS,
   ACTIVITY_ORB_OPTIONS,
   ACTIVITY_PLACEMENT_OPTIONS,
   ACTIVITY_VARIANT_OPTIONS,
   AGENT_AVATAR_OPTIONS,
+  AnimatedToastStack,
   AgentActivity,
-  ApprovalCard,
   BeuiActivityOrb,
   BeuiAgentAvatar,
   BeuiAlert,
@@ -75,15 +86,21 @@ import {
   BeuiPromptInput,
   BeuiPromptSuggestions,
   BeuiSubagentCard,
+  BeuiTelemetryNoticeStrip,
   BeuiTerminalOutput,
+  BeuiToastStylePreview,
   BeuiUserAvatar,
+  INLINE_NOTICE_STYLE_OPTIONS,
   ImageGeneration,
   MessageScroller,
   ReasoningText,
   StreamingResponse,
-  ToolApproval,
-  ToolResult,
+  TOAST_DURATION_OPTIONS,
+  TOAST_MAX_VISIBLE_OPTIONS,
+  TOAST_POSITION_OPTIONS,
+  TOAST_VARIANT_OPTIONS,
   USER_AVATAR_OPTIONS,
+  normalizeToastPosition,
 } from '../../components/beui';
 import { OpenZFoxIcon } from '../../components/OpenZFoxIcon';
 import { Badge } from '../../components/ui/badge';
@@ -100,6 +117,8 @@ interface StudioMenuEntry {
   description: string;
   icon: React.ComponentType<{ className?: string }>;
 }
+
+const STUDIO_PREVIEW_ANCHOR_TS = 1_763_150_000_000;
 
 const MENU_ITEMS: StudioMenuEntry[] = [
   {
@@ -200,6 +219,15 @@ const MENU_ITEMS: StudioMenuEntry[] = [
     icon: Activity,
   },
   {
+    id: 'animated-toast-stack',
+    group: 'Agent & Reasoning',
+    label: 'Toast Stack & Telemetry',
+    pkg: '@beui/animated-toast-stack',
+    description:
+      'Layered 3D spring toast stack & inline telemetry pills for Workflow matched, Skill used, Self-improvement, Memory, and Guard approvals.',
+    icon: Bell,
+  },
+  {
     id: 'plan-checklist',
     group: 'Agent & Reasoning',
     label: 'Plan Checklist',
@@ -242,17 +270,17 @@ const MENU_ITEMS: StudioMenuEntry[] = [
   {
     id: 'tool-result',
     group: 'Code, Tools & Data',
-    label: 'Tool Result',
-    pkg: '@beui/tool-result',
-    description: 'Collapsible native tool execution cards with Result, Diff, Console, and JSON tabs.',
+    label: 'Tool Call',
+    pkg: '@assistant-ui/elements-tool-call',
+    description: 'Inline collapsible tool invocations with live shimmer status and Request/Result inspection.',
     icon: Wrench,
   },
   {
     id: 'tool-approval',
     group: 'Code, Tools & Data',
-    label: 'Tool Approval',
-    pkg: '@beui/tool-approval',
-    description: 'SecurityGuard human-in-the-loop approval prompts before sensitive tool runs.',
+    label: 'Approval Card',
+    pkg: '@assistant-ui/elements-approval-card',
+    description: 'SecurityGuard human-in-the-loop approval cards with command preview and live receipts.',
     icon: ShieldCheck,
   },
   {
@@ -1590,7 +1618,7 @@ export const UiStudioModal: React.FC = () => {
                           '1. Evaluate active turn tool calls and subagent delegations\n2. Stream live elapsed durations\n3. Apply configured variant, orb indicator, and viewport clamp',
                         actor: 'openz-core',
                         status: 'info',
-                        timestamp: Date.now() - 4200,
+                        timestamp: STUDIO_PREVIEW_ANCHOR_TS - 4200,
                       },
                       {
                         id: 'preview-search',
@@ -1603,7 +1631,7 @@ export const UiStudioModal: React.FC = () => {
                         status: 'success',
                         durationMs: 92,
                         durationLabel: '92ms',
-                        timestamp: Date.now() - 2800,
+                        timestamp: STUDIO_PREVIEW_ANCHOR_TS - 2800,
                       },
                       {
                         id: 'preview-subagent',
@@ -1616,7 +1644,7 @@ export const UiStudioModal: React.FC = () => {
                         status: 'running',
                         durationMs: 640,
                         durationLabel: '640ms',
-                        timestamp: Date.now() - 900,
+                        timestamp: STUDIO_PREVIEW_ANCHOR_TS - 900,
                       },
                     ]}
                   />
@@ -1657,7 +1685,7 @@ export const UiStudioModal: React.FC = () => {
                               detail: 'Indexed 18 memory nodes',
                               status: 'success',
                               durationLabel: '64ms',
-                              timestamp: Date.now() - 1800,
+                              timestamp: STUDIO_PREVIEW_ANCHOR_TS - 1800,
                             },
                             {
                               id: `${opt.id}-2`,
@@ -1667,7 +1695,7 @@ export const UiStudioModal: React.FC = () => {
                               actor: 'builder',
                               status: 'running',
                               durationLabel: '420ms',
-                              timestamp: Date.now() - 400,
+                              timestamp: STUDIO_PREVIEW_ANCHOR_TS - 400,
                             },
                           ]}
                         />
@@ -1855,6 +1883,421 @@ export const UiStudioModal: React.FC = () => {
                         </div>
                         <Switch
                           checked={toggle.checked}
+                          onCheckedChange={(checked) =>
+                            applyCustomization({ [toggle.key]: Boolean(checked) })
+                          }
+                        />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 11B. ANIMATED TOAST STACK (@beui/animated-toast-stack) */}
+            {activeSection === 'animated-toast-stack' && (
+              <div className="space-y-8">
+                {/* Master Enable & Live Trigger Playground */}
+                <div className="rounded-2xl border border-primary/30 bg-card/65 p-4 shadow-2xs">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
+                        <Bell className="size-3.5 text-primary" />
+                        <span>Live Telemetry Toast Stack (@beui/animated-toast-stack)</span>
+                        <Badge variant="secondary" className="font-mono text-[10px]">
+                          {state.toastVariant}
+                        </Badge>
+                        <Badge variant="outline" className="font-mono text-[10px]">
+                          {normalizeToastPosition(state.toastPosition)}
+                        </Badge>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        Hover the live stack to fan out cards and pause countdowns, or swipe horizontally to dismiss.
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2.5">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        {state.toastEnabled ? 'Enabled' : 'Muted'}
+                      </span>
+                      <Switch
+                        checked={state.toastEnabled}
+                        onCheckedChange={(checked) =>
+                          applyCustomization({ toastEnabled: Boolean(checked) })
+                        }
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-3.5 flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        if (!state.toastEnabled) {
+                          applyCustomization({ toastEnabled: true });
+                        }
+                        useToastStore.getState().pushToast({
+                          dedupeKey: `demo-workflow-${Date.now()}`,
+                          category: 'workflow',
+                          status: 'info',
+                          title: 'Workflow matched',
+                          detail: 'ship-pr-until-green · verified preconditions & steps',
+                          actionLabel: 'Inspect Activity',
+                          onAction: () => setIsOpen(false),
+                        });
+                      }}
+                    >
+                      <span>Test Workflow Matched</span>
+                    </Button>
+
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        if (!state.toastEnabled) {
+                          applyCustomization({ toastEnabled: true });
+                        }
+                        useToastStore.getState().pushToast({
+                          dedupeKey: `demo-skill-${Date.now()}`,
+                          category: 'skill',
+                          status: 'info',
+                          title: 'Skill used',
+                          detail: 'openz_fullstack_playbook, rust_pro',
+                          actionLabel: 'Open Skills',
+                          onAction: () => {
+                            useOpenZStore.getState().setActiveView('skills');
+                            setIsOpen(false);
+                          },
+                        });
+                      }}
+                    >
+                      <span>Test Skill Used</span>
+                    </Button>
+
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        if (!state.toastEnabled) {
+                          applyCustomization({ toastEnabled: true });
+                        }
+                        useToastStore.getState().pushToast({
+                          dedupeKey: `demo-curator-${Date.now()}`,
+                          category: 'self_improvement',
+                          status: 'success',
+                          title: 'Self-improvement skill synthesized',
+                          detail: 'Curator updated ~/.openz/skills/cargo_low_mem.md',
+                          actionLabel: 'Open Skills',
+                          onAction: () => {
+                            useOpenZStore.getState().setActiveView('skills');
+                            setIsOpen(false);
+                          },
+                        });
+                      }}
+                    >
+                      <span>Test Self-Improvement</span>
+                    </Button>
+
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => {
+                        if (!state.toastEnabled) {
+                          applyCustomization({ toastEnabled: true });
+                        }
+                        const samples = [
+                          {
+                            category: 'research' as const,
+                            status: 'info' as const,
+                            title: 'Research brief matched',
+                            detail: 'beui animated-toast-stack architecture (fresh)',
+                          },
+                          {
+                            category: 'skill' as const,
+                            status: 'info' as const,
+                            title: 'Skill used',
+                            detail: 'openz_orchestration_handbook',
+                          },
+                          {
+                            category: 'workflow' as const,
+                            status: 'info' as const,
+                            title: 'Workflow matched',
+                            detail: 'verified-webui-release',
+                          },
+                          {
+                            category: 'self_improvement' as const,
+                            status: 'success' as const,
+                            title: 'Self-improvement memory updated',
+                            detail: 'Saved reusable session telemetry patterns',
+                          },
+                        ];
+                        samples.forEach((sample, idx) => {
+                          globalThis.setTimeout(() => {
+                            useToastStore.getState().pushToast({
+                              dedupeKey: `demo-burst-${Date.now()}-${idx}`,
+                              ...sample,
+                            });
+                          }, idx * 120);
+                        });
+                      }}
+                    >
+                      <span>Trigger 4-Card Stack Burst</span>
+                    </Button>
+
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => useToastStore.getState().clearActiveToasts()}
+                    >
+                      <span>Clear Live Stack</span>
+                    </Button>
+                  </div>
+
+                  {/* Interactive Static Deck Preview (Hover to Fan Out!) */}
+                  <div className="mt-4 rounded-xl border border-border/60 bg-background/60 px-4 py-3">
+                    <div className="mb-1 text-center text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                      Hover deck below to preview spring fan-out geometry
+                    </div>
+                    <AnimatedToastStack
+                      previewStatic
+                      variant={state.toastVariant}
+                      maxVisible={state.toastMaxVisible}
+                      onDismiss={() => {}}
+                      toasts={[
+                        {
+                          id: 'studio-toast-1',
+                          category: 'workflow',
+                          status: 'info',
+                          title: 'Workflow matched',
+                          detail: 'release-verification-pipeline (score 9.4)',
+                          createdAt: 1_763_150_144_000,
+                          actionLabel: 'Inspect Activity',
+                          onAction: () => {},
+                        },
+                        {
+                          id: 'studio-toast-2',
+                          category: 'skill',
+                          status: 'info',
+                          title: 'Skill used',
+                          detail: 'openz_fullstack_playbook',
+                          createdAt: 1_763_150_141_000,
+                          actionLabel: 'Open Skills',
+                          onAction: () => {},
+                        },
+                        {
+                          id: 'studio-toast-3',
+                          category: 'self_improvement',
+                          status: 'success',
+                          title: 'Self-improvement memory updated',
+                          detail: 'Recent conversation learnings were saved',
+                          createdAt: 1_763_150_138_000,
+                        },
+                      ]}
+                    />
+                  </div>
+                </div>
+
+                {/* 1. 10 Toast Stack UI Component Styles */}
+                <div>
+                  <h2 className="mb-1 text-sm font-semibold text-foreground">
+                    1. Toast UI Component Styles ({TOAST_VARIANT_OPTIONS.length} Components)
+                  </h2>
+                  <p className="mb-4 text-xs text-muted-foreground">
+                    Choose from {TOAST_VARIANT_OPTIONS.length} distinct @beui/animated-toast-stack UI component styles across Light and Dark themes.
+                  </p>
+                  <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+                    {TOAST_VARIANT_OPTIONS.map((opt) => (
+                      <VariantPreviewCard
+                        key={opt.id}
+                        title={opt.title}
+                        description={opt.description}
+                        selected={state.toastVariant === opt.id}
+                        isDefault={Boolean(opt.isDefault)}
+                        onSelect={() => applyCustomization({ toastVariant: opt.id })}
+                      >
+                        <div className="space-y-2 rounded-xl border border-border/60 bg-background/55 p-3">
+                          <div className="flex items-center justify-between text-[11px]">
+                            <span className="font-semibold text-foreground">{opt.shortLabel} Component</span>
+                            <Badge variant={state.toastVariant === opt.id ? 'default' : 'outline'}>
+                              {opt.id}
+                            </Badge>
+                          </div>
+                          <BeuiToastStylePreview variant={opt.id} />
+                        </div>
+                      </VariantPreviewCard>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 2. Screen Position, Auto-Dismiss Duration & Stack Depth */}
+                <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+                  <div className="rounded-2xl border border-border/70 bg-card/55 p-4">
+                    <h3 className="mb-1 text-xs font-semibold text-foreground">
+                      2. Viewport Anchor Placement
+                    </h3>
+                    <p className="mb-3 text-[11px] text-muted-foreground">
+                      Place live toast decks at Top Start / Center / End or Bottom Start / Center / End.
+                    </p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {TOAST_POSITION_OPTIONS.map((opt) => {
+                        const activePos = normalizeToastPosition(state.toastPosition) === opt.id;
+                        return (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => applyCustomization({ toastPosition: opt.id })}
+                            className={cn(
+                              'rounded-xl border px-2.5 py-2 text-left transition-colors',
+                              activePos
+                                ? 'border-primary/50 bg-primary/10 text-foreground'
+                                : 'border-border/60 bg-background/50 text-muted-foreground hover:border-border hover:text-foreground',
+                            )}
+                          >
+                            <div className="text-[11px] font-semibold leading-tight">{opt.shortLabel}</div>
+                            <div className="mt-0.5 line-clamp-1 font-mono text-[9.5px] opacity-80">
+                              {opt.isDefault ? 'default' : opt.id}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-border/70 bg-card/55 p-4">
+                    <h3 className="mb-1 text-xs font-semibold text-foreground">
+                      3. Auto-Dismiss Timing
+                    </h3>
+                    <p className="mb-3 text-[11px] text-muted-foreground">
+                      Countdowns automatically pause while hovering the stack.
+                    </p>
+                    <div className="grid grid-cols-2 gap-2">
+                      {TOAST_DURATION_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => applyCustomization({ toastDuration: opt.id })}
+                          className={cn(
+                            'rounded-xl border px-3 py-2 text-left transition-colors',
+                            state.toastDuration === opt.id
+                              ? 'border-primary/50 bg-primary/10 text-foreground'
+                              : 'border-border/60 bg-background/50 text-muted-foreground hover:border-border hover:text-foreground',
+                          )}
+                        >
+                          <div className="text-xs font-semibold">{opt.shortLabel}</div>
+                          <div className="mt-0.5 line-clamp-1 text-[10px] opacity-80">
+                            {opt.title}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="rounded-2xl border border-border/70 bg-card/55 p-4">
+                    <h3 className="mb-1 text-xs font-semibold text-foreground">
+                      4. Max Visible Stack Depth
+                    </h3>
+                    <p className="mb-3 text-[11px] text-muted-foreground">
+                      Number of layered cards visible simultaneously in the stack.
+                    </p>
+                    <div className="grid grid-cols-3 gap-2">
+                      {TOAST_MAX_VISIBLE_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => applyCustomization({ toastMaxVisible: opt.id })}
+                          className={cn(
+                            'rounded-xl border px-3 py-2.5 text-center transition-colors',
+                            state.toastMaxVisible === opt.id
+                              ? 'border-primary/50 bg-primary/10 text-foreground'
+                              : 'border-border/60 bg-background/50 text-muted-foreground hover:border-border hover:text-foreground',
+                          )}
+                        >
+                          <div className="text-sm font-bold">{opt.shortLabel}</div>
+                          <div className="text-[10px] opacity-80">cards</div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* 5. Inline Chat Telemetry Notice Style */}
+                <div>
+                  <h2 className="mb-1 text-sm font-semibold text-foreground">
+                    5. Inline Chat Telemetry Display
+                  </h2>
+                  <p className="mb-4 text-xs text-muted-foreground">
+                    Control how Workflow matched, Skill used, and Self-improvement notices appear inside chat messages alongside live toasts.
+                  </p>
+                  <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+                    {INLINE_NOTICE_STYLE_OPTIONS.map((opt) => (
+                      <VariantPreviewCard
+                        key={opt.id}
+                        title={opt.title}
+                        description={opt.description}
+                        selected={state.inlineNoticeStyle === opt.id}
+                        isDefault={Boolean(opt.isDefault)}
+                        onSelect={() => applyCustomization({ inlineNoticeStyle: opt.id })}
+                      >
+                        {opt.id === 'toast-only' ? (
+                          <div className="rounded-xl border border-dashed border-border/70 px-3 py-2.5 text-center text-[11px] text-muted-foreground">
+                            Clean chat bubble — routed to Toast Stack &amp; Drawer only
+                          </div>
+                        ) : (
+                          <BeuiTelemetryNoticeStrip
+                            styleVariant={opt.id}
+                            onInspectNotice={() => {}}
+                            notices={[
+                              {
+                                id: `preview-inline-wf-${opt.id}`,
+                                kind: 'workflow',
+                                title: 'Workflow matched',
+                                detail: 'ship-pr-until-green',
+                                timestamp: STUDIO_PREVIEW_ANCHOR_TS - 2000,
+                              },
+                              {
+                                id: `preview-inline-sk-${opt.id}`,
+                                kind: 'skill',
+                                title: 'Skill used',
+                                detail: 'rust_pro',
+                                timestamp: STUDIO_PREVIEW_ANCHOR_TS - 1000,
+                              },
+                            ]}
+                          />
+                        )}
+                      </VariantPreviewCard>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 6. Granular Event Category Routing Switches */}
+                <div className="rounded-2xl border border-border/70 bg-card/55 p-4">
+                  <h3 className="mb-1 text-xs font-semibold text-foreground">
+                    6. Per-Category Toast Triggers
+                  </h3>
+                  <p className="mb-3 text-[11px] text-muted-foreground">
+                    Choose exactly which agent runtime events trigger popup toasts. Muted categories are still logged quietly in the Bell Notification Center.
+                  </p>
+                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                    {TOAST_CATEGORY_TOGGLE_OPTIONS.map((toggle) => (
+                      <label
+                        key={toggle.key}
+                        className="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-border/55 bg-background/45 px-3.5 py-2.5"
+                      >
+                        <div>
+                          <div className="text-xs font-semibold text-foreground">
+                            {toggle.title}
+                          </div>
+                          <div className="text-[11px] text-muted-foreground">
+                            {toggle.description}
+                          </div>
+                        </div>
+                        <Switch
+                          checked={Boolean(state[toggle.key])}
                           onCheckedChange={(checked) =>
                             applyCustomization({ [toggle.key]: Boolean(checked) })
                           }
@@ -2101,129 +2544,110 @@ export const UiStudioModal: React.FC = () => {
               </div>
             )}
 
-            {/* 17. TOOL RESULT (@beui/tool-result) */}
+            {/* 17. TOOL CALL (@assistant-ui/elements-tool-call) */}
             {activeSection === 'tool-result' && (
               <div className="grid grid-cols-1 gap-6">
-                {(
-                  [
-                    {
-                      id: 'beui-card',
-                      title: 'BEUI Collapsible Tool Card',
-                      desc: 'Structured collapsible card with status badge, duration, and tabbed inspector.',
-                      isDefault: true,
-                    },
-                    {
-                      id: 'compact-pill',
-                      title: 'BEUI Compact Pill',
-                      desc: 'Collapsed inline pill chip that expands into full tabs when clicked.',
-                      isDefault: false,
-                    },
-                    {
-                      id: 'expanded-terminal',
-                      title: 'BEUI Auto-Expanded Inspector',
-                      desc: 'Opens tool results expanded by default so output is immediately visible.',
-                      isDefault: false,
-                    },
-                  ] as const
-                ).map((opt) => (
+                {TOOL_CALL_STYLE_OPTIONS.map((opt) => (
                   <VariantPreviewCard
                     key={opt.id}
                     title={opt.title}
-                    description={opt.desc}
+                    description={opt.description}
                     selected={state.toolResultStyle === opt.id}
                     isDefault={opt.isDefault}
                     onSelect={() => applyCustomization({ toolResultStyle: opt.id })}
                   >
-                    <ToolResult
-                      variant={opt.id}
-                      tool={{
-                        id: `demo-${opt.id}`,
-                        name: 'grep_search',
-                        status: 'success',
-                        durationMs: 48,
-                        args: { query: 'TurnState', path: 'src/agent' },
-                        output: 'Found 6 matches across src/agent/agent_loop/mod.rs',
-                      }}
-                    />
+                    <div className="flex flex-col gap-2">
+                      <ToolExecutionCard
+                        key={`demo-ok-${opt.id}`}
+                        styleOverride={opt.id}
+                        tool={{
+                          id: `demo-ok-${opt.id}`,
+                          name: 'grep_search',
+                          status: 'success',
+                          durationMs: 48,
+                          args: { query: 'TurnState', path: 'src/agent' },
+                          output: 'Found 6 matches across src/agent/agent_loop/mod.rs',
+                        }}
+                      />
+                      <ToolExecutionCard
+                        key={`demo-run-${opt.id}`}
+                        styleOverride={opt.id}
+                        tool={{
+                          id: `demo-run-${opt.id}`,
+                          name: 'exec_command',
+                          status: 'running',
+                          args: { command: 'cargo check -p openz -j 1' },
+                        }}
+                      />
+                      <ToolExecutionCard
+                        key={`demo-err-${opt.id}`}
+                        styleOverride={opt.id}
+                        tool={{
+                          id: `demo-err-${opt.id}`,
+                          name: 'cargo_manager',
+                          status: 'error',
+                          durationMs: 312,
+                          args: { action: 'test', package: 'openz' },
+                          error: 'Test assertion failed in session::tests::compaction_roundtrip',
+                        }}
+                      />
+                    </div>
                   </VariantPreviewCard>
                 ))}
               </div>
             )}
 
-            {/* 18. TOOL APPROVAL (@beui/tool-approval & @beui/approval-card) */}
+            {/* 18. APPROVAL CARD (@assistant-ui/elements-approval-card) */}
             {activeSection === 'tool-approval' && (
               <div className="grid grid-cols-1 gap-6">
-                {(
-                  [
-                    {
-                      id: 'beui-tool-approval',
-                      title: 'BEUI Tool Approval (@beui/tool-approval)',
-                      desc: 'Focused inline SecurityGuard prompt with command preview and Approve / Deny actions.',
-                      isDefault: true,
-                    },
-                    {
-                      id: 'beui-approval-card',
-                      title: 'BEUI Approval Audit Card (@beui/approval-card)',
-                      desc: 'High-trust security card with risk badge and collapsible JSON arguments.',
-                      isDefault: false,
-                    },
-                  ] as const
-                ).map((opt) => (
+                {APPROVAL_CARD_STYLE_OPTIONS.map((opt) => (
                   <VariantPreviewCard
                     key={opt.id}
                     title={opt.title}
-                    description={opt.desc}
+                    description={opt.description}
                     selected={state.approvalStyle === opt.id}
                     isDefault={opt.isDefault}
                     onSelect={() => applyCustomization({ approvalStyle: opt.id })}
                   >
-                    {opt.id === 'beui-approval-card' ? (
-                      <div className="space-y-2">
-                        <ApprovalCard
+                    <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                      <SecurityGuardPrompt
+                        styleOverride={opt.id}
+                        onChoice={() => {}}
+                        prompt={{
+                          id: `sec-pending-${opt.id}`,
+                          toolName: 'exec_command',
+                          description: 'Requires confirmation before running shell command',
+                          arguments: { command: 'cargo check -p openz -j 1' },
+                          status: 'pending',
+                        }}
+                      />
+                      <div className="flex flex-col gap-3">
+                        <SecurityGuardPrompt
+                          styleOverride={opt.id}
+                          stateOverride="running"
                           onChoice={() => {}}
                           prompt={{
-                            id: 'sec-1',
+                            id: `sec-running-${opt.id}`,
                             toolName: 'exec_command',
-                            description: 'Requires confirmation before running shell command',
-                            arguments: { command: 'cargo check -p openz -j 1' },
-                            status: 'pending',
+                            description: '',
+                            arguments: { command: 'just test openz' },
+                            status: 'approved',
                           }}
                         />
-                        <ApprovalCard
+                        <SecurityGuardPrompt
+                          styleOverride={opt.id}
+                          stateOverride="done"
                           onChoice={() => {}}
                           prompt={{
-                            id: 'sec-1-resolved',
+                            id: `sec-done-${opt.id}`,
                             toolName: 'curate_skill',
-                            description: 'action: "list"',
-                            arguments: { action: 'list' },
+                            description: '',
+                            arguments: { action: 'save', name: 'opencaveman' },
                             status: 'approved',
                           }}
                         />
                       </div>
-                    ) : (
-                      <div className="space-y-2">
-                        <ToolApproval
-                          onChoice={() => {}}
-                          prompt={{
-                            id: 'sec-2',
-                            toolName: 'exec_command',
-                            description: 'Requires confirmation before running shell command',
-                            arguments: { command: 'cargo check -p openz -j 1' },
-                            status: 'pending',
-                          }}
-                        />
-                        <ToolApproval
-                          onChoice={() => {}}
-                          prompt={{
-                            id: 'sec-2-resolved',
-                            toolName: 'curate_skill',
-                            description: 'action: "list"',
-                            arguments: { action: 'list' },
-                            status: 'approved',
-                          }}
-                        />
-                      </div>
-                    )}
+                    </div>
                   </VariantPreviewCard>
                 ))}
               </div>

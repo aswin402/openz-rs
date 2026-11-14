@@ -18,12 +18,14 @@ export type WebSocketCommand =
       turn_id?: string;
       streaming?: boolean;
       caveman_mode?: boolean;
+      caveman_level?: string;
       attachments?: WebSocketAttachment[];
     }
   | { type: 'new_chat' }
-  | { type: 'attach' | 'load_history' | 'archive_session' | 'delete_session'; chat_id: string }
+  | { type: 'stop_turn'; chat_id: string; turn_id?: string }
+  | { type: 'attach' | 'load_history' | 'clear_session' | 'archive_session' | 'delete_session'; chat_id: string }
   | { type: 'list_sessions'; offset?: number; limit?: number }
-  | { type: 'get_cognitive_memory' | 'get_mcp_servers' | 'get_logs' | 'get_servers' | 'get_config' | 'get_slash_commands' | 'get_status' | 'get_runtime_inventory' }
+  | { type: 'get_cognitive_memory' | 'get_mcp_servers' | 'get_logs' | 'get_servers' | 'get_config' | 'get_status' | 'get_runtime_inventory' }
   | { type: 'stop_server'; target: string }
   | { type: 'get_models'; provider?: string }
   | { type: 'toggle_favorite_model'; provider: string; model: string }
@@ -61,9 +63,11 @@ export interface WebSocketCommandAckEvent extends WebSocketEventEnvelope {
 const COMMAND_NAMES = new Set<WebSocketCommandName>([
   'ping',
   'message',
+  'stop_turn',
   'new_chat',
   'attach',
   'load_history',
+  'clear_session',
   'archive_session',
   'delete_session',
   'list_sessions',
@@ -72,7 +76,6 @@ const COMMAND_NAMES = new Set<WebSocketCommandName>([
   'get_logs',
   'get_servers',
   'get_config',
-  'get_slash_commands',
   'get_status',
   'get_runtime_inventory',
   'stop_server',

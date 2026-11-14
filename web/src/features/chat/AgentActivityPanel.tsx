@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import {
+  Bell,
   Brain,
   Clock3,
   ExternalLink,
@@ -79,6 +80,7 @@ export const AgentActivityPanel: React.FC<AgentActivityPanelProps> = ({
   const activityOrbStyle = useUiCustomizationStore((s) => s.activityOrbStyle);
   const activityDensity = useUiCustomizationStore((s) => s.activityDensity);
   const activityShowDetails = useUiCustomizationStore((s) => s.activityShowDetails);
+  const toastEnabled = useUiCustomizationStore((s) => s.toastEnabled);
   const applyCustomization = useUiCustomizationStore((s) => s.applyCustomization);
   const setActiveCustomizeSection = useUiCustomizationStore(
     (s) => s.setActiveCustomizeSection,
@@ -292,6 +294,28 @@ export const AgentActivityPanel: React.FC<AgentActivityPanelProps> = ({
                     ))}
                   </div>
                 </div>
+              </div>
+
+              <div className="flex items-center justify-between border-t border-border/50 pt-2">
+                <button
+                  type="button"
+                  onClick={() => applyCustomization({ toastEnabled: !toastEnabled })}
+                  className="inline-flex items-center gap-1.5 text-[10.5px] font-medium text-foreground transition hover:text-primary"
+                >
+                  <Bell className="size-3 text-primary" />
+                  <span>Live Toast Stack: {toastEnabled ? 'On' : 'Muted'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveCustomizeSection('animated-toast-stack');
+                    setIsCustomizeOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1 text-[10px] font-semibold text-primary hover:underline"
+                >
+                  <span>Toast Options</span>
+                  <ExternalLink className="size-2.5" />
+                </button>
               </div>
             </div>
           )}

@@ -1,4 +1,10 @@
 import { asString, isRecord } from '../shared/lib/format';
+import type {
+  CavemanLevelSlug,
+  CavemanStatsSnapshot,
+} from '../shared/lib/cavemanLevels';
+
+export type { CavemanLevelSlug, CavemanStatsSnapshot };
 
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | JsonObject | JsonValue[];
@@ -8,6 +14,7 @@ export interface ActivityNotice {
   id: string;
   kind:
     | "workflow"
+    | "skill"
     | "memory"
     | "research"
     | "self_improvement"
@@ -366,6 +373,8 @@ export interface AgentDefaultsConfig {
   max_tokens: number;
   streaming: boolean;
   caveman_mode: boolean;
+  caveman_level?: CavemanLevelSlug | string;
+  caveman_stats?: CavemanStatsSnapshot | null;
   security_mode: string;
   tool_routing_mode?: string;
   workspace: string;
@@ -395,12 +404,6 @@ export interface OpenZConfigPatch {
   defaults?: Partial<AgentDefaultsConfig>;
   providers?: JsonObject;
   channels?: JsonObject;
-}
-
-/** A single slash command from the backend `SLASH_COMMANDS`. */
-export interface SlashCommand {
-  cmd: string;
-  desc: string;
 }
 
 /** Agent/gateway status from the backend `status` event. */
@@ -438,6 +441,8 @@ export interface RuntimeInventory {
     provider: string;
     streaming: boolean;
     cavemanMode: boolean;
+    cavemanLevel?: string;
+    cavemanStats?: CavemanStatsSnapshot | null;
     maxMessages: number;
     maxToolIterations: number;
     toolTimeoutSecs: number;

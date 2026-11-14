@@ -189,6 +189,16 @@ fn workflow_notice_is_emitted_once_per_turn() {
 }
 
 #[test]
+fn skill_notice_is_emitted_once_per_turn_and_thresholded() {
+    let mut seen = std::collections::HashSet::new();
+
+    assert!(MIN_SKILL_NOTICE_SCORE >= 3.0);
+    assert!(should_emit_skill_notice(&mut seen, "rust-pro"));
+    assert!(!should_emit_skill_notice(&mut seen, "rust-pro"));
+    assert!(should_emit_skill_notice(&mut seen, "frontend-design"));
+}
+
+#[test]
 fn live_queries_keep_research_context_available() {
     assert!(!should_skip_research_memory_for_generic_query(
         "check this https://example.com/path"
@@ -453,6 +463,7 @@ fn kv_cached_system_prompt_keeps_static_prefix_identical_across_turns_and_timest
 
     let suffix_turn_1 = DynamicPromptSuffix {
         persona_priority_part: "",
+        caveman_auto_clarity: "",
         summary_part: "\n\nSummary turn 1",
         memory_part: "\n\nMemory turn 1",
         cross_session_memory: "\n\nCross memory 1",
@@ -466,6 +477,7 @@ fn kv_cached_system_prompt_keeps_static_prefix_identical_across_turns_and_timest
     };
     let suffix_turn_2 = DynamicPromptSuffix {
         persona_priority_part: "\n\n[Persona Priority]",
+        caveman_auto_clarity: "\n\n[Caveman Auto-Clarity Override]",
         summary_part: "\n\nSummary turn 2 updated",
         memory_part: "\n\nMemory turn 2 updated",
         cross_session_memory: "\n\nCross memory 2",
@@ -509,6 +521,7 @@ fn kv_cached_system_prompt_budget_truncates_dynamic_sections_without_touching_st
     let long_cross = format!("\nCross: {}", "C".repeat(500));
     let suffix = DynamicPromptSuffix {
         persona_priority_part: "",
+        caveman_auto_clarity: "",
         summary_part: "",
         memory_part: "",
         cross_session_memory: &long_cross,

@@ -10,6 +10,10 @@ import {
   type BeuiActivityContentType,
 } from './beui';
 import { buildUnifiedDashboardActivitySteps } from '../features/activity/activityAdapters';
+import {
+  formatCavemanSavingsBadge,
+  getCavemanLevelOption,
+} from '../shared/lib/cavemanLevels';
 import { cn } from '../lib/utils';
 import type { JsonObject, JsonValue } from '../types';
 import {
@@ -99,6 +103,8 @@ export const DashboardView: React.FC = () => {
   const servers = useOpenZStore((s) => s.servers);
   const streamingMode = useOpenZStore((s) => s.streamingMode);
   const cavemanMode = useOpenZStore((s) => s.cavemanMode);
+  const cavemanLevel = useOpenZStore((s) => s.cavemanLevel);
+  const cavemanStats = useOpenZStore((s) => s.cavemanStats);
   const toggleStreamingMode = useOpenZStore((s) => s.toggleStreamingMode);
   const toggleCavemanMode = useOpenZStore((s) => s.toggleCavemanMode);
   const providersConfig = useOpenZStore((s) => s.providersConfig) || {};
@@ -114,6 +120,7 @@ export const DashboardView: React.FC = () => {
   const showDashboardActivity = useUiCustomizationStore((s) => s.showDashboardActivity);
   const applyCustomization = useUiCustomizationStore((s) => s.applyCustomization);
   const setActiveCustomizeSection = useUiCustomizationStore((s) => s.setActiveCustomizeSection);
+  const setActiveGatewaySection = useUiCustomizationStore((s) => s.setActiveGatewaySection);
   const setIsCustomizeOpen = useUiCustomizationStore((s) => s.setIsCustomizeOpen);
 
   const [dashboardContentType, setDashboardContentType] =
@@ -396,13 +403,44 @@ export const DashboardView: React.FC = () => {
           onToggle={toggleStreamingMode}
           icon={Activity}
         />
-        <ToggleRow
-          label="Caveman Mode"
-          desc="Terseness instruction injected into the system prompt"
-          on={cavemanMode}
-          onToggle={toggleCavemanMode}
-          icon={Database}
-        />
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-border/60 bg-card/60 p-4 shadow-sm transition hover:border-primary/40 hover:bg-card">
+          <button
+            type="button"
+            onClick={() => {
+              setActiveGatewaySection('caveman');
+              setIsSettingsOpen(true);
+            }}
+            className="flex flex-1 items-center gap-3 text-left"
+            title="Open Caveman Mode settings"
+          >
+            <Zap className="h-4 w-4 shrink-0 text-primary" />
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                <span>Caveman Mode</span>
+                {formatCavemanSavingsBadge(cavemanStats) && (
+                  <span className="rounded-full bg-primary/12 px-2 py-0.5 font-mono text-[10px] font-bold text-primary">
+                    ⛏{formatCavemanSavingsBadge(cavemanStats)}
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-muted-foreground">
+                {cavemanMode
+                  ? `${getCavemanLevelOption(cavemanLevel).label} · Configure`
+                  : 'Standard verbose prose · Configure'}
+              </div>
+            </div>
+          </button>
+          <button
+            type="button"
+            onClick={toggleCavemanMode}
+            className={`relative h-5 w-9 shrink-0 rounded-full transition-colors ${cavemanMode ? 'bg-primary' : 'bg-muted'}`}
+            aria-label={cavemanMode ? 'Caveman Enabled' : 'Caveman Disabled'}
+          >
+            <span
+              className={`absolute top-0.5 h-4 w-4 rounded-full shadow transition-all ${cavemanMode ? 'left-[18px] bg-primary-foreground' : 'left-0.5 bg-card'}`}
+            />
+          </button>
+        </div>
         <ToggleRow
           label="Dashboard Activity"
           desc="Live @beui/agent-activity feed on overview"

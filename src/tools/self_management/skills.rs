@@ -8,6 +8,12 @@ pub struct CurateSkillTool;
 const SKILL_NAME_KEYS: &[&str] = &["skill_name", "skillName", "name", "skill", "id"];
 const SKILL_CONTENT_KEYS: &[&str] = &["content", "instructions", "body", "text"];
 
+fn notify_skill_curation(title: &str, detail: &str) {
+    let _ = crate::agent::style::spinner::get_current_session_key().map(|session_key| {
+        crate::channels::websocket::publish_activity_notice(&session_key, "skill", title, detail);
+    });
+}
+
 #[async_trait::async_trait]
 impl Tool for CurateSkillTool {
     fn name(&self) -> &str {
@@ -95,6 +101,7 @@ impl Tool for CurateSkillTool {
                     }
                     None => crate::agent::skills::save_skill(&skill_name, content)?,
                 }
+                notify_skill_curation("Skill curated", &skill_name);
 
                 Ok(serde_json::json!({
                     "success": true,
@@ -106,6 +113,7 @@ impl Tool for CurateSkillTool {
                     .ok_or_else(|| anyhow::anyhow!("Missing skill_name for action 'delete'"))?;
 
                 crate::agent::skills::delete_skill_with_profile(&skill_name, profile.as_deref())?;
+                notify_skill_curation("Skill deleted", &skill_name);
                 Ok(serde_json::json!({
                     "success": true,
                     "message": format!("Skill '{}' successfully deleted", skill_name)
@@ -138,6 +146,7 @@ impl Tool for CurateSkillTool {
                     profile.as_deref(),
                     revision_id,
                 )?;
+                notify_skill_curation("Skill rolled back", &restored.name);
                 Ok(serde_json::json!({
                     "success": true,
                     "skill_name": restored.name,

@@ -24,7 +24,7 @@ enum RatatuiSlashCommand<'a> {
     Theme(&'a str),
     Gateway(&'a str),
     NewSession,
-    Settings,
+    Settings(&'a str),
     Streaming,
     Servers,
     StopServer(&'a str),
@@ -48,7 +48,6 @@ impl<'a> RatatuiSlashCommand<'a> {
             "/help" | "/commands" => return Self::Help,
             "/history" => return Self::History,
             "/new-session" => return Self::NewSession,
-            "/settings" => return Self::Settings,
             "/streaming" => return Self::Streaming,
             "/servers" => return Self::Servers,
             "/memory" => return Self::Memory,
@@ -56,6 +55,13 @@ impl<'a> RatatuiSlashCommand<'a> {
             "/mcps" => return Self::Mcps,
             "/audit" => return Self::Audit,
             _ => {}
+        }
+        match trimmed.strip_prefix("/settings") {
+            Some(rest) => match rest.is_empty() || rest.starts_with(char::is_whitespace) {
+                true => return Self::Settings(rest.trim()),
+                false => {}
+            },
+            None => {}
         }
         match trimmed.strip_prefix("/model") {
             Some(rest) => return Self::Model(rest.trim()),
@@ -284,7 +290,15 @@ pub async fn handle_slash_command(
                 ),
             }
         }
-        RatatuiSlashCommand::Settings => {
+        RatatuiSlashCommand::Settings("") => SlashResult::OpenModal(ModalState::Settings(
+            super::settings_menu::TuiSettingsModalState::from_live_session(
+                session_manager,
+                session_key,
+                config,
+                &app.theme_name,
+            ),
+        )),
+        RatatuiSlashCommand::Settings(_) => {
             let raw_cfg = crate::config::loader::load_config()
                 .unwrap_or_else(|_| agent_loop.config.clone());
             let ws_cfg = raw_cfg.channels.websocket.clone().unwrap_or_default();
@@ -319,6 +333,10 @@ pub async fn handle_slash_command(
                 format!(
                     "• **Caveman Mode:** `{}`",
                     enabled_title_label(defaults.caveman_mode)
+                ),
+                format!(
+                    "• **Caveman Intensity:** `{}`",
+                    opencaveman::normalize_level_slug(&defaults.caveman_level)
                 ),
                 format!("• **Max Messages:** `{}`", defaults.max_messages),
                 format!(

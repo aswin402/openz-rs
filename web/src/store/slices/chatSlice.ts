@@ -102,7 +102,7 @@ export const createChatSlice: StateCreator<
     const chatId = get().activeChatId;
     if (!chatId) return;
     set({ messages: { ...get().messages, [chatId]: [] } });
-    wsService.sendMessage(chatId, '/clear');
+    wsService.clearSession(chatId);
   },
 
   sendMessage: (content, attachments = []) => {
@@ -173,6 +173,7 @@ export const createChatSlice: StateCreator<
       wsService.sendMessage(chatId, content, model, provider, attachmentPayload, {
         streaming: get().streamingMode,
         cavemanMode: get().cavemanMode,
+        cavemanLevel: get().cavemanLevel,
       });
     } catch (err) {
       set({ isStreaming: false });

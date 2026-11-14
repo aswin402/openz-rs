@@ -49,21 +49,6 @@ export {
   type ImageGenerationProps,
 } from "./image-generation"
 export {
-  ToolResult,
-  type ToolResultProps,
-  type BeuiToolResultVariant,
-} from "./tool-result"
-export {
-  ToolApproval,
-  formatApprovalArgs,
-  summarizeApprovalInline,
-  type ToolApprovalProps,
-} from "./tool-approval"
-export {
-  ApprovalCard,
-  type ApprovalCardProps,
-} from "./approval-card"
-export {
   BeuiCitations,
   extractAllMarkdownSources,
   type BeuiCitationsProps,
@@ -72,6 +57,7 @@ export {
 export {
   AgentActivity,
   BeuiActivityOrb,
+  OfficialBeuiAgentActivity,
   ACTIVITY_DENSITY_OPTIONS,
   ACTIVITY_MAX_HEIGHT_OPTIONS,
   ACTIVITY_MAX_HEIGHT_PX,
@@ -82,12 +68,14 @@ export {
   resolveMaxHeightPx,
   resolveStepContentType,
   resolveStepIcon,
+  toBeuiOfficialActivityItems,
   type AgentActivityNoticeKind,
   type AgentActivityOptionDescriptor,
   type AgentActivityProps,
   type AgentActivityStep,
   type AgentActivityStepKind,
   type AgentActivityStepStatus,
+  type AgentSearchResult,
   type BeuiActivityContentType,
   type BeuiActivityDensity,
   type BeuiActivityMaxHeight,
@@ -96,6 +84,7 @@ export {
   type BeuiActivityPhase,
   type BeuiActivityPlacement,
   type BeuiActivityVariant,
+  type BeuiOfficialActivityItem,
 } from "./agent-activity"
 export {
   BeuiMessageActions,
@@ -170,3 +159,38 @@ export {
   type BeuiUserAvatarVariant,
   type BeuiAvatarOptionMeta,
 } from "./avatar"
+export {
+  AnimatedToastStack,
+  BeuiNotificationCenterPopover,
+  BeuiTelemetryNoticeStrip,
+  BeuiToastStylePreview,
+  INLINE_NOTICE_STYLE_OPTIONS,
+  TOAST_CATEGORY_META,
+  TOAST_DURATION_MS,
+  TOAST_DURATION_OPTIONS,
+  TOAST_MAX_VISIBLE_OPTIONS,
+  TOAST_POSITION_OPTIONS,
+  TOAST_VARIANT_OPTIONS,
+  computeCumulativeExpandedOffsets,
+  computeToastStackGeometry,
+  mapNoticeKindToToastCategory,
+  normalizeToastPosition,
+  normalizeToastVariant,
+  resolveToastDurationMs,
+  type AnimatedToastStackProps,
+  type BeuiCanonicalToastPosition,
+  type BeuiInlineNoticeStyle,
+  type BeuiNotificationCenterPopoverProps,
+  type BeuiTelemetryNoticeStripProps,
+  type BeuiToastCategory,
+  type BeuiToastCategoryMeta,
+  type BeuiToastDurationPreset,
+  type BeuiToastItem,
+  type BeuiToastMaxVisible,
+  type BeuiToastOptionDescriptor,
+  type BeuiToastPosition,
+  type BeuiToastStatus,
+  type BeuiToastStylePreviewProps,
+  type BeuiToastVariant,
+  type ToastStackGeometry,
+} from "./animated-toast-stack"

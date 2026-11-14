@@ -1,4 +1,5 @@
 import type { AgentDefaultsConfig, JsonObject, WebUiCapabilities } from '../../types';
+import { normalizeCavemanLevel } from '../../shared/lib/cavemanLevels';
 import { isWebSocketUrl } from '../../shared/lib/format';
 
 export type SettingsForm = Record<string, string | number | boolean>;
@@ -174,6 +175,8 @@ const AGENT_SETTING_FIELDS: readonly AgentSettingFieldDescriptor[] = [
   { key: 'tool_timeout_secs', kind: 'number' },
   { key: 'security_mode', kind: 'string', fallback: 'low' },
   { key: 'tool_routing_mode', kind: 'string', fallback: 'adaptive' },
+  { key: 'caveman_mode', kind: 'boolean', fallback: true },
+  { key: 'caveman_level', kind: 'string', fallback: 'full' },
   { key: 'workspace', kind: 'string' },
   { key: 'context_limit', kind: 'nullable_number', fallback: '' },
   { key: 'tool_output_limit', kind: 'nullable_number', fallback: '' },
@@ -188,6 +191,7 @@ const SPECIAL_STRING_NORMALIZERS: Readonly<
 > = {
   security_mode: normalizeSecurityMode,
   tool_routing_mode: normalizeToolRoutingMode,
+  caveman_level: normalizeCavemanLevel,
 };
 
 const FIELD_COERCERS: Readonly<

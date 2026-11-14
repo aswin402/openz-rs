@@ -1,4 +1,5 @@
 import type {
+  ActivityNotice,
   OpenZMessage,
   SecurityPromptInfo,
   ToolExecution,
@@ -16,28 +17,71 @@ import {
   type OrchestrationPayload,
 } from '../chatUtils';
 import type { StoreEventContext } from '../eventContext';
+import {
+  dispatchActivityNoticeToast,
+  dispatchOrchestrationLifecycleToast,
+  dispatchSecurityRequestToast,
+  dispatchWorkspaceEventToast,
+  type TelemetryNavigationHandlers,
+} from '../useToastStore';
 import { asString, isRecord } from '../../shared/lib/format';
 
-function normalizeActivityKind(value: unknown): 'workflow' | 'memory' | 'research' | 'self_improvement' | 'source' | 'system' {
+export function buildTelemetryNavigation({
+  set,
+}: StoreEventContext): TelemetryNavigationHandlers {
+  return {
+    openSkills: () => set({ activeView: 'skills' }),
+    openKnowledge: () => set({ activeView: 'knowledge' }),
+    openMemory: () => set({ isMemoryOpen: true }),
+    openActivity: () => set({ activeView: 'chats', isActivityPanelOpen: true }),
+    openAgents: () => set({ activeView: 'agents' }),
+    openLogs: () => set({ isLogsOpen: true }),
+    focusChat: () => set({ activeView: 'chats', isActivityPanelOpen: true }),
+  };
+}
+
+function normalizeActivityKind(value: unknown): ActivityNotice['kind'] {
   const raw = typeof value === 'string' ? value : 'system';
-  if (raw === 'workflow' || raw === 'memory' || raw === 'research' || raw === 'self_improvement' || raw === 'source') return raw;
+  if (
+    raw === 'workflow' ||
+    raw === 'skill' ||
+    raw === 'memory' ||
+    raw === 'research' ||
+    raw === 'self_improvement' ||
+    raw === 'source'
+  ) {
+    return raw;
+  }
   return 'system';
 }
 
 function attachActivityNotice(
-  { set, get }: StoreEventContext,
+  ctx: StoreEventContext,
   chatId: string,
   payload: Record<string, unknown>,
 ) {
+  const { set, get } = ctx;
+  const rawKind = typeof payload.kind === 'string' ? payload.kind : 'system';
+  const rawTitle = asString(payload.title) || 'Agent activity';
+
+  // Raw CLI/Telegram progress strings carry ANSI codes and duplicate structured
+  // WebSocket `reasoning_delta`, `tool_start`, and `tool_end` events.
+  if (rawKind === 'progress' || rawTitle === 'Progress') {
+    return;
+  }
+
   const state = get();
   const messages = state.messages[chatId] || [];
-  const notice = {
+  const notice: ActivityNotice = {
     id: newMsgId('activity'),
     kind: normalizeActivityKind(payload.kind),
-    title: asString(payload.title) || 'Agent activity',
+    title: rawTitle,
     detail: asString(payload.detail),
     timestamp: typeof payload.timestamp === 'number' ? payload.timestamp : Date.now(),
   };
+
+  dispatchActivityNoticeToast(notice, rawKind, buildTelemetryNavigation(ctx));
+
   const lastMsg = messages[messages.length - 1];
 
   if (lastMsg && lastMsg.role === 'assistant') {
@@ -94,6 +138,32 @@ function upsertStreamingAssistantMessage(
         [chatId]: [...chatMessages.slice(0, -1), updateExisting(lastMsg)],
       },
       ...(setStreamingOnExisting && isActiveChat ? { isStreaming: true } : {}),
+    });
+    return;
+  }
+
+  // Upgrade any pre-turn telemetry placeholder (`Workflow matched` / `Skill used`) into
+  // the live streaming assistant turn so notices stay attached to their response bubble.
+  if (
+    lastMsg &&
+    lastMsg.role === 'assistant' &&
+    lastMsg.isNotice &&
+    !lastMsg.content &&
+    (lastMsg.activityNotices?.length ?? 0) > 0
+  ) {
+    const promoted: OpenZMessage = {
+      ...lastMsg,
+      isNotice: false,
+      isStreaming: true,
+      model: lastMsg.model || get().activeModel || undefined,
+      ...initialPatch,
+    };
+    set({
+      messages: {
+        ...get().messages,
+        [chatId]: [...chatMessages.slice(0, -1), promoted],
+      },
+      ...(isActiveChat ? { isStreaming: true } : {}),
     });
     return;
   }
@@ -197,12 +267,16 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
 
   wsService.on('activity_notice', (payload) => {
     const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
-    attachActivityNotice({ set, get }, chatId, payload as Record<string, unknown>);
+    attachActivityNotice(ctx, chatId, payload as Record<string, unknown>);
   });
 
   wsService.on('orchestration_event', (payload) => {
     const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
     const eventPayload = isRecord(payload.payload) ? payload.payload as OrchestrationPayload : {};
+    dispatchOrchestrationLifecycleToast(
+      eventPayload as unknown as Record<string, unknown>,
+      buildTelemetryNavigation(ctx),
+    );
     set({
       orchestrationRuns: {
         ...get().orchestrationRuns,
@@ -313,6 +387,7 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
       arguments: payload.arguments,
       status: 'pending',
     };
+    dispatchSecurityRequestToast(prompt, buildTelemetryNavigation(ctx));
     upsertStreamingAssistantMessage(
       ctx,
       chatId,
@@ -398,6 +473,12 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
 
   wsService.on('error', (payload) => {
     const detail = payload.detail || 'Gateway error occurred.';
+    dispatchWorkspaceEventToast(
+      'global',
+      'error',
+      String(detail),
+      buildTelemetryNavigation(ctx),
+    );
     if (!payload.chat_id && (get().activeView !== 'chats' || get().isSettingsOpen)) {
       const activeView = get().activeView;
       const scope = get().isSettingsOpen

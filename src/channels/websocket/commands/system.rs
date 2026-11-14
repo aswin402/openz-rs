@@ -1,4 +1,4 @@
-//! Runtime, slash-command, and managed-server WebSocket response builders.
+//! Runtime and managed-server WebSocket response builders.
 
 use serde_json::Value;
 
@@ -9,14 +9,6 @@ pub(crate) fn runtime_inventory_event(
     let effective = config.with_ui_surface("webui");
     let inventory = crate::core::inventory::build_runtime_inventory(&effective, tools);
     super::super::protocol::runtime_inventory(inventory)
-}
-
-pub(crate) fn slash_commands_event() -> Value {
-    let commands = crate::channels::ratatui::app::SLASH_COMMANDS
-        .iter()
-        .map(|(cmd, desc)| super::super::protocol::slash_command(*cmd, *desc))
-        .collect::<Vec<_>>();
-    super::super::protocol::slash_commands(commands)
 }
 
 pub(crate) fn status_event() -> Value {

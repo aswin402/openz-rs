@@ -250,6 +250,8 @@ pub struct AgentDefaults {
     pub fallback_models: Vec<serde_json::Value>,
     #[serde(default = "default_caveman_mode", alias = "caveman_mode")]
     pub caveman_mode: bool,
+    #[serde(default = "default_caveman_level", alias = "caveman_level")]
+    pub caveman_level: String,
     #[serde(default, alias = "context_limit")]
     pub context_limit: Option<usize>,
     #[serde(default, alias = "prompt_budget_limit")]
@@ -354,6 +356,10 @@ fn default_caveman_mode() -> bool {
     true
 }
 
+fn default_caveman_level() -> String {
+    "full".to_string()
+}
+
 fn default_workspace() -> String {
     "~/.openz/workspace".to_string()
 }
@@ -404,6 +410,7 @@ impl Default for AgentDefaults {
             max_tool_iterations: default_max_tool_iterations(),
             fallback_models: default_fallback_models(),
             caveman_mode: true,
+            caveman_level: default_caveman_level(),
             context_limit: None,
             prompt_budget_limit: None,
             security_mode: default_security_mode(),
@@ -769,6 +776,8 @@ pub struct UiProfileSettings {
     pub streaming: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none", alias = "caveman_mode")]
     pub caveman_mode: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "caveman_level")]
+    pub caveman_level: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", alias = "security_mode")]
     pub security_mode: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", alias = "tool_routing_mode")]
@@ -1459,6 +1468,10 @@ impl Config {
         }
         match profile.caveman_mode {
             Some(v) => defaults.caveman_mode = v,
+            None => {}
+        }
+        match profile.caveman_level {
+            Some(v) => defaults.caveman_level = opencaveman::normalize_level_slug(&v).to_string(),
             None => {}
         }
         match profile.security_mode {

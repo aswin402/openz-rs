@@ -1,9 +1,19 @@
 use super::*;
 
 #[test]
-fn websocket_chat_uses_shared_stop_command_detection() {
-    assert!(crate::channels::is_stop_command("/stop"));
-    assert!(!crate::channels::is_stop_command("/stopwatch"));
+fn webui_session_surface_disables_slash_command_routing() {
+    assert_eq!(
+        crate::config::schema::Config::ui_surface_for_session_key("ws:chat-123"),
+        "webui"
+    );
+    assert_eq!(
+        crate::config::schema::Config::ui_surface_for_session_key("web:chat-123"),
+        "webui"
+    );
+    assert_eq!(
+        crate::config::schema::Config::ui_surface_for_session_key("cli:default"),
+        "tui"
+    );
 }
 
 #[test]

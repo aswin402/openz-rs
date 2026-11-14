@@ -162,10 +162,6 @@ pub(super) async fn handle_post_message_command(
                 super::send_event(&tx_clone, event).await;
             });
         }
-        "get_slash_commands" => {
-            let event = system::slash_commands_event();
-            super::send_event(tx, event).await;
-        }
         "get_status" => {
             let event = system::status_event();
             super::send_event(tx, event).await;
@@ -236,9 +232,11 @@ pub(super) async fn handle_post_message_command(
 pub(crate) enum WsCommand {
     Ping,
     Message,
+    StopTurn,
     NewChat,
     Attach,
     LoadHistory,
+    ClearSession,
     ArchiveSession,
     DeleteSession,
     ListSessions,
@@ -256,7 +254,6 @@ pub(crate) enum WsCommand {
     SaveSubagent,
     UpdateSubagentSettings,
     DeleteSubagent,
-    GetSlashCommands,
     GetStatus,
     GetRuntimeInventory,
     PauseCronJob,
@@ -271,9 +268,11 @@ impl WsCommand {
         Some(match command {
             "ping" => Self::Ping,
             "message" => Self::Message,
+            "stop_turn" => Self::StopTurn,
             "new_chat" => Self::NewChat,
             "attach" => Self::Attach,
             "load_history" => Self::LoadHistory,
+            "clear_session" => Self::ClearSession,
             "archive_session" => Self::ArchiveSession,
             "delete_session" => Self::DeleteSession,
             "list_sessions" => Self::ListSessions,
@@ -291,7 +290,6 @@ impl WsCommand {
             "save_subagent" => Self::SaveSubagent,
             "update_subagent_settings" => Self::UpdateSubagentSettings,
             "delete_subagent" => Self::DeleteSubagent,
-            "get_slash_commands" => Self::GetSlashCommands,
             "get_status" => Self::GetStatus,
             "get_runtime_inventory" => Self::GetRuntimeInventory,
             "pause_cron_job" => Self::PauseCronJob,

@@ -37,6 +37,7 @@ export interface UpdateSubagentSettingsData {
 export interface SendMessageOptions {
   streaming?: boolean;
   cavemanMode?: boolean;
+  cavemanLevel?: string;
 }
 
 export interface WebSocketCommandMethods {
@@ -53,6 +54,7 @@ export interface WebSocketCommandMethods {
   sendStop(chatId: string, turnId?: string): string | null;
   requestSessions(offset?: number, limit?: number): void;
   requestHistory(chatId: string): void;
+  clearSession(chatId: string): void;
   archiveSession(chatId: string): void;
   deleteSession(chatId: string): void;
   requestCognitiveMemory(): void;
@@ -71,7 +73,6 @@ export interface WebSocketCommandMethods {
   saveSubagent(data: SaveSubagentData): void;
   updateSubagentSettings(data: UpdateSubagentSettingsData): void;
   deleteSubagent(name: string): void;
-  requestSlashCommands(): void;
   requestStatus(): void;
   requestRuntimeInventory(): void;
   pauseCronJob(id: string): void;
@@ -100,6 +101,9 @@ export function createWebSocketCommands(
       if (provider) payload.provider = provider;
       if (typeof options?.streaming === 'boolean') payload.streaming = options.streaming;
       if (typeof options?.cavemanMode === 'boolean') payload.caveman_mode = options.cavemanMode;
+      if (typeof options?.cavemanLevel === 'string' && options.cavemanLevel.trim()) {
+        payload.caveman_level = options.cavemanLevel.trim();
+      }
       if (attachments?.length) payload.attachments = attachments;
       return send(payload, { requireConnected: true });
     },
@@ -110,10 +114,9 @@ export function createWebSocketCommands(
     },
 
     sendStop(chatId, turnId) {
-      const payload: Extract<WebSocketCommand, { type: 'message' }> = {
-        type: 'message',
+      const payload: Extract<WebSocketCommand, { type: 'stop_turn' }> = {
+        type: 'stop_turn',
         chat_id: chatId,
-        content: '/stop',
       };
       if (turnId) payload.turn_id = turnId;
       return send(payload, { requireConnected: true });
@@ -128,6 +131,9 @@ export function createWebSocketCommands(
 
     requestHistory: (chatId) => {
       send({ type: 'load_history', chat_id: chatId });
+    },
+    clearSession: (chatId) => {
+      send({ type: 'clear_session', chat_id: chatId });
     },
     archiveSession: (chatId) => {
       send({ type: 'archive_session', chat_id: chatId });
@@ -169,7 +175,6 @@ export function createWebSocketCommands(
     deleteSubagent: (name) => {
       send({ type: 'delete_subagent', name });
     },
-    requestSlashCommands: sendSimple({ type: 'get_slash_commands' }),
     requestStatus: sendSimple({ type: 'get_status' }),
     requestRuntimeInventory: sendSimple({ type: 'get_runtime_inventory' }),
     pauseCronJob: (id) => {

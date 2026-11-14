@@ -5,6 +5,7 @@ pub mod diff_viewer;
 pub mod markdown;
 pub mod modals;
 pub mod session;
+pub mod settings_menu;
 pub mod theme;
 pub mod timeline;
 pub mod ui;
@@ -539,6 +540,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
 
     let mut app = RatatuiApp::new(model, provider, active_key.clone());
     app.set_theme(&session_config.ui_theme("tui"));
+    app.refresh_caveman_status(&session_config);
     let _ = write_tui_marker_in_dir(
         &marker_dir,
         current_pid,
@@ -640,6 +642,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                     app.clear_activity();
                     current_turn_handle = None;
                     app.apply_sync_session(msgs);
+                    app.refresh_caveman_savings_only();
                 }
                 TurnEvent::SingleMessage(msg) => {
                     let is_live_thought = msg.reasoning.is_some() && msg.content.is_empty();
@@ -655,6 +658,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                             current_turn_handle = None;
                             app.messages.push(msg);
                             app.update_approx_tokens();
+                            app.refresh_caveman_savings_only();
                         }
                     }
                 }
@@ -798,6 +802,9 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                 // ── 1. Modal Key Interception ───────────────────────────
                                 match app.modal.is_active() {
                                     true => {
+                                        let mut maybe_sync_settings: Option<
+                                            settings_menu::TuiSettingsModalState,
+                                        > = None;
                                         match &mut app.modal {
                                             ModalState::ExitConfirm { selected_yes } => {
                                                 match key.code {
@@ -1074,6 +1081,9 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                                 .defaults
                                                                 .provider
                                                                 .clone();
+                                                            app.refresh_caveman_status(
+                                                                &restored_cfg,
+                                                            );
                                                             app.messages =
                                                                 ChatMessage::from_session_messages(
                                                                     &loaded.messages,
@@ -1139,7 +1149,40 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                         }
                                         _ => {}
                                     },
+                                    ModalState::Settings(state) => match key.code {
+                                        KeyCode::Up => {
+                                            state.move_prev();
+                                        }
+                                        KeyCode::Down => {
+                                            state.move_next();
+                                        }
+                                        KeyCode::Left => {
+                                            state.step_selected(false);
+                                            maybe_sync_settings = Some(state.clone());
+                                        }
+                                        KeyCode::Right | KeyCode::Enter | KeyCode::Char(' ') => {
+                                            state.step_selected(true);
+                                            maybe_sync_settings = Some(state.clone());
+                                        }
+                                        KeyCode::Esc => {
+                                            app.modal = ModalState::None;
+                                        }
+                                        _ => {}
+                                    },
                                     ModalState::None => {}
+                                }
+                                match maybe_sync_settings {
+                                    Some(snapshot) => {
+                                        let current_key = session_key.read().await.clone();
+                                        snapshot
+                                            .persist_and_sync(
+                                                &mut app,
+                                                &session_manager,
+                                                &current_key,
+                                            )
+                                            .await;
+                                    }
+                                    None => {}
                                 }
                                 continue;
                             }
@@ -1226,6 +1269,9 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                     commands::SlashResult::Message(msg) => {
                                         app.messages.push(msg);
                                         app.scroll_to_bottom();
+                                    }
+                                    commands::SlashResult::OpenModal(m) => {
+                                        app.modal = m;
                                     }
                                     _ => {}
                                 }

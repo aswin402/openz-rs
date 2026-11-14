@@ -57,7 +57,20 @@ export const CoreTab: React.FC<{ inventory: RuntimeInventory }> = ({ inventory }
       <KeyValue label="Model" value={inventory.defaults.model} />
       <KeyValue label="Provider" value={inventory.defaults.provider} />
       <KeyValue label="Streaming" value={inventory.defaults.streaming ? 'Enabled' : 'Disabled'} />
-      <KeyValue label="Caveman Mode" value={inventory.defaults.cavemanMode ? 'Enabled' : 'Disabled'} />
+      <KeyValue
+        label="Caveman Mode"
+        value={
+          inventory.defaults.cavemanMode
+            ? `Enabled (${inventory.defaults.cavemanLevel || 'full'})`
+            : 'Disabled'
+        }
+      />
+      {inventory.defaults.cavemanStats && inventory.defaults.cavemanStats.lifetimeTotalTokensSaved > 0 && (
+        <KeyValue
+          label="OpenCaveman Saved"
+          value={`${inventory.defaults.cavemanStats.compactLifetimeBadge} tokens (${inventory.defaults.cavemanStats.lifetimeTurns} turns)`}
+        />
+      )}
       <KeyValue label="Max Messages" value={String(inventory.defaults.maxMessages)} />
       <KeyValue label="Max Tool Iterations" value={String(inventory.defaults.maxToolIterations)} />
       <KeyValue label="Tool Timeout" value={`${inventory.defaults.toolTimeoutSecs}s`} />

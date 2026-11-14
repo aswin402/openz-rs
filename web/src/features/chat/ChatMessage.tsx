@@ -4,10 +4,11 @@ import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
-import type { OpenZMessage } from '../../types';
+import type { ActivityNotice, OpenZMessage } from '../../types';
 import { ToolExecutionCard } from './ToolExecutionCard';
 import { buildMessageActivitySteps } from '../activity/activityAdapters';
 import { SecurityGuardPrompt } from '../../components/SecurityGuardPrompt';
+import { pairSecurityPromptsWithToolCalls } from '../../components/assistant-ui/elements';
 import { ChatTrackRow } from '../../components/ChatTrackRow';
 import {
   AgentActivity,
@@ -18,7 +19,7 @@ import {
   BeuiDataTable,
   BeuiFileDiff,
   BeuiMessageActions,
-  BeuiPlanChecklist,
+  BeuiTelemetryNoticeStrip,
   BeuiUserAvatar,
   ImageGeneration,
   ReasoningText,
@@ -26,12 +27,12 @@ import {
   extractAllMarkdownSources,
   type AgentActivityStep,
   type BeuiActivityPlacement,
-  type BeuiPlanStep,
 } from '../../components/beui';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Textarea } from '../../components/ui/textarea';
 import { useOpenZStore } from '../../store/useOpenZStore';
+import { resolveNoticeJumpAction } from '../../store/useToastStore';
 import { useUiCustomizationStore } from '../../store/useUiCustomizationStore';
 import { extractCodeLanguage, formatFileSize } from '../../shared/lib/format';
 import { cn } from '../../lib/utils';
@@ -120,13 +121,16 @@ function looksLikeUnifiedDiffBlock(language: string | undefined, text: string): 
 
 const INLINE_PLACEMENT_PREDICATES: Record<
   BeuiActivityPlacement,
-  (msg: OpenZMessage, steps: ReadonlyArray<AgentActivityStep>) => boolean
+  (
+    msg: OpenZMessage,
+    steps: ReadonlyArray<AgentActivityStep>,
+    working: boolean,
+  ) => boolean
 > = {
   'panel-only': () => false,
-  'streaming-only': (msg, steps) => Boolean(msg.isStreaming) && steps.length > 0,
-  'always-inline': (_msg, steps) => steps.length > 0,
-  'beui-timeline': (msg, steps) =>
-    steps.length >= 2 || (Boolean(msg.isStreaming) && steps.length > 0),
+  'streaming-only': (_msg, _steps, working) => working,
+  'always-inline': (_msg, steps, working) => steps.length > 0 || working,
+  'beui-timeline': (_msg, steps, working) => steps.length > 0 || working,
 };
 
 export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) => {
@@ -134,6 +138,10 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
   const regenerateMessage = useOpenZStore((s) => s.regenerateMessage);
   const editAndResendMessage = useOpenZStore((s) => s.editAndResendMessage);
   const newSession = useOpenZStore((s) => s.newSession);
+  const setActiveView = useOpenZStore((s) => s.setActiveView);
+  const setIsMemoryOpen = useOpenZStore((s) => s.setIsMemoryOpen);
+  const setIsActivityPanelOpen = useOpenZStore((s) => s.setIsActivityPanelOpen);
+  const setIsLogsOpen = useOpenZStore((s) => s.setIsLogsOpen);
 
   const chatWidth = useUiCustomizationStore((s) => s.chatWidth);
   const thinkingAnimation = useUiCustomizationStore((s) => s.thinkingAnimation);
@@ -153,7 +161,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
   const activityMaxHeight = useUiCustomizationStore((s) => s.activityMaxHeight);
   const activityAutoCollapse = useUiCustomizationStore((s) => s.activityAutoCollapse);
   const activityShowDetails = useUiCustomizationStore((s) => s.activityShowDetails);
-  const planChecklistStyle = useUiCustomizationStore((s) => s.planChecklistStyle);
+  const inlineNoticeStyle = useUiCustomizationStore((s) => s.inlineNoticeStyle);
+  const approvalStyle = useUiCustomizationStore((s) => s.approvalStyle);
   const alertStyle = useUiCustomizationStore((s) => s.alertStyle);
   const messageActionsStyle = useUiCustomizationStore((s) => s.messageActionsStyle);
   const showMessageActions = useUiCustomizationStore((s) => s.showMessageActions);
@@ -163,7 +172,6 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
   const [draftEdit, setDraftEdit] = useState(message.content);
 
   const isUser = message.role === 'user';
-  const isThinkingPhase = Boolean(message.isStreaming && !message.content && message.reasoningContent);
 
   const markdownComponents = useMemo<Components>(
     () => ({
@@ -248,31 +256,91 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
     return extractAllMarkdownSources(message.content);
   }, [isUser, message.content]);
 
+  const hasActiveTool = Boolean(
+    message.toolCalls?.some(
+      (tc) => tc.status === 'running' || tc.status === 'awaiting_approval',
+    ),
+  );
+  const hasPendingGuard = Boolean(
+    message.securityPrompts?.some((sp) => sp.status === 'pending'),
+  );
+  const isActivityWorking =
+    !isUser &&
+    (hasActiveTool ||
+      hasPendingGuard ||
+      (Boolean(message.isStreaming) && message.content.trim().length === 0));
+
   const inlineActivitySteps = useMemo(() => {
-    if (isUser) return [];
-    const steps = buildMessageActivitySteps([message], {
+    if (isUser || activityStyle === 'panel-only') return [];
+    return buildMessageActivitySteps([message], {
       chronological: true,
       limit: 64,
     });
-    const shouldRender = INLINE_PLACEMENT_PREDICATES[activityStyle](message, steps);
-    return shouldRender ? steps : [];
   }, [isUser, activityStyle, message]);
 
-  const planSteps = useMemo<BeuiPlanStep[]>(() => {
-    if (isUser || !message.toolCalls || message.toolCalls.length < 3) return [];
-    return message.toolCalls.map((tc) => ({
-      id: tc.id,
-      title: tc.name,
-      status:
-        tc.status === 'running' || tc.status === 'awaiting_approval'
-          ? 'running'
-          : tc.status === 'error'
-            ? 'error'
-            : 'completed',
-    }));
-  }, [isUser, message.toolCalls]);
+  const showInlineActivity =
+    !isUser &&
+    INLINE_PLACEMENT_PREDICATES[activityStyle](
+      message,
+      inlineActivitySteps,
+      isActivityWorking,
+    );
+
+  const coordinatedToolsAndApprovals = useMemo(() => {
+    if (isUser) {
+      return { visibleToolCalls: [], visibleApprovals: [] };
+    }
+    return pairSecurityPromptsWithToolCalls(
+      message.toolCalls,
+      message.securityPrompts,
+      { keepApprovedReceipt: approvalStyle === 'assistant-receipt' },
+    );
+  }, [isUser, message.toolCalls, message.securityPrompts, approvalStyle]);
+
+  const { visibleToolCalls, visibleApprovals } = coordinatedToolsAndApprovals;
+
+  const visibleTelemetryNotices = useMemo<ActivityNotice[]>(() => {
+    if (isUser || !message.activityNotices || message.activityNotices.length === 0) {
+      return [];
+    }
+    return message.activityNotices.filter(
+      (notice) => !(notice.kind === 'system' && notice.title === 'Progress'),
+    );
+  }, [isUser, message.activityNotices]);
+
+  const handleInspectNotice = React.useCallback(
+    (notice: ActivityNotice) => {
+      const jump = resolveNoticeJumpAction(notice.kind, notice.title, {
+        openSkills: () => setActiveView('skills'),
+        openKnowledge: () => setActiveView('knowledge'),
+        openMemory: () => setIsMemoryOpen(true),
+        openActivity: () => {
+          setActiveView('chats');
+          setIsActivityPanelOpen(true);
+        },
+        openAgents: () => setActiveView('agents'),
+        openLogs: () => setIsLogsOpen(true),
+        focusChat: () => setActiveView('chats'),
+      });
+      jump.onAction();
+    },
+    [setActiveView, setIsActivityPanelOpen, setIsLogsOpen, setIsMemoryOpen],
+  );
 
   if (message.isNotice || message.role === 'system' || message.role === 'tool') {
+    if (!message.content && visibleTelemetryNotices.length > 0) {
+      if (inlineNoticeStyle === 'toast-only') return null;
+      return (
+        <ChatTrackRow chatWidth={chatWidth} className="py-0.5">
+          <BeuiTelemetryNoticeStrip
+            notices={visibleTelemetryNotices}
+            styleVariant={inlineNoticeStyle}
+            onInspectNotice={handleInspectNotice}
+          />
+        </ChatTrackRow>
+      );
+    }
+    if (!message.content) return null;
     return (
       <ChatTrackRow chatWidth={chatWidth} className="py-1">
         <BeuiAlert tone="info" compact={alertStyle === 'compact-pill'}>
@@ -284,8 +352,9 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
 
   const hasWideAssistantBlocks = Boolean(
     !isUser &&
-      ((message.toolCalls && message.toolCalls.length > 0) ||
-        (message.securityPrompts && message.securityPrompts.length > 0) ||
+      (showInlineActivity ||
+        visibleToolCalls.length > 0 ||
+        visibleApprovals.length > 0 ||
         message.content.includes('```')),
   );
 
@@ -408,34 +477,26 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
               bubbleClasses,
             )}
           >
-            {!message.content && !message.reasoningContent && message.isStreaming && (
+            {visibleTelemetryNotices.length > 0 && (
+              <BeuiTelemetryNoticeStrip
+                notices={visibleTelemetryNotices}
+                styleVariant={inlineNoticeStyle}
+                onInspectNotice={handleInspectNotice}
+                className="mb-2"
+              />
+            )}
+
+            {!showInlineActivity && !message.content && message.isStreaming && (
               <div className="select-none py-0.5">
                 <ReasoningText isStreaming label="Thinking…" variant={thinkingAnimation} />
               </div>
             )}
 
-            {message.reasoningContent && (
-              <div className="mb-2.5 w-full min-w-0">
-                <ReasoningText
-                  text={message.reasoningContent}
-                  isStreaming={isThinkingPhase}
-                  variant={thinkingAnimation}
-                />
-              </div>
-            )}
-
-            {planSteps.length > 0 && (
-              <BeuiPlanChecklist
-                title="Tool Execution Plan"
-                steps={planSteps}
-                variant={planChecklistStyle}
-              />
-            )}
-
-            {inlineActivitySteps.length > 0 && (
+            {showInlineActivity && (
               <AgentActivity
                 steps={inlineActivitySteps}
-                isActive={Boolean(message.isStreaming)}
+                isActive={isActivityWorking}
+                contentType={inlineActivitySteps.length === 0 ? 'step' : 'mixed'}
                 mode="inline-collapsible"
                 variant={activityVariant}
                 orbStyle={activityOrbStyle}
@@ -444,24 +505,26 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
                 autoCollapse={activityAutoCollapse}
                 showDetails={activityShowDetails}
                 startedAt={message.timestamp}
+                className={message.content ? 'mb-2' : undefined}
               />
             )}
 
-            {message.toolCalls && message.toolCalls.length > 0 && (
-              <div className="my-1 w-full min-w-0">
-                {message.toolCalls.map((tool) => (
+            {visibleToolCalls.length > 0 && (
+              <div className="my-1.5 flex w-full min-w-0 flex-col gap-1 not-prose">
+                {visibleToolCalls.map((tool) => (
                   <ToolExecutionCard key={tool.id} tool={tool} />
                 ))}
               </div>
             )}
 
-            {message.securityPrompts && message.securityPrompts.length > 0 && (
-              <div className="my-1 w-full min-w-0 space-y-1">
-                {message.securityPrompts.map((prompt) => (
+            {visibleApprovals.length > 0 && (
+              <div className="my-2 flex w-full min-w-0 flex-col gap-2.5 not-prose">
+                {visibleApprovals.map((item) => (
                   <SecurityGuardPrompt
-                    key={prompt.id}
-                    prompt={prompt}
-                    onChoice={(choice) => handleSecurityChoice(prompt.id, choice)}
+                    key={item.prompt.id}
+                    prompt={item.prompt}
+                    stateOverride={item.state}
+                    onChoice={(choice) => handleSecurityChoice(item.prompt.id, choice)}
                   />
                 ))}
               </div>

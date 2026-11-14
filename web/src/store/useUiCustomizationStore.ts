@@ -1,32 +1,44 @@
 import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
-import type {
-  BeuiActivityDensity,
-  BeuiActivityMaxHeight,
-  BeuiActivityOrbStyle,
-  BeuiActivityPlacement,
-  BeuiActivityVariant,
-  BeuiAgentAvatarVariant,
-  BeuiCitationsVariant,
-  BeuiCodeBlockVariant,
-  BeuiCollapsibleVariant,
-  BeuiContextUsageVariant,
-  BeuiDataTableVariant,
-  BeuiDiffViewMode,
-  BeuiJsonViewerVariant,
-  BeuiMessageActionsVariant,
-  BeuiModelSelectorVariant,
-  BeuiPlanChecklistVariant,
-  BeuiPromptInputVariant,
-  BeuiPromptSuggestionsVariant,
-  BeuiReasoningVariant,
-  BeuiSendButtonVariant,
-  BeuiStreamingCursorStyle,
-  BeuiSubagentCardVariant,
-  BeuiTerminalVariant,
-  BeuiToolResultVariant,
-  BeuiUserAvatarVariant,
-  ScrollerBehaviorMode,
+import {
+  normalizeApprovalStyle,
+  normalizeToolResultStyle,
+  type ApprovalStyleChoice,
+  type ToolResultStyleChoice,
+} from "../components/assistant-ui/elements";
+import {
+  normalizeToastPosition,
+  normalizeToastVariant,
+  type BeuiActivityDensity,
+  type BeuiActivityMaxHeight,
+  type BeuiActivityOrbStyle,
+  type BeuiActivityPlacement,
+  type BeuiActivityVariant,
+  type BeuiAgentAvatarVariant,
+  type BeuiCitationsVariant,
+  type BeuiCodeBlockVariant,
+  type BeuiCollapsibleVariant,
+  type BeuiContextUsageVariant,
+  type BeuiDataTableVariant,
+  type BeuiDiffViewMode,
+  type BeuiInlineNoticeStyle,
+  type BeuiJsonViewerVariant,
+  type BeuiMessageActionsVariant,
+  type BeuiModelSelectorVariant,
+  type BeuiPlanChecklistVariant,
+  type BeuiPromptInputVariant,
+  type BeuiPromptSuggestionsVariant,
+  type BeuiReasoningVariant,
+  type BeuiSendButtonVariant,
+  type BeuiStreamingCursorStyle,
+  type BeuiSubagentCardVariant,
+  type BeuiTerminalVariant,
+  type BeuiToastDurationPreset,
+  type BeuiToastMaxVisible,
+  type BeuiToastPosition,
+  type BeuiToastVariant,
+  type BeuiUserAvatarVariant,
+  type ScrollerBehaviorMode,
 } from "../components/beui";
 import {
   THEME_FAMILIES,
@@ -108,12 +120,12 @@ export type ChatWidthChoice = "standard" | "wide" | "full";
 export type AgentAvatarChoice = BeuiAgentAvatarVariant;
 export type UserAvatarChoice = BeuiUserAvatarVariant;
 export type BubbleStyleChoice = "beui-card" | "beui-full" | "editorial";
-export type ApprovalStyleChoice = "beui-tool-approval" | "beui-approval-card";
+export type { ApprovalStyleChoice, ToolResultStyleChoice };
 export type ImageGenStyleChoice = "beui-frame" | "minimal";
 export type ActivityStyleChoice = BeuiActivityPlacement;
 export type AlertStyleChoice = "beui-alert" | "compact-pill";
 
-export type GatewaySettingsSectionId = "agent" | "providers" | "channels";
+export type GatewaySettingsSectionId = "agent" | "caveman" | "providers" | "channels";
 
 export type CustomizeUiSectionId =
   | "theme"
@@ -128,6 +140,7 @@ export type CustomizeUiSectionId =
   | "streaming-response"
   | "reasoning-text"
   | "agent-activity"
+  | "animated-toast-stack"
   | "plan-checklist"
   | "subagent-card"
   | "code-block"
@@ -165,12 +178,24 @@ export interface UiCustomizationSnapshot {
   activityAutoCollapse: boolean;
   activityShowDetails: boolean;
   showDashboardActivity: boolean;
+  toastEnabled: boolean;
+  toastVariant: BeuiToastVariant;
+  toastPosition: BeuiToastPosition;
+  toastDuration: BeuiToastDurationPreset;
+  toastMaxVisible: BeuiToastMaxVisible;
+  inlineNoticeStyle: BeuiInlineNoticeStyle;
+  toastNotifyWorkflow: boolean;
+  toastNotifySkill: boolean;
+  toastNotifySelfImprovement: boolean;
+  toastNotifyMemory: boolean;
+  toastNotifyResearch: boolean;
+  toastNotifyApproval: boolean;
   planChecklistStyle: BeuiPlanChecklistVariant;
   subagentCardStyle: BeuiSubagentCardVariant;
   codeStyle: BeuiCodeBlockVariant;
   diffLayout: BeuiDiffViewMode;
   terminalStyle: BeuiTerminalVariant;
-  toolResultStyle: BeuiToolResultVariant;
+  toolResultStyle: ToolResultStyleChoice;
   approvalStyle: ApprovalStyleChoice;
   imageGenStyle: ImageGenStyleChoice;
   citationsStyle: BeuiCitationsVariant;
@@ -204,13 +229,25 @@ export const DEFAULT_CUSTOMIZATION: UiCustomizationSnapshot = {
   activityAutoCollapse: true,
   activityShowDetails: true,
   showDashboardActivity: true,
+  toastEnabled: true,
+  toastVariant: "beui-stack",
+  toastPosition: "bottom-end",
+  toastDuration: "standard",
+  toastMaxVisible: 4,
+  inlineNoticeStyle: "pills",
+  toastNotifyWorkflow: true,
+  toastNotifySkill: true,
+  toastNotifySelfImprovement: true,
+  toastNotifyMemory: true,
+  toastNotifyResearch: true,
+  toastNotifyApproval: true,
   planChecklistStyle: "card",
   subagentCardStyle: "card",
   codeStyle: "framed",
   diffLayout: "unified",
   terminalStyle: "console",
-  toolResultStyle: "beui-card",
-  approvalStyle: "beui-tool-approval",
+  toolResultStyle: "assistant-collapsed",
+  approvalStyle: "assistant-default",
   imageGenStyle: "beui-frame",
   citationsStyle: "pills",
   dataTableStyle: "interactive",
@@ -234,6 +271,36 @@ export function sanitizeCustomizationSnapshot(
     if (key === "activeThemeId") {
       if (typeof val === "string" && PREBUILT_THEMES.some((t) => t.id === val)) {
         clean.activeThemeId = val;
+      }
+      continue;
+    }
+    if (key === "toastMaxVisible") {
+      if (val === 3 || val === 4 || val === 5) {
+        clean.toastMaxVisible = val;
+      }
+      continue;
+    }
+    if (key === "toastVariant") {
+      if (typeof val === "string") {
+        clean.toastVariant = normalizeToastVariant(val);
+      }
+      continue;
+    }
+    if (key === "toastPosition") {
+      if (typeof val === "string") {
+        clean.toastPosition = normalizeToastPosition(val);
+      }
+      continue;
+    }
+    if (key === "toolResultStyle") {
+      if (typeof val === "string") {
+        clean.toolResultStyle = normalizeToolResultStyle(val);
+      }
+      continue;
+    }
+    if (key === "approvalStyle") {
+      if (typeof val === "string") {
+        clean.approvalStyle = normalizeApprovalStyle(val);
       }
       continue;
     }
@@ -329,6 +396,18 @@ export function extractSnapshot(state: UiCustomizationSnapshot): UiCustomization
     activityAutoCollapse: state.activityAutoCollapse,
     activityShowDetails: state.activityShowDetails,
     showDashboardActivity: state.showDashboardActivity,
+    toastEnabled: state.toastEnabled,
+    toastVariant: state.toastVariant,
+    toastPosition: state.toastPosition,
+    toastDuration: state.toastDuration,
+    toastMaxVisible: state.toastMaxVisible,
+    inlineNoticeStyle: state.inlineNoticeStyle,
+    toastNotifyWorkflow: state.toastNotifyWorkflow,
+    toastNotifySkill: state.toastNotifySkill,
+    toastNotifySelfImprovement: state.toastNotifySelfImprovement,
+    toastNotifyMemory: state.toastNotifyMemory,
+    toastNotifyResearch: state.toastNotifyResearch,
+    toastNotifyApproval: state.toastNotifyApproval,
     planChecklistStyle: state.planChecklistStyle,
     subagentCardStyle: state.subagentCardStyle,
     codeStyle: state.codeStyle,

@@ -39,6 +39,27 @@ describe('WebSocket protocol contracts', () => {
       status: 'accepted',
     });
     expect(ack && isCommandAckEvent(ack)).toBe(true);
+    const stopAck = parseWebSocketEvent({
+      event: 'command_ack',
+      request_id: 'req-2',
+      command: 'stop_turn',
+      status: 'accepted',
+    });
+    expect(stopAck && isCommandAckEvent(stopAck)).toBe(true);
+    const clearAck = parseWebSocketEvent({
+      event: 'command_ack',
+      request_id: 'req-3',
+      command: 'clear_session',
+      status: 'accepted',
+    });
+    expect(clearAck && isCommandAckEvent(clearAck)).toBe(true);
+    const removedSlashAck = parseWebSocketEvent({
+      event: 'command_ack',
+      request_id: 'req-4',
+      command: 'get_slash_commands',
+      status: 'accepted',
+    });
+    expect(isCommandAckEvent(removedSlashAck)).toBe(false);
     expect(isCommandAckEvent(parseWebSocketEvent({ event: 'ready' }))).toBe(false);
   });
 

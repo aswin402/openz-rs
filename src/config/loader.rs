@@ -332,6 +332,7 @@ const AGENT_DEFAULTS_LEGACY_ALIASES: &[&str] = &[
     "max_tool_iterations",
     "fallback_models",
     "caveman_mode",
+    "caveman_level",
     "context_limit",
     "security_mode",
     "tool_output_limit",

@@ -311,6 +311,17 @@ pub async fn delete_workflow(name: &str) -> Result<usize> {
 
 pub struct WorkflowMemoryTool;
 
+fn notify_workflow_memory(title: &str, detail: &str) {
+    let _ = crate::agent::style::spinner::get_current_session_key().map(|session_key| {
+        crate::channels::websocket::publish_activity_notice(
+            &session_key,
+            "workflow",
+            title,
+            detail,
+        );
+    });
+}
+
 #[async_trait::async_trait]
 impl Tool for WorkflowMemoryTool {
     fn name(&self) -> &str {
@@ -328,9 +339,36 @@ impl Tool for WorkflowMemoryTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing action"))?;
         match action {
-            "add" => Ok(
-                json!({"status":"success","workflow":add_workflow_card(arguments.get("name").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("Missing name"))?, string_array(arguments.get("triggers")), arguments.get("summary").and_then(|v| v.as_str()).ok_or_else(|| anyhow!("Missing summary"))?, arguments.get("steps").cloned().unwrap_or_else(|| Value::Array(vec![])), string_array(arguments.get("preconditions")), string_array(arguments.get("verification")), arguments.get("risk").and_then(|v| v.as_str()).unwrap_or("normal"), arguments.get("status").and_then(|v| v.as_str()).unwrap_or("draft")).await?}),
-            ),
+            "add" => {
+                let card = add_workflow_card(
+                    arguments
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| anyhow!("Missing name"))?,
+                    string_array(arguments.get("triggers")),
+                    arguments
+                        .get("summary")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| anyhow!("Missing summary"))?,
+                    arguments
+                        .get("steps")
+                        .cloned()
+                        .unwrap_or_else(|| Value::Array(vec![])),
+                    string_array(arguments.get("preconditions")),
+                    string_array(arguments.get("verification")),
+                    arguments
+                        .get("risk")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("normal"),
+                    arguments
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("draft"),
+                )
+                .await?;
+                notify_workflow_memory("Workflow saved", &card.name);
+                Ok(json!({"status":"success","workflow":card}))
+            }
             "search" => Ok(
                 json!({"status":"success","matches":search_workflow_cards(arguments.get("query").and_then(|v| v.as_str()).unwrap_or(""), arguments.get("limit").and_then(|v| v.as_u64()).unwrap_or(5) as usize, arguments.get("active_only").and_then(|v| v.as_bool()).unwrap_or(false)).await?}),
             ),
@@ -353,7 +391,9 @@ impl Tool for WorkflowMemoryTool {
                     .get("name")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing name"))?;
-                Ok(json!({"status":"success","updated":set_workflow_status(name, "active").await?}))
+                let updated = set_workflow_status(name, "active").await?;
+                let _ = (updated > 0).then(|| notify_workflow_memory("Workflow activated", name));
+                Ok(json!({"status":"success","updated":updated}))
             }
             "deactivate" => {
                 let name = arguments
@@ -369,9 +409,30 @@ impl Tool for WorkflowMemoryTool {
                     .get("name")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| anyhow!("Missing name"))?;
-                Ok(
-                    json!({"status":"success","workflow":record_workflow_run(name, arguments.get("session_key").and_then(|v| v.as_str()).unwrap_or("unknown"), arguments.get("task").and_then(|v| v.as_str()).unwrap_or(""), arguments.get("success").and_then(|v| v.as_bool()).unwrap_or(true), arguments.get("error").and_then(|v| v.as_str())).await?}),
+                let success = arguments
+                    .get("success")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(true);
+                let recorded = record_workflow_run(
+                    name,
+                    arguments
+                        .get("session_key")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown"),
+                    arguments
+                        .get("task")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(""),
+                    success,
+                    arguments.get("error").and_then(|v| v.as_str()),
                 )
+                .await?;
+                let label = match success {
+                    true => "Workflow executed",
+                    false => "Workflow run failed",
+                };
+                notify_workflow_memory(label, name);
+                Ok(json!({"status":"success","workflow":recorded}))
             }
             _ => Err(anyhow!("Invalid action")),
         }

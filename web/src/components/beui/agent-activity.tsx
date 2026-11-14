@@ -2,10 +2,9 @@ import * as React from "react"
 import {
   Activity,
   AlertTriangle,
+  BookOpen,
   Brain,
   CheckCircle2,
-  ChevronDown,
-  Clock3,
   FileCode2,
   GitBranch,
   Loader2,
@@ -16,9 +15,20 @@ import {
   Terminal,
 } from "lucide-react"
 
+import {
+  AgentActivity as OfficialBeuiAgentActivity,
+  type AgentActivityContentType as OfficialContentType,
+  type AgentActivityItem as BeuiOfficialActivityItem,
+  type AgentSearchResult,
+  type AgentStepStatus,
+  type AgentTraceKind,
+} from "@/components/agents/agent-activity"
+import { ThinkingShimmer } from "@/components/agents/loading-states/thinking-shimmer"
 import { FOX_SILHOUETTE_PATH } from "@/components/OpenZFoxIcon"
-import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
+
+export { OfficialBeuiAgentActivity }
+export type { AgentSearchResult, BeuiOfficialActivityItem }
 
 export type BeuiActivityPlacement =
   | "beui-timeline"
@@ -81,6 +91,7 @@ export type AgentActivityStepStatus =
 
 export type AgentActivityNoticeKind =
   | "workflow"
+  | "skill"
   | "memory"
   | "research"
   | "self_improvement"
@@ -110,7 +121,7 @@ export const ACTIVITY_PLACEMENT_OPTIONS: ReadonlyArray<
     title: "Smart Adaptive Stream",
     shortLabel: "Smart",
     description:
-      "Shows @beui/agent-activity inline on multi-step or active turns plus the live right-hand Activity Drawer.",
+      "Renders @beui/agent-activity inline on assistant turns and syncs live telemetry to the right-hand Activity Drawer.",
     isDefault: true,
   },
   {
@@ -118,21 +129,21 @@ export const ACTIVITY_PLACEMENT_OPTIONS: ReadonlyArray<
     title: "Always Inline Stream",
     shortLabel: "Inline",
     description:
-      "Embeds @beui/agent-activity inside every assistant turn that records reasoning, tools, notices, or approvals.",
+      "Embeds @beui/agent-activity inside every assistant turn that records reasoning, searches, tools, or telemetry.",
   },
   {
     id: "streaming-only",
     title: "Live Streaming Only",
     shortLabel: "Live Only",
     description:
-      "Displays inline activity while a turn is actively streaming, then tucks completed history into the panel.",
+      "Displays @beui/agent-activity while actively working, then tucks completed history into the Activity Drawer.",
   },
   {
     id: "panel-only",
     title: "Activity Drawer Only",
     shortLabel: "Drawer",
     description:
-      "Keeps chat bubbles clean and routes all turn telemetry to the dedicated Activity Drawer and workspace feeds.",
+      "Keeps chat bubbles minimal and routes all turn telemetry to the dedicated Activity Drawer and workspace feeds.",
   },
 ]
 
@@ -141,32 +152,32 @@ export const ACTIVITY_VARIANT_OPTIONS: ReadonlyArray<
 > = [
   {
     id: "orb-card",
-    title: "BEUI Thought-Orb Card",
-    shortLabel: "Orb Card",
+    title: "BEUI Adaptive Mixed Stream",
+    shortLabel: "Adaptive",
     description:
-      "Signature beui.dev adaptive stream card with reactive 9-dot Thought Orb, live ticker, duration timer, and expandable rows.",
+      "Official @beui/agent-activity mixed stream combining reasoning paragraphs, web search results, Read/Edit/Run tool pills, and steps.",
     isDefault: true,
   },
   {
     id: "rail-timeline",
-    title: "BEUI Connected Rail",
-    shortLabel: "Rail",
+    title: "BEUI Step Checklist Stream",
+    shortLabel: "Steps",
     description:
-      "Vertical timeline connector rail with status nodes, role badges, actor tags, and structured step cards.",
+      "Official @beui/agent-activity step rows with Check, pulsing active dot, and right-aligned duration/actor metadata.",
   },
   {
     id: "compact-pills",
-    title: "BEUI Compact Step Strip",
-    shortLabel: "Pills",
+    title: "BEUI Compact Tool Stream",
+    shortLabel: "Compact",
     description:
-      "Minimal wrapped chip stream showing status dots, step titles, and durations with click-to-inspect disclosure.",
+      "Tight @beui/agent-activity tool & search rows without verbose secondary descriptions.",
   },
   {
     id: "trace-log",
-    title: "BEUI Chronological Trace",
+    title: "BEUI Structured Trace",
     shortLabel: "Trace",
     description:
-      "Dense monospace execution trace with timestamps, kind tags, actors, and expandable JSON/text payloads.",
+      "Official @beui/agent-activity 3-column execution trace with kind icons, labels, and monospace detail pills.",
   },
 ]
 
@@ -175,25 +186,25 @@ export const ACTIVITY_ORB_OPTIONS: ReadonlyArray<
 > = [
   {
     id: "dotted-orb",
-    title: "Reactive Dotted Thought Orb",
+    title: "Thought Orb + Shimmer",
     shortLabel: "9-Dot Orb",
     description:
-      "Authentic beui.dev 3×3 dot matrix whose wave geometry adapts to thinking, search, tool, security, and completion phases.",
+      "Pairs a reactive 3×3 Thought-Orb dot wave beside @beui/agent-activity's ThinkingShimmer.",
     isDefault: true,
   },
   {
     id: "fox-pulse",
-    title: "OpenZ Fox Emblem Pulse",
+    title: "OpenZ Fox + Shimmer",
     shortLabel: "Fox Pulse",
     description:
-      "Sculpted OpenZ Fox silhouette with phase-tinted orbital ring pulse while steps execute.",
+      "Pairs a subtle OpenZ Fox emblem pulse beside @beui/agent-activity's ThinkingShimmer.",
   },
   {
     id: "minimal-spinner",
-    title: "Minimal Orbital Indicator",
-    shortLabel: "Minimal",
+    title: "Pure ThinkingShimmer",
+    shortLabel: "Shimmer",
     description:
-      "Clean understated status ring and crisp checkmark without decorative motion.",
+      "Unadorned @beui/agent-activity ThinkingShimmer text sweep without an leading icon.",
   },
 ]
 
@@ -204,14 +215,14 @@ export const ACTIVITY_DENSITY_OPTIONS: ReadonlyArray<
     id: "comfortable",
     title: "Comfortable Spacing",
     shortLabel: "Comfort",
-    description: "Balanced padding, readable step excerpts, and clear metadata pills.",
+    description: "Standard @beui/agent-activity row rhythm and breathing room.",
     isDefault: true,
   },
   {
     id: "compact",
     title: "Compact High-Density",
     shortLabel: "Compact",
-    description: "Tighter row rhythm to fit more tool, subagent, and log steps per screen.",
+    description: "Tighter vertical spacing to fit more steps in the gliding viewport.",
   },
 ]
 
@@ -220,20 +231,20 @@ export const ACTIVITY_MAX_HEIGHT_OPTIONS: ReadonlyArray<
 > = [
   {
     id: "compact",
-    title: "Compact Viewport (176px)",
+    title: "Compact Gliding Viewport (176px)",
     shortLabel: "176px",
-    description: "Clamps long step streams early with smooth internal scrolling.",
+    description: "Begins smooth vertical stream gliding after ~4 rows.",
   },
   {
     id: "standard",
-    title: "Balanced Viewport (264px)",
+    title: "Balanced Gliding Viewport (264px)",
     shortLabel: "264px",
-    description: "Default scrollable window showing ~5–6 steps before scrolling.",
+    description: "Default @beui/agent-activity gliding window (~6 rows).",
     isDefault: true,
   },
   {
     id: "tall",
-    title: "Tall Viewport (384px)",
+    title: "Tall Gliding Viewport (384px)",
     shortLabel: "384px",
     description: "Expanded inspection window for deep multi-agent and log streams.",
   },
@@ -241,7 +252,7 @@ export const ACTIVITY_MAX_HEIGHT_OPTIONS: ReadonlyArray<
     id: "unlimited",
     title: "Unclamped Full Stream",
     shortLabel: "Full",
-    description: "Renders every activity step inline without internal max-height clamping.",
+    description: "Shows every activity row without viewport height clamping.",
   },
 ]
 
@@ -259,10 +270,25 @@ export interface AgentActivityStep {
   durationLabel?: string
   durationMs?: number
   timestamp?: number
+  /** Native @beui/agent-activity tool action ("read" | "edit" | "write" | "run" | ...) */
+  toolAction?: string
+  /** Native @beui/agent-activity monospace target pill text */
+  toolTarget?: string
+  /** Diff additions count for edit/write tools */
+  additions?: number
+  /** Diff deletions count for edit tools */
+  deletions?: number
+  /** Native @beui/agent-activity search query */
+  searchQuery?: string
+  /** Parsed search result links/matches */
+  searchResults?: AgentSearchResult[]
+  /** Extra search hits count beyond `searchResults` */
+  moreCount?: number
 }
 
 export interface AgentActivityProps {
   steps: AgentActivityStep[]
+  items?: BeuiOfficialActivityItem[]
   isActive?: boolean
   mode?: "timeline" | "inline-collapsible"
   variant?: BeuiActivityVariant
@@ -273,6 +299,8 @@ export interface AgentActivityProps {
   autoCollapse?: boolean
   showDetails?: boolean
   defaultOpen?: boolean
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   title?: string
   subtitle?: string
   startedAt?: number
@@ -286,6 +314,7 @@ type IconComponent = React.ComponentType<{ className?: string }>
 
 const NOTICE_KIND_ICONS: Record<AgentActivityNoticeKind, IconComponent> = {
   workflow: GitBranch,
+  skill: BookOpen,
   memory: Brain,
   research: Search,
   self_improvement: Sparkles,
@@ -303,32 +332,6 @@ const STEP_KIND_ICONS: Record<AgentActivityStepKind, IconComponent> = {
   trace: FileCode2,
 }
 
-const STEP_KIND_SHORT_TAG: Record<AgentActivityStepKind, string> = {
-  tool: "TOOL",
-  security: "GUARD",
-  reasoning: "THINK",
-  notice: "NOTE",
-  message: "MSG",
-  search: "SEARCH",
-  trace: "TRACE",
-}
-
-const STATUS_NODE_CLASSES: Record<AgentActivityStepStatus, string> = {
-  running: "border-primary/50 bg-primary/15 text-primary",
-  success: "border-success/40 bg-success/12 text-success",
-  error: "border-destructive/45 bg-destructive/12 text-destructive",
-  pending: "border-warning/45 bg-warning/12 text-warning",
-  info: "border-border bg-muted/60 text-muted-foreground",
-}
-
-const STATUS_DOT_CLASSES: Record<AgentActivityStepStatus, string> = {
-  running: "bg-primary animate-pulse",
-  success: "bg-success",
-  error: "bg-destructive",
-  pending: "bg-warning animate-pulse",
-  info: "bg-muted-foreground/70",
-}
-
 const PHASE_COLOR_CLASSES: Record<BeuiActivityPhase, string> = {
   idle: "text-muted-foreground",
   reasoning: "text-primary",
@@ -340,26 +343,6 @@ const PHASE_COLOR_CLASSES: Record<BeuiActivityPhase, string> = {
   error: "text-destructive",
 }
 
-const PHASE_LABELS: Record<BeuiActivityPhase, string> = {
-  idle: "Ready",
-  reasoning: "Thinking",
-  search: "Searching",
-  tool: "Executing tool",
-  security: "Awaiting approval",
-  workflow: "Orchestrating",
-  complete: "Completed",
-  error: "Attention needed",
-}
-
-/**
- * 3×3 coordinate grid (row, col in 0..2) mapped to phase-specific delay multipliers (ms).
- * Produces distinct organic wave patterns without branching logic:
- * - reasoning: spiral orbit around center
- * - search: horizontal radar sweep (col-major)
- * - tool: diagonal cascade (row + col)
- * - security: perimeter vs core pulse
- * - workflow: vertical stream (row-major)
- */
 const GRID_COORDS: ReadonlyArray<readonly [number, number]> = [
   [0, 0],
   [0, 1],
@@ -459,71 +442,183 @@ export function resolveMaxHeightPx(
   return ACTIVITY_MAX_HEIGHT_PX[key]
 }
 
-function formatClockTime(timestamp?: number): string {
-  if (!timestamp) return "--:--:--"
-  const d = new Date(timestamp)
-  if (Number.isNaN(d.getTime())) return "--:--:--"
-  return d.toLocaleTimeString([], {
-    hour12: false,
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  })
+const STEP_STATUS_MAP: Record<AgentActivityStepStatus, AgentStepStatus> = {
+  running: "active",
+  pending: "pending",
+  success: "complete",
+  error: "complete",
+  info: "complete",
 }
 
-function formatElapsedMs(ms: number): string {
-  const clamped = Math.max(0, ms)
-  if (clamped < 1000) return `${Math.round(clamped)}ms`
-  const secs = clamped / 1000
-  if (secs < 60) {
-    return secs < 10 ? `${secs.toFixed(1)}s` : `${Math.round(secs)}s`
-  }
-  const mins = Math.floor(secs / 60)
-  const remSecs = Math.round(secs % 60)
-  return `${mins}m ${String(remSecs).padStart(2, "0")}s`
+function mapTraceKind(step: AgentActivityStep): AgentTraceKind {
+  if (step.kind === "reasoning") return "thinking"
+  if (step.kind === "message") return "message"
+  if (step.toolAction === "edit" || step.toolAction === "write") return "write"
+  if (step.toolAction === "read") return "read"
+  if (step.kind === "tool" || step.kind === "trace") return "run"
+  return "tool"
 }
 
-function computeEarliestTimestamp(
+function splitReasoningParagraphs(raw: string): string[] {
+  const blocks = raw
+    .split("\n\n")
+    .map((chunk) => chunk.trim())
+    .filter(Boolean)
+  if (blocks.length > 1) return blocks.slice(0, 6)
+  const lines = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+  if (lines.length <= 2) return [lines.join(" ")].filter(Boolean)
+  return lines.slice(0, 6)
+}
+
+const OFFICIAL_CONTENT_TYPE_MAP: Record<
+  BeuiActivityContentType,
+  OfficialContentType
+> = {
+  mixed: "mixed",
+  step: "step",
+  tool: "tool",
+  search: "search",
+  reasoning: "text",
+  trace: "trace",
+}
+
+/**
+ * Converts OpenZ `AgentActivityStep[]` into official `@beui/agent-activity`
+ * `AgentActivityItem[]` (`text`, `search`, `tool`, `step`, `trace`).
+ */
+export function toBeuiOfficialActivityItems(
   steps: ReadonlyArray<AgentActivityStep>,
-  startedAt?: number
-): number | undefined {
-  if (startedAt && startedAt > 0) return startedAt
-  const valid = steps
-    .map((s) => s.timestamp ?? 0)
-    .filter((ts) => ts > 0)
-  return valid.length > 0 ? Math.min(...valid) : undefined
-}
-
-function useLiveDurationLabel(
-  steps: ReadonlyArray<AgentActivityStep>,
-  isActive: boolean,
-  startedAt?: number
-): string | undefined {
-  const anchorTs = React.useMemo(
-    () => computeEarliestTimestamp(steps, startedAt),
-    [steps, startedAt]
-  )
-  const summedMs = React.useMemo(
-    () => steps.reduce((acc, s) => acc + (s.durationMs ?? 0), 0),
-    [steps]
-  )
-  const [now, setNow] = React.useState<number>(() => Date.now())
-
-  React.useEffect(() => {
-    if (!isActive || !anchorTs) return undefined
-    setNow(Date.now())
-    const timer = window.setInterval(() => setNow(Date.now()), 400)
-    return () => window.clearInterval(timer)
-  }, [isActive, anchorTs])
-
-  if (isActive && anchorTs) {
-    return formatElapsedMs(Math.max(100, now - anchorTs))
+  variant: BeuiActivityVariant = "orb-card",
+  showDetails = true
+): BeuiOfficialActivityItem[] {
+  if (variant === "trace-log") {
+    return steps.map((step) => ({
+      id: step.id,
+      type: "trace",
+      kind: mapTraceKind(step),
+      label: step.actor ? `${step.title} · ${step.actor}` : step.title,
+      detail: showDetails
+        ? step.toolTarget ?? step.detail ?? step.durationLabel ?? step.meta
+        : undefined,
+    }))
   }
-  if (summedMs > 0) {
-    return formatElapsedMs(summedMs)
+
+  if (variant === "rail-timeline") {
+    return steps.map((step) => {
+      const targetText = step.toolTarget ?? step.searchQuery ?? step.detail
+      return {
+        id: step.id,
+        type: "step",
+        status: STEP_STATUS_MAP[step.status],
+        label:
+          showDetails && targetText && targetText !== step.title
+            ? `${step.title} — ${targetText}`
+            : step.title,
+        meta: showDetails ? step.durationLabel ?? step.actor ?? step.meta : undefined,
+      }
+    })
   }
-  const explicit = steps.find((s) => Boolean(s.durationLabel))?.durationLabel
-  return explicit
+
+  if (variant === "compact-pills") {
+    return steps.map((step) => {
+      const contentType = resolveStepContentType(step)
+      if (contentType === "search") {
+        return {
+          id: step.id,
+          type: "search",
+          query: step.searchQuery ?? step.detail ?? step.title,
+        }
+      }
+      if (step.kind === "tool") {
+        return {
+          id: step.id,
+          type: "tool",
+          action: step.toolAction ?? "run",
+          target: step.toolTarget ?? step.title,
+          additions: step.additions,
+          deletions: step.deletions,
+        }
+      }
+      return {
+        id: step.id,
+        type: "step",
+        status: STEP_STATUS_MAP[step.status],
+        label: step.detail && step.kind === "reasoning" ? step.detail : step.title,
+        meta: step.durationLabel,
+      }
+    })
+  }
+
+  // Default: "orb-card" -> Official @beui/agent-activity adaptive mixed stream
+  const items: BeuiOfficialActivityItem[] = []
+  for (const step of steps) {
+    const contentType = resolveStepContentType(step)
+
+    if (step.kind === "reasoning") {
+      const textSource = step.payload ?? step.detail ?? step.title
+      const paragraphs = splitReasoningParagraphs(textSource)
+      paragraphs.forEach((paragraph, idx) => {
+        items.push({
+          id: paragraphs.length === 1 ? step.id : `${step.id}-p-${idx}`,
+          type: "text",
+          content: paragraph,
+        })
+      })
+      continue
+    }
+
+    if (contentType === "search") {
+      items.push({
+        id: step.id,
+        type: "search",
+        query: step.searchQuery ?? step.detail ?? step.title,
+        results: showDetails ? step.searchResults : undefined,
+        moreCount: showDetails ? step.moreCount : undefined,
+      })
+      continue
+    }
+
+    if (step.kind === "tool") {
+      items.push({
+        id: step.id,
+        type: "tool",
+        action: step.toolAction ?? "run",
+        target:
+          step.toolTarget ??
+          (showDetails && step.detail ? `${step.title} · ${step.detail}` : step.title),
+        additions: showDetails ? step.additions : undefined,
+        deletions: showDetails ? step.deletions : undefined,
+      })
+      continue
+    }
+
+    if (step.kind === "trace") {
+      items.push({
+        id: step.id,
+        type: "trace",
+        kind: mapTraceKind(step),
+        label: step.title,
+        detail: showDetails ? step.detail : undefined,
+      })
+      continue
+    }
+
+    items.push({
+      id: step.id,
+      type: "step",
+      status: STEP_STATUS_MAP[step.status],
+      label:
+        showDetails && step.detail && step.detail !== step.title
+          ? `${step.title} · ${step.detail}`
+          : step.title,
+      meta: showDetails ? step.durationLabel ?? step.actor ?? step.meta : undefined,
+    })
+  }
+
+  return items
 }
 
 export interface BeuiActivityOrbProps {
@@ -535,13 +630,15 @@ export interface BeuiActivityOrbProps {
 }
 
 const ORB_DIMENSIONS: Record<"sm" | "md" | "lg", string> = {
-  sm: "size-5",
-  md: "size-6",
-  lg: "size-8",
+  sm: "size-4",
+  md: "size-5",
+  lg: "size-7",
 }
 
 /**
- * Reactive Thought-Orb indicator modeled on `beui.dev/components/agents/agent-activity`.
+ * Reactive Thought-Orb indicator paired with `@beui/agent-activity`.
+ * Inline `sm` mode is borderless so it sits cleanly inside `@beui/agent-activity`'s `h-7` trigger row;
+ * `lg` mode provides the drawer header emblem.
  */
 export const BeuiActivityOrb: React.FC<BeuiActivityOrbProps> = ({
   phase,
@@ -553,19 +650,21 @@ export const BeuiActivityOrb: React.FC<BeuiActivityOrbProps> = ({
   const colorClass = PHASE_COLOR_CLASSES[phase]
   const sizeClass = ORB_DIMENSIONS[size]
   const animate = isActive || phase === "security"
+  const framed = size === "lg"
 
   if (styleVariant === "fox-pulse") {
     return (
       <span
         aria-hidden="true"
         className={cn(
-          "relative inline-flex shrink-0 items-center justify-center rounded-lg border border-border/60 bg-card/80",
+          "relative inline-flex shrink-0 items-center justify-center",
+          framed && "rounded-lg border border-border/60 bg-card/80",
           sizeClass,
           colorClass,
           className
         )}
       >
-        <svg viewBox="0 0 100 100" className="size-[76%]">
+        <svg viewBox="0 0 100 100" className={framed ? "size-[76%]" : "size-full"}>
           {animate && (
             <circle
               cx="50"
@@ -589,6 +688,7 @@ export const BeuiActivityOrb: React.FC<BeuiActivityOrbProps> = ({
         aria-hidden="true"
         className={cn(
           "inline-flex shrink-0 items-center justify-center",
+          framed && "rounded-lg border border-border/60 bg-muted/40",
           sizeClass,
           colorClass,
           className
@@ -613,13 +713,14 @@ export const BeuiActivityOrb: React.FC<BeuiActivityOrbProps> = ({
     <span
       aria-hidden="true"
       className={cn(
-        "relative inline-flex shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/45",
+        "relative inline-flex shrink-0 items-center justify-center",
+        framed && "rounded-lg border border-border/60 bg-muted/45",
         sizeClass,
         colorClass,
         className
       )}
     >
-      <svg viewBox="0 0 24 24" className="size-[78%]">
+      <svg viewBox="0 0 24 24" className={framed ? "size-[78%]" : "size-full"}>
         {GRID_COORDS.map(([row, col], idx) => {
           const cx = 5 + col * 7
           const cy = 5 + row * 7
@@ -637,7 +738,7 @@ export const BeuiActivityOrb: React.FC<BeuiActivityOrbProps> = ({
               key={`${row}-${col}`}
               cx={cx}
               cy={cy}
-              r={1.85}
+              r={1.9}
               fill="currentColor"
               className={cn(animate && "beui-orb-dot-active")}
               style={
@@ -653,41 +754,81 @@ export const BeuiActivityOrb: React.FC<BeuiActivityOrbProps> = ({
   )
 }
 
-function renderStatusGlyph(
-  status: AgentActivityStepStatus,
-  Icon: IconComponent,
-  sizeClass = "size-3"
-) {
-  if (status === "running") return <Loader2 className={cn(sizeClass, "animate-spin")} />
-  if (status === "success") return <CheckCircle2 className={sizeClass} />
-  if (status === "error") return <AlertTriangle className={sizeClass} />
-  return <Icon className={sizeClass} />
+function computeEarliestTimestamp(
+  steps: ReadonlyArray<AgentActivityStep>,
+  startedAt?: number
+): number | undefined {
+  if (startedAt && startedAt > 0) return startedAt
+  const valid = steps.map((s) => s.timestamp ?? 0).filter((ts) => ts > 0)
+  return valid.length > 0 ? Math.min(...valid) : undefined
+}
+
+function useElapsedSeconds(
+  steps: ReadonlyArray<AgentActivityStep>,
+  working: boolean,
+  startedAt?: number
+): number {
+  const anchorTs = React.useMemo(
+    () => computeEarliestTimestamp(steps, startedAt),
+    [steps, startedAt]
+  )
+  const summedSeconds = React.useMemo(() => {
+    const totalMs = steps.reduce((acc, s) => acc + (s.durationMs ?? 0), 0)
+    if (totalMs > 0) return Math.max(1, Math.round(totalMs / 1000))
+    const reasoningChars = steps
+      .filter((s) => s.kind === "reasoning")
+      .reduce((acc, s) => acc + (s.payload?.length ?? s.detail?.length ?? 0), 0)
+    if (reasoningChars > 0) return Math.max(1, Math.round(reasoningChars / 180))
+    return steps.length > 0 ? 1 : 0
+  }, [steps])
+
+  const frozenLiveSecRef = React.useRef<number>(0)
+  const [liveSec, setLiveSec] = React.useState<number>(0)
+
+  React.useEffect(() => {
+    if (!working || !anchorTs) return undefined
+    const tick = () => {
+      const next = Math.max(1, Math.round((Date.now() - anchorTs) / 1000))
+      frozenLiveSecRef.current = next
+      setLiveSec(next)
+    }
+    tick()
+    const timer = window.setInterval(tick, 1000)
+    return () => window.clearInterval(timer)
+  }, [working, anchorTs])
+
+  if (working) {
+    return liveSec || summedSeconds || 1
+  }
+  if (frozenLiveSecRef.current > 0) {
+    return frozenLiveSecRef.current
+  }
+  return summedSeconds
 }
 
 /**
- * @beui/agent-activity — Adaptive live agent activity stream component
- * inspired by https://beui.dev/components/agents/agent-activity with reactive
- * Thought Orb, visual variants, contentType filtering, maxHeight viewport,
- * auto-collapse on completion, and interactive step payload disclosure.
+ * `@beui/agent-activity` — Powered directly by the official registry component
+ * installed via `bunx --bun shadcn add @beui/agent-activity` (`@/components/agents/agent-activity`).
  */
 export const AgentActivity: React.FC<AgentActivityProps> = ({
   steps,
+  items: explicitItems,
   isActive = false,
-  mode = "timeline",
+  mode = "inline-collapsible",
   variant = "orb-card",
   orbStyle = "dotted-orb",
   density = "comfortable",
   maxHeight = "standard",
   contentType = "mixed",
-  autoCollapse = false,
+  autoCollapse = true,
   showDetails = true,
   defaultOpen,
+  open,
+  onOpenChange,
   title,
-  subtitle,
   startedAt,
   emptyLabel,
   headerActions,
-  onStepSelect,
   className,
 }) => {
   const visibleSteps = React.useMemo(() => {
@@ -698,47 +839,28 @@ export const AgentActivity: React.FC<AgentActivityProps> = ({
   const runningCount = visibleSteps.filter(
     (s) => s.status === "running" || s.status === "pending"
   ).length
-  const completedCount = visibleSteps.filter((s) => s.status === "success").length
-  const errorCount = visibleSteps.filter((s) => s.status === "error").length
+  const working = Boolean(isActive || runningCount > 0)
 
   const phase = React.useMemo(
-    () => resolveActivityPhase(visibleSteps, isActive),
-    [visibleSteps, isActive]
+    () => resolveActivityPhase(visibleSteps, working),
+    [visibleSteps, working]
   )
 
-  const liveDuration = useLiveDurationLabel(
-    visibleSteps,
-    isActive || runningCount > 0,
-    startedAt
+  const durationSeconds = useElapsedSeconds(visibleSteps, working, startedAt)
+
+  const officialItems = React.useMemo(
+    () =>
+      explicitItems ??
+      toBeuiOfficialActivityItems(visibleSteps, variant, showDetails),
+    [explicitItems, visibleSteps, variant, showDetails]
   )
 
-  const initialOpen =
-    defaultOpen ??
-    (mode === "timeline"
-      ? true
-      : isActive || runningCount > 0 || !autoCollapse)
-
-  const [isOpen, setIsOpen] = React.useState<boolean>(initialOpen)
-  const [expandedStepIds, setExpandedStepIds] = React.useState<Record<string, boolean>>({})
-  const wasActiveRef = React.useRef<boolean>(isActive || runningCount > 0)
-
-  React.useEffect(() => {
-    const currentlyWorking = isActive || runningCount > 0
-    if (currentlyWorking && !wasActiveRef.current && mode === "inline-collapsible") {
-      setIsOpen(true)
-    }
-    if (!currentlyWorking && wasActiveRef.current && autoCollapse && errorCount === 0) {
-      setIsOpen(false)
-    }
-    wasActiveRef.current = currentlyWorking
-  }, [isActive, runningCount, autoCollapse, errorCount, mode])
-
-  if (visibleSteps.length === 0) {
+  if (!working && officialItems.length === 0) {
     if (!emptyLabel) return null
     return (
       <div
         className={cn(
-          "flex items-center gap-2.5 rounded-xl border border-dashed border-border/60 bg-card/40 px-3.5 py-3 text-xs text-muted-foreground",
+          "flex items-center gap-2 py-2 text-xs text-muted-foreground",
           className
         )}
       >
@@ -749,474 +871,50 @@ export const AgentActivity: React.FC<AgentActivityProps> = ({
   }
 
   const maxHeightPx = resolveMaxHeightPx(maxHeight)
-  const scrollStyle: React.CSSProperties | undefined =
-    maxHeightPx > 0 ? { maxHeight: `${maxHeightPx}px` } : undefined
+  const effectiveMaxHeight = maxHeightPx > 0 ? maxHeightPx : 2400
+  const resolvedDefaultOpen =
+    defaultOpen ?? (mode === "timeline" ? true : !autoCollapse)
+  const resolvedCollapseOnComplete = mode === "timeline" ? false : autoCollapse
 
-  const isCompact = density === "compact"
-
-  const activeHeadlineStep =
-    visibleSteps.find((s) => s.status === "running" || s.status === "pending") ??
-    visibleSteps[0]
-
-  const headerTitle =
-    title ??
-    (runningCount > 0
-      ? `${PHASE_LABELS[phase]} · ${activeHeadlineStep?.title ?? "Working"}`
-      : errorCount > 0
-        ? `Activity recorded (${errorCount} issue${errorCount === 1 ? "" : "s"})`
-        : `Completed ${completedCount || visibleSteps.length} ${
-            visibleSteps.length === 1 ? "step" : "steps"
-          }`)
-
-  const headerSubtitle =
-    subtitle ??
-    (runningCount > 0 && activeHeadlineStep?.detail
-      ? activeHeadlineStep.detail
-      : !isOpen && activeHeadlineStep
-        ? activeHeadlineStep.title
-        : undefined)
-
-  const toggleStepExpand = (step: AgentActivityStep) => {
-    onStepSelect?.(step)
-    const hasExpandable = Boolean(step.payload || (step.detail && step.detail.length > 72))
-    if (!hasExpandable) return
-    setExpandedStepIds((prev) => ({
-      ...prev,
-      [step.id]: !prev[step.id],
-    }))
-  }
-
-  const renderStepPayload = (step: AgentActivityStep) => {
-    if (!expandedStepIds[step.id]) return null
-    const content = step.payload ?? step.detail
-    if (!content) return null
-    return (
-      <pre className="mt-1.5 max-h-44 overflow-auto rounded-md border border-border/60 bg-muted/45 p-2 font-mono text-[10.5px] leading-relaxed whitespace-pre-wrap break-words text-foreground/90">
-        {content}
-      </pre>
-    )
-  }
-
-  const renderOrbStreamRows = () => (
-    <div
-      style={scrollStyle}
-      className={cn(
-        " divide-y divide-border/45",
-        maxHeightPx > 0 && "overflow-y-auto overscroll-contain"
-      )}
-    >
-      {visibleSteps.map((step) => {
-        const Icon = resolveStepIcon(step)
-        const isExpanded = Boolean(expandedStepIds[step.id])
-        const canExpand = Boolean(
-          step.payload || (step.detail && step.detail.length > 72) || onStepSelect
+  const renderWorkingStatus =
+    orbStyle === "minimal-spinner"
+      ? undefined
+      : ({ label }: { label: React.ReactNode; duration: number }) => (
+          <span className="inline-flex min-w-0 items-center gap-2">
+            <BeuiActivityOrb
+              phase={phase}
+              isActive
+              styleVariant={orbStyle}
+              size="sm"
+            />
+            <ThinkingShimmer>{label}</ThinkingShimmer>
+          </span>
         )
-
-        return (
-          <div
-            key={step.id}
-            onClick={canExpand ? () => toggleStepExpand(step) : undefined}
-            role={canExpand ? "button" : undefined}
-            tabIndex={canExpand ? 0 : undefined}
-            onKeyDown={
-              canExpand
-                ? (e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault()
-                      toggleStepExpand(step)
-                    }
-                  }
-                : undefined
-            }
-            className={cn(
-              "group flex items-start gap-2.5 transition-colors",
-              isCompact ? "px-2.5 py-1.5" : "px-3 py-2.5",
-              canExpand && "cursor-pointer hover:bg-muted/35"
-            )}
-          >
-            <span
-              className={cn(
-                "mt-0.5 flex shrink-0 items-center justify-center rounded-md border",
-                isCompact ? "size-5" : "size-5.5",
-                STATUS_NODE_CLASSES[step.status]
-              )}
-            >
-              {renderStatusGlyph(step.status, Icon, "size-3")}
-            </span>
-
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <span className="truncate font-mono text-[11.5px] font-semibold text-foreground">
-                    {step.title}
-                  </span>
-                  {step.actor && (
-                    <Badge
-                      variant="secondary"
-                      className="px-1.5 py-0 font-mono text-[9px]"
-                    >
-                      {step.actor}
-                    </Badge>
-                  )}
-                  {step.meta && (
-                    <span className="hidden truncate text-[10px] text-muted-foreground sm:inline">
-                      {step.meta}
-                    </span>
-                  )}
-                </div>
-
-                <div className="flex shrink-0 items-center gap-1.5">
-                  {showDetails && step.durationLabel && (
-                    <Badge
-                      variant="outline"
-                      className="px-1.5 py-0 font-mono text-[9.5px]"
-                    >
-                      {step.durationLabel}
-                    </Badge>
-                  )}
-                  {canExpand && (step.payload || (step.detail && step.detail.length > 72)) && (
-                    <ChevronDown
-                      className={cn(
-                        "size-3 text-muted-foreground/70 transition-transform duration-150",
-                        isExpanded && "rotate-180 text-foreground"
-                      )}
-                    />
-                  )}
-                </div>
-              </div>
-
-              {showDetails && step.detail && !isExpanded && (
-                <p
-                  className={cn(
-                    "mt-0.5 text-[11px] leading-relaxed text-muted-foreground",
-                    isCompact ? "line-clamp-1" : "line-clamp-2"
-                  )}
-                >
-                  {step.detail}
-                </p>
-              )}
-
-              {renderStepPayload(step)}
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-
-  const renderRailTimeline = () => (
-    <div
-      style={scrollStyle}
-      className={cn(
-        "relative pl-1",
-        isCompact ? "space-y-1.5" : "space-y-2",
-        maxHeightPx > 0 && "overflow-y-auto overscroll-contain pr-1"
-      )}
-    >
-      {visibleSteps.map((step, index) => {
-        const Icon = resolveStepIcon(step)
-        const isLast = index === visibleSteps.length - 1
-        const canExpand = Boolean(
-          step.payload || (step.detail && step.detail.length > 72) || onStepSelect
-        )
-
-        return (
-          <div key={step.id} className="relative flex items-start gap-2.5">
-            {!isLast && (
-              <span
-                aria-hidden="true"
-                className="absolute top-6 bottom-[-10px] left-[11px] w-px bg-border/75"
-              />
-            )}
-
-            <div
-              className={cn(
-                "relative z-10 mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border",
-                STATUS_NODE_CLASSES[step.status]
-              )}
-            >
-              {renderStatusGlyph(step.status, Icon, "size-3")}
-            </div>
-
-            <div
-              onClick={canExpand ? () => toggleStepExpand(step) : undefined}
-              className={cn(
-                "min-w-0 flex-1 rounded-lg border border-border/60 bg-card/70 text-xs transition-colors hover:border-border",
-                isCompact ? "px-2 py-1.5" : "px-2.5 py-2",
-                canExpand && "cursor-pointer"
-              )}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="flex min-w-0 items-center gap-1.5 font-mono text-[11.5px] font-semibold text-foreground">
-                  <Icon className="size-3 shrink-0 text-muted-foreground" />
-                  <span className="truncate">{step.title}</span>
-                  {step.actor && (
-                    <Badge variant="secondary" className="px-1.5 py-0 font-mono text-[9px]">
-                      {step.actor}
-                    </Badge>
-                  )}
-                </span>
-                {showDetails && step.durationLabel ? (
-                  <Badge variant="outline" className="px-1.5 py-0 font-mono text-[9.5px]">
-                    {step.durationLabel}
-                  </Badge>
-                ) : null}
-              </div>
-
-              {showDetails && step.detail && !expandedStepIds[step.id] && (
-                <p
-                  className={cn(
-                    "mt-1 text-[11px] leading-relaxed text-muted-foreground",
-                    isCompact ? "line-clamp-1" : "line-clamp-2"
-                  )}
-                >
-                  {step.detail}
-                </p>
-              )}
-
-              {renderStepPayload(step)}
-            </div>
-          </div>
-        )
-      })}
-    </div>
-  )
-
-  const renderCompactPills = () => {
-    const selectedStep = visibleSteps.find((s) => Boolean(expandedStepIds[s.id]))
-    return (
-      <div className="space-y-2">
-        <div
-          style={scrollStyle}
-          className={cn(
-            "flex flex-wrap items-center gap-1.5",
-            maxHeightPx > 0 && "overflow-y-auto overscroll-contain"
-          )}
-        >
-          {visibleSteps.map((step) => {
-            const Icon = resolveStepIcon(step)
-            const isSelected = Boolean(expandedStepIds[step.id])
-            return (
-              <button
-                key={step.id}
-                type="button"
-                onClick={() => {
-                  onStepSelect?.(step)
-                  setExpandedStepIds((prev) => ({
-                    [step.id]: !prev[step.id],
-                  }))
-                }}
-                className={cn(
-                  "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] transition-colors",
-                  isSelected
-                    ? "border-primary/50 bg-primary/12 text-foreground"
-                    : "border-border/65 bg-card/75 text-foreground/90 hover:border-primary/35 hover:bg-muted/40"
-                )}
-              >
-                <span
-                  className={cn(
-                    "size-1.5 shrink-0 rounded-full",
-                    STATUS_DOT_CLASSES[step.status]
-                  )}
-                />
-                <Icon className="size-3 shrink-0 text-muted-foreground" />
-                <span className="max-w-[180px] truncate font-mono font-medium">
-                  {step.title}
-                </span>
-                {showDetails && step.durationLabel && (
-                  <span className="font-mono text-[9.5px] text-muted-foreground">
-                    {step.durationLabel}
-                  </span>
-                )}
-              </button>
-            )
-          })}
-        </div>
-
-        {selectedStep && (selectedStep.detail || selectedStep.payload) && (
-          <div className="rounded-lg border border-border/65 bg-card/80 p-2.5 text-xs">
-            <div className="mb-1 flex items-center justify-between gap-2 font-mono text-[11px] font-semibold text-foreground">
-              <span>{selectedStep.title}</span>
-              {selectedStep.meta && (
-                <span className="text-[10px] font-normal text-muted-foreground">
-                  {selectedStep.meta}
-                </span>
-              )}
-            </div>
-            <pre className="max-h-40 overflow-auto font-mono text-[10.5px] leading-relaxed whitespace-pre-wrap break-words text-muted-foreground">
-              {selectedStep.payload ?? selectedStep.detail}
-            </pre>
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  const renderTraceLog = () => (
-    <div
-      style={scrollStyle}
-      className={cn(
-        "divide-y divide-border/40 rounded-lg border border-border/65 bg-card/75 font-mono text-[11px]",
-        maxHeightPx > 0 && "overflow-y-auto overscroll-contain"
-      )}
-    >
-      {visibleSteps.map((step) => {
-        const tag = STEP_KIND_SHORT_TAG[step.kind]
-        const canExpand = Boolean(
-          step.payload || (step.detail && step.detail.length > 72) || onStepSelect
-        )
-
-        return (
-          <div
-            key={step.id}
-            onClick={canExpand ? () => toggleStepExpand(step) : undefined}
-            className={cn(
-              "px-2.5 transition-colors",
-              isCompact ? "py-1" : "py-1.5",
-              canExpand && "cursor-pointer hover:bg-muted/40"
-            )}
-          >
-            <div className="flex items-center gap-2">
-              <span
-                className={cn(
-                  "size-1.5 shrink-0 rounded-full",
-                  STATUS_DOT_CLASSES[step.status]
-                )}
-              />
-              <span className="shrink-0 text-[10px] text-muted-foreground/75">
-                {formatClockTime(step.timestamp)}
-              </span>
-              <span className="shrink-0 rounded bg-muted px-1 py-0.2 text-[9px] font-bold text-muted-foreground">
-                {tag}
-              </span>
-              {step.actor && (
-                <span className="shrink-0 text-[10px] text-primary/85">
-                  @{step.actor}
-                </span>
-              )}
-              <span className="min-w-0 flex-1 truncate font-semibold text-foreground">
-                {step.title}
-              </span>
-              {showDetails && step.durationLabel && (
-                <span className="shrink-0 text-[10px] text-muted-foreground">
-                  {step.durationLabel}
-                </span>
-              )}
-            </div>
-
-            {showDetails && step.detail && !expandedStepIds[step.id] && (
-              <div className="mt-0.5 truncate pl-3.5 text-[10.5px] text-muted-foreground">
-                {step.detail}
-              </div>
-            )}
-
-            {renderStepPayload(step)}
-          </div>
-        )
-      })}
-    </div>
-  )
-
-  const variantBodyRenderers: Record<BeuiActivityVariant, () => React.ReactNode> = {
-    "orb-card": renderOrbStreamRows,
-    "rail-timeline": renderRailTimeline,
-    "compact-pills": renderCompactPills,
-    "trace-log": renderTraceLog,
-  }
-
-  const bodyContent = variantBodyRenderers[variant]()
-
-  // In standalone timeline mode with non-orb-card variants, render clean headerless stream unless title/headerActions provided
-  if (mode === "timeline" && variant !== "orb-card" && !title && !headerActions) {
-    return <div className={cn("w-full", className)}>{bodyContent}</div>
-  }
 
   return (
-    <div
-      className={cn(
-        "my-2 w-full overflow-hidden rounded-xl border border-border/70 bg-card/65 shadow-2xs transition-colors",
-        (isActive || runningCount > 0) && "border-primary/35",
-        className
-      )}
-    >
-      <div
-        className={cn(
-          "flex items-center justify-between gap-2 px-3",
-          isCompact ? "py-2" : "py-2.5",
-          isOpen && "border-b border-border/50"
-        )}
-      >
-        <button
-          type="button"
-          onClick={() => setIsOpen((prev) => !prev)}
-          aria-expanded={isOpen}
-          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
-        >
-          <BeuiActivityOrb
-            phase={phase}
-            isActive={isActive || runningCount > 0}
-            styleVariant={orbStyle}
-            size={isCompact ? "sm" : "md"}
-          />
-
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="truncate text-xs font-semibold text-foreground">
-                {headerTitle}
-              </span>
-            </div>
-            {headerSubtitle && (
-              <p className="truncate text-[11px] text-muted-foreground">
-                {headerSubtitle}
-              </p>
-            )}
-          </div>
-        </button>
-
-        <div className="flex shrink-0 items-center gap-1.5">
+    <div className={cn("w-full", className)}>
+      {headerActions && (
+        <div className="mb-1 flex items-center justify-end gap-1.5">
           {headerActions}
-          {showDetails && liveDuration && (
-            <Badge
-              variant="secondary"
-              className="gap-1 px-1.5 py-0 font-mono text-[10px]"
-            >
-              <Clock3 className="size-2.5" />
-              <span>{liveDuration}</span>
-            </Badge>
-          )}
-          <Badge
-            variant={runningCount > 0 ? "warning" : errorCount > 0 ? "destructive" : "outline"}
-            className="px-1.5 py-0 font-mono text-[10px]"
-          >
-            {runningCount > 0
-              ? `${completedCount}/${visibleSteps.length}`
-              : `${visibleSteps.length} ${visibleSteps.length === 1 ? "step" : "steps"}`}
-          </Badge>
-          <button
-            type="button"
-            onClick={() => setIsOpen((prev) => !prev)}
-            aria-label={isOpen ? "Collapse activity stream" : "Expand activity stream"}
-            className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-          >
-            <ChevronDown
-              className={cn(
-                "size-3.5 transition-transform duration-150",
-                isOpen && "rotate-180"
-              )}
-            />
-          </button>
-        </div>
-      </div>
-
-      {isOpen && (
-        <div
-          className={cn(
-            variant === "orb-card" ? "p-0" : isCompact ? "p-2" : "p-2.5"
-          )}
-        >
-          {bodyContent}
         </div>
       )}
+      <OfficialBeuiAgentActivity
+        items={officialItems}
+        contentType={OFFICIAL_CONTENT_TYPE_MAP[contentType]}
+        status={working ? "working" : "complete"}
+        duration={durationSeconds}
+        open={open}
+        defaultOpen={resolvedDefaultOpen}
+        onOpenChange={onOpenChange}
+        collapseOnComplete={resolvedCollapseOnComplete}
+        activeLabel={working && title ? title : undefined}
+        summary={!working && title ? title : undefined}
+        renderWorkingStatus={renderWorkingStatus}
+        maxHeight={effectiveMaxHeight}
+        contentClassName={
+          density === "compact" ? "space-y-0 py-1 text-xs" : undefined
+        }
+      />
     </div>
   )
 }

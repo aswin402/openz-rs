@@ -180,9 +180,10 @@ async fn handle_delegate(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>, parts:
 }
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
-    match ctx.user_content.starts_with('/') {
-        false => Ok(TurnState::Build),
-        true => {
+    let is_webui =
+        crate::config::schema::Config::ui_surface_for_session_key(ctx.session_key) == "webui";
+    match (!is_webui, ctx.user_content.starts_with('/')) {
+        (true, true) => {
             let profile_name = subagent_profile_name(ctx.session_key);
             let parts: Vec<&str> = ctx.user_content.split_whitespace().collect();
             match parts.first().copied() {
@@ -237,5 +238,6 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 _ => Ok(TurnState::Build),
             }
         }
+        _ => Ok(TurnState::Build),
     }
 }

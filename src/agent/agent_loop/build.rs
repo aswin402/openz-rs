@@ -4,6 +4,7 @@ use anyhow::Result;
 use std::collections::HashSet;
 
 pub const MIN_MATCH_SCORE: f64 = 6.0;
+pub const MIN_SKILL_NOTICE_SCORE: f32 = 3.0;
 pub const MAX_SOURCE_CONTEXT_CHARS: usize = 3000;
 pub const DEFAULT_BRIEF_CONTEXT_CHARS: usize = 3600;
 pub const DEFAULT_WORKFLOW_CONTEXT_CHARS: usize = 3600;
@@ -51,33 +52,61 @@ pub(super) fn subagent_profile_name(session_key: &str) -> Option<&str> {
     }
 }
 
+fn should_emit_skill_notice(seen: &mut HashSet<String>, skill_name: &str) -> bool {
+    seen.insert(skill_name.to_string())
+}
+
 fn format_skills_part(
+    session_key: &str,
     user_content: &str,
     messages: &[crate::session::Message],
     profile_name: Option<&str>,
+    seen_skill_notices: &mut HashSet<String>,
 ) -> String {
-    let relevant_skills = crate::agent::skills::load_relevant_skills_with_profile(
+    let relevant_scored = crate::agent::skills::load_scored_relevant_skills_with_profile(
         user_content,
         messages,
         profile_name,
     )
     .unwrap_or_default();
 
-    match relevant_skills.is_empty() {
+    match relevant_scored.is_empty() {
         false => {
             let mut skills_part =
                 "\n\nHere are the active guidelines and procedural skills you should follow:\n"
                     .to_string();
-            let top_count = 2.min(relevant_skills.len());
-            for skill in relevant_skills.iter().take(top_count) {
+            let top_count = 2.min(relevant_scored.len());
+            let mut notified_names: Vec<String> = Vec::new();
+            let allow_notice = !is_local_operational_or_ack_query(user_content);
+
+            for (score, skill) in relevant_scored.iter().take(top_count) {
                 skills_part.push_str(&format!(
                     "=== Active Skill: {} ===\n{}\n\n",
                     skill.name, skill.content
                 ));
+                let _ = (allow_notice
+                    && *score >= MIN_SKILL_NOTICE_SCORE
+                    && should_emit_skill_notice(seen_skill_notices, &skill.name))
+                .then(|| {
+                    notified_names.push(skill.name.clone());
+                });
             }
-            let _ = (relevant_skills.len() > top_count).then(|| {
+
+            let _ = (!notified_names.is_empty()).then(|| {
+                let detail = notified_names.join(", ");
+                let notice = format!("◇ Skill used: {}", detail);
+                crate::channels::send_session_notice(session_key, &notice);
+                crate::channels::websocket::publish_activity_notice(
+                    session_key,
+                    "skill",
+                    "Skill used",
+                    detail,
+                );
+            });
+
+            let _ = (relevant_scored.len() > top_count).then(|| {
                 skills_part.push_str("[Indexed Skills Catalog]\nThe following additional skills are active in ~/.openz/skills/:\n");
-                for skill in relevant_skills.iter().skip(top_count) {
+                for (_, skill) in relevant_scored.iter().skip(top_count) {
                     let desc = skill.description();
                     let triggers = skill.triggers();
                     let triggers_str = (!triggers.is_empty())
@@ -117,7 +146,13 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         "Here is the long-term memory of key facts, preferences, and decisions from this session:",
     );
     let profile_name = subagent_profile_name(ctx.session_key);
-    let skills_part = format_skills_part(ctx.user_content, &ctx.session.messages, profile_name);
+    let skills_part = format_skills_part(
+        ctx.session_key,
+        ctx.user_content,
+        &ctx.session.messages,
+        profile_name,
+        &mut ctx.skill_notice_names,
+    );
     let vision_instruction = (!crate::providers::model_supports_vision(&config.agents.defaults.model))
         .then_some(" If a message contains a markdown image link (e.g. ![](file://...)) and you need to analyze or describe the image, you MUST call the direct 'vision_agent' tool to see and report on the image contents. Do not route image analysis through generic 'delegate_task' when the specialized 'vision_agent' tool is available; generic delegation may select a non-vision model.")
         .unwrap_or("");
@@ -217,12 +252,12 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             ));
         });
 
-    let caveman_rules = config
-        .agents
-        .defaults
-        .caveman_mode
-        .then_some("\n\nRespond terse like smart caveman. All technical substance stay. Only fluff die.\nRules:\n- Drop: articles (a/an/the), filler (just/really/basically), pleasantries, hedging\n- Fragments OK. Short synonyms. Technical terms exact. Code unchanged.\n- Pattern: [thing] [action] [reason]. [next step].\n- Not: \"Sure! I'd be happy to help you with that.\"\n- Yes: \"Bug in auth middleware. Fix:\"")
-        .unwrap_or("");
+    let caveman_level =
+        opencaveman::CavemanLevel::from_config_str(&config.agents.defaults.caveman_level);
+    let caveman_rules =
+        opencaveman::compile_static_directive(config.agents.defaults.caveman_mode, caveman_level);
+    let caveman_auto_clarity =
+        opencaveman::compile_dynamic_auto_clarity(config.agents.defaults.caveman_mode, ctx.user_content);
 
     let user_profile_raw = crate::agent::skills::load_user_profile();
     let user_profile_part = (!user_profile_raw.trim().is_empty())
@@ -281,11 +316,12 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         grounding_rules: &grounding_rules,
         weak_model_rules: &weak_model_rules,
         vision_instruction,
-        caveman_rules,
+        caveman_rules: &caveman_rules,
         pinned_memory: &pinned_memory,
     };
     let dynamic_suffix = DynamicPromptSuffix {
         persona_priority_part: &persona_priority_part,
+        caveman_auto_clarity: &caveman_auto_clarity,
         summary_part: &summary_part,
         memory_part: &memory_part,
         cross_session_memory: &cross_session_memory,
@@ -335,6 +371,7 @@ impl StaticPromptPrefix<'_> {
 #[derive(Debug, Clone)]
 pub(crate) struct DynamicPromptSuffix<'a> {
     pub persona_priority_part: &'a str,
+    pub caveman_auto_clarity: &'a str,
     pub summary_part: &'a str,
     pub memory_part: &'a str,
     pub cross_session_memory: &'a str,
@@ -389,6 +426,7 @@ pub(crate) fn assemble_kv_cached_system_prompt(
         suffix.utc_timestamp_rfc3339
     );
     let fixed_dynamic_len = suffix.persona_priority_part.chars().count()
+        + suffix.caveman_auto_clarity.chars().count()
         + suffix.summary_part.chars().count()
         + suffix.memory_part.chars().count()
         + suffix.workflow_context.chars().count()
@@ -419,9 +457,10 @@ pub(crate) fn assemble_kv_cached_system_prompt(
     };
 
     format!(
-        "{}{}{}{}{}{}{}{}{}{}{}{}",
+        "{}{}{}{}{}{}{}{}{}{}{}{}{}",
         static_prefix,
         suffix.persona_priority_part,
+        suffix.caveman_auto_clarity,
         suffix.summary_part,
         suffix.memory_part,
         fitted_cross,

@@ -148,3 +148,20 @@ fn test_user_profile_update_and_deduplication() {
     let count = loaded2.matches("Cyberpunk Neon with #00ffcc").count();
     assert_eq!(count, 1);
 }
+
+#[test]
+fn builtin_opencaveman_skills_load_and_validate_cleanly() {
+    let skills = load_skills().expect("load_skills");
+    for expected in ["caveman", "caveman_commit", "caveman_review", "caveman_compress"] {
+        let skill = skills
+            .iter()
+            .find(|s| s.name == expected)
+            .unwrap_or_else(|| panic!("expected built-in skill {expected}"));
+        let errors = validate_skill_metadata(&skill.name, &skill.content);
+        assert!(
+            errors.is_empty(),
+            "built-in skill {expected} failed validation: {:?}",
+            errors
+        );
+    }
+}

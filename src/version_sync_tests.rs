@@ -209,8 +209,13 @@ fn collect_web_ts_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>
 fn codebase_enforces_zero_if_else_and_zero_regex() {
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let src_dir = manifest_dir.join("src");
+    let crates_dir = manifest_dir.join("crates");
     let mut rs_files = Vec::new();
     collect_rs_files(&src_dir, &mut rs_files);
+    match crates_dir.is_dir() {
+        true => collect_rs_files(&crates_dir, &mut rs_files),
+        false => {}
+    }
     rs_files.sort();
 
     assert!(

@@ -45,6 +45,10 @@ pub struct RuntimeDefaults {
     pub provider: String,
     pub streaming: bool,
     pub caveman_mode: bool,
+    #[serde(default)]
+    pub caveman_level: String,
+    #[serde(default)]
+    pub caveman_stats: Option<opencaveman::CavemanStatsSnapshot>,
     pub max_messages: usize,
     pub max_tool_iterations: usize,
     pub tool_timeout_secs: u64,
@@ -244,6 +248,11 @@ pub fn build_runtime_inventory(
             provider: config.agents.defaults.provider.clone(),
             streaming: config.agents.defaults.streaming,
             caveman_mode: config.agents.defaults.caveman_mode,
+            caveman_level: opencaveman::normalize_level_slug(&config.agents.defaults.caveman_level)
+                .to_string(),
+            caveman_stats: Some(opencaveman::load_stats_ledger(
+                &crate::config::runtime_data_dir(),
+            )),
             max_messages: config.agents.defaults.max_messages,
             max_tool_iterations: config.agents.defaults.max_tool_iterations,
             tool_timeout_secs: config.agents.defaults.tool_timeout_secs,

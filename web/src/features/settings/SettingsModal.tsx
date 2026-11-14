@@ -11,6 +11,7 @@ import {
   Save,
   Upload,
   X,
+  Zap,
 } from 'lucide-react';
 import { useOpenZStore } from '../../store/useOpenZStore';
 import { useThemeStore } from '../../store/useThemeStore';
@@ -35,6 +36,7 @@ import {
   type SettingsForm,
 } from './settingsSchema';
 import { AgentSettingsTab } from './AgentSettingsTab';
+import { CavemanSettingsTab } from './CavemanSettingsTab';
 import { ChannelsTab } from './ChannelsTab';
 import { ProvidersTab } from './ProvidersTab';
 import { BeuiAlert } from '../../components/beui';
@@ -56,6 +58,13 @@ const NAV_SECTIONS: NavSectionMeta[] = [
     label: 'Agent & Gateway',
     subtitle: 'Gateway WebSocket URL, auth token, default model, inference limits & runtime switches',
     icon: Cpu,
+  },
+  {
+    id: 'caveman',
+    label: 'Caveman Mode',
+    subtitle:
+      'Enable or disable caveman mode, configure intensity modes (Lite, Full, Ultra, Wenyan), and inspect OpenCaveman token savings',
+    icon: Zap,
   },
   {
     id: 'providers',
@@ -519,6 +528,15 @@ export const SettingsModal: React.FC = () => {
                 onTokenChange={setTokenInput}
                 onFieldChange={setField}
                 onUpdateConfig={updateConfig}
+                onOpenCavemanSettings={() => setActiveSection('caveman')}
+              />
+            )}
+
+            {activeSection === 'caveman' && (
+              <CavemanSettingsTab
+                settings={settings}
+                form={form}
+                onFieldChange={setField}
               />
             )}
 

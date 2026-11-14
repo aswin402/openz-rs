@@ -2,6 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@fontsource-variable/inter";
+@import "tw-shimmer";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -340,6 +341,22 @@
   }
 }
 
+@keyframes beui-toast-countdown {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+.beui-toast-progress {
+  transform-origin: left center;
+  animation-name: beui-toast-countdown;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+}
+
 .beui-orb-dot-active {
   transform-box: fill-box;
   transform-origin: center;
@@ -455,6 +472,17 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: color-mix(in srgb, var(--muted-foreground) 48%, transparent) !important;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
 }
 
 /* Native select styling */

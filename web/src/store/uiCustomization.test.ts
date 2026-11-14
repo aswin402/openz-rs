@@ -21,34 +21,68 @@ import {
   resolveModelContextWindow,
 } from '../shared/lib/runtimeMetrics';
 import {
+  APPROVAL_CARD_STYLE_OPTIONS,
+  TOOL_CALL_STYLE_OPTIONS,
+  formatApprovalArgs,
+  isDestructiveToolPrompt,
+  mapSecurityPromptToApprovalData,
+  mapToolExecutionToToolCallData,
+  normalizeApprovalStyle,
+  normalizeToolResultStyle,
+  pairSecurityPromptsWithToolCalls,
+  summarizeApprovalInline,
+} from '../components/assistant-ui/elements';
+import {
   ACTIVITY_DENSITY_OPTIONS,
   ACTIVITY_MAX_HEIGHT_OPTIONS,
   ACTIVITY_ORB_OPTIONS,
   ACTIVITY_PLACEMENT_OPTIONS,
   ACTIVITY_VARIANT_OPTIONS,
   AGENT_AVATAR_OPTIONS,
+  INLINE_NOTICE_STYLE_OPTIONS,
+  TOAST_DURATION_OPTIONS,
+  TOAST_MAX_VISIBLE_OPTIONS,
+  TOAST_POSITION_OPTIONS,
+  TOAST_VARIANT_OPTIONS,
   USER_AVATAR_OPTIONS,
+  computeCumulativeExpandedOffsets,
+  computeToastStackGeometry,
   extractAllMarkdownSources,
   extractMarkdownCitations,
   extractToolImagePayload,
-  formatApprovalArgs,
+  mapNoticeKindToToastCategory,
+  normalizeToastPosition,
+  normalizeToastVariant,
   orchestrationRunToSubagentProps,
   parseCitationSegments,
   parseUnifiedDiff,
   resolveActivityPhase,
   resolveMaxHeightPx,
   resolveStepContentType,
-  summarizeApprovalInline,
+  resolveStepIcon,
+  resolveToastDurationMs,
+  toBeuiOfficialActivityItems,
   tokenizeDiffLine,
 } from '../components/beui';
+import {
+  TOAST_CATEGORY_TOGGLE_OPTIONS,
+  dispatchActivityNoticeToast,
+  resolveNoticeJumpAction,
+  shouldEmitCategoryToast,
+  useToastStore,
+} from './useToastStore';
 import {
   buildInventoryActivitySteps,
   buildLogActivitySteps,
   buildMessageActivitySteps,
   buildOrchestrationActivitySteps,
   buildUnifiedDashboardActivitySteps,
+  classifyBeuiToolAction,
   classifyToolContentType,
+  formatBeuiToolTarget,
+  stripTerminalFormatting,
 } from '../features/activity/activityAdapters';
+import { interpolateTemplate } from '../lib/i18n';
 import { FOX_SILHOUETTE_PATH, buildFoxFaviconDataUri } from '../components/OpenZFoxIcon';
 
 describe('useUiCustomizationStore (@beui + shadcn/ui v5)', () => {
@@ -90,14 +124,26 @@ describe('useUiCustomizationStore (@beui + shadcn/ui v5)', () => {
     expect(state.codeStyle).toBe('framed');
     expect(state.diffLayout).toBe('unified');
     expect(state.terminalStyle).toBe('console');
-    expect(state.toolResultStyle).toBe('beui-card');
-    expect(state.approvalStyle).toBe('beui-tool-approval');
+    expect(state.toolResultStyle).toBe('assistant-collapsed');
+    expect(state.approvalStyle).toBe('assistant-default');
     expect(state.imageGenStyle).toBe('beui-frame');
     expect(state.citationsStyle).toBe('pills');
     expect(state.dataTableStyle).toBe('interactive');
     expect(state.jsonViewerStyle).toBe('tree');
     expect(state.alertStyle).toBe('beui-alert');
     expect(state.collapsibleStyle).toBe('subtle');
+    expect(state.toastEnabled).toBe(true);
+    expect(state.toastVariant).toBe('beui-stack');
+    expect(state.toastPosition).toBe('bottom-end');
+    expect(state.toastDuration).toBe('standard');
+    expect(state.toastMaxVisible).toBe(4);
+    expect(state.inlineNoticeStyle).toBe('pills');
+    expect(state.toastNotifyWorkflow).toBe(true);
+    expect(state.toastNotifySkill).toBe(true);
+    expect(state.toastNotifySelfImprovement).toBe(true);
+    expect(state.toastNotifyMemory).toBe(true);
+    expect(state.toastNotifyResearch).toBe(true);
+    expect(state.toastNotifyApproval).toBe(true);
   });
 
   test('ships 13 dual-mode theme families where every theme supports both Light and Dark modes with WCAG contrast', () => {
@@ -159,8 +205,8 @@ describe('useUiCustomizationStore (@beui + shadcn/ui v5)', () => {
       codeStyle: 'minimal',
       diffLayout: 'split',
       terminalStyle: 'minimal',
-      toolResultStyle: 'compact-pill',
-      approvalStyle: 'beui-approval-card',
+      toolResultStyle: 'assistant-error-open',
+      approvalStyle: 'assistant-receipt',
       imageGenStyle: 'minimal',
       citationsStyle: 'cards',
       dataTableStyle: 'striped',
@@ -198,8 +244,8 @@ describe('useUiCustomizationStore (@beui + shadcn/ui v5)', () => {
     expect(updated.codeStyle).toBe('minimal');
     expect(updated.diffLayout).toBe('split');
     expect(updated.terminalStyle).toBe('minimal');
-    expect(updated.toolResultStyle).toBe('compact-pill');
-    expect(updated.approvalStyle).toBe('beui-approval-card');
+    expect(updated.toolResultStyle).toBe('assistant-error-open');
+    expect(updated.approvalStyle).toBe('assistant-receipt');
     expect(updated.imageGenStyle).toBe('minimal');
     expect(updated.citationsStyle).toBe('cards');
     expect(updated.dataTableStyle).toBe('striped');
@@ -359,7 +405,7 @@ describe('zero-regex @beui parsers & adapters', () => {
     useUiCustomizationStore.getState().applyCustomization({
       activeThemeId: 'catppuccin-mocha',
       agentAvatar: 'fox-ember',
-      approvalStyle: 'beui-approval-card',
+      approvalStyle: 'assistant-receipt',
       codeStyle: 'minimal',
     });
     expect(syncCalls).toEqual(['catppuccin-mocha']);
@@ -388,7 +434,18 @@ describe('zero-regex @beui parsers & adapters', () => {
     expect(restored.themeMode).toBe('light');
     expect(useUiCustomizationStore.getState().activeThemeId).toBe('catppuccin-mocha');
     expect(useUiCustomizationStore.getState().agentAvatar).toBe('fox-ember');
-    expect(useUiCustomizationStore.getState().approvalStyle).toBe('beui-approval-card');
+    expect(useUiCustomizationStore.getState().approvalStyle).toBe('assistant-receipt');
+
+    // Legacy @beui backup values migrate seamlessly to @assistant-ui element choices
+    const legacyBackup = JSON.stringify({
+      ui_customization: {
+        toolResultStyle: 'expanded-terminal',
+        approvalStyle: 'beui-approval-card',
+      },
+    });
+    expect(useUiCustomizationStore.getState().importBackupJson(legacyBackup).ok).toBe(true);
+    expect(useUiCustomizationStore.getState().toolResultStyle).toBe('assistant-expanded');
+    expect(useUiCustomizationStore.getState().approvalStyle).toBe('assistant-receipt');
 
     // Also accepts ~/.openz/webui_preferences.json format (`active_theme_id` + `ui_customization`)
     const serverDiskBackup = JSON.stringify({
@@ -406,25 +463,88 @@ describe('zero-regex @beui parsers & adapters', () => {
     unsubscribe();
   });
 
-  test('summarizes resolved tool permissions into a minimal single-line status summary', () => {
+  test('maps SecurityGuard prompts and ToolExecution calls to @assistant-ui elements cleanly without duplicate rows', () => {
+    expect(TOOL_CALL_STYLE_OPTIONS.length).toBe(3);
+    expect(APPROVAL_CARD_STYLE_OPTIONS.length).toBe(3);
+    expect(normalizeToolResultStyle('beui-card')).toBe('assistant-collapsed');
+    expect(normalizeToolResultStyle('expanded-terminal')).toBe('assistant-expanded');
+    expect(normalizeApprovalStyle('beui-tool-approval')).toBe('assistant-default');
+    expect(normalizeApprovalStyle('beui-approval-card')).toBe('assistant-receipt');
+
     const summaryFromArgs = summarizeApprovalInline({
-      requestId: 'req-1',
-      toolName: 'curate_skill',
       description: '',
       arguments: { action: 'list' },
-      status: 'approved',
     });
     expect(summaryFromArgs).toBe('action: list');
 
     const summaryFromDesc = summarizeApprovalInline({
-      requestId: 'req-2',
-      toolName: 'exec_command',
       description: 'cargo check -p openz',
       arguments: { command: 'cargo check -p openz' },
-      status: 'denied',
     });
     expect(summaryFromDesc).toBe('cargo check -p openz');
     expect(formatApprovalArgs({ action: 'list' })).toContain('"action": "list"');
+
+    expect(isDestructiveToolPrompt('exec_command', { command: 'rm -rf target/tmp' })).toBe(true);
+    expect(isDestructiveToolPrompt('exec_command', { command: 'cargo check -p openz' })).toBe(false);
+
+    const pendingApproval = mapSecurityPromptToApprovalData({
+      id: 'sec-pending',
+      toolName: 'exec_command',
+      description: 'cargo check -p openz',
+      arguments: { command: 'cargo check -p openz', workdir: '/workspace/openz' },
+      status: 'pending',
+    });
+    expect(pendingApproval.state).toBe('request');
+    expect(pendingApproval.command).toBe('$ cargo check -p openz');
+    expect(pendingApproval.description).toBeUndefined();
+    expect(pendingApproval.details).toEqual([{ label: 'workdir', value: '/workspace/openz' }]);
+    expect(pendingApproval.variant).toBe('default');
+
+    const mappedTool = mapToolExecutionToToolCallData({
+      id: 'tc-1',
+      name: 'exec_command',
+      args: { command: 'echo "=== RSS NEWS ==="; curl -s https://example.com' },
+      status: 'success',
+      output: JSON.stringify({ stdout: '\x1b[1mHeadline OK\x1b[0m', status_code: 0 }),
+      durationMs: 85,
+    });
+    expect(mappedTool.label).toBe('Ran exec_command');
+    expect(mappedTool.activeLabel).toBe('Running exec_command');
+    expect(mappedTool.query).toBe('$ echo "=== RSS NEWS ==="; curl -s https://example.com');
+    expect(mappedTool.result).toContain('Headline OK');
+    expect(mappedTool.running).toBe(false);
+    expect(mappedTool.failed).toBe(false);
+
+    // Lifecycle coordination: pending -> running -> completed handoff to ToolCall
+    const cmdArgs = { command: 'curl -s https://example.com' };
+    const stepPending = pairSecurityPromptsWithToolCalls(
+      [{ id: 't1', name: 'exec_command', args: cmdArgs, status: 'running' }],
+      [{ id: 'p1', toolName: 'exec_command', description: '', arguments: cmdArgs, status: 'pending' }],
+    );
+    expect(stepPending.visibleToolCalls.length).toBe(0);
+    expect(stepPending.visibleApprovals.map((a) => a.state)).toEqual(['request']);
+
+    const stepRunning = pairSecurityPromptsWithToolCalls(
+      [{ id: 't1', name: 'exec_command', args: cmdArgs, status: 'running' }],
+      [{ id: 'p1', toolName: 'exec_command', description: '', arguments: cmdArgs, status: 'approved' }],
+    );
+    expect(stepRunning.visibleToolCalls.length).toBe(0);
+    expect(stepRunning.visibleApprovals.map((a) => a.state)).toEqual(['running']);
+
+    const stepFinishedHandoff = pairSecurityPromptsWithToolCalls(
+      [{ id: 't1', name: 'exec_command', args: cmdArgs, status: 'success', output: 'ok' }],
+      [{ id: 'p1', toolName: 'exec_command', description: '', arguments: cmdArgs, status: 'approved' }],
+    );
+    expect(stepFinishedHandoff.visibleToolCalls.length).toBe(1);
+    expect(stepFinishedHandoff.visibleApprovals.length).toBe(0);
+
+    const stepFinishedWithReceipt = pairSecurityPromptsWithToolCalls(
+      [{ id: 't1', name: 'exec_command', args: cmdArgs, status: 'success', output: 'ok' }],
+      [{ id: 'p1', toolName: 'exec_command', description: '', arguments: cmdArgs, status: 'approved' }],
+      { keepApprovedReceipt: true },
+    );
+    expect(stepFinishedWithReceipt.visibleToolCalls.length).toBe(1);
+    expect(stepFinishedWithReceipt.visibleApprovals.map((a) => a.state)).toEqual(['done']);
   });
 
   test('builds cache-busting inline OpenZ Fox SVG favicon data URI for live browser tabs', () => {
@@ -552,5 +672,315 @@ describe('zero-regex @beui parsers & adapters', () => {
       ],
     });
     expect(unified.length).toBe(2);
+
+    const skillNoticeSteps = buildMessageActivitySteps([
+      {
+        id: 'm3',
+        role: 'assistant',
+        content: 'Applied Rust zero-branching skill.',
+        timestamp: 4000,
+        activityNotices: [
+          {
+            id: 'n-skill-1',
+            kind: 'skill',
+            title: 'Skill used',
+            detail: 'rust-pro',
+            timestamp: 4005,
+          },
+        ],
+      },
+    ]);
+    expect(skillNoticeSteps.length).toBe(1);
+    expect(skillNoticeSteps[0]?.noticeKind).toBe('skill');
+    expect(typeof resolveStepIcon(skillNoticeSteps[0]!)).toBe('object');
+  });
+
+  test('computes @beui/animated-toast-stack 3D deck geometry, cumulative heights, and telemetry routing', () => {
+    useToastStore.getState().resetToastStore();
+    useUiCustomizationStore.getState().resetAllCustomization();
+
+    expect(TOAST_VARIANT_OPTIONS.length).toBe(10);
+    expect(TOAST_VARIANT_OPTIONS.map((opt) => opt.id)).toEqual([
+      'beui-stack',
+      'compact-pills',
+      'dynamic-island',
+      'minimal-glass',
+      'accent-banner',
+      'terminal-hud',
+      'split-action',
+      'soft-tinted',
+      'brutalist-outline',
+      'micro-badge',
+    ]);
+    expect(TOAST_POSITION_OPTIONS.length).toBe(6);
+    expect(TOAST_POSITION_OPTIONS.map((opt) => opt.id)).toEqual([
+      'top-start',
+      'top-center',
+      'top-end',
+      'bottom-start',
+      'bottom-center',
+      'bottom-end',
+    ]);
+    expect(normalizeToastPosition('bottom-right')).toBe('bottom-end');
+    expect(normalizeToastPosition('bottom-left')).toBe('bottom-start');
+    expect(normalizeToastPosition('top-right')).toBe('top-end');
+    expect(normalizeToastPosition('bottom-center')).toBe('bottom-center');
+    expect(normalizeToastPosition('top-start')).toBe('top-start');
+    expect(normalizeToastVariant('dynamic-island')).toBe('dynamic-island');
+    expect(normalizeToastVariant('terminal-hud')).toBe('terminal-hud');
+    expect(normalizeToastVariant('unknown-style')).toBe('beui-stack');
+
+    useUiCustomizationStore.getState().setActiveGatewaySection('caveman');
+    expect(useUiCustomizationStore.getState().activeGatewaySection).toBe('caveman');
+    useUiCustomizationStore.getState().setActiveGatewaySection('agent');
+
+    expect(TOAST_DURATION_OPTIONS.length).toBe(4);
+    expect(TOAST_MAX_VISIBLE_OPTIONS.length).toBe(3);
+    expect(INLINE_NOTICE_STYLE_OPTIONS.length).toBe(3);
+    expect(TOAST_CATEGORY_TOGGLE_OPTIONS.length).toBe(6);
+
+    expect(resolveToastDurationMs('fast')).toBe(3200);
+    expect(resolveToastDurationMs('standard')).toBe(5000);
+    expect(resolveToastDurationMs('extended')).toBe(8000);
+    expect(resolveToastDurationMs('sticky')).toBe(0);
+    expect(resolveToastDurationMs('fast', 9000)).toBe(9000);
+
+    expect(computeCumulativeExpandedOffsets([80, 92, 74], 8)).toEqual([0, 88, 188]);
+
+    const frontBottom = computeToastStackGeometry({
+      index: 0,
+      isExpanded: false,
+      expandedOffsetPx: 0,
+      position: 'bottom-right',
+      maxVisible: 4,
+    });
+    const depthBottom = computeToastStackGeometry({
+      index: 2,
+      isExpanded: false,
+      expandedOffsetPx: 180,
+      position: 'bottom-right',
+      maxVisible: 4,
+    });
+    const depthTop = computeToastStackGeometry({
+      index: 2,
+      isExpanded: false,
+      expandedOffsetPx: 180,
+      position: 'top-right',
+      maxVisible: 4,
+    });
+    const expandedBottom = computeToastStackGeometry({
+      index: 2,
+      isExpanded: true,
+      expandedOffsetPx: 180,
+      position: 'bottom-right',
+      maxVisible: 4,
+    });
+    const overflowHidden = computeToastStackGeometry({
+      index: 4,
+      isExpanded: false,
+      expandedOffsetPx: 320,
+      position: 'bottom-right',
+      maxVisible: 4,
+    });
+
+    expect(frontBottom.scale).toBe(1);
+    expect(frontBottom.translateY).toBe(-0);
+    expect(frontBottom.hidden).toBe(false);
+    expect(depthBottom.scale).toBeLessThan(1);
+    expect(depthBottom.translateY).toBeLessThan(0);
+    expect(depthTop.translateY).toBeGreaterThan(0);
+    expect(expandedBottom.scale).toBe(1);
+    expect(expandedBottom.translateY).toBe(-180);
+    expect(overflowHidden.hidden).toBe(true);
+    expect(overflowHidden.opacity).toBe(0);
+
+    expect(mapNoticeKindToToastCategory('workflow')).toBe('workflow');
+    expect(mapNoticeKindToToastCategory('skill')).toBe('skill');
+    expect(mapNoticeKindToToastCategory('self_improvement')).toBe('self_improvement');
+
+    // Burst deduplication + unread badge + Notification Center read state
+    useToastStore.getState().pushToast({
+      dedupeKey: 'workflow:matched:deploy_release',
+      category: 'workflow',
+      title: 'Workflow matched',
+      detail: 'deploy_release',
+    });
+    useToastStore.getState().pushToast({
+      dedupeKey: 'workflow:matched:deploy_release',
+      category: 'workflow',
+      title: 'Workflow matched',
+      detail: 'deploy_release',
+    });
+
+    expect(useToastStore.getState().toasts.length).toBe(1);
+    expect(useToastStore.getState().toasts[0]?.count).toBe(2);
+    expect(useToastStore.getState().unreadCount).toBe(2);
+
+    const activeId = useToastStore.getState().toasts[0]!.id;
+    useToastStore.getState().dismissToast(activeId);
+    expect(useToastStore.getState().toasts.length).toBe(0);
+    expect(useToastStore.getState().history.length).toBe(1);
+
+    useToastStore.getState().setIsCenterOpen(true);
+    expect(useToastStore.getState().unreadCount).toBe(0);
+    useToastStore.getState().setIsCenterOpen(false);
+
+    // Category mute toggles suppress active popup stack while preserving Bell history
+    useUiCustomizationStore.getState().applyCustomization({
+      toastVariant: 'minimal-glass',
+      toastPosition: 'top-center',
+      toastDuration: 'extended',
+      toastMaxVisible: 5,
+      inlineNoticeStyle: 'cards',
+      toastNotifySkill: false,
+    });
+    expect(useUiCustomizationStore.getState().toastVariant).toBe('minimal-glass');
+    expect(useUiCustomizationStore.getState().toastMaxVisible).toBe(5);
+    expect(shouldEmitCategoryToast('skill', useUiCustomizationStore.getState())).toBe(false);
+    expect(shouldEmitCategoryToast('workflow', useUiCustomizationStore.getState())).toBe(true);
+
+    const jumps: string[] = [];
+    const nav = {
+      openSkills: () => jumps.push('skills'),
+      openKnowledge: () => jumps.push('knowledge'),
+      openMemory: () => jumps.push('memory'),
+      openActivity: () => jumps.push('activity'),
+      openAgents: () => jumps.push('agents'),
+      openLogs: () => jumps.push('logs'),
+      focusChat: () => jumps.push('chat'),
+    };
+
+    dispatchActivityNoticeToast(
+      {
+        id: 'n1',
+        kind: 'skill',
+        title: 'Skill used',
+        detail: 'rust-pro',
+        timestamp: 5000,
+      },
+      'skill',
+      nav,
+    );
+    // Muted category: 0 active popups, but recorded in Notification Center history
+    expect(useToastStore.getState().toasts.length).toBe(0);
+    expect(useToastStore.getState().history[0]?.category).toBe('skill');
+
+    const skillCuratorJump = resolveNoticeJumpAction(
+      'self_improvement',
+      'Skill updated',
+      nav,
+    );
+    expect(skillCuratorJump.actionLabel).toBe('Open Skills');
+    skillCuratorJump.onAction();
+
+    const memoryCuratorJump = resolveNoticeJumpAction(
+      'self_improvement',
+      'Self-improvement memory updated',
+      nav,
+    );
+    expect(memoryCuratorJump.actionLabel).toBe('Open Memory');
+    memoryCuratorJump.onAction();
+
+    expect(jumps).toEqual(['skills', 'memory']);
+
+    useToastStore.getState().resetToastStore();
+    useUiCustomizationStore.getState().resetAllCustomization();
+  });
+
+  test('maps steps into official @beui/agent-activity registry items, strips ANSI codes, and drops Progress spam without regex', () => {
+    expect(interpolateTemplate('Ran {count} tools', { count: 3 })).toBe('Ran 3 tools');
+    expect(
+      interpolateTemplate('{toolCalls}, {messages}', {
+        toolCalls: '2 tool calls',
+        messages: '1 message',
+      }),
+    ).toBe('2 tool calls, 1 message');
+    expect(interpolateTemplate('Keep {missing} and {bad-key}', { count: 1 })).toBe(
+      'Keep {missing} and {bad-key}',
+    );
+
+    expect(stripTerminalFormatting('*[1mopenz_inventory[0m(runtime identity)*')).toBe(
+      '*openz_inventory(runtime identity)*',
+    );
+    expect(stripTerminalFormatting('\x1b[1mgit_manager\x1b[0m')).toBe('git_manager');
+
+    expect(classifyBeuiToolAction('read_file')).toBe('read');
+    expect(classifyBeuiToolAction('openz_inventory')).toBe('read');
+    expect(classifyBeuiToolAction('patch_file')).toBe('edit');
+    expect(classifyBeuiToolAction('write_file')).toBe('write');
+    expect(classifyBeuiToolAction('delegate_task')).toBe('delegate');
+    expect(classifyBeuiToolAction('git_manager')).toBe('run');
+    expect(formatBeuiToolTarget('git_manager', { action: 'log' })).toBe('git log');
+    expect(formatBeuiToolTarget('read_file', { path: 'src/main.rs' })).toBe('src/main.rs');
+
+    const steps = buildMessageActivitySteps(
+      [
+        {
+          id: 'msg-official',
+          role: 'assistant',
+          content: 'Summary ready.',
+          timestamp: 1000,
+          isStreaming: false,
+          reasoningContent: 'Checking runtime inventory and recent commits.',
+          activityNotices: [
+            {
+              id: 'progress-spam-1',
+              kind: 'system',
+              title: 'Progress',
+              detail: '▶ Running *[1mopenz_inventory[0m(runtime identity)*...',
+              timestamp: 1010,
+            },
+            {
+              id: 'skill-1',
+              kind: 'skill',
+              title: 'Skill used',
+              detail: 'rust-pro',
+              timestamp: 1020,
+            },
+          ],
+          toolCalls: [
+            {
+              id: 'tc-inv',
+              name: 'openz_inventory',
+              args: { section: 'runtime' },
+              status: 'success',
+              durationMs: 42,
+              startedAt: 1030,
+            },
+            {
+              id: 'tc-search',
+              name: 'web_search',
+              args: { query: 'beui agent-activity' },
+              output: JSON.stringify({
+                results: [
+                  { title: 'Agent Activity - BeUI', url: 'https://beui.dev/components/agents/agent-activity' },
+                ],
+              }),
+              status: 'success',
+              durationMs: 180,
+              startedAt: 1040,
+            },
+          ],
+        },
+      ],
+      { chronological: true },
+    );
+
+    // Raw Progress notice must be completely excluded
+    expect(steps.some((s) => s.title === 'Progress')).toBe(false);
+    expect(steps.length).toBe(4);
+    expect(steps[0]?.status).toBe('info');
+
+    const adaptiveItems = toBeuiOfficialActivityItems(steps, 'orb-card', true);
+    expect(adaptiveItems.map((i) => i.type)).toEqual(['text', 'step', 'tool', 'search']);
+
+    const checklistItems = toBeuiOfficialActivityItems(steps, 'rail-timeline', true);
+    expect(checklistItems.every((i) => i.type === 'step')).toBe(true);
+
+    const compactItems = toBeuiOfficialActivityItems(steps, 'compact-pills', false);
+    expect(compactItems.length).toBe(4);
+
+    const traceItems = toBeuiOfficialActivityItems(steps, 'trace-log', true);
+    expect(traceItems.every((i) => i.type === 'trace')).toBe(true);
   });
 });

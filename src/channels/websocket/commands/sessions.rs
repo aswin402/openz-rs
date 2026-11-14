@@ -139,6 +139,22 @@ pub(crate) async fn fetch_real_session_history(
     super::super::protocol::session_history(chat_id, messages)
 }
 
+pub(crate) async fn clear_session_history_event(
+    session_mgr: &crate::session::SessionManager,
+    chat_id: &str,
+) -> Value {
+    let resolved_key = resolve_session_key_async(session_mgr, chat_id).await;
+    let load_key = ensure_webui_session_key(&resolved_key);
+    match session_mgr.load_async(&load_key).await {
+        Ok(mut session) => {
+            session.messages.clear();
+            let _ = session_mgr.save(&session).await;
+        }
+        Err(_) => {}
+    }
+    super::super::protocol::session_history(chat_id, Vec::new())
+}
+
 pub(crate) fn requested_session_id(envelope: &Value) -> &str {
     envelope
         .get("chat_id")

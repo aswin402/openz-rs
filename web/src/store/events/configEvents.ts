@@ -16,6 +16,12 @@ import {
   registerUiCustomizationSyncListener,
   useUiCustomizationStore,
 } from '../useUiCustomizationStore';
+import {
+  normalizeCavemanLevel,
+  normalizeCavemanStats,
+} from '../../shared/lib/cavemanLevels';
+import { dispatchWorkspaceEventToast } from '../useToastStore';
+import { buildTelemetryNavigation } from './chatTurnEvents';
 
 function mergeProviders(
   current: ProviderModelOption[],
@@ -54,6 +60,8 @@ function applyCapabilitiesAndDefaultsPatch(
       active_theme_id?: string | null;
       ui_customization?: Record<string, unknown> | null;
       caveman_mode?: boolean;
+      caveman_level?: string;
+      caveman_stats?: unknown;
       streaming?: boolean;
       max_tokens?: number;
       temperature?: number;
@@ -65,11 +73,16 @@ function applyCapabilitiesAndDefaultsPatch(
     set({ capabilities: normalizeWebUiCapabilities(payload.capabilities as Record<string, unknown>) });
   }
   if (payload.defaults) {
+    const parsedCavemanStats = normalizeCavemanStats(payload.defaults.caveman_stats);
     set({
       settings: payload.defaults as ReturnType<typeof get>['settings'],
       activeModel: payload.defaults.model || get().activeModel,
       activeProvider: payload.defaults.provider || get().activeProvider,
       cavemanMode: !!payload.defaults.caveman_mode,
+      cavemanLevel: normalizeCavemanLevel(
+        payload.defaults.caveman_level ?? get().cavemanLevel,
+      ),
+      cavemanStats: parsedCavemanStats ?? get().cavemanStats,
       streamingMode: payload.defaults.streaming !== false,
     });
 
@@ -115,7 +128,7 @@ function applyCapabilitiesAndDefaultsPatch(
 }
 
 function emitWorkspaceUpdateNotice(
-  set: StoreEventContext['set'],
+  ctx: StoreEventContext,
   scope: 'skills' | 'agents',
   labelPrefix: string,
   fallbackName: string,
@@ -123,13 +136,15 @@ function emitWorkspaceUpdateNotice(
 ) {
   const status = typeof payload.status === 'string' ? payload.status : 'updated';
   const name = typeof payload.name === 'string' ? payload.name : fallbackName;
-  set({
+  const message = `${labelPrefix} ${name} ${status}.`;
+  ctx.set({
     workspaceNotice: createWorkspaceNotice(
       scope,
       'success',
-      `${labelPrefix} ${name} ${status}.`,
+      message,
     ),
   });
+  dispatchWorkspaceEventToast(scope, 'success', message, buildTelemetryNavigation(ctx));
 }
 
 export function registerConfigEvents(ctx: StoreEventContext) {
@@ -205,14 +220,14 @@ export function registerConfigEvents(ctx: StoreEventContext) {
     if (Array.isArray(payload.skills)) {
       set({ skills: payload.skills });
     }
-    emitWorkspaceUpdateNotice(set, 'skills', 'Skill', 'skills', payload);
+    emitWorkspaceUpdateNotice(ctx, 'skills', 'Skill', 'skills', payload);
   });
 
   wsService.on('subagents_updated', (payload) => {
     if (Array.isArray(payload.subagents)) {
       set({ subagents: payload.subagents });
     }
-    emitWorkspaceUpdateNotice(set, 'agents', 'Subagent', 'subagent', payload);
+    emitWorkspaceUpdateNotice(ctx, 'agents', 'Subagent', 'subagent', payload);
   });
 
   wsService.on('config_updated', (payload) => {
@@ -225,12 +240,6 @@ export function registerConfigEvents(ctx: StoreEventContext) {
           'Settings saved and backed up to ~/.openz.',
         ),
       });
-    }
-  });
-
-  wsService.on('slash_commands', (payload) => {
-    if (Array.isArray(payload.commands)) {
-      set({ slashCommands: payload.commands });
     }
   });
 

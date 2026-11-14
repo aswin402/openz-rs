@@ -14,6 +14,10 @@ import {
   Zap,
 } from 'lucide-react';
 import type { AgentDefaultsConfig, OpenZConfigPatch } from '../../types';
+import {
+  getCavemanLevelOption,
+  normalizeCavemanLevel,
+} from '../../shared/lib/cavemanLevels';
 import { CustomSelect, NumberInput } from './CustomSelect';
 import {
   normalizeSecurityMode,
@@ -39,6 +43,7 @@ export interface AgentSettingsTabProps {
   onTokenChange: (value: string) => void;
   onFieldChange: (key: string, value: string | number | boolean) => void;
   onUpdateConfig: (patch: OpenZConfigPatch) => void;
+  onOpenCavemanSettings?: () => void;
 }
 
 export const AgentSettingsTab: React.FC<AgentSettingsTabProps> = ({
@@ -54,6 +59,7 @@ export const AgentSettingsTab: React.FC<AgentSettingsTabProps> = ({
   onTokenChange,
   onFieldChange,
   onUpdateConfig,
+  onOpenCavemanSettings,
 }) => {
   const [showToken, setShowToken] = useState(false);
 
@@ -302,6 +308,67 @@ export const AgentSettingsTab: React.FC<AgentSettingsTabProps> = ({
                   </button>
                 );
               })}
+            </div>
+          </section>
+
+          {/* Card 2.85: Caveman Mode Quick Summary (Full controls in Caveman Mode tab) */}
+          <section className="rounded-2xl border border-border/70 bg-card/60 p-5 shadow-xs">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-8 w-8 items-center justify-center rounded-xl bg-primary/15 text-primary">
+                  <Zap className="h-4 w-4" />
+                </div>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="text-sm font-semibold text-foreground">Caveman Mode</h3>
+                    <span className="rounded-md bg-muted px-2 py-0.5 font-mono text-[10px] font-semibold text-foreground">
+                      {
+                        getCavemanLevelOption(
+                          normalizeCavemanLevel(form.caveman_level ?? settings.caveman_level),
+                        ).label
+                      }
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground">
+                    Enable or disable terse mode here, or open Caveman Mode settings to configure intensity tiers.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {settings.caveman_stats && settings.caveman_stats.lifetimeTotalTokensSaved > 0 && (
+                  <span className="rounded-full border border-primary/30 bg-primary/10 px-2.5 py-1 font-mono text-[10px] font-semibold text-primary">
+                    ⛏ {settings.caveman_stats.compactLifetimeBadge} saved
+                  </span>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    const next = !settings.caveman_mode;
+                    onFieldChange('caveman_mode', next);
+                    onUpdateConfig({ defaults: { caveman_mode: next } });
+                  }}
+                  aria-pressed={Boolean(settings.caveman_mode)}
+                  className={cn(
+                    'inline-flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-all',
+                    settings.caveman_mode
+                      ? 'border-primary bg-primary text-primary-foreground shadow-xs'
+                      : 'border-border/70 bg-background/60 text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  <Zap className="h-3.5 w-3.5" />
+                  <span>Caveman {settings.caveman_mode ? 'ON' : 'OFF'}</span>
+                </button>
+                {onOpenCavemanSettings && (
+                  <button
+                    type="button"
+                    onClick={onOpenCavemanSettings}
+                    className="inline-flex items-center gap-1 rounded-xl border border-border/70 bg-background/60 px-3 py-1.5 text-xs font-semibold text-foreground transition hover:border-primary/45 hover:bg-primary/10 hover:text-primary"
+                  >
+                    <span>Configure Mode →</span>
+                  </button>
+                )}
+              </div>
             </div>
           </section>
 

@@ -140,6 +140,9 @@ pub(crate) fn render_modal_overlay(f: &mut Frame, app: &RatatuiApp, area: Rect) 
                 }
             }
         }
+        ModalState::Settings(state) => {
+            super::settings_menu::render_settings_modal(f, area, theme, state);
+        }
         ModalState::Help => {
             let popup_area = centered_rect(65, 60, area);
             f.render_widget(Clear, popup_area);

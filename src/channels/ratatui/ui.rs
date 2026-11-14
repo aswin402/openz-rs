@@ -497,6 +497,22 @@ fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
     };
     left_spans.push(mcp_span);
 
+    // Caveman mode & intensity indicator (subtle live status badge)
+    match app.caveman_mode {
+        true => {
+            left_spans.push(Span::styled(" · ", Style::default().fg(theme.muted)));
+            let label = match app.caveman_saved_badge.is_empty() {
+                true => format!("caveman:{}", app.caveman_level),
+                false => format!("caveman:{} ⛏{}", app.caveman_level, app.caveman_saved_badge),
+            };
+            left_spans.push(Span::styled(
+                label,
+                Style::default().fg(theme.warning),
+            ));
+        }
+        false => {}
+    }
+
     // Queued prompts indicator
     let total_queued = app.queued_prompts.len() + app.queued_remote_turns.len();
     match total_queued > 0 {

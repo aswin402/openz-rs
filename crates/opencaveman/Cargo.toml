@@ -1,0 +1,19 @@
+[package]
+name = "opencaveman"
+version = "0.1.0"
+edition = "2021"
+description = "Native Rust terseness-driven token compression, AST-safe context compaction, auto-clarity guardrails, and workflow engines for OpenZ."
+
+[lib]
+name = "opencaveman"
+path = "src/lib.rs"
+bench = false
+
+[dependencies]
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+hex = "0.4"
+pulldown-cmark = "0.11"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"

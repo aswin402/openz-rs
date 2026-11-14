@@ -28,12 +28,6 @@ pub(crate) struct WsModelProvider {
 }
 
 #[derive(Debug, Serialize)]
-pub(crate) struct WsSlashCommand {
-    cmd: String,
-    desc: String,
-}
-
-#[derive(Debug, Serialize)]
 pub(crate) struct WsManagedServer {
     id: u64,
     pid: u32,
@@ -226,20 +220,6 @@ pub(crate) fn model_prefs(prefs: crate::channels::ModelPrefs) -> Value {
         "event": "model_prefs",
         "recent_models": to_value_safe(prefs.recent),
         "favorite_models": to_value_safe(prefs.favorites),
-    })
-}
-
-pub(crate) fn slash_command(cmd: impl Into<String>, desc: impl Into<String>) -> WsSlashCommand {
-    WsSlashCommand {
-        cmd: cmd.into(),
-        desc: desc.into(),
-    }
-}
-
-pub(crate) fn slash_commands(commands: Vec<WsSlashCommand>) -> Value {
-    json!({
-        "event": "slash_commands",
-        "commands": to_value_safe(commands),
     })
 }
 
@@ -568,8 +548,6 @@ pub(crate) enum WsEvent {
         turn_id: Option<String>,
         content: String,
     },
-    #[serde(rename = "delta")]
-    DeltaWithoutTurn { chat_id: String, content: String },
     #[serde(rename = "reasoning_delta")]
     ReasoningDelta {
         chat_id: String,
@@ -669,17 +647,6 @@ pub(crate) fn delta(
     WsEvent::Delta {
         chat_id: chat_id.into(),
         turn_id,
-        content: content.into(),
-    }
-    .into_json()
-}
-
-pub(crate) fn delta_without_turn(
-    chat_id: impl Into<String>,
-    content: impl Into<String>,
-) -> Value {
-    WsEvent::DeltaWithoutTurn {
-        chat_id: chat_id.into(),
         content: content.into(),
     }
     .into_json()

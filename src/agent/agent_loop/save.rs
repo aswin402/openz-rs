@@ -396,6 +396,17 @@ fn truncate_curator_log_text(text: &str, max_len: usize, with_dash: bool) -> Str
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
     let config = &ctx.config;
     loop_ref.session_manager.save(&ctx.session).await?;
+    let _ = (config.agents.defaults.caveman_mode && !ctx.final_content.trim().is_empty()).then(
+        || {
+            let level =
+                opencaveman::CavemanLevel::from_config_str(&config.agents.defaults.caveman_level);
+            let _ = opencaveman::record_turn_savings(
+                &crate::config::runtime_data_dir(),
+                level,
+                &ctx.final_content,
+            );
+        },
+    );
     let _ = crate::tools::onpkg::sync_onpkg_manifest().map_err(|e| {
         tracing::warn!("Failed to synchronize onpkg manifest: {}", e);
     });

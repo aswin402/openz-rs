@@ -381,6 +381,11 @@ impl Tool for ManageConfigTool {
                             "type": "boolean",
                             "description": "Toggles terse/concise system prompt instructions."
                         },
+                        "caveman_level": {
+                            "type": "string",
+                            "enum": ["lite", "full", "ultra", "wenyan_lite", "wenyan_full", "wenyan_ultra"],
+                            "description": "Intensity level for 'caveman' terse mode."
+                        },
                         "tool_timeout_secs": {
                             "type": "integer",
                             "description": "Max timeout for tool executions."
@@ -625,6 +630,23 @@ impl Tool for ManageConfigTool {
                         "caveman_mode" => {
                             assign_bool_field(&mut config.agents.defaults.caveman_mode, v)
                         }
+                        "caveman_level" => match v.as_str() {
+                            Some(raw) => match opencaveman::CavemanLevel::parse_flexible(raw) {
+                                Some(lvl) => {
+                                    config.agents.defaults.caveman_level = lvl.slug().to_string();
+                                }
+                                None => {
+                                    return Ok(serde_json::json!({
+                                        "success": false,
+                                        "error": format!(
+                                            "Invalid caveman_level '{}'. Use lite, full, ultra, wenyan_lite, wenyan_full, or wenyan_ultra.",
+                                            raw
+                                        )
+                                    }));
+                                }
+                            },
+                            None => {}
+                        },
                         "tool_timeout_secs" => match parse_u64_value(v) {
                             Some(n) => config.agents.defaults.tool_timeout_secs = n,
                             None => {}

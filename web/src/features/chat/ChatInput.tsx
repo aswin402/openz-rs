@@ -17,6 +17,10 @@ import {
 } from '../../types/attachments';
 import { formatFileSize } from '../../shared/lib/format';
 import {
+  formatCavemanSavingsBadge,
+  getCavemanLevelOption,
+} from '../../shared/lib/cavemanLevels';
+import {
   estimateConversationTokens,
   mimePolicyToAcceptAttr,
   resolveModelContextWindow,
@@ -27,8 +31,6 @@ const EMPTY_MSGS: OpenZMessage[] = [];
 
 export const ChatInput: React.FC = () => {
   const [input, setInput] = useState('');
-  const [showCommands, setShowCommands] = useState(false);
-  const [filteredCmds, setFilteredCmds] = useState<{ cmd: string; desc: string }[]>([]);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [isDraggingFile, setIsDraggingFile] = useState(false);
@@ -62,8 +64,9 @@ export const ChatInput: React.FC = () => {
   const setActiveModel = useOpenZStore((s) => s.setActiveModel);
   const requestProviderModels = useOpenZStore((s) => s.requestProviderModels);
   const toggleFavoriteModel = useOpenZStore((s) => s.toggleFavoriteModel);
-  const slashCommands = useOpenZStore((s) => s.slashCommands);
   const cavemanMode = useOpenZStore((s) => s.cavemanMode);
+  const cavemanLevel = useOpenZStore((s) => s.cavemanLevel);
+  const cavemanStats = useOpenZStore((s) => s.cavemanStats);
   const toggleCavemanMode = useOpenZStore((s) => s.toggleCavemanMode);
   const streamingMode = useOpenZStore((s) => s.streamingMode);
   const toggleStreamingMode = useOpenZStore((s) => s.toggleStreamingMode);
@@ -99,20 +102,7 @@ export const ChatInput: React.FC = () => {
   );
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const val = e.target.value;
-    setInput(val);
-
-    if (val.startsWith('/')) {
-      setShowCommands(true);
-      const query = val.toLowerCase();
-      const cmds =
-        slashCommands.length > 0
-          ? slashCommands
-          : [{ cmd: '/help', desc: 'Show available slash commands' }];
-      setFilteredCmds(cmds.filter((item) => item.cmd.toLowerCase().includes(query)));
-    } else {
-      setShowCommands(false);
-    }
+    setInput(e.target.value);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -121,7 +111,6 @@ export const ChatInput: React.FC = () => {
       handleSend();
     }
     if (e.key === 'Escape') {
-      setShowCommands(false);
       setAttachmentError(null);
       if (quotedReplyText) setQuotedReplyText(null);
     }
@@ -143,7 +132,6 @@ export const ChatInput: React.FC = () => {
     setInput('');
     setAttachments([]);
     setAttachmentError(null);
-    setShowCommands(false);
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
@@ -246,12 +234,6 @@ export const ChatInput: React.FC = () => {
     addFiles(event.dataTransfer.files);
   };
 
-  const selectCommand = (cmd: string) => {
-    setInput(cmd);
-    setShowCommands(false);
-    if (textareaRef.current) textareaRef.current.focus();
-  };
-
   const modelGroups = useMemo(
     () =>
       providers
@@ -270,25 +252,6 @@ export const ChatInput: React.FC = () => {
 
   return (
     <ChatTrackRow chatWidth={chatWidth} className="pb-3.5" centerClassName="relative">
-      {showCommands && filteredCmds.length > 0 && (
-        <div className="t-popover absolute bottom-full left-0 right-0 z-30 mb-2 max-h-56 overflow-y-auto rounded-xl border border-border bg-popover p-1.5 shadow-lg">
-          <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-            OpenZ Slash Commands
-          </div>
-          {filteredCmds.map((item) => (
-            <button
-              key={item.cmd}
-              type="button"
-              onClick={() => selectCommand(item.cmd)}
-              className="flex w-full items-center justify-between rounded-lg px-2.5 py-1.5 text-left text-xs transition hover:bg-muted/70"
-            >
-              <span className="font-mono font-semibold text-primary">{item.cmd}</span>
-              <span className="text-[11px] text-muted-foreground">{item.desc}</span>
-            </button>
-          ))}
-        </div>
-      )}
-
       <input
         ref={fileInputRef}
         type="file"
@@ -350,10 +313,19 @@ export const ChatInput: React.FC = () => {
                   ? 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary'
                   : 'text-muted-foreground',
               )}
-              title="Toggle terse Caveman mode"
+              title={
+                cavemanMode
+                  ? `Caveman ON (${getCavemanLevelOption(cavemanLevel).shortBadge}) — configure mode in Settings`
+                  : 'Turn ON Caveman mode (configure mode in Settings)'
+              }
             >
               <Zap className="size-3" />
-              <span>Caveman {cavemanMode ? 'ON' : 'OFF'}</span>
+              <span>
+                Caveman {cavemanMode ? 'ON' : 'OFF'}
+                {cavemanMode && formatCavemanSavingsBadge(cavemanStats)
+                  ? ` · ⛏${formatCavemanSavingsBadge(cavemanStats)}`
+                  : ''}
+              </span>
             </Button>
 
             <Button

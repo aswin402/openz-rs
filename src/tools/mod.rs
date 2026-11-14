@@ -174,6 +174,7 @@ pub mod device_inventory;
 pub mod get_logs;
 pub mod manage_whitelist;
 pub mod open;
+pub mod opencaveman_tool;
 pub mod system_info;
 pub mod task_manager;
 

@@ -58,7 +58,7 @@ export const BeuiPromptInput: React.FC<BeuiPromptInputProps> = ({
   onKeyDown,
   onSubmit,
   onStop,
-  placeholder = "Ask OpenZ agent anything or type '/' for slash commands...",
+  placeholder = "Ask OpenZ agent anything...",
   isStreaming = false,
   canSend = false,
   variant = "elevated",

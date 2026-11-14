@@ -78,7 +78,6 @@ export function registerSessionEvents({ set, get }: StoreEventContext) {
     wsService.requestLogs();
     wsService.requestModels();
     wsService.requestConfig();
-    wsService.requestSlashCommands();
     wsService.requestStatus();
     wsService.requestRuntimeInventory();
   });

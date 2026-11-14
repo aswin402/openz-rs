@@ -7,6 +7,7 @@ import {
   resolveActivePalette,
   useUiCustomizationStore,
 } from './store/useUiCustomizationStore';
+import { useToastStore } from './store/useToastStore';
 import { Sidebar } from './components/Sidebar';
 import { ChatMessage } from './features/chat/ChatMessage';
 import { ChatInput } from './features/chat/ChatInput';
@@ -24,7 +25,9 @@ import { ServersModal } from './components/ServersModal';
 import { AgentActivityPanel } from './features/chat/AgentActivityPanel';
 import { UiStudioModal } from './features/customize/UiStudioModal';
 import {
+  AnimatedToastStack,
   BeuiCommandPalette,
+  BeuiNotificationCenterPopover,
   MessageScroller,
   type BeuiCommandItem,
 } from './components/beui';
@@ -33,6 +36,8 @@ import { cn } from './lib/utils';
 import {
   Activity,
   Archive,
+  Bell,
+  BellOff,
   BookOpen,
   Bot,
   BrainCircuit,
@@ -50,6 +55,7 @@ import {
   Sun,
   SunMoon,
   User,
+  Zap,
 } from 'lucide-react';
 
 const EMPTY_MESSAGES: OpenZMessage[] = [];
@@ -79,10 +85,27 @@ export const App: React.FC = () => {
 
   const activeThemeId = useUiCustomizationStore((s) => s.activeThemeId);
   const scrollerBehavior = useUiCustomizationStore((s) => s.scrollerBehavior);
+  const toastEnabled = useUiCustomizationStore((s) => s.toastEnabled);
+  const toastVariant = useUiCustomizationStore((s) => s.toastVariant);
+  const toastPosition = useUiCustomizationStore((s) => s.toastPosition);
+  const toastDuration = useUiCustomizationStore((s) => s.toastDuration);
+  const toastMaxVisible = useUiCustomizationStore((s) => s.toastMaxVisible);
+  const applyCustomization = useUiCustomizationStore((s) => s.applyCustomization);
   const setIsCustomizeOpen = useUiCustomizationStore((s) => s.setIsCustomizeOpen);
   const setActiveCustomizeSection = useUiCustomizationStore((s) => s.setActiveCustomizeSection);
+  const setActiveGatewaySection = useUiCustomizationStore((s) => s.setActiveGatewaySection);
   const isCommandPaletteOpen = useUiCustomizationStore((s) => s.isCommandPaletteOpen);
   const setIsCommandPaletteOpen = useUiCustomizationStore((s) => s.setIsCommandPaletteOpen);
+
+  const activeToasts = useToastStore((s) => s.toasts);
+  const toastHistory = useToastStore((s) => s.history);
+  const toastUnreadCount = useToastStore((s) => s.unreadCount);
+  const isToastCenterOpen = useToastStore((s) => s.isCenterOpen);
+  const dismissToast = useToastStore((s) => s.dismissToast);
+  const clearActiveToasts = useToastStore((s) => s.clearActiveToasts);
+  const clearToastHistory = useToastStore((s) => s.clearHistory);
+  const setIsToastCenterOpen = useToastStore((s) => s.setIsCenterOpen);
+  const toggleToastCenter = useToastStore((s) => s.toggleCenter);
 
   const palette = useMemo(
     () => resolveActivePalette(activeThemeId, resolvedMode),
@@ -155,6 +178,17 @@ export const App: React.FC = () => {
         },
       },
       {
+        id: 'customize-toast-stack',
+        group: 'Customize UI (@beui)',
+        label: 'Customize Toast Stack & Telemetry (@beui/animated-toast-stack)',
+        subtitle: 'Configure Workflow matched, Skill used & Self-improvement toast stack, position & filters',
+        icon: Bell,
+        onSelect: () => {
+          setActiveCustomizeSection('animated-toast-stack');
+          setIsCustomizeOpen(true);
+        },
+      },
+      {
         id: 'customize-code',
         group: 'Customize UI (@beui)',
         label: 'Customize Code Block & File Diff',
@@ -190,7 +224,21 @@ export const App: React.FC = () => {
         label: 'Gateway Settings',
         subtitle: 'Providers, API keys, channels & runtime limits',
         icon: Settings,
-        onSelect: () => setIsSettingsOpen(true),
+        onSelect: () => {
+          setActiveGatewaySection('agent');
+          setIsSettingsOpen(true);
+        },
+      },
+      {
+        id: 'open-caveman-settings',
+        group: 'Actions',
+        label: 'Caveman Mode Settings',
+        subtitle: 'Enable or disable caveman mode and configure Lite, Full, Ultra, or Wenyan modes',
+        icon: Zap,
+        onSelect: () => {
+          setActiveGatewaySection('caveman');
+          setIsSettingsOpen(true);
+        },
       },
       {
         id: 'open-logs',
@@ -261,6 +309,7 @@ export const App: React.FC = () => {
     newSession,
     setIsCustomizeOpen,
     setActiveCustomizeSection,
+    setActiveGatewaySection,
     setIsSettingsOpen,
     setIsLogsOpen,
     setActiveView,
@@ -307,8 +356,12 @@ export const App: React.FC = () => {
         <WorkspaceQuickActions
           activeView={activeView}
           activityOpen={isActivityPanelOpen}
+          notificationsOpen={isToastCenterOpen}
+          toastEnabled={toastEnabled}
+          unreadCount={toastUnreadCount}
           onViewChange={setActiveView}
           onCustomizeOpen={() => setIsCustomizeOpen(true)}
+          onNotificationsToggle={toggleToastCenter}
           onThemeToggle={handleQuickThemeToggle}
           themeLabel={palette.mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
           themeIcon={palette.mode === 'dark' ? Sun : Moon}
@@ -377,6 +430,40 @@ export const App: React.FC = () => {
       <SettingsModal />
       <ServersModal />
       <UiStudioModal />
+
+      <BeuiNotificationCenterPopover
+        open={isToastCenterOpen}
+        onClose={() => setIsToastCenterOpen(false)}
+        history={toastHistory}
+        toastEnabled={toastEnabled}
+        toastVariant={toastVariant}
+        toastPosition={toastPosition}
+        onToggleEnabled={(enabled) => applyCustomization({ toastEnabled: enabled })}
+        onSelectVariant={(variant) => applyCustomization({ toastVariant: variant })}
+        onSelectPosition={(position) => applyCustomization({ toastPosition: position })}
+        onClearHistory={clearToastHistory}
+        onOpenStudioOptions={() => {
+          setIsToastCenterOpen(false);
+          setActiveCustomizeSection('animated-toast-stack');
+          setIsCustomizeOpen(true);
+        }}
+      />
+
+      {toastEnabled && (
+        <AnimatedToastStack
+          toasts={activeToasts}
+          onDismiss={dismissToast}
+          onClearAll={clearActiveToasts}
+          onOpenOptions={() => {
+            setActiveCustomizeSection('animated-toast-stack');
+            setIsCustomizeOpen(true);
+          }}
+          variant={toastVariant}
+          position={toastPosition}
+          durationPreset={toastDuration}
+          maxVisible={toastMaxVisible}
+        />
+      )}
     </div>
   );
 };
@@ -387,13 +474,18 @@ interface QuickActionItem {
   icon: React.ComponentType<{ className?: string }>;
   action: () => void;
   active: boolean;
+  badgeCount?: number;
 }
 
 const WorkspaceQuickActions: React.FC<{
   activeView: WorkspaceView;
   activityOpen: boolean;
+  notificationsOpen: boolean;
+  toastEnabled: boolean;
+  unreadCount: number;
   onViewChange: (view: WorkspaceView) => void;
   onCustomizeOpen: () => void;
+  onNotificationsToggle: () => void;
   onThemeToggle: () => void;
   themeLabel: string;
   themeIcon: React.ComponentType<{ className?: string }>;
@@ -401,8 +493,12 @@ const WorkspaceQuickActions: React.FC<{
 }> = ({
   activeView,
   activityOpen,
+  notificationsOpen,
+  toastEnabled,
+  unreadCount,
   onViewChange,
   onCustomizeOpen,
+  onNotificationsToggle,
   onThemeToggle,
   themeLabel,
   themeIcon,
@@ -452,6 +548,14 @@ const WorkspaceQuickActions: React.FC<{
       active: activeView === 'inventory',
     },
     {
+      id: 'notifications',
+      label: toastEnabled ? 'Telemetry notifications' : 'Telemetry notifications (muted)',
+      icon: toastEnabled ? Bell : BellOff,
+      action: onNotificationsToggle,
+      active: notificationsOpen,
+      badgeCount: unreadCount,
+    },
+    {
       id: 'customize',
       label: 'Customize UI',
       icon: Palette,
@@ -498,6 +602,9 @@ const WorkspaceQuickActions: React.FC<{
             aria-label={item.label}
           >
             <Icon className="h-4 w-4" />
+            {item.badgeCount && item.badgeCount > 0 ? (
+              <span className="pointer-events-none absolute right-1 top-1 flex h-2 w-2 rounded-full bg-primary ring-2 ring-background" />
+            ) : null}
             <span className="pointer-events-none absolute right-full top-1/2 mr-2 hidden -translate-y-1/2 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-[11px] font-medium text-foreground shadow-lg group-hover:block">
               {item.label}
             </span>

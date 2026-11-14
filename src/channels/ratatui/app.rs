@@ -438,6 +438,7 @@ pub enum ModalState {
         loading: bool,
     },
     Help,
+    Settings(super::settings_menu::TuiSettingsModalState),
     History {
         sessions: Vec<(String, String, String)>, // (key, title, timestamp)
         selected_idx: usize,
@@ -471,6 +472,9 @@ impl std::fmt::Debug for ModalState {
                 ..
             } => write!(f, "ModalState::ModelSelect({provider_name}, {selected_idx})"),
             ModalState::Help => write!(f, "ModalState::Help"),
+            ModalState::Settings(state) => {
+                write!(f, "ModalState::Settings({})", state.selected_idx)
+            }
             ModalState::History { selected_idx, .. } => {
                 write!(f, "ModalState::History({selected_idx})")
             }
@@ -645,10 +649,10 @@ pub const PALETTE_COMMANDS: &[PaletteCommand] = &[
     PaletteCommand {
         slash_name: "/settings",
         title: "Settings & Configuration",
-        description: "View and adjust active TUI configuration, security & sandbox",
+        description: "Interactive menu for caveman mode/intensity, streaming, security & theme",
         category: CommandCategory::System,
         shortcut: Some("F3"),
-        example: "/settings",
+        example: "/settings | /settings summary",
     },
     PaletteCommand {
         slash_name: "/gateway",
@@ -818,6 +822,12 @@ pub struct RatatuiApp {
     pub spinner_style: super::animation::SpinnerStyle,
     /// Clock reference for smooth millisecond animations
     pub start_time: Instant,
+    /// Active caveman mode flag for the TUI session
+    pub caveman_mode: bool,
+    /// Active caveman intensity tier slug (`lite`, `full`, `ultra`, `wenyan_*`)
+    pub caveman_level: String,
+    /// Compact cumulative token savings badge (e.g. `1.2k`)
+    pub caveman_saved_badge: String,
 }
 
 pub const SLASH_COMMANDS: &[(&str, &str)] = &[
@@ -838,7 +848,10 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/servers", "List OpenZ background server instances"),
     ("/stop-server", "Stop background server instance by ID or all"),
     ("/logs", "Stream real-time color-coded structured logs"),
-    ("/settings", "View and adjust active configuration"),
+    (
+        "/settings",
+        "Interactive settings menu (caveman mode/level, streaming, security, theme)",
+    ),
     ("/theme", "Switch TUI color theme (persisted for TUI)"),
     ("/streaming", "Toggle response streaming preference"),
     ("/device", "Manage local application and device inventory"),
@@ -891,7 +904,23 @@ impl RatatuiApp {
             current_activity: None,
             spinner_style: super::animation::SpinnerStyle::BrailleWave,
             start_time: Instant::now(),
+            caveman_mode: true,
+            caveman_level: "full".to_string(),
+            caveman_saved_badge: String::new(),
         }
+    }
+
+    pub fn refresh_caveman_status(&mut self, cfg: &crate::config::schema::Config) {
+        self.caveman_mode = cfg.agents.defaults.caveman_mode;
+        self.caveman_level =
+            opencaveman::normalize_level_slug(&cfg.agents.defaults.caveman_level).to_string();
+        self.caveman_saved_badge =
+            opencaveman::load_stats_ledger(&crate::config::runtime_data_dir()).non_zero_badge();
+    }
+
+    pub fn refresh_caveman_savings_only(&mut self) {
+        self.caveman_saved_badge =
+            opencaveman::load_stats_ledger(&crate::config::runtime_data_dir()).non_zero_badge();
     }
 
     pub fn set_theme(&mut self, theme_name: &str) {

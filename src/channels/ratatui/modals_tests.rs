@@ -179,3 +179,52 @@ fn test_format_security_reason_lines_strips_resource_policy_prefix() {
     assert!(!line_str.contains("arguments:"));
     assert!(line_str.contains("Disk quota threshold reached: 500MB free"));
 }
+
+#[test]
+fn test_settings_modal_caveman_mode_and_intensity_cycling() {
+    use crate::channels::ratatui::settings_menu::{
+        TuiSettingId, TuiSettingsModalState, TUI_SETTING_DESCRIPTORS,
+    };
+
+    let mut state = TuiSettingsModalState {
+        selected_idx: 0,
+        caveman_mode: true,
+        caveman_level: opencaveman::CavemanLevel::Full,
+        streaming: true,
+        thought_display: "compact".to_string(),
+        security_mode: "medium".to_string(),
+        enable_sandbox: false,
+        theme_name: "aura_dark".to_string(),
+        caveman_stats: opencaveman::CavemanStatsSnapshot::default(),
+    };
+
+    assert_eq!(state.selected_descriptor().id, TuiSettingId::CavemanMode);
+    state.step_selected(true);
+    assert!(!state.caveman_mode);
+    state.step_selected(true);
+    assert!(state.caveman_mode);
+
+    state.move_next();
+    assert_eq!(state.selected_descriptor().id, TuiSettingId::CavemanLevel);
+
+    let expected_forward = [
+        opencaveman::CavemanLevel::Ultra,
+        opencaveman::CavemanLevel::WenyanLite,
+        opencaveman::CavemanLevel::WenyanFull,
+        opencaveman::CavemanLevel::WenyanUltra,
+        opencaveman::CavemanLevel::Lite,
+        opencaveman::CavemanLevel::Full,
+    ];
+    for expected in expected_forward {
+        state.step_selected(true);
+        assert_eq!(state.caveman_level, expected);
+    }
+
+    state.step_selected(false);
+    assert_eq!(state.caveman_level, opencaveman::CavemanLevel::Lite);
+
+    let modal = ModalState::Settings(state);
+    assert!(modal.is_active());
+    assert!(format!("{:?}", modal).contains("ModalState::Settings(1)"));
+    assert_eq!(TUI_SETTING_DESCRIPTORS.len(), 7);
+}

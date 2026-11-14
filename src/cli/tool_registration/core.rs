@@ -73,6 +73,12 @@ pub(crate) fn register_core_tools(
     registry.register(std::sync::Arc::new(
         crate::tools::manage_whitelist::ManageWhitelistTool,
     ));
+    registry.register(std::sync::Arc::new(
+        crate::tools::opencaveman_tool::OpenCavemanTool {
+            provider: provider.clone(),
+            config: config.clone(),
+        },
+    ));
     registry.register(std::sync::Arc::new(InspectBrowsersTool));
     registry.register(std::sync::Arc::new(DelegateTaskTool {
         config: config.clone(),

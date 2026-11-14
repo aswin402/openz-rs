@@ -834,6 +834,25 @@ pub fn load_skill_views() -> Result<Vec<SkillView>> {
         add_file_skill_views(&dir, "external", &mut views)?;
     }
 
+    for spec in opencaveman::builtin_caveman_skills() {
+        views
+            .entry(spec.name.to_string())
+            .or_insert_with(|| SkillView {
+                validation_errors: validate_skill_metadata(spec.name, spec.content),
+                name: spec.name.to_string(),
+                content: spec.content.to_string(),
+                scope: "builtin".to_string(),
+                profile: None,
+                source: "opencaveman".to_string(),
+                path: Some(format!("opencaveman://skills/{}", spec.name)),
+                enabled: true,
+                is_protected: true,
+                use_count: 0,
+                created_at: None,
+                last_used: None,
+            });
+    }
+
     Ok(views.into_values().collect())
 }
 
@@ -881,6 +900,20 @@ pub fn load_skills_with_profile(profile_name: Option<&str>) -> Result<Vec<Skill>
     for external_dir in skills_config.external_dirs {
         let dir = crate::config::resolve_path(&external_dir);
         load_skill_files_from_dir(&dir, &mut skills_map)?;
+    }
+
+    match profile_name.is_none() {
+        true => {
+            for spec in opencaveman::builtin_caveman_skills() {
+                skills_map
+                    .entry(spec.name.to_string())
+                    .or_insert_with(|| Skill {
+                        name: spec.name.to_string(),
+                        content: spec.content.to_string(),
+                    });
+            }
+        }
+        false => {}
     }
 
     Ok(skills_map.into_values().collect())
@@ -1056,6 +1089,15 @@ pub fn load_relevant_skills_with_profile(
     session_messages: &[crate::session::Message],
     profile_name: Option<&str>,
 ) -> Result<Vec<Skill>> {
+    load_scored_relevant_skills_with_profile(user_content, session_messages, profile_name)
+        .map(|scored| scored.into_iter().map(|(_, skill)| skill).collect())
+}
+
+pub fn load_scored_relevant_skills_with_profile(
+    user_content: &str,
+    session_messages: &[crate::session::Message],
+    profile_name: Option<&str>,
+) -> Result<Vec<(f32, Skill)>> {
     let all_skills = load_skills_with_profile(profile_name)?;
     match all_skills.is_empty() {
         true => return Ok(Vec::new()),
@@ -1116,12 +1158,11 @@ pub fn load_relevant_skills_with_profile(
     }
 
     relevant_scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-    let relevant: Vec<Skill> = relevant_scored.into_iter().map(|(_, s)| s).collect();
 
-    match (!relevant.is_empty(), get_connection()) {
+    match (!relevant_scored.is_empty(), get_connection()) {
         (true, Ok(conn)) => {
             let now = chrono::Utc::now().to_rfc3339();
-            for skill in &relevant {
+            for (_, skill) in &relevant_scored {
                 match profile_skills.contains(&skill.name) {
                     true => {
                         let _ = conn.execute(
@@ -1141,7 +1182,7 @@ pub fn load_relevant_skills_with_profile(
         _ => {}
     }
 
-    Ok(relevant)
+    Ok(relevant_scored)
 }
 
 fn is_shell_name(tok: &str) -> bool {

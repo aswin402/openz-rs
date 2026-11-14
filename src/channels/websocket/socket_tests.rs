@@ -22,3 +22,10 @@ fn websocket_command_ack_has_stable_wire_shape() {
     assert_eq!(ack["command"], "get_status");
     assert_eq!(ack["status"], "accepted");
 }
+
+#[test]
+fn websocket_commands_use_typed_session_controls_without_slash_commands() {
+    assert!(is_known_ws_command("stop_turn"));
+    assert!(is_known_ws_command("clear_session"));
+    assert!(!is_known_ws_command("get_slash_commands"));
+}

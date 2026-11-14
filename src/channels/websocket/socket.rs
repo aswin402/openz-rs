@@ -9,9 +9,9 @@ use super::commands;
 use super::commands::memory::cognitive_memory_event;
 use super::commands::observability::{logs_event, mcp_servers_event};
 use super::commands::sessions::{
-    archive_session_event, delete_session_event, ensure_webui_session_key,
-    fetch_real_session_history, fetch_real_sessions_list, fetch_real_sessions_list_paginated,
-    resolve_session_key_async,
+    archive_session_event, clear_session_history_event, delete_session_event,
+    ensure_webui_session_key, fetch_real_session_history, fetch_real_sessions_list,
+    fetch_real_sessions_list_paginated, resolve_session_key_async,
 };
 use super::commands::system::runtime_inventory_event;
 use super::events::normalize_ws_chat_id;
@@ -254,6 +254,44 @@ pub(crate) async fn handle_socket(socket: WebSocket, state: WsState) {
                     send_event(&tx_clone, evt).await;
                 });
             }
+            "clear_session" => {
+                let session_mgr = state.agent_loop.session_manager.clone();
+                let chat_id_owned = chat_id.clone();
+                let tx_clone = tx.clone();
+                tokio::spawn(async move {
+                    let evt = clear_session_history_event(&session_mgr, &chat_id_owned).await;
+                    send_event(&tx_clone, evt).await;
+                    let sessions_evt = fetch_real_sessions_list(&session_mgr).await;
+                    send_event(&tx_clone, sessions_evt).await;
+                });
+            }
+            "stop_turn" => {
+                let requested_turn_id = envelope
+                    .get("turn_id")
+                    .and_then(Value::as_str)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty());
+                let normalized_chat_id = normalize_ws_chat_id(&chat_id);
+                let stopped_turn_id = cancel_ws_turn_for_client_chat(
+                    &client_id,
+                    &normalized_chat_id,
+                    requested_turn_id,
+                );
+                let (status, message) = match stopped_turn_id.is_some() {
+                    true => (
+                        "cancelled",
+                        "Stop requested. Active OpenZ turn interrupted.",
+                    ),
+                    false => ("idle", "No active OpenZ turn for this client and chat."),
+                };
+                let stopped_evt = protocol::stopped(
+                    chat_id.clone(),
+                    stopped_turn_id,
+                    status,
+                    message,
+                );
+                send_event(&tx, stopped_evt).await;
+            }
             "archive_session" | "delete_session" => {
                 let is_archive = msg_type == "archive_session";
                 let session_mgr = state.agent_loop.session_manager.clone();
@@ -331,33 +369,6 @@ pub(crate) async fn handle_socket(socket: WebSocket, state: WsState) {
     unregister_ws_client(&client_id);
 }
 
-async fn send_delta_and_turn_end(tx: &mpsc::Sender<Message>, chat_id: &str, response_text: String) {
-    let delta_evt = protocol::delta_without_turn(chat_id.to_string(), response_text);
-    send_event(tx, delta_evt).await;
-    let turn_end_evt = protocol::turn_end(chat_id.to_string(), None);
-    send_event(tx, turn_end_evt).await;
-}
-
-fn format_background_servers_response() -> String {
-    let servers = crate::shutdown::list_registered_children();
-    match servers.is_empty() {
-        true => "No OpenZ-launched background servers running.".to_string(),
-        false => {
-            let mut res = "OpenZ background servers:\n".to_string();
-            for server in servers {
-                res.push_str(&format!(
-                    "  #{} pid={} {} - {}\n",
-                    server.id, server.pid, server.kind, server.command
-                ));
-            }
-            res.push_str("Use `/stop-server <id>` or `/stop-server all`.");
-            res
-        }
-    }
-}
-
-use crate::channels::format_stop_server_response;
-
 fn collect_message_session_overrides(envelope: &Value) -> serde_json::Map<String, Value> {
     let mut overrides = serde_json::Map::new();
     for key in [
@@ -367,6 +378,7 @@ fn collect_message_session_overrides(envelope: &Value) -> serde_json::Map<String
         "max_tokens",
         "streaming",
         "caveman_mode",
+        "caveman_level",
     ] {
         match envelope.get(key) {
             Some(Value::String(s)) => {
@@ -403,95 +415,7 @@ async fn handle_message_command(
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string();
-
-    match crate::channels::is_stop_command(&raw_content) {
-        true => {
-            let requested_turn_id = envelope
-                .get("turn_id")
-                .and_then(|value| value.as_str())
-                .map(str::trim)
-                .filter(|value| !value.is_empty());
-            let normalized_chat_id = normalize_ws_chat_id(chat_id);
-            let stopped_turn_id =
-                cancel_ws_turn_for_client_chat(client_id, &normalized_chat_id, requested_turn_id);
-            let (status, message) = match stopped_turn_id.is_some() {
-                true => (
-                    "cancelled",
-                    "Stop requested. Active OpenZ turn interrupted.",
-                ),
-                false => ("idle", "No active OpenZ turn for this client and chat."),
-            };
-            let stopped_evt = protocol::stopped(
-                chat_id.to_string(),
-                stopped_turn_id,
-                status,
-                message,
-            );
-            send_event(tx, stopped_evt).await;
-            return;
-        }
-        false => {}
-    }
-
     let attachments_val = envelope.get("attachments").cloned().unwrap_or(Value::Null);
-    let has_attachments = attachments_val
-        .as_array()
-        .is_some_and(|items| !items.is_empty());
-
-    match (!has_attachments, raw_content.trim().starts_with('/')) {
-        (true, true) => {
-            let trimmed = raw_content.trim();
-            match trimmed == "/servers" {
-                true => {
-                    send_delta_and_turn_end(tx, chat_id, format_background_servers_response())
-                        .await;
-                    return;
-                }
-                false => {}
-            }
-            match trimmed.strip_prefix("/stop-server") {
-                Some(stripped) => {
-                    send_delta_and_turn_end(
-                        tx,
-                        chat_id,
-                        format_stop_server_response(stripped.trim()),
-                    )
-                    .await;
-                    return;
-                }
-                None => {}
-            }
-            match trimmed.strip_prefix("/device") {
-                Some(_) => {
-                    let response = "Device clipboard and app suggestions are currently managed locally. To audit device details, use the CLI `openz`.".to_string();
-                    send_delta_and_turn_end(tx, chat_id, response).await;
-                    return;
-                }
-                None => {}
-            }
-            match crate::channels::session_command_text_response(
-                &state.agent_loop.session_manager,
-                chat_id,
-                &raw_content,
-            )
-            .await
-            {
-                Some(response_text) => {
-                    send_delta_and_turn_end(tx, chat_id, response_text).await;
-                    return;
-                }
-                None => {}
-            }
-            match crate::channels::model_switch_text_response(&raw_content) {
-                Some(response_text) => {
-                    send_delta_and_turn_end(tx, chat_id, response_text).await;
-                    return;
-                }
-                None => {}
-            }
-        }
-        _ => {}
-    }
 
     let state_clone = state.clone();
     let tx_clone = tx.clone();

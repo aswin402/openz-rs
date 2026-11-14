@@ -2,15 +2,20 @@ import type { StateCreator } from 'zustand';
 import type {
   AgentDefaultsConfig,
   AgentStatus,
+  CavemanLevelSlug,
+  CavemanStatsSnapshot,
   JsonObject,
   ModelRef,
   OpenZConfigPatch,
   ProviderModelOption,
   SkillInfo,
-  SlashCommand,
   SubagentInfo,
   WebUiCapabilities,
 } from '../../types';
+import {
+  cycleCavemanLevelSlug,
+  normalizeCavemanLevel,
+} from '../../shared/lib/cavemanLevels';
 import { providerKeyFromModel } from '../../config/providers';
 import { wsService } from '../../services/websocket';
 import type {
@@ -49,9 +54,10 @@ export interface ConfigSlice {
   recentModels: ModelRef[];
   favoriteModels: ModelRef[];
   loadingModelProvider: string | null;
-  slashCommands: SlashCommand[];
   status: AgentStatus | null;
   cavemanMode: boolean;
+  cavemanLevel: CavemanLevelSlug;
+  cavemanStats: CavemanStatsSnapshot | null;
   streamingMode: boolean;
   providersConfig: JsonObject;
   channelsConfig: JsonObject;
@@ -63,6 +69,8 @@ export interface ConfigSlice {
   toggleFavoriteModel: (provider: string, model: string) => void;
   updateSettings: (patch: Partial<AgentDefaultsConfig>) => void;
   toggleCavemanMode: () => void;
+  setCavemanLevel: (level: string) => void;
+  cycleCavemanLevel: (forward?: boolean) => void;
   toggleStreamingMode: () => void;
   saveSkill: (name: string, content: string) => void;
   deleteSkill: (name: string) => void;
@@ -99,9 +107,10 @@ export const createConfigSlice: StateCreator<
   recentModels: [],
   favoriteModels: [],
   loadingModelProvider: null,
-  slashCommands: [],
   status: null,
   cavemanMode: false,
+  cavemanLevel: 'full',
+  cavemanStats: null,
   streamingMode: true,
   providersConfig: {},
   channelsConfig: {},
@@ -153,17 +162,33 @@ export const createConfigSlice: StateCreator<
   },
 
   updateSettings: (patch) => {
+    const normalizedPatch: Partial<AgentDefaultsConfig> = { ...patch };
+    if (patch.caveman_level !== undefined) {
+      const cleanLevel = normalizeCavemanLevel(patch.caveman_level);
+      normalizedPatch.caveman_level = cleanLevel;
+      set({ cavemanLevel: cleanLevel });
+    }
     const settings = get().settings;
     if (settings) {
-      set({ settings: { ...settings, ...patch } });
+      set({ settings: { ...settings, ...normalizedPatch } });
     }
     if (patch.caveman_mode !== undefined) set({ cavemanMode: patch.caveman_mode });
     if (patch.streaming !== undefined) set({ streamingMode: patch.streaming });
-    wsService.updateConfig(patch);
+    wsService.updateConfig(normalizedPatch);
   },
 
   toggleCavemanMode: () => {
     get().updateSettings({ caveman_mode: !get().cavemanMode });
+  },
+
+  setCavemanLevel: (level) => {
+    const nextLevel = normalizeCavemanLevel(level);
+    get().updateSettings({ caveman_level: nextLevel });
+  },
+
+  cycleCavemanLevel: (forward = true) => {
+    const nextLevel = cycleCavemanLevelSlug(get().cavemanLevel, forward);
+    get().updateSettings({ caveman_level: nextLevel });
   },
 
   toggleStreamingMode: () => {

@@ -95,6 +95,7 @@ pub struct TurnContext<'a> {
     pub streamed: bool,
     pub config: Config,
     pub workflow_notice_names: std::collections::HashSet<String>,
+    pub skill_notice_names: std::collections::HashSet<String>,
 }
 
 struct ActivityGuard<'a> {
@@ -142,6 +143,17 @@ pub fn apply_session_overrides(
         }
         match map.get("caveman_mode").and_then(|v| v.as_bool()) {
             Some(caveman) => cfg.agents.defaults.caveman_mode = caveman,
+            None => {}
+        }
+        match map
+            .get("caveman_level")
+            .or_else(|| map.get("cavemanLevel"))
+            .and_then(|v| v.as_str())
+        {
+            Some(level) => {
+                cfg.agents.defaults.caveman_level =
+                    opencaveman::normalize_level_slug(level).to_string();
+            }
             None => {}
         }
         match map.get("tool_timeout_secs").and_then(|v| v.as_u64()) {
@@ -712,6 +724,7 @@ impl AgentLoop {
             streamed: false,
             config: self.config.clone(),
             workflow_notice_names: std::collections::HashSet::new(),
+            skill_notice_names: std::collections::HashSet::new(),
         };
 
         let mut state = TurnState::Restore;

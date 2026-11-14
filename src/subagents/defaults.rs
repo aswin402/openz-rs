@@ -42,6 +42,9 @@ pub const DEFAULT_SUBAGENT_NAMES: &[&str] = &[
     "coding_agent",
     "diagram_designer",
     "video_animator",
+    "cavecrew_investigator",
+    "cavecrew_builder",
+    "cavecrew_reviewer",
     "openz",
 ];
 
@@ -50,7 +53,7 @@ pub fn is_default_subagent(name: &str) -> bool {
 }
 
 pub fn default_profiles() -> Vec<SubagentProfile> {
-    vec![
+    let mut profiles = vec![
         SubagentProfile {
             name: "orchestrator".to_string(),
             description: "Coordinates complex, multi-stage project deliverables by planning and delegating subtasks to other specialized subagents.".to_string(),
@@ -371,5 +374,16 @@ pub fn default_profiles() -> Vec<SubagentProfile> {
             fallbacks: None,
             extra: serde_json::Map::new(),
         },
-    ]
+    ];
+    for spec in opencaveman::cavecrew_subagent_specs() {
+        profiles.push(SubagentProfile {
+            name: spec.name.to_string(),
+            description: spec.description.to_string(),
+            system_prompt: spec.system_prompt.to_string(),
+            model: None,
+            fallbacks: None,
+            extra: serde_json::Map::new(),
+        });
+    }
+    profiles
 }

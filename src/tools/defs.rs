@@ -943,6 +943,30 @@ pub static STATIC_TOOL_DEFS: &[StaticToolDef] = &[
         when_to_use: "Use to execute isolated Python code for computation or data wrangling.",
         when_not_to_use: "Avoid for shell-native tasks; exec_command covers most workflows.",
     },
+    StaticToolDef {
+        name: "opencaveman",
+        presentation_name: "OpenCaveman",
+        domain: "self_management",
+        risk: ToolRisk::Medium,
+        packs: &["admin", "repo_write"],
+        writes_disk: true,
+        uses_network: false,
+        recommended_timeout_secs: Some(120),
+        aliases: &[
+            "caveman",
+            "caveman_compress",
+            "caveman_commit",
+            "caveman_review",
+            "caveman_stats",
+        ],
+        examples: &[
+            "Inspect or update caveman intensity level and token savings",
+            "AST-safely compress a Markdown memory file with out-of-tree backup",
+            "Validate a terse Conventional Commit message or code review report",
+        ],
+        when_to_use: "Use to manage 'caveman' terse mode, run AST-verified Markdown compression with backups, format caveman commits/reviews, or inspect token savings.",
+        when_not_to_use: "Avoid compressing secret files (.env, credentials, private keys) or source code files.",
+    },
 ];
 
 /// Names covered by the curated static tool definitions. Consumed by the
