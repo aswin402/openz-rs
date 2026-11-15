@@ -138,81 +138,42 @@ mod tests {
 
     #[tokio::test]
     async fn test_link_spider_bfs_cached() {
-        use crate::tools::searchxyz::core::cache::{Cache, CacheEntry};
         use crate::tools::searchxyz::core::config::{CrawlerConfig, HeadlessConfig, ProxyConfig};
+        use crate::tools::shared_memory::web_cache::save_http_cache;
+        use reqwest::header::HeaderMap;
         use std::sync::Arc;
-        use tokio::sync::Mutex;
 
-        let cache = Arc::new(Mutex::new(Cache::new(100, 3600)));
-        {
-            let mut c = cache.lock().await;
-            // Page 1: Root
-            c.put(
-                "https://example.com/".to_string(),
-                CacheEntry::new(
-                    r#"
-                    <html>
-                        <body>
-                            <a href="/page1">Page 1</a>
-                            <a href="/page2">Page 2</a>
-                            <a href="https://external.com/">External</a>
-                        </body>
-                    </html>
-                    "#
-                    .to_string(),
-                    "https://example.com/".to_string(),
-                ),
-            );
-            // Page 2: Page 1
-            c.put(
-                "https://example.com/page1".to_string(),
-                CacheEntry::new(
-                    r#"
-                    <html>
-                        <body>
-                            <a href="/page3">Page 3</a>
-                        </body>
-                    </html>
-                    "#
-                    .to_string(),
-                    "https://example.com/page1".to_string(),
-                ),
-            );
-            // Page 3: Page 2
-            c.put(
-                "https://example.com/page2".to_string(),
-                CacheEntry::new(
-                    r#"
-                    <html>
-                        <body>
-                            <a href="/page1">Back to Page 1</a>
-                        </body>
-                    </html>
-                    "#
-                    .to_string(),
-                    "https://example.com/page2".to_string(),
-                ),
-            );
-            // Page 4: Page 3
-            c.put(
-                "https://example.com/page3".to_string(),
-                CacheEntry::new(
-                    "<html><body>Done</body></html>".to_string(),
-                    "https://example.com/page3".to_string(),
-                ),
-            );
+        let headers = HeaderMap::new();
+        for (url, html) in [
+            (
+                "https://spider-cached.example/",
+                r#"<html><body><a href="/page1">Page 1</a><a href="/page2">Page 2</a><a href="https://external.com/">External</a></body></html>"#,
+            ),
+            (
+                "https://spider-cached.example/page1",
+                r#"<html><body><a href="/page3">Page 3</a></body></html>"#,
+            ),
+            (
+                "https://spider-cached.example/page2",
+                r#"<html><body><a href="/page1">Back to Page 1</a></body></html>"#,
+            ),
+            (
+                "https://spider-cached.example/page3",
+                "<html><body>Done</body></html>",
+            ),
+        ] {
+            save_http_cache(url, url, html, "text/html", &headers, 200, 3600).unwrap();
         }
 
         let crawler = Arc::new(Crawler::new(
             CrawlerConfig::default(),
             HeadlessConfig::default(),
             ProxyConfig::default(),
-            cache,
         ));
 
         let spider = LinkSpider::new(crawler);
         let mut links = spider
-            .discover_links("https://example.com/", 10)
+            .discover_links("https://spider-cached.example/", 10)
             .await
             .unwrap();
         links.sort();
@@ -220,10 +181,10 @@ mod tests {
         assert_eq!(
             links,
             vec![
-                "https://example.com/".to_string(),
-                "https://example.com/page1".to_string(),
-                "https://example.com/page2".to_string(),
-                "https://example.com/page3".to_string(),
+                "https://spider-cached.example/".to_string(),
+                "https://spider-cached.example/page1".to_string(),
+                "https://spider-cached.example/page2".to_string(),
+                "https://spider-cached.example/page3".to_string(),
             ]
         );
     }

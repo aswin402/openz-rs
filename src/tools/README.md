@@ -103,10 +103,10 @@ Large or highly cohesive tool families are partitioned into 11 dedicated domain 
 - **Description:** SVG animation, timeline synthesis, rasterization, video stitching, audio merging, image enhancement, and template rendering.
 - **Key Tools (37 tools):** `openmedia_model_download`, `openmedia_rasterize_svg`, `openmedia_diagram_generate_mermaid`, `openmedia_html_to_image`, `openmedia_create_svg`, `openmedia_create_chart`, `openmedia_create_icon`, `openmedia_animate_svg`, `openmedia_animate_create_timeline`, `openmedia_animate_morph_paths`, `openmedia_animate_generate_spinner`, `openmedia_animate_from_lottie`, `openmedia_animate_to_lottie`, `openmedia_image_apply_filter`, `openmedia_image_resize`, `openmedia_image_crop`, `openmedia_image_transform`, `openmedia_image_convert`, `openmedia_image_batch_process`, `openmedia_video_create`, `openmedia_video_preview`, `openmedia_video_create_slideshow`, `openmedia_video_add_transition`, `openmedia_video_add_audio`, `openmedia_video_from_template`, `openmedia_video_extract_frames`, `openmedia_video_trim`, `openmedia_template_create`, `openmedia_template_read`, `openmedia_template_update`, `openmedia_template_delete`, `openmedia_improve_score_image`, `openmedia_improve_refine_prompt`, `openmedia_improve_auto_refine`, `openmedia_improve_feedback`, `openmedia_improve_quality_report`, `openmedia_ping`.
 
-### 7. `searchxyz/` — Multi-Engine Web Discovery
+### 7. `searchxyz/` — Unified Web Engine & Deep Research
 - **Directory:** [`src/tools/searchxyz/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/searchxyz/)
-- **Description:** Deep web exploration, source crawling, sitemaps, relationship indexing, and multi-source research briefs.
-- **Key Tools (17 tools):** `searchxyz_doctor`, `searchxyz_search_web`, `searchxyz_browser_search`, `searchxyz_read_url`, `searchxyz_search_and_read`, `searchxyz_recall`, `searchxyz_list_sources`, `searchxyz_deep_research`, `searchxyz_index_content`, `searchxyz_site_map`, `searchxyz_index_relationship`, `searchxyz_query_graph`, `searchxyz_read_github_repo`, `searchxyz_export_research`, `searchxyz_import_research`, `searchxyz_delete_source`, `searchxyz_clear_index`.
+- **Description:** Core multi-backend RRF search dispatcher, SSRF-hardened DNS-pinned crawler, readability Markdown extractor, iterative deep research, and GitHub repository indexing unified onto OpenZ's SQLite `memory.db`, `graph_memory.db`, shared FastEmbed model, and headless-first `BrowserBroker`.
+- **Key Tools (3 power tools; local search/fetch/crawl/index/graph/doctor unified into `web_search`, `web_fetch`, `crawl_website`, `search_research`, `archive_research`, `create_relations`, `search_nodes`, `diagnose_system`):** `searchxyz_browser_search`, `searchxyz_deep_research`, `searchxyz_read_github_repo`.
 
 ### 8. `self_management/` — Runtime Diagnostics & Configuration
 - **Directory:** [`src/tools/self_management/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/self_management/)
@@ -225,7 +225,7 @@ Tool registration is organized into four modular facades under [`src/cli/tool_re
 3. **Media Registration** ([`src/cli/tool_registration/media.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tool_registration/media.rs)):
    - Registers the comprehensive OpenMedia suite (37 tools) and Opendoc document engine (35 tools).
 4. **Integrations Registration** ([`src/cli/tool_registration/integrations.rs`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/cli/tool_registration/integrations.rs)):
-   - Registers searchxyz (17 tools), GitHub MCP client (3 tools), Docs MCP client (6 tools), and spawns asynchronous background workers for lazy external MCP servers.
+   - Registers SearchXyz power tools (3 tools), Docs MCP client (4 tools), and spawns asynchronous background workers for lazy external MCP servers.
 
 ---
 

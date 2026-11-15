@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.327-orange.svg" alt="Version 0.0.327"/></a>
+  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.328-orange.svg" alt="Version 0.0.328"/></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.82%2B-blue.svg" alt="Rust 1.82+"/></a>
   <a href="https://tokio.rs/"><img src="https://img.shields.io/badge/runtime-tokio-purple.svg" alt="Tokio Async"/></a>
   <a href="https://github.com/aswin402/openz-rs/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-green.svg" alt="License"/></a>
@@ -18,7 +18,7 @@
 
 ---
 
-OpenZ is a local-first AI agent runtime built in Rust. It combines an interactive terminal agent (Ratatui TUI), **241 native in-process tools**, durable SQLite cognitive memory (`~/.openz/memory.db`), browser-backed research, document/media automation pipelines, multi-channel communication (Ratatui TUI, WebUI, Telegram, Discord, WhatsApp, Email), and isolated subagents into one fast desktop-oriented binary.
+OpenZ is a local-first AI agent runtime built in Rust. It combines an interactive terminal agent (Ratatui TUI), **232 native in-process tools**, durable SQLite cognitive memory (`~/.openz/memory.db`), browser-backed research, document/media automation pipelines, multi-channel communication (Ratatui TUI, WebUI, Telegram, Discord, WhatsApp, Email), and isolated subagents into one fast desktop-oriented binary.
 
 Maintainer: **Aswin** ([@aswin402](https://github.com/aswin402)) — Rebranded from `nanobot`.
 
@@ -57,6 +57,11 @@ Most agent frameworks require users to manually select tools, switch providers, 
 ---
 
 ## 🆕 Latest Highlights
+
+### 🔎 Unified Native Web, SearchXyz, Headless Browser & SQLite Research Engine (`v0.0.328`)
+- **Single-Engine Native Web & Search Stack (`232` Canonical Tools, Zero Duplicates)**: Consolidated 12 overlapping `searchxyz_*` wrappers into OpenZ's canonical native tools (`web_search`, `web_fetch`, `crawl_website`, `search_research`, `archive_research`, `create_relations`, `search_nodes`, `diagnose_system`) with full backward-compatible alias routing, while preserving dedicated power tools (`searchxyz_browser_search`, `searchxyz_deep_research`, `searchxyz_read_github_repo`).
+- **Unified SQLite FTS5 + Vector RRF Storage & Single ONNX Embedding Model**: Migrated legacy `~/.searchxyz/{cache.db,index.bin,graph.json,repos}` into OpenZ's unified `~/.openz/memory.db` (`http_cache`, `research_archive`, `research_archive_fts` BM25 + binary `f32` vector RRF) and `~/.openz/graph_memory.db`, sharing a single `AllMiniLmL6V2` FastEmbed instance (~130–200 MB RAM saved) and removing redundant `spider`, `bincode`, `scraper 0.25`, and `chromiumoxide` `headless.rs` dependencies.
+- **Hardened SSRF IP-Pinning, Headless-First `BrowserBroker` & Bot-Decoy SERP Guard**: Added shared DNS-resolved IP-pinned `reqwest` clients blocking IPv4-mapped IPv6 (`::ffff:127.0.0.1`), CGNAT, and cloud metadata endpoints across `web_fetch`, `crawl_site`, and `SearchXyz`; switched `BrowserBroker` to headless-first (`Obscura` → `Firefox` → `Gsd`) with tab cleanup; added Mojeek keyless search, transient backend cooldowns, and automatic bot-decoy SERP poisoning detection.
 
 ### ⚡ Native `opencaveman` Crate, `@assistant-ui` Tool/Approval Elements & 10-Style Telemetry Deck (`v0.0.327`)
 - **Native `opencaveman` Workspace Crate & Tool**: Full in-process Rust token compression engine (`lite`, `full`, `ultra`, `wenyan_lite`, `wenyan_full`, `wenyan_ultra`) with `pulldown-cmark` AST-guarded Markdown/code compaction, auto-clarity safety bypasses, commit/review formatters, 6 seeded procedural skills, TUI `/settings` menu, and a dedicated WebUI **Settings → Caveman** workspace alongside a one-click composer toggle.

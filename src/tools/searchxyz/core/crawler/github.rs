@@ -1,16 +1,18 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
-use tokio::sync::Mutex;
+use std::process::{Output, Stdio};
+use std::time::Duration;
+use tokio::process::Command;
 
 use crate::tools::searchxyz::core::error::SearchXyzError;
 use crate::tools::searchxyz::core::extractor::ExtractedContent;
-use crate::tools::searchxyz::core::graph::KnowledgeGraph;
+use crate::tools::searchxyz::core::graph::extract_and_persist_relations;
 use crate::tools::searchxyz::core::index::SearchIndex;
+use crate::tools::shared_memory::searchxyz_repos_dir;
 
 const DEFAULT_EXTENSIONS: &[&str] = &[
-    "rs", "py", "js", "ts", "go", "c", "cpp", "h", "java", "swift", "kt", "sh", "pl", "rb", "php",
-    "md", "txt", "rst", "adoc", "toml", "json", "yaml", "yml", "ini", "conf",
+    "rs", "py", "js", "ts", "tsx", "jsx", "go", "c", "cpp", "h", "java", "swift", "kt", "sh",
+    "pl", "rb", "php", "md", "txt", "rst", "adoc", "toml", "json", "yaml", "yml", "ini", "conf",
 ];
 
 const DEFAULT_EXCLUDE_PATHS: &[&str] = &[
@@ -25,7 +27,7 @@ const DEFAULT_EXCLUDE_PATHS: &[&str] = &[
     "obj",
 ];
 
-const MAX_FILE_SIZE_BYTES: u64 = 256 * 1024; // 256 KB
+const MAX_FILE_SIZE_BYTES: u64 = 256 * 1024;
 const DEFAULT_MAX_REPO_FILES: usize = 2_000;
 const MAX_REPO_FILES_CAP: usize = 10_000;
 const DEFAULT_MAX_REPO_BYTES: u64 = 20 * 1024 * 1024;
@@ -70,56 +72,36 @@ impl GithubIngestLimits {
     }
 }
 
-fn run_command_with_timeout(
+async fn run_command_with_timeout(
     cmd: &mut Command,
     timeout_secs: u64,
     url: &str,
     action: &str,
 ) -> Result<Output, SearchXyzError> {
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| SearchXyzError::CrawlFailed {
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null())
+        .kill_on_drop(true);
+
+    let child = cmd.spawn().map_err(|e| SearchXyzError::CrawlFailed {
         url: url.to_string(),
         reason: format!("Failed to spawn {action}: {e}"),
     })?;
 
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
-    loop {
-        match child
-            .try_wait()
-            .map_err(|e| SearchXyzError::CrawlFailed {
-                url: url.to_string(),
-                reason: format!("Failed while waiting for {action}: {e}"),
-            })?
-            .is_some()
-        {
-            true => {
-                return child
-                    .wait_with_output()
-                    .map_err(|e| SearchXyzError::CrawlFailed {
-                        url: url.to_string(),
-                        reason: format!("Failed to collect {action} output: {e}"),
-                    });
-            }
-            false => {}
-        }
-
-        match std::time::Instant::now() >= deadline {
-            true => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(SearchXyzError::CrawlFailed {
-                    url: url.to_string(),
-                    reason: format!("{action} timed out after {timeout_secs}s"),
-                });
-            }
-            false => {}
-        }
-
-        std::thread::sleep(std::time::Duration::from_millis(25));
+    match tokio::time::timeout(Duration::from_secs(timeout_secs), child.wait_with_output()).await {
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(e)) => Err(SearchXyzError::CrawlFailed {
+            url: url.to_string(),
+            reason: format!("Failed to collect {action} output: {e}"),
+        }),
+        Err(_) => Err(SearchXyzError::CrawlFailed {
+            url: url.to_string(),
+            reason: format!("{action} timed out after {timeout_secs}s"),
+        }),
     }
 }
 
-fn run_git_checked(
+async fn run_git_checked(
     repo_dir: &Path,
     args: &[&str],
     timeout_secs: u64,
@@ -129,7 +111,7 @@ fn run_git_checked(
 ) -> Result<String, SearchXyzError> {
     let mut cmd = Command::new("git");
     cmd.args(args).current_dir(repo_dir);
-    let output = run_command_with_timeout(&mut cmd, timeout_secs, url, action)?;
+    let output = run_command_with_timeout(&mut cmd, timeout_secs, url, action).await?;
     match output.status.success() {
         true => Ok(String::from_utf8_lossy(&output.stdout).trim().to_string()),
         false => {
@@ -142,7 +124,7 @@ fn run_git_checked(
     }
 }
 
-fn run_git_nonempty_rev(
+async fn run_git_nonempty_rev(
     repo_dir: &Path,
     args: &[&str],
     timeout_secs: u64,
@@ -150,7 +132,7 @@ fn run_git_nonempty_rev(
     action: &str,
     failure_label: &str,
 ) -> Result<String, SearchXyzError> {
-    let rev = run_git_checked(repo_dir, args, timeout_secs, url, action, failure_label)?;
+    let rev = run_git_checked(repo_dir, args, timeout_secs, url, action, failure_label).await?;
     match rev.is_empty() {
         true => Err(SearchXyzError::CrawlFailed {
             url: url.to_string(),
@@ -206,11 +188,9 @@ fn enforce_ingest_limits(
     Ok(())
 }
 
-/// Parse a GitHub URL to extract Owner, Repo, and optional Branch
+/// Parse a GitHub URL to extract Owner, Repo, and optional Branch.
 pub fn parse_github_url(url: &str) -> Option<(String, String, Option<String>)> {
     let parsed = url::Url::parse(url).ok()?;
-
-    // Check hostname
     let host = parsed.host_str()?;
     match matches!(host, "github.com" | "www.github.com") {
         true => {}
@@ -222,7 +202,6 @@ pub fn parse_github_url(url: &str) -> Option<(String, String, Option<String>)> {
     let repo_raw = segments.next()?;
     let repo = repo_raw.strip_suffix(".git").unwrap_or(repo_raw).to_string();
 
-    // Check if there is a branch specified, e.g. /tree/branch-name or /blob/branch-name
     let branch = match segments.next() {
         Some("tree") | Some("blob") => segments.next().map(|b| b.to_string()),
         _ => None,
@@ -232,6 +211,15 @@ pub fn parse_github_url(url: &str) -> Option<(String, String, Option<String>)> {
         true => None,
         false => Some((owner, repo, branch)),
     }
+}
+
+fn sanitize_segment(raw: &str) -> String {
+    raw.chars()
+        .map(|c| match c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+            true => c,
+            false => '_',
+        })
+        .collect()
 }
 
 fn is_excluded_rel_path(rel_path: &Path, exclude_paths: &[String]) -> bool {
@@ -250,7 +238,6 @@ fn has_included_extension(path: &Path, include_exts: &[String]) -> bool {
         .unwrap_or(false)
 }
 
-/// Recursively walk the directory, filtering files by extension and path exclusion
 fn visit_dirs(
     dir: &Path,
     base_dir: &Path,
@@ -294,10 +281,10 @@ fn visit_dirs(
     Ok(())
 }
 
-/// Clone a repository using git and index its contents
+/// Clone or incrementally sync a GitHub repository under `~/.openz/searchxyz/repos/`
+/// and index its contents into OpenZ's shared `memory.db` and `graph_memory.db`.
 pub async fn clone_and_index_repo(
     index: &SearchIndex,
-    graph: &Mutex<KnowledgeGraph>,
     url: &str,
     branch: Option<&str>,
     include_exts: Option<&[String]>,
@@ -306,7 +293,6 @@ pub async fn clone_and_index_repo(
 ) -> Result<String, SearchXyzError> {
     let limits = limits.unwrap_or_default();
 
-    // 1. Parse GitHub URL
     let (owner, repo_name, parsed_branch) =
         parse_github_url(url).ok_or_else(|| SearchXyzError::CrawlFailed {
             url: url.to_string(),
@@ -316,16 +302,14 @@ pub async fn clone_and_index_repo(
     let resolved_branch = branch.or(parsed_branch.as_deref());
     let repo_base_url = format!("https://github.com/{}/{}", owner, repo_name);
 
-    // Resolve target repository directory name (persistent directory)
-    let branch_sanitized = resolved_branch
-        .unwrap_or("default")
-        .replace(['/', '\\'], "_");
-    let repo_dir_name = format!("{}_{}_{}", owner, repo_name, branch_sanitized);
-    let repo_dir = dirs::home_dir()
-        .unwrap_or_else(std::env::temp_dir)
-        .join(".searchxyz")
-        .join("repos")
-        .join(repo_dir_name);
+    let branch_sanitized = sanitize_segment(resolved_branch.unwrap_or("default"));
+    let repo_dir_name = format!(
+        "{}__{}__{}",
+        sanitize_segment(&owner),
+        sanitize_segment(&repo_name),
+        branch_sanitized
+    );
+    let repo_dir = searchxyz_repos_dir().join(repo_dir_name);
 
     let include_exts_vec: Vec<String> = match include_exts {
         Some(exts) => exts.iter().map(|s| s.to_string()).collect(),
@@ -348,7 +332,6 @@ pub async fn clone_and_index_repo(
     match repo_dir.exists() && repo_git_dir.exists() {
         true => {
             is_incremental = true;
-            // 1. Get active branch
             let active_branch = run_git_checked(
                 &repo_dir,
                 &["rev-parse", "--abbrev-ref", "HEAD"],
@@ -356,9 +339,9 @@ pub async fn clone_and_index_repo(
                 url,
                 "git rev-parse --abbrev-ref",
                 "git rev-parse --abbrev-ref HEAD",
-            )?;
+            )
+            .await?;
 
-            // 2. Get old commit hash
             let old_commit = run_git_nonempty_rev(
                 &repo_dir,
                 &["rev-parse", "HEAD"],
@@ -366,9 +349,9 @@ pub async fn clone_and_index_repo(
                 url,
                 "git rev-parse HEAD",
                 "git rev-parse HEAD (old)",
-            )?;
+            )
+            .await?;
 
-            // 3. Fetch from remote
             tracing::info!(repo = %repo_base_url, branch = %active_branch, "Fetching latest changes");
             run_git_checked(
                 &repo_dir,
@@ -377,9 +360,9 @@ pub async fn clone_and_index_repo(
                 url,
                 "git fetch",
                 "git fetch",
-            )?;
+            )
+            .await?;
 
-            // 4. Reset hard to FETCH_HEAD
             run_git_checked(
                 &repo_dir,
                 &["reset", "--hard", "FETCH_HEAD"],
@@ -387,9 +370,9 @@ pub async fn clone_and_index_repo(
                 url,
                 "git reset",
                 "git reset",
-            )?;
+            )
+            .await?;
 
-            // 5. Get new commit hash
             let new_commit = run_git_nonempty_rev(
                 &repo_dir,
                 &["rev-parse", "HEAD"],
@@ -397,9 +380,9 @@ pub async fn clone_and_index_repo(
                 url,
                 "git rev-parse",
                 "git rev-parse HEAD (new)",
-            )?;
+            )
+            .await?;
 
-            // 6. Get diff list of files
             let diff_str = run_git_checked(
                 &repo_dir,
                 &[
@@ -413,7 +396,8 @@ pub async fn clone_and_index_repo(
                 url,
                 "git diff",
                 "git diff",
-            )?;
+            )
+            .await?;
 
             for line in diff_str.lines() {
                 let parts: Vec<&str> = line.splitn(2, '\t').collect();
@@ -466,7 +450,6 @@ pub async fn clone_and_index_repo(
             }
         }
         false => {
-            // Clean clone
             match repo_dir.exists() {
                 true => {
                     let _ = fs::remove_dir_all(&repo_dir);
@@ -475,7 +458,7 @@ pub async fn clone_and_index_repo(
             }
             fs::create_dir_all(&repo_dir).map_err(|e| SearchXyzError::CrawlFailed {
                 url: url.to_string(),
-                reason: format!("Failed to create repository directory: {}", e),
+                reason: format!("Failed to create repository directory: {e}"),
             })?;
 
             let mut cmd = Command::new("git");
@@ -485,12 +468,12 @@ pub async fn clone_and_index_repo(
                 Some(b) => {
                     let safe_branch = b
                         .chars()
-                        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '/');
+                        .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'));
                     match safe_branch {
                         false => {
                             return Err(SearchXyzError::CrawlFailed {
                                 url: url.to_string(),
-                                reason: format!("Invalid/unsafe branch name: {}", b),
+                                reason: format!("Invalid/unsafe branch name: {b}"),
                             });
                         }
                         true => {
@@ -505,7 +488,8 @@ pub async fn clone_and_index_repo(
 
             tracing::info!(repo = %repo_base_url, branch = ?resolved_branch, dest = ?repo_dir, "Cloning repository");
             let output =
-                run_command_with_timeout(&mut cmd, limits.git_timeout_secs, url, "git clone")?;
+                run_command_with_timeout(&mut cmd, limits.git_timeout_secs, url, "git clone")
+                    .await?;
 
             match output.status.success() {
                 true => {}
@@ -528,7 +512,7 @@ pub async fn clone_and_index_repo(
             )
             .map_err(|e| SearchXyzError::CrawlFailed {
                 url: url.to_string(),
-                reason: format!("Directory traversal failed: {}", e),
+                reason: format!("Directory traversal failed: {e}"),
             })?;
 
             for path in file_paths {
@@ -545,7 +529,6 @@ pub async fn clone_and_index_repo(
     let budget_files: Vec<PathBuf> = files_to_upsert.iter().map(PathBuf::from).collect();
     enforce_ingest_limits(&repo_dir, &budget_files, &limits, url)?;
 
-    // Process deletions
     let branch_for_url = resolved_branch.unwrap_or("main");
 
     for rel_path_str in &files_to_delete {
@@ -556,13 +539,8 @@ pub async fn clone_and_index_repo(
                 tracing::warn!(url = %file_url, error = %e, "Failed to delete file from search index");
             }
         }
-        {
-            let mut g = graph.lock().await;
-            g.prune_node(&file_url);
-        }
     }
 
-    // Process additions / updates
     let mut indexed_count = 0;
     let mut readme_content = String::new();
     let mut file_list_summary = String::new();
@@ -598,10 +576,7 @@ pub async fn clone_and_index_repo(
             }
         }
 
-        {
-            let mut g = graph.lock().await;
-            g.extract_heuristics(&file_url, &file_title, &file_content);
-        }
+        let _ = extract_and_persist_relations(&file_url, &file_title, &file_content);
 
         let file_name_lower = Path::new(rel_path_str)
             .file_name()
@@ -612,7 +587,7 @@ pub async fn clone_and_index_repo(
             && Path::new(rel_path_str).parent() == Some(Path::new(""))
         {
             true => {
-                readme_content = file_content.clone();
+                readme_content = file_content;
             }
             false => {}
         }
@@ -688,6 +663,7 @@ mod tests {
 
     struct EnvGuard {
         old_home: Option<String>,
+        old_openz_dir: Option<String>,
         old_config_count: Option<String>,
         old_config_key_0: Option<String>,
         old_config_value_0: Option<String>,
@@ -703,6 +679,7 @@ mod tests {
     impl Drop for EnvGuard {
         fn drop(&mut self) {
             restore_env("HOME", &self.old_home);
+            restore_env("OPENZ_CONFIG_DIR", &self.old_openz_dir);
             restore_env("GIT_CONFIG_COUNT", &self.old_config_count);
             restore_env("GIT_CONFIG_KEY_0", &self.old_config_key_0);
             restore_env("GIT_CONFIG_VALUE_0", &self.old_config_value_0);
@@ -751,7 +728,6 @@ mod tests {
         fs::write(src.join("helper.rs"), "fn helper() {}").unwrap();
         fs::write(temp.join("README.md"), "# Test Repo").unwrap();
 
-        // Ignored path
         let target = temp.join("target");
         fs::create_dir_all(&target).unwrap();
         fs::write(target.join("output.rs"), "some compiled output").unwrap();
@@ -810,7 +786,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_incremental_git_sync() {
-        // Setup temporary directories
         let temp_dir = std::env::temp_dir().join(format!(
             "test_incremental_git_sync_home_{}",
             rand::thread_rng().gen::<u32>()
@@ -825,9 +800,8 @@ mod tests {
         fs::create_dir_all(&temp_dir).unwrap();
         fs::create_dir_all(&dummy_origin).unwrap();
 
-        // Initialize dummy origin repo
         let run_git = |args: &[&str], dir: &Path| {
-            let output = Command::new("git")
+            let output = std::process::Command::new("git")
                 .args(args)
                 .current_dir(dir)
                 .output()
@@ -840,12 +814,10 @@ mod tests {
             );
         };
 
-        // Create main branch explicitly
         run_git(&["init", "-b", "main"], &dummy_origin);
         run_git(&["config", "user.name", "Test User"], &dummy_origin);
         run_git(&["config", "user.email", "test@example.com"], &dummy_origin);
 
-        // Add initial files to dummy origin
         let file_a = dummy_origin.join("a.rs");
         let file_b = dummy_origin.join("b.rs");
         let readme = dummy_origin.join("README.md");
@@ -856,33 +828,25 @@ mod tests {
         run_git(&["add", "."], &dummy_origin);
         run_git(&["commit", "-m", "initial commit"], &dummy_origin);
 
-        // Prepare SearchIndex and KnowledgeGraph
         let index_dir = temp_dir.join("index");
         fs::create_dir_all(&index_dir).unwrap();
         let index_config = crate::tools::searchxyz::core::config::IndexConfig {
             path: index_dir,
-            writer_heap_bytes: 15_000_000,
+            writer_heap_bytes: 0,
             embedding: Default::default(),
         };
         let index = SearchIndex::open(&index_config).unwrap();
-        let graph = Mutex::new(KnowledgeGraph::new());
-
-        let old_home = std::env::var("HOME").ok();
-        let old_config_count = std::env::var("GIT_CONFIG_COUNT").ok();
-        let old_config_key_0 = std::env::var("GIT_CONFIG_KEY_0").ok();
-        let old_config_value_0 = std::env::var("GIT_CONFIG_VALUE_0").ok();
 
         let _env_guard = EnvGuard {
-            old_home: old_home.clone(),
-            old_config_count: old_config_count.clone(),
-            old_config_key_0: old_config_key_0.clone(),
-            old_config_value_0: old_config_value_0.clone(),
+            old_home: std::env::var("HOME").ok(),
+            old_openz_dir: std::env::var("OPENZ_CONFIG_DIR").ok(),
+            old_config_count: std::env::var("GIT_CONFIG_COUNT").ok(),
+            old_config_key_0: std::env::var("GIT_CONFIG_KEY_0").ok(),
+            old_config_value_0: std::env::var("GIT_CONFIG_VALUE_0").ok(),
         };
 
-        // Redirect home directory (so ~/.searchxyz is written into our temp_dir)
         std::env::set_var("HOME", &temp_dir);
-
-        // Configure git to redirect github.com to our local dummy_origin
+        std::env::set_var("OPENZ_CONFIG_DIR", temp_dir.join(".openz"));
         std::env::set_var("GIT_CONFIG_COUNT", "1");
         let local_url = dummy_origin.to_string_lossy().to_string();
         std::env::set_var("GIT_CONFIG_KEY_0", format!("url.{}.insteadOf", local_url));
@@ -891,19 +855,14 @@ mod tests {
             "https://github.com/dummy-owner/dummy-repo",
         );
 
-        // First indexing (clean clone)
         let repo_url = "https://github.com/dummy-owner/dummy-repo";
-        let result = clone_and_index_repo(&index, &graph, repo_url, Some("main"), None, None, None)
+        let _result = clone_and_index_repo(&index, repo_url, Some("main"), None, None, None)
             .await
             .unwrap();
 
-        println!("RESULT OF INDEXING:\n{}", result);
-
         index.reload().unwrap();
 
-        // Assert initial index state
         let (docs, total) = index.list_documents(Some("github"), 100, 0).unwrap();
-        // total is 4 because README.md is chunked into 2 docs (total 2) + a.rs (1) + b.rs (1) = 4
         assert_eq!(
             total, 4,
             "Expected 4 indexed document chunks initially, got: {:?}",
@@ -922,10 +881,6 @@ mod tests {
         assert!(urls.contains(&format!("{}#chunk-0", expected_readme_url)));
         assert!(urls.contains(&format!("{}#chunk-1", expected_readme_url)));
 
-        // Modify the dummy origin:
-        // - Modify a.rs
-        // - Delete b.rs
-        // - Add c.rs
         fs::write(&file_a, "fn a_modified() {}").unwrap();
         fs::remove_file(&file_b).unwrap();
         let file_c = dummy_origin.join("c.rs");
@@ -934,42 +889,29 @@ mod tests {
         run_git(&["add", "-A"], &dummy_origin);
         run_git(&["commit", "-m", "second commit"], &dummy_origin);
 
-        // Run updating index
-        let _result2 =
-            clone_and_index_repo(&index, &graph, repo_url, Some("main"), None, None, None)
-                .await
-                .unwrap();
+        let _result2 = clone_and_index_repo(&index, repo_url, Some("main"), None, None, None)
+            .await
+            .unwrap();
 
         index.reload().unwrap();
 
-        // Verify changes in the search index
         let (docs2, total2) = index.list_documents(Some("github"), 100, 0).unwrap();
         let mut urls2: Vec<String> = docs2.iter().map(|d| d.url.clone()).collect();
         urls2.sort();
 
         let expected_c_url = format!("{}/blob/main/c.rs", repo_url);
 
-        // total2 is 4 because README.md is chunked into 2 docs (total 2) + modified a.rs (1) + added c.rs (1) = 4
         assert_eq!(
             total2, 4,
             "Expected 4 indexed document chunks after update, got: {:?}",
             urls2
         );
         assert!(urls2.contains(&expected_a_url));
-        assert!(
-            !urls2.contains(&expected_b_url),
-            "Deleted file b.rs should be gone"
-        );
-        assert!(
-            urls2.contains(&expected_c_url),
-            "New file c.rs should be indexed"
-        );
+        assert!(!urls2.contains(&expected_b_url));
+        assert!(urls2.contains(&expected_c_url));
         assert!(urls2.contains(&format!("{}#chunk-0", expected_readme_url)));
         assert!(urls2.contains(&format!("{}#chunk-1", expected_readme_url)));
 
-        // Clean up env vars automatically via EnvGuard
-
-        // Clean up
         let _ = fs::remove_dir_all(&temp_dir);
         let _ = fs::remove_dir_all(&dummy_origin);
     }

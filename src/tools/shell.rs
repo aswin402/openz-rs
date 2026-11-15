@@ -291,7 +291,7 @@ impl Tool for ExecCommandTool {
     }
 
     fn description(&self) -> &str {
-        "Run a shell command on the host system and return its output."
+        "Run a local host shell command and return its output. Never use curl or wget to fetch external web pages, JSON APIs, or RSS feeds — use native web_fetch ('url' or batch 'urls') and web_search instead."
     }
 
     fn parameters(&self) -> serde_json::Value {

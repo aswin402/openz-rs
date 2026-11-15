@@ -107,6 +107,7 @@ async fn test_shared_memory_workflow() -> Result<()> {
     Ok(())
 }
 
+
 struct MockProvider {
     response_content: String,
 }
@@ -203,6 +204,7 @@ async fn test_shared_memory_consolidation() -> Result<()> {
     Ok(())
 }
 
+
 #[tokio::test]
 async fn test_research_archive_workflow() -> Result<()> {
     let _lock = TestLock::acquire();
@@ -243,6 +245,7 @@ async fn test_research_archive_workflow() -> Result<()> {
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())
 }
+
 
 #[tokio::test]
 async fn test_interaction_history_workflow() -> Result<()> {
@@ -288,6 +291,7 @@ async fn test_interaction_history_workflow() -> Result<()> {
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())
 }
+
 
 #[test]
 fn test_chunk_content_by_headings() {
@@ -383,3 +387,56 @@ async fn test_cognitive_memory_aliases_and_coercion() -> Result<()> {
     Ok(())
 }
 
+
+
+#[tokio::test]
+async fn test_archive_research_export_bundle_source_filter_and_bundle_path_alias() -> Result<()> {
+    let _lock = TestLock::acquire();
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_bundle_filter_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir)?;
+    std::env::set_var("OPENZ_CONFIG_DIR", &temp_dir);
+
+    let archive = ArchiveResearchTool;
+    archive
+        .call(&json!({
+            "action": "save",
+            "title": "Tokio Channels",
+            "url": "https://tokio.rs/tokio/tutorial/channels",
+            "content": "Tokio provides mpsc, oneshot, broadcast, and watch async channels."
+        }))
+        .await?;
+    archive
+        .call(&json!({
+            "action": "save",
+            "title": "Unrelated Domain",
+            "url": "https://example.org/other",
+            "content": "Unrelated example note that must be excluded by source_filter."
+        }))
+        .await?;
+
+    let bundle_file = temp_dir.join("tokio_only_bundle.json");
+    let export_res = archive
+        .call(&json!({
+            "action": "export_bundle",
+            "bundle_path": bundle_file.to_string_lossy().to_string(),
+            "source_filter": "tokio.rs"
+        }))
+        .await?;
+
+    assert_eq!(export_res["status"], "success");
+    assert_eq!(export_res["source_filter"], "tokio.rs");
+    assert!(export_res["exported_chunks"].as_u64().unwrap() >= 1);
+
+    let raw_bundle: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&bundle_file)?)?;
+    let docs = raw_bundle["chunks"].as_array().unwrap();
+    assert_eq!(docs.len(), 1);
+    assert!(docs
+        .iter()
+        .all(|d| d["url"].as_str().unwrap_or("").contains("tokio.rs")));
+
+    std::env::remove_var("OPENZ_CONFIG_DIR");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    Ok(())
+}

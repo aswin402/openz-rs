@@ -96,10 +96,46 @@ fn create_schema(conn: &Connection) -> Result<()> {
             content TEXT NOT NULL,
             source TEXT NOT NULL,
             timestamp TEXT NOT NULL,
-            embedding TEXT NOT NULL
+            embedding TEXT NOT NULL,
+            url TEXT NOT NULL DEFAULT '',
+            title TEXT NOT NULL DEFAULT '',
+            embedding_blob BLOB
         )",
         [],
     )?;
+    let _ = conn.execute(
+        "ALTER TABLE research_archive ADD COLUMN url TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE research_archive ADD COLUMN title TEXT NOT NULL DEFAULT ''",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE research_archive ADD COLUMN embedding_blob BLOB",
+        [],
+    );
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_research_archive_source ON research_archive(source)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_research_archive_url ON research_archive(url)",
+        [],
+    )?;
+    conn.execute(
+        "CREATE VIRTUAL TABLE IF NOT EXISTS research_archive_fts USING fts5(
+            entry_id UNINDEXED,
+            query,
+            title,
+            content,
+            url,
+            source,
+            tokenize='porter unicode61'
+        )",
+        [],
+    )?;
+    sync_missing_research_fts(conn)?;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS interaction_history (
             id TEXT PRIMARY KEY,
@@ -157,10 +193,20 @@ fn create_schema(conn: &Connection) -> Result<()> {
             fetched_at TEXT NOT NULL,
             expires_at TEXT NOT NULL,
             status_code INTEGER NOT NULL,
-            use_count INTEGER NOT NULL DEFAULT 0
+            use_count INTEGER NOT NULL DEFAULT 0,
+            content_type TEXT NOT NULL DEFAULT 'text/html',
+            final_url TEXT
         )",
         [],
     )?;
+    let _ = conn.execute(
+        "ALTER TABLE web_fetch_cache ADD COLUMN content_type TEXT NOT NULL DEFAULT 'text/html'",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE web_fetch_cache ADD COLUMN final_url TEXT",
+        [],
+    );
     conn.execute(
         "CREATE TABLE IF NOT EXISTS workflow_cards (
             id TEXT PRIMARY KEY,
@@ -191,6 +237,19 @@ fn create_schema(conn: &Connection) -> Result<()> {
             timestamp TEXT NOT NULL,
             FOREIGN KEY(workflow_id) REFERENCES workflow_cards(id)
         )",
+        [],
+    )?;
+    Ok(())
+}
+
+fn sync_missing_research_fts(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "INSERT INTO research_archive_fts (entry_id, query, title, content, url, source)
+         SELECT r.id, r.query, r.title, r.content, r.url, r.source
+         FROM research_archive r
+         WHERE NOT EXISTS (
+             SELECT 1 FROM research_archive_fts f WHERE f.entry_id = r.id
+         )",
         [],
     )?;
     Ok(())

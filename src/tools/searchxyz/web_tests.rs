@@ -10,10 +10,13 @@ fn backend_health_labels_cover_expected_states() {
     config.search.backends = vec![
         "searxng".to_string(),
         "brave".to_string(),
+        "tavily".to_string(),
         "duckduckgo".to_string(),
+        "mojeek".to_string(),
     ];
     config.searxng.instance_url = "http://searxng.local".to_string();
     config.brave.api_key = None;
+    config.tavily_api_key = Some("tvly-test".to_string());
 
     assert_eq!(
         backend_health_label("searxng", &config.search.backends, &config),
@@ -24,7 +27,15 @@ fn backend_health_labels_cover_expected_states() {
         "missing_key"
     );
     assert_eq!(
+        backend_health_label("tavily", &config.search.backends, &config),
+        "configured"
+    );
+    assert_eq!(
         backend_health_label("duckduckgo", &config.search.backends, &config),
+        "keyless"
+    );
+    assert_eq!(
+        backend_health_label("mojeek", &config.search.backends, &config),
         "keyless"
     );
     assert_eq!(
@@ -39,6 +50,7 @@ fn only_scraper_backends_detects_keyless_only_order() {
         "duckduckgo".to_string(),
         "google".to_string(),
         "bing".to_string(),
+        "mojeek".to_string(),
     ]));
     assert!(!only_scraper_backends_enabled(&[
         "searxng".to_string(),
@@ -195,6 +207,7 @@ fn search_failure_payload_is_machine_readable() {
 
 #[test]
 fn search_backend_cooldown_records_active_backends() {
+    let _guard = COOLDOWN_TEST_LOCK.lock().unwrap();
     clear_search_backend_cooldowns_for_tests();
     record_search_backend_failure(
         &["duckduckgo".to_string(), "google".to_string()],
@@ -212,13 +225,20 @@ fn search_backend_cooldown_records_active_backends() {
 
 #[tokio::test]
 async fn searchxyz_doctor_reports_active_cooldowns() -> Result<()> {
-    clear_search_backend_cooldowns_for_tests();
-    record_search_backend_failure(&["duckduckgo".to_string()], SearchFailureKind::RateLimited);
-    let report = build_searchxyz_doctor_report(false).await?;
+    let report = {
+        let _guard = COOLDOWN_TEST_LOCK.lock().unwrap();
+        clear_search_backend_cooldowns_for_tests();
+        record_search_backend_failure(
+            &["duckduckgo".to_string()],
+            SearchFailureKind::RateLimited,
+        );
+        let generated = build_searchxyz_doctor_report(false).await?;
+        clear_search_backend_cooldowns_for_tests();
+        generated
+    };
     assert!(report.contains("## Backend Cooldowns"));
     assert!(report.contains("duckduckgo"));
     assert!(report.contains("rate_limited"));
-    clear_search_backend_cooldowns_for_tests();
     Ok(())
 }
 
@@ -230,17 +250,14 @@ async fn searchxyz_doctor_mentions_automatic_browser_fallback() -> Result<()> {
     Ok(())
 }
 
-#[tokio::test]
-async fn searchxyz_doctor_accepts_direct_string_and_aliases() -> Result<()> {
-    let tool = SearchXyzDoctorTool;
-    let res = tool.call(&json!("false")).await?;
-    let text = res.as_str().expect("string report");
-    assert!(!text.contains("Index path:"));
-
-    let res_alias = tool.call(&json!({ "paths": false })).await?;
-    let text_alias = res_alias.as_str().expect("string report");
-    assert!(!text_alias.contains("Index path:"));
-    Ok(())
+#[test]
+fn web_engine_health_json_exposes_structured_state() {
+    let health = build_web_engine_health_json();
+    assert_eq!(health["engine"], "searchxyz_native");
+    assert_eq!(health["storage"], "sqlite_unified_memory_db");
+    assert!(health["configured_backends"].is_array());
+    assert!(health["http_cache"].is_object());
+    assert!(health["research_index"].is_object());
 }
 
 #[test]
@@ -252,9 +269,17 @@ fn searchxyz_web_args_normalization_and_aliases() {
         "diagnostics": "true"
     });
     let mut normalized = normalize_query_arg(&raw);
-    map_field_alias(&mut normalized, "max_results", &["limit", "count", "maxResults", "max_pages"]);
+    map_field_alias(
+        &mut normalized,
+        "max_results",
+        &["limit", "count", "maxResults", "max_pages"],
+    );
     map_field_alias(&mut normalized, "merge_backends", &["mergeBackends", "merge"]);
-    map_field_alias(&mut normalized, "include_diagnostics", &["includeDiagnostics", "diagnostics"]);
+    map_field_alias(
+        &mut normalized,
+        "include_diagnostics",
+        &["includeDiagnostics", "diagnostics"],
+    );
     coerce_numeric_fields(&mut normalized, &["max_results"]);
     coerce_bool_fields(&mut normalized, &["merge_backends", "include_diagnostics"]);
 
@@ -265,36 +290,52 @@ fn searchxyz_web_args_normalization_and_aliases() {
 }
 
 #[test]
-fn searchxyz_read_url_args_normalization_and_aliases() {
+fn searchxyz_url_normalization_and_aliases() {
     let raw = json!("docs.rs/tokio");
     let mut normalized = normalize_url_arg(&raw);
-    map_field_alias(&mut normalized, "depth", &["max_depth", "crawl_depth", "maxDepth"]);
-    map_field_alias(&mut normalized, "max_chars", &["maxChars", "limit", "max_length", "maxLength"]);
-    map_field_alias(&mut normalized, "render_js", &["renderJs", "js"]);
-    coerce_numeric_fields(&mut normalized, &["depth", "max_chars"]);
+    map_field_alias(
+        &mut normalized,
+        "depth",
+        &["max_depth", "crawl_depth", "maxDepth"],
+    );
+    coerce_numeric_fields(&mut normalized, &["depth"]);
     coerce_bool_fields(&mut normalized, &["render_js"]);
 
     assert_eq!(normalized["url"], "https://docs.rs/tokio");
 }
 
 #[test]
-fn searchxyz_site_map_args_normalization_and_aliases() {
-    let raw = json!({
-        "link": "example.com",
-        "sitemap": "0",
-        "crawl": "yes",
-        "limit": "25"
-    });
-    let mut normalized = normalize_url_arg(&raw);
-    map_field_alias(&mut normalized, "max_links", &["limit", "max_results", "maxLinks", "count"]);
-    map_field_alias(&mut normalized, "use_sitemap", &["useSitemap", "sitemap"]);
-    map_field_alias(&mut normalized, "crawl_links", &["crawlLinks", "crawl"]);
-    coerce_numeric_fields(&mut normalized, &["max_links"]);
-    coerce_bool_fields(&mut normalized, &["use_sitemap", "crawl_links"]);
+fn browser_search_detects_ddg_bot_challenge_and_filters_irrelevant_serp() {
+    assert_eq!(
+        browser_search_url("mojeek", "rust serde").unwrap(),
+        "https://www.mojeek.com/search?q=rust+serde"
+    );
+    assert!(html_has_bot_block(
+        "Unfortunately, bots use DuckDuckGo too. Please complete the following challenge."
+    ));
 
-    assert_eq!(normalized["url"], "https://example.com");
-    assert_eq!(normalized["max_links"], json!(25));
-    assert_eq!(normalized["use_sitemap"], json!(false));
-    assert_eq!(normalized["crawl_links"], json!(true));
+    let candidates = vec![
+        json!({ "title": "Black Friday Deals 2026", "url": "https://poki.com/en/g/deals" }),
+        json!({ "title": "serde_json - Rust", "url": "https://docs.rs/serde_json/latest/serde_json/" }),
+    ];
+    let (kept, dropped) = filter_relevant_browser_results("rust serde_json crate", candidates);
+    assert_eq!(dropped, 1);
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0]["title"], "serde_json - Rust");
+
+    let mut cfg = crate::tools::searchxyz::core::config::Config::default();
+    cfg.search.backends = vec![
+        "duckduckgo".to_string(),
+        "bing".to_string(),
+        "mojeek".to_string(),
+        "brave".to_string(),
+    ];
+    cfg.brave.api_key = None;
+    assert!(
+        crate::tools::searchxyz::doctor_report::only_scraper_backends_usable(
+            &cfg.search.backends,
+            &cfg
+        )
+    );
 }
 

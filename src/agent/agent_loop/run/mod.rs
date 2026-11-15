@@ -12,6 +12,7 @@ mod artifacts;
 mod events;
 mod research;
 mod response;
+mod shell_http_rewrite;
 #[cfg(test)]
 mod tests;
 mod tool_pipeline;
@@ -1081,17 +1082,23 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         let mut tool_results = Vec::new();
         let mut assistant_tool_calls_json = Vec::new();
         let mut loop_detection_messages = ctx.messages.clone();
+        let normalized_calls: Vec<crate::providers::ToolCallRequest> = resp
+            .tool_calls
+            .into_iter()
+            .map(|mut call| {
+                call.name = loop_ref.tools.resolve_canonical_name(&call.name);
+                auto_adjust_tool_call_for_user_intent(call, ctx.user_content)
+            })
+            .collect();
         let mut prefetched_outputs = prefetch_parallel_safe_batch(
             &loop_ref.tools,
-            &resp.tool_calls,
+            &normalized_calls,
             &config,
             &turn_cancel,
         )
         .await;
 
-        for mut call in resp.tool_calls {
-            call.name = loop_ref.tools.resolve_canonical_name(&call.name);
-            let call = auto_adjust_tool_call_for_user_intent(call, ctx.user_content);
+        for call in normalized_calls {
             let orig_name = call.name.clone();
             let scoped_candidate =
                 auto_scope_context_before_edit(call.clone(), &mut run.auto_scoped_edit_paths);

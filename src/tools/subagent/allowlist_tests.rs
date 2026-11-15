@@ -278,7 +278,9 @@ fn test_modernized_subagent_native_tools_allowlists() {
     let researcher_tools = static_allowlist_for_subagent("researcher").expect("researcher allowlist");
     assert!(researcher_tools.contains(&"web_search"));
     assert!(researcher_tools.contains(&"web_fetch"));
-    assert!(researcher_tools.contains(&"searchxyz_recall"));
+    assert!(researcher_tools.contains(&"search_research"));
+    assert!(researcher_tools.contains(&"archive_research"));
+    assert!(researcher_tools.contains(&"searchxyz_deep_research"));
     assert!(researcher_tools.contains(&"rust_docs"));
     assert!(researcher_tools.contains(&"tool_catalog"));
 

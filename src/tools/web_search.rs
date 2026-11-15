@@ -1,7 +1,11 @@
+use crate::tools::searchxyz::core::search::{
+    duckduckgo::DuckDuckGoBackend, exa::ExaBackend, mojeek::MojeekBackend, tavily::TavilyBackend,
+    websurfx::WebsurfxBackend, SearchBackend, SearchDispatcher, SearchQuery, SearchResult,
+};
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
+use futures_util::future::join_all;
 use reqwest::Client;
-use scraper::{Html, Selector};
 use serde_json::{json, Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -14,8 +18,14 @@ enum WebSearchPolicy {
 
 impl WebSearchPolicy {
     fn parse(value: Option<&str>) -> Self {
-        let env_value = std::env::var("OPENZ_WEB_SEARCH_POLICY").ok();
-        let raw = value.or(env_value.as_deref()).unwrap_or("native_only");
+        let env_value = std::env::var("OPENZ_WEB_SEARCH_POLICY")
+            .ok()
+            .filter(|v| !v.trim().is_empty());
+        let configured = crate::tools::searchxyz::get_server()
+            .config
+            .search_policy
+            .as_str();
+        let raw = value.or(env_value.as_deref()).unwrap_or(configured);
         match raw.trim().to_ascii_lowercase().as_str() {
             "native_then_browser" | "browser_fallback" | "native-browser" | "native_browser" => {
                 Self::NativeThenBrowser
@@ -114,7 +124,7 @@ fn result_term_coverage(result: &Value, terms: &[String]) -> usize {
     terms.iter().filter(|term| haystack.contains(*term)).count()
 }
 
-fn searchxyz_results_to_json(results: Vec<crate::tools::searchxyz::core::search::SearchResult>) -> Vec<Value> {
+fn searchxyz_results_to_json(results: Vec<SearchResult>) -> Vec<Value> {
     results
         .into_iter()
         .map(|r| {
@@ -128,10 +138,51 @@ fn searchxyz_results_to_json(results: Vec<crate::tools::searchxyz::core::search:
         .collect()
 }
 
+fn extract_domain_list(arguments: &Value, keys: &[&str]) -> Vec<String> {
+    keys.iter()
+        .find_map(|key| arguments.get(*key))
+        .map(|val| match val {
+            Value::Array(items) => items
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string)
+                .collect(),
+            Value::String(csv) => csv
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(ToString::to_string)
+                .collect(),
+            _ => Vec::new(),
+        })
+        .unwrap_or_default()
+}
+
+pub(crate) fn build_search_query(query: &str, arguments: &Value) -> SearchQuery {
+    let max_results = crate::tools::arguments::extract_u64_arg(
+        arguments,
+        &["max_results", "maxResults", "num_results", "count"],
+    )
+    .map(|v| v.clamp(1, 20) as usize)
+    .unwrap_or(10);
+
+    let mut sq = SearchQuery::new(query, max_results);
+    sq.include_domains = extract_domain_list(arguments, &["include_domains", "includeDomains"]);
+    sq.exclude_domains = extract_domain_list(arguments, &["exclude_domains", "excludeDomains"]);
+    sq.merge_backends = crate::tools::arguments::get_bool_arg(
+        arguments,
+        &["merge_backends", "mergeBackends"],
+        false,
+    );
+    sq
+}
+
 fn web_search_should_auto_read_top_results(query: &str, arguments: &Value) -> bool {
     crate::tools::arguments::extract_bool_arg(
         arguments,
-        &["read_top_results", "readTopResults"],
+        &["read_top_results", "readTopResults", "auto_read", "autoRead"],
     )
     .unwrap_or_else(|| {
         let normalized = query.to_ascii_lowercase();
@@ -228,6 +279,61 @@ fn browser_search_value_to_web_search_result(value: Value) -> Value {
     }
 }
 
+async fn attach_top_result_reads(results: Vec<Value>, query: &str, arguments: &Value) -> Value {
+    let should_read = web_search_should_auto_read_top_results(query, arguments);
+    let max_pages = web_search_auto_read_max_pages(arguments, should_read);
+    match max_pages == 0 || results.is_empty() {
+        true => Value::Array(results),
+        false => {
+            let server = crate::tools::searchxyz::get_server();
+            let candidate_urls: Vec<String> = results
+                .iter()
+                .filter_map(|item| item.get("url").and_then(|u| u.as_str()))
+                .filter(|u| !u.trim().is_empty())
+                .take(max_pages)
+                .map(ToString::to_string)
+                .collect();
+
+            let read_futs = candidate_urls.into_iter().map(|url| async move {
+                match server
+                    .read_url(crate::tools::searchxyz::server::ReadUrlRequest {
+                        url: url.clone(),
+                        depth: Some(1),
+                        render_js: Some(false),
+                        cache_mode: None,
+                        save_mode: None,
+                        include_diagnostics: Some(false),
+                        max_chars: Some(8_000),
+                    })
+                    .await
+                {
+                    Ok(markdown) => (!markdown.trim().is_empty()).then(|| {
+                        json!({
+                            "status": "success",
+                            "url": url,
+                            "content": markdown,
+                        })
+                    }),
+                    Err(err) => {
+                        tracing::debug!(url = %url, error = ?err, "web_search auto-read skipped failed URL");
+                        None
+                    }
+                }
+            });
+
+            let read_results: Vec<Value> = join_all(read_futs).await.into_iter().flatten().collect();
+            match read_results.is_empty() {
+                true => Value::Array(results),
+                false => json!({
+                    "results": results,
+                    "read_count": read_results.len(),
+                    "read_results": read_results,
+                }),
+            }
+        }
+    }
+}
+
 fn web_search_archive_text(search_res: &Value) -> Option<String> {
     let results = search_res
         .as_array()
@@ -305,58 +411,12 @@ fn format_native_only_failure(native_error: Option<&str>) -> String {
         "Native web_search policy is active (`search_policy=native_only`); external search backends are disabled. {detail}
 
 Next steps:
-- Run `searchxyz_doctor` to inspect native backend health.
+- Run `diagnose_system` (alias `searchxyz_doctor`) to inspect native backend health.
 - Provider-free browser discovery is attempted automatically before this failure is returned.
 - Configure `SEARCHXYZ_SEARXNG_URL` for stronger private/native discovery.
 - Diagnostics are appended automatically unless `diagnose_on_failure=false` is set.
 - For one-off API/scraper fallback, call `web_search` with `search_policy=native_then_external`."
     )
-}
-
-fn extract_external_json_results(resp_json: &Value, snippet_key: &str) -> Option<Vec<Value>> {
-    let results = resp_json.get("results")?.as_array()?;
-    let mapped: Vec<Value> = results
-        .iter()
-        .map(|r| {
-            let title = r
-                .get("title")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string();
-            let url = r
-                .get("url")
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string();
-            let snippet = r
-                .get(snippet_key)
-                .and_then(|v| v.as_str())
-                .unwrap_or_default()
-                .to_string();
-            json!({
-                "title": title,
-                "url": url,
-                "snippet": snippet
-            })
-        })
-        .collect();
-    Some(mapped)
-}
-
-fn normalize_ddg_href(href: String) -> String {
-    let decoded = match href.find("uddg=") {
-        Some(pos) => percent_encoding::percent_decode_str(&href[pos + 5..])
-            .decode_utf8_lossy()
-            .into_owned(),
-        None => match href.starts_with("//") {
-            true => format!("https:{}", href),
-            false => href,
-        },
-    };
-    match decoded.find("&rut=") {
-        Some(pos) => decoded[..pos].to_string(),
-        None => decoded,
-    }
 }
 
 pub struct WebSearchTool {
@@ -375,6 +435,85 @@ impl WebSearchTool {
             client: crate::core::http::default_http_client(),
         }
     }
+
+    fn build_external_dispatcher(&self) -> SearchDispatcher {
+        let server = crate::tools::searchxyz::get_server();
+        let server_cfg = &server.config;
+        let timeout_secs = server_cfg.search.timeout_secs;
+        let mut backends: Vec<Box<dyn SearchBackend>> = Vec::new();
+
+        let websurfx_url = std::env::var("WEBSURFX_URL")
+            .ok()
+            .filter(|u| !u.trim().is_empty())
+            .or_else(|| {
+                server_cfg
+                    .websurfx_url
+                    .clone()
+                    .filter(|u| !u.trim().is_empty())
+            });
+        match websurfx_url {
+            Some(url) => {
+                backends.push(Box::new(WebsurfxBackend::new(
+                    self.client.clone(),
+                    Some(url),
+                    timeout_secs,
+                )));
+            }
+            None => {}
+        }
+
+        let tavily_key = std::env::var("TAVILY_API_KEY")
+            .ok()
+            .filter(|k| !k.trim().is_empty())
+            .or_else(|| {
+                server_cfg
+                    .tavily_api_key
+                    .clone()
+                    .filter(|k| !k.trim().is_empty())
+            });
+        match tavily_key {
+            Some(key) => {
+                backends.push(Box::new(TavilyBackend::new(
+                    self.client.clone(),
+                    Some(key),
+                    timeout_secs,
+                )));
+            }
+            None => {}
+        }
+
+        let exa_key = std::env::var("EXA_API_KEY")
+            .ok()
+            .filter(|k| !k.trim().is_empty())
+            .or_else(|| {
+                server_cfg
+                    .exa_api_key
+                    .clone()
+                    .filter(|k| !k.trim().is_empty())
+            });
+        match exa_key {
+            Some(key) => {
+                backends.push(Box::new(ExaBackend::new(
+                    self.client.clone(),
+                    Some(key),
+                    timeout_secs,
+                )));
+            }
+            None => {}
+        }
+
+        backends.push(Box::new(
+            DuckDuckGoBackend::new(self.client.clone())
+                .with_proxies(server.crawler.clients().to_vec())
+                .with_headless_enabled(server_cfg.headless.enabled),
+        ));
+        backends.push(Box::new(
+            MojeekBackend::new(self.client.clone())
+                .with_proxies(server.crawler.clients().to_vec()),
+        ));
+
+        SearchDispatcher::new(backends)
+    }
 }
 
 #[async_trait::async_trait]
@@ -384,7 +523,7 @@ impl Tool for WebSearchTool {
     }
 
     fn description(&self) -> &str {
-        "Perform a web search query and return a list of matching page titles, URLs, and snippets."
+        "Perform a multi-backend web search (with optional top-result page reading and domain filtering) and return matching titles, URLs, snippets, and extracted content."
     }
 
     fn parameters(&self) -> Value {
@@ -399,22 +538,40 @@ impl Tool for WebSearchTool {
                     "type": "string",
                     "description": "Optional domain or website to restrict search to (e.g. 'docs.rs', 'github.com'). Automatically appends site:<domain> to query."
                 },
+                "include_domains": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional allowlist of domains to keep in search results."
+                },
+                "exclude_domains": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional denylist of domains to exclude from search results."
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Maximum number of search results to return (default: 10, max: 20)."
+                },
+                "merge_backends": {
+                    "type": "boolean",
+                    "description": "Query all healthy search backends concurrently and merge results via Reciprocal Rank Fusion (default: false)."
+                },
                 "search_policy": {
                     "type": "string",
                     "enum": ["native_only", "native_then_browser", "native_then_external", "external_only"],
-                    "description": "Search backend policy. Default native_only uses the local stack: SearchXyz native discovery, native rescue, then browser discovery without Brave/SearXNG; native_then_external allows API/scraper fallback; external_only skips SearchXyz. Can also be set with OPENZ_WEB_SEARCH_POLICY."
+                    "description": "Search backend policy. Default native_only uses OpenZ's SearchXyz engine, native rescue, and provider-free BrowserBroker discovery; native_then_external allows API/scraper fallback; external_only skips native SearchXyz."
                 },
                 "diagnose_on_failure": {
                     "type": "boolean",
-                    "description": "When SearchXyz plus browser fallback fail, append searchxyz_doctor output to the error for actionable debugging. Defaults to true; set false to opt out."
+                    "description": "When search tiers fail, append SearchXyz diagnostics to the error for actionable debugging. Defaults to true; set false to opt out."
                 },
                 "read_top_results": {
                     "type": "boolean",
-                    "description": "Override automatic research-style page reading. By default, research/latest/compare/summarize queries read top browser-discovered pages."
+                    "description": "Automatically fetch and extract Markdown from the top matching result URLs. Defaults to true for research/latest/compare/summarize queries."
                 },
                 "max_pages": {
                     "type": "integer",
-                    "description": "Maximum browser-discovered result pages to read for research-style queries (default: 3, max: 5)."
+                    "description": "Maximum top result pages to read when read_top_results is active (default: 3, max: 5)."
                 }
             },
             "required": ["query"]
@@ -443,12 +600,16 @@ impl Tool for WebSearchTool {
 }
 
 impl WebSearchTool {
-    async fn try_native_search(&self, query: &str, policy: WebSearchPolicy) -> (Option<Value>, Option<String>) {
+    async fn try_native_search(
+        &self,
+        query: &str,
+        arguments: &Value,
+        policy: WebSearchPolicy,
+    ) -> (Option<Vec<Value>>, Option<String>) {
         match policy.allows_native() {
             false => (None, None),
             true => {
-                let search_query =
-                    crate::tools::searchxyz::core::search::SearchQuery::new(query, 10);
+                let search_query = build_search_query(query, arguments);
                 match crate::tools::searchxyz::get_server()
                     .dispatcher
                     .search(&search_query)
@@ -459,13 +620,14 @@ impl WebSearchTool {
                         match search_results.is_empty() {
                             true => (None, None),
                             false => {
-                                match native_search_results_need_merge_retry(query, &search_results)
-                                {
+                                let should_retry_merge = !search_query.merge_backends
+                                    && native_search_results_need_merge_retry(
+                                        query,
+                                        &search_results,
+                                    );
+                                match should_retry_merge {
                                     true => {
-                                        let mut merged_query =
-                                            crate::tools::searchxyz::core::search::SearchQuery::new(
-                                                query, 10,
-                                            );
+                                        let mut merged_query = search_query.clone();
                                         merged_query.merge_backends = true;
                                         match crate::tools::searchxyz::get_server()
                                             .dispatcher
@@ -473,15 +635,12 @@ impl WebSearchTool {
                                             .await
                                         {
                                             Ok(merged_results) => {
-                                                let merged_results =
+                                                let merged_json =
                                                     searchxyz_results_to_json(merged_results);
-                                                match merged_results.is_empty() {
+                                                match merged_json.is_empty() {
                                                     false => {
-                                                        tracing::info!(query = %query, "SearchXyz first native results looked weak; returned merged backend results");
-                                                        return (
-                                                            Some(Value::Array(merged_results)),
-                                                            None,
-                                                        );
+                                                        tracing::info!(query = %query, "SearchXyz first native results looked weak; returned RRF-merged backend results");
+                                                        return (Some(merged_json), None);
                                                     }
                                                     true => {}
                                                 }
@@ -493,7 +652,7 @@ impl WebSearchTool {
                                     }
                                     false => {}
                                 }
-                                (Some(Value::Array(search_results)), None)
+                                (Some(search_results), None)
                             }
                         }
                     }
@@ -511,9 +670,9 @@ impl WebSearchTool {
             WebSearchPolicy::parse(arguments.get("search_policy").and_then(|v| v.as_str()));
         let diagnose_on_failure = web_search_should_diagnose_on_failure(arguments);
 
-        let (native_hit, native_error) = self.try_native_search(query, policy).await;
+        let (native_hit, native_error) = self.try_native_search(query, arguments, policy).await;
         match native_hit {
-            Some(hit) => return Ok(hit),
+            Some(results) => return Ok(attach_top_result_reads(results, query, arguments).await),
             None => {}
         }
 
@@ -521,7 +680,9 @@ impl WebSearchTool {
             true => {
                 let rescue_results = native_rescue_results(query);
                 match rescue_results.is_empty() {
-                    false => return Ok(Value::Array(rescue_results)),
+                    false => {
+                        return Ok(attach_top_result_reads(rescue_results, query, arguments).await)
+                    }
                     true => {}
                 }
             }
@@ -572,261 +733,46 @@ impl WebSearchTool {
             false => {
                 let mut message = format_native_only_failure(native_error.as_deref());
                 match diagnose_on_failure {
-                    true => match crate::tools::searchxyz::web::build_searchxyz_doctor_report(false).await {
-                        Ok(report) => {
-                            message.push_str("\n\n---\n");
-                            message.push_str(&report);
+                    true => {
+                        match crate::tools::searchxyz::doctor_report::build_searchxyz_doctor_report(
+                            false,
+                        )
+                        .await
+                        {
+                            Ok(report) => {
+                                message.push_str("\n\n---\n");
+                                message.push_str(&report);
+                            }
+                            Err(err) => {
+                                message.push_str(&format!(
+                                    "\n\nSearchXyz doctor failed while building diagnostics: {err}"
+                                ));
+                            }
                         }
-                        Err(err) => {
-                            message.push_str(&format!(
-                                "\n\nSearchXyz doctor failed while building diagnostics: {err}"
-                            ));
-                        }
-                    },
+                    }
                     false => {}
                 }
                 return Err(anyhow!(message));
             }
         }
 
-        // 1. Try Websurfx Local/Private Search Engine API (if WEBSURFX_URL is set)
-        match std::env::var("WEBSURFX_URL")
-            .ok()
-            .filter(|url| !url.trim().is_empty())
-        {
-            Some(websurfx_url) => {
-                let base = websurfx_url.trim().trim_end_matches('/');
-                let encoded_query = percent_encoding::utf8_percent_encode(
-                    query,
-                    percent_encoding::NON_ALPHANUMERIC,
-                )
-                .to_string();
-                let url = format!("{}/?q={}&json=true", base, encoded_query);
+        let external_dispatcher = self.build_external_dispatcher();
+        let search_query = build_search_query(query, arguments);
+        let external_results = external_dispatcher
+            .search(&search_query)
+            .await
+            .map_err(|err| anyhow!("All external search backends failed: {err}"))?;
 
-                let res = self.client.get(&url).send().await?;
-                match res.status().is_success() {
-                    true => {
-                        let resp_json: Value = res.json().await?;
-                        match extract_external_json_results(&resp_json, "content")
-                            .filter(|r| !r.is_empty())
-                        {
-                            Some(search_results) => return Ok(Value::Array(search_results)),
-                            None => {}
-                        }
-                    }
-                    false => {}
-                }
-            }
-            None => {}
+        let mapped = searchxyz_results_to_json(external_results);
+        match mapped.is_empty() {
+            true => Err(anyhow!(
+                "Search returned no results from any available external search engine."
+            )),
+            false => Ok(attach_top_result_reads(mapped, query, arguments).await),
         }
-
-        // 2. Try Tavily Search API
-        match std::env::var("TAVILY_API_KEY")
-            .ok()
-            .filter(|key| !key.trim().is_empty())
-        {
-            Some(tavily_key) => {
-                let body = json!({
-                    "api_key": tavily_key,
-                    "query": query,
-                    "search_depth": "basic",
-                    "max_results": 5
-                });
-                let res = self
-                    .client
-                    .post("https://api.tavily.com/search")
-                    .json(&body)
-                    .send()
-                    .await?;
-
-                match res.status().is_success() {
-                    true => {
-                        let resp_json: Value = res.json().await?;
-                        match extract_external_json_results(&resp_json, "content") {
-                            Some(search_results) => return Ok(Value::Array(search_results)),
-                            None => {}
-                        }
-                    }
-                    false => {}
-                }
-            }
-            None => {}
-        }
-
-        // 3. Try Exa Search API
-        match std::env::var("EXA_API_KEY")
-            .ok()
-            .filter(|key| !key.trim().is_empty())
-        {
-            Some(exa_key) => {
-                let body = json!({
-                    "query": query,
-                    "numResults": 5,
-                    "useAutoprompt": true
-                });
-                let res = self
-                    .client
-                    .post("https://api.exa.ai/search")
-                    .header("x-api-key", exa_key)
-                    .json(&body)
-                    .send()
-                    .await?;
-
-                match res.status().is_success() {
-                    true => {
-                        let resp_json: Value = res.json().await?;
-                        match extract_external_json_results(&resp_json, "text") {
-                            Some(search_results) => return Ok(Value::Array(search_results)),
-                            None => {}
-                        }
-                    }
-                    false => {}
-                }
-            }
-            None => {}
-        }
-
-        // 4. Fallback to DuckDuckGo scraping
-        let mut search_results = Vec::new();
-        let res = self.client.get("https://html.duckduckgo.com/html/")
-            .query(&[("q", query)])
-            .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-            .send()
-            .await;
-
-        match res {
-            Ok(response) => match response.status().is_success() {
-                true => match response.text().await {
-                    Ok(html_content) => {
-                        let document = Html::parse_document(&html_content);
-                        match (
-                            Selector::parse(".result"),
-                            Selector::parse(".result__title .result__a"),
-                            Selector::parse(".result__snippet"),
-                        ) {
-                            (Ok(result_selector), Ok(title_selector), Ok(snippet_selector)) => {
-                                for element in document.select(&result_selector) {
-                                    let title = element
-                                        .select(&title_selector)
-                                        .next()
-                                        .map(|e| e.text().collect::<String>().trim().to_string())
-                                        .unwrap_or_default();
-
-                                    let href = element
-                                        .select(&title_selector)
-                                        .next()
-                                        .and_then(|e| e.value().attr("href"))
-                                        .map(|s| s.to_string())
-                                        .unwrap_or_default();
-
-                                    let snippet = element
-                                        .select(&snippet_selector)
-                                        .next()
-                                        .map(|e| e.text().collect::<String>().trim().to_string())
-                                        .unwrap_or_default();
-
-                                    let _ = (!title.is_empty() && !href.is_empty()).then(|| {
-                                        let clean_url = normalize_ddg_href(href);
-                                        search_results.push(json!({
-                                            "title": title,
-                                            "url": clean_url,
-                                            "snippet": snippet
-                                        }));
-                                    });
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    Err(_) => {}
-                },
-                false => {}
-            },
-            Err(_) => {}
-        }
-
-        // 5. Try Mojeek scraping if DuckDuckGo fails or returns no results
-        match search_results.is_empty() {
-            true => {
-                tracing::warn!("DuckDuckGo search returned no results, falling back to Mojeek");
-                let res = self.client.get("https://www.mojeek.com/search")
-                    .query(&[("q", query)])
-                    .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                    .send()
-                    .await;
-
-                match res {
-                    Ok(response) => match response.status().is_success() {
-                        true => match response.text().await {
-                            Ok(html_content) => {
-                                let document = Html::parse_document(&html_content);
-                                match (
-                                    Selector::parse("li"),
-                                    Selector::parse("a.title"),
-                                    Selector::parse("p.s"),
-                                ) {
-                                    (Ok(li_selector), Ok(title_selector), Ok(snippet_selector)) => {
-                                        for element in document.select(&li_selector) {
-                                            let title_node = element.select(&title_selector).next();
-                                            let snippet_node =
-                                                element.select(&snippet_selector).next();
-
-                                            let _ = title_node.map(|tn| {
-                                                let title = tn
-                                                    .text()
-                                                    .collect::<String>()
-                                                    .trim()
-                                                    .to_string();
-                                                let href = tn
-                                                    .value()
-                                                    .attr("href")
-                                                    .map(|s| s.to_string())
-                                                    .unwrap_or_default();
-                                                let snippet = snippet_node
-                                                    .map(|e| {
-                                                        e.text()
-                                                            .collect::<String>()
-                                                            .trim()
-                                                            .to_string()
-                                                    })
-                                                    .unwrap_or_default();
-
-                                                let _ = (!title.is_empty() && !href.is_empty())
-                                                    .then(|| {
-                                                        search_results.push(json!({
-                                                            "title": title,
-                                                            "url": href,
-                                                            "snippet": snippet
-                                                        }));
-                                                    });
-                                            });
-                                        }
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            Err(_) => {}
-                        },
-                        false => {}
-                    },
-                    Err(_) => {}
-                }
-            }
-            false => {}
-        }
-
-        (!search_results.is_empty())
-            .then_some(Value::Array(search_results))
-            .ok_or_else(|| {
-                anyhow!(
-                    "All enabled external web search backends (Websurfx, Tavily, Exa, DuckDuckGo, Mojeek) failed or returned no results. Current policy: {}.",
-                    policy.as_str()
-                )
-            })
     }
 }
 
 #[cfg(test)]
 #[path = "web_search_tests.rs"]
 mod tests;
-

@@ -1,11 +1,17 @@
+use crate::memory::with_shared_db as with_db;
+use crate::tools::arguments::{get_bool_arg, get_u64_arg};
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
 use rusqlite::params;
 use serde_json::{json, Value};
 
-use crate::memory::with_shared_db as with_db;
 use super::db::get_db_mutex;
-use super::embeddings::{cosine_similarity, get_cloud_embeddings_batch, get_embedding, with_model};
+use super::embeddings::{get_cloud_embeddings_batch, get_embedding, with_model};
+use super::research_bundle::{
+    clear_indexed_research, delete_indexed_source, encode_embedding_blob,
+    export_research_bundle_filtered, import_research_bundle, list_indexed_sources,
+    search_research_hybrid, ResearchSearchMode,
+};
 
 fn flush_research_chunk(
     query: &str,
@@ -87,53 +93,121 @@ pub fn chunk_content_by_headings(query: &str, content: &str) -> Vec<(String, Str
     chunks
 }
 
-pub async fn archive_research_entry(query: &str, content: &str, source: &str) -> Result<()> {
-    let chunks = chunk_content_by_headings(query, content);
-    for (chunk_query, chunk_content) in chunks {
-        let embedding = get_embedding(&chunk_query, false)
-            .await
-            .unwrap_or_else(|e| {
-                tracing::error!(
-                    "Failed to generate embedding for research archive chunk: {:?}",
-                    e
-                );
-                Vec::new()
-            });
+fn infer_url_from_source(source: &str, explicit_url: Option<&str>) -> String {
+    explicit_url
+        .map(str::trim)
+        .filter(|u| !u.is_empty())
+        .map(ToString::to_string)
+        .or_else(|| {
+            source
+                .strip_prefix("web_fetch: ")
+                .map(|u| u.trim().to_string())
+        })
+        .or_else(|| {
+            (source.starts_with("http://") || source.starts_with("https://"))
+                .then(|| source.trim().to_string())
+        })
+        .unwrap_or_default()
+}
 
-        match embedding.is_empty() {
-            true => {
-                tracing::warn!(
-                    "Skipping research archive chunk (empty embedding): {}",
-                    chunk_query
-                );
-                continue;
+pub async fn archive_research_entry_with_meta(
+    query: &str,
+    title: &str,
+    content: &str,
+    source: &str,
+    explicit_url: Option<&str>,
+) -> Result<usize> {
+    let resolved_url = infer_url_from_source(source, explicit_url);
+    let resolved_title = match title.trim().is_empty() {
+        true => query.trim(),
+        false => title.trim(),
+    };
+    let chunks = chunk_content_by_headings(query, content);
+    let mut stored_chunks = 0usize;
+
+    let mut prepared_rows = Vec::with_capacity(chunks.len());
+    for (chunk_query, chunk_content) in chunks {
+        let embed_input = format!("{chunk_query}\n{}", chunk_content.chars().take(600).collect::<String>());
+        let embedding = get_embedding(&embed_input, false).await.unwrap_or_default();
+        let blob = encode_embedding_blob(&embedding);
+        let legacy_json = serde_json::to_string(&embedding)?;
+        prepared_rows.push((chunk_query, chunk_content, legacy_json, blob));
+    }
+
+    let _lock = get_db_mutex().lock().await;
+    with_db(|conn| {
+        let tx = conn.transaction()?;
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        match resolved_url.is_empty() {
+            false => {
+                tx.execute(
+                    "DELETE FROM research_archive_fts WHERE entry_id IN (SELECT id FROM research_archive WHERE url = ?1 AND source = ?2)",
+                    params![resolved_url, source],
+                )?;
+                tx.execute(
+                    "DELETE FROM research_archive WHERE url = ?1 AND source = ?2",
+                    params![resolved_url, source],
+                )?;
             }
-            false => {}
+            true => {}
         }
 
-        let timestamp = chrono::Utc::now().to_rfc3339();
-        let id = uuid::Uuid::new_v4().to_string();
-        let embedding_json = serde_json::to_string(&embedding)?;
-
-        let _lock = get_db_mutex().lock().await;
-        with_db(|conn| {
-            conn.execute(
-                "INSERT OR REPLACE INTO research_archive (id, query, content, source, timestamp, embedding)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                params![id, chunk_query, chunk_content, source, timestamp, embedding_json],
+        for (chunk_query, chunk_content, legacy_json, blob) in &prepared_rows {
+            let id = uuid::Uuid::new_v4().to_string();
+            tx.execute(
+                "INSERT OR REPLACE INTO research_archive (id, query, title, content, url, source, timestamp, embedding, embedding_blob)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    id,
+                    chunk_query,
+                    resolved_title,
+                    chunk_content,
+                    resolved_url,
+                    source,
+                    timestamp,
+                    legacy_json,
+                    blob
+                ],
             )?;
-            Ok(())
-        })?;
-    }
+            tx.execute(
+                "INSERT INTO research_archive_fts (entry_id, query, title, content, url, source)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    id,
+                    chunk_query,
+                    resolved_title,
+                    chunk_content,
+                    resolved_url,
+                    source
+                ],
+            )?;
+            stored_chunks += 1;
+        }
+        tx.commit()?;
+        Ok(())
+    })?;
+
+    Ok(stored_chunks)
+}
+
+pub async fn archive_research_entry(query: &str, content: &str, source: &str) -> Result<()> {
+    let _ = archive_research_entry_with_meta(query, query, content, source, None).await?;
     Ok(())
 }
 
 pub async fn archive_research_entries(entries: Vec<(String, String, String)>) -> Result<()> {
     let mut all_chunks = Vec::new();
     for (query, content, source) in entries {
+        let resolved_url = infer_url_from_source(&source, None);
         let chunks = chunk_content_by_headings(&query, &content);
         for (chunk_query, chunk_content) in chunks {
-            all_chunks.push((chunk_query, chunk_content, source.clone()));
+            all_chunks.push((
+                chunk_query,
+                query.clone(),
+                chunk_content,
+                resolved_url.clone(),
+                source.clone(),
+            ));
         }
     }
 
@@ -149,16 +223,17 @@ pub async fn archive_research_entries(entries: Vec<(String, String, String)>) ->
         .map(|e| e.mode.as_str())
         .unwrap_or("local");
 
-    let mut all_embeddings = Vec::new();
+    let mut all_embeddings = Vec::with_capacity(all_chunks.len());
     for chunk_group in all_chunks.chunks(128) {
-        let queries_to_embed: Vec<String> = chunk_group.iter().map(|(q, _, _)| q.clone()).collect();
+        let queries_to_embed: Vec<String> = chunk_group
+            .iter()
+            .map(|(q, _, c, _, _)| format!("{q}\n{}", c.chars().take(500).collect::<String>()))
+            .collect();
 
         let mut embeds = None;
         match mode != "local" {
             true => match get_cloud_embeddings_batch(queries_to_embed.clone(), false).await {
-                Ok(res) => {
-                    embeds = Some(res);
-                }
+                Ok(res) => embeds = Some(res),
                 Err(e) => match mode {
                     "cloud_only" => {
                         return Err(anyhow::anyhow!(
@@ -177,55 +252,66 @@ pub async fn archive_research_entries(entries: Vec<(String, String, String)>) ->
             false => {}
         }
 
-        let embeds = match embeds {
+        let resolved_embeds = match embeds {
             Some(res) => res,
             None => {
-                tokio::task::spawn_blocking(move || -> Result<Vec<Vec<f32>>> {
+                let count = queries_to_embed.len();
+                tokio::task::spawn_blocking(move || -> Vec<Vec<f32>> {
                     with_model(|model| {
-                        let refs: Vec<&str> = queries_to_embed.iter().map(|s| s.as_str()).collect();
-                        let formatted_refs: Vec<String> =
-                            refs.iter().map(|s| format!("passage: {}", s)).collect();
-                        let formatted_slices: Vec<&str> =
-                            formatted_refs.iter().map(|s| s.as_str()).collect();
-
-                        let embeds = model.embed(formatted_slices, None)?;
-                        Ok(embeds)
+                        let formatted: Vec<String> = queries_to_embed
+                            .iter()
+                            .map(|s| format!("passage: {s}"))
+                            .collect();
+                        let slices: Vec<&str> = formatted.iter().map(String::as_str).collect();
+                        model.embed(slices, None)
                     })
+                    .unwrap_or_else(|_| vec![Vec::new(); count])
                 })
-                .await??
+                .await
+                .unwrap_or_else(|_| vec![Vec::new(); count])
             }
         };
 
-        all_embeddings.extend(embeds);
+        all_embeddings.extend(resolved_embeds);
     }
 
     let _lock = get_db_mutex().lock().await;
     with_db(|conn| {
         let tx = conn.transaction()?;
         let timestamp = chrono::Utc::now().to_rfc3339();
-
         {
             let mut stmt = tx.prepare(
-                "INSERT OR REPLACE INTO research_archive (id, query, content, source, timestamp, embedding)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+                "INSERT OR REPLACE INTO research_archive (id, query, title, content, url, source, timestamp, embedding, embedding_blob)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            )?;
+            let mut fts_stmt = tx.prepare(
+                "INSERT INTO research_archive_fts (entry_id, query, title, content, url, source)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             )?;
 
-            for (idx, (chunk_query, chunk_content, source)) in all_chunks.into_iter().enumerate() {
-                let embedding = &all_embeddings[idx];
+            for (idx, (chunk_query, title, chunk_content, url, source)) in
+                all_chunks.into_iter().enumerate()
+            {
+                let empty_vec = Vec::new();
+                let embedding = all_embeddings.get(idx).unwrap_or(&empty_vec);
                 let id = uuid::Uuid::new_v4().to_string();
                 let embedding_json = serde_json::to_string(embedding)?;
+                let blob = encode_embedding_blob(embedding);
 
                 stmt.execute(params![
                     id,
                     chunk_query,
+                    title,
                     chunk_content,
+                    url,
                     source,
                     timestamp,
-                    embedding_json
+                    embedding_json,
+                    blob
                 ])?;
+                fts_stmt.execute(params![id, chunk_query, title, chunk_content, url, source])?;
             }
         }
-
         tx.commit()?;
         Ok(())
     })?;
@@ -233,81 +319,59 @@ pub async fn archive_research_entries(entries: Vec<(String, String, String)>) ->
 }
 
 pub async fn search_research_entries(query: &str, top_k: usize) -> Result<Value> {
-    let query_embed = get_embedding(query, true).await.unwrap_or_default();
-    let query_lower = query.to_lowercase();
-
-    let _lock = get_db_mutex().lock().await;
-    let entries = with_db(|conn| {
-        let mut stmt = conn.prepare("SELECT id, query, content, source, timestamp, embedding FROM research_archive LIMIT 1000")?;
-        let mapped = stmt.query_map([], |row| {
-            let embedding_str: String = row.get(5)?;
-            let embedding: Vec<f32> = serde_json::from_str(&embedding_str).unwrap_or_default();
-            Ok(json!({
-                "id": row.get::<_, String>(0)?,
-                "query": row.get::<_, String>(1)?,
-                "content": row.get::<_, String>(2)?,
-                "source": row.get::<_, String>(3)?,
-                "timestamp": row.get::<_, String>(4)?,
-                "embedding": embedding,
-            }))
-        })?;
-        let mut collected = Vec::new();
-        for item in mapped {
-            collected.push(item?);
-        }
-        Ok(collected)
-    })?;
-
-    let mut scored_results = Vec::new();
-    for entry in entries {
-        let entry_query = entry["query"].as_str().unwrap_or_default();
-        let entry_content = entry["content"].as_str().unwrap_or_default();
-        let entry_embed: Vec<f32> =
-            serde_json::from_value(entry["embedding"].clone()).unwrap_or_default();
-
-        let sim = match !query_embed.is_empty() && !entry_embed.is_empty() {
-            true => cosine_similarity(&query_embed, &entry_embed),
-            false => 0.0,
-        };
-
-        let query_lower_entry = entry_query.to_lowercase();
-        let content_lower_entry = entry_content.to_lowercase();
-        let keyword_match = query_lower_entry.contains(&query_lower)
-            || content_lower_entry.contains(&query_lower)
-            || query_lower.contains(&query_lower_entry);
-
-        let final_score = match keyword_match {
-            true => sim * 0.7 + 0.3,
-            false => sim * 0.7,
-        };
-
-        match final_score > 0.15 || keyword_match {
-            true => scored_results.push((final_score, entry)),
-            false => {}
-        }
-    }
-
-    scored_results.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-
-    let selected: Vec<Value> = scored_results
-        .into_iter()
-        .take(top_k)
-        .map(|(score, mut entry)| {
-            match entry.as_object_mut() {
-                Some(obj) => {
-                    obj.insert("score".to_string(), json!(score));
-                    obj.remove("embedding");
-                }
-                None => {}
-            }
-            entry
-        })
-        .collect();
-
-    Ok(Value::Array(selected))
+    let results =
+        search_research_hybrid(query, top_k, ResearchSearchMode::Hybrid, None, None).await?;
+    Ok(Value::Array(results))
 }
 
-// 4. ArchiveResearchTool
+fn infer_archive_action(arguments: &Value) -> &'static str {
+    let explicit = ["action", "op", "operation", "cmd"]
+        .into_iter()
+        .find_map(|k| arguments.get(k).and_then(Value::as_str))
+        .map(|s| s.trim().to_ascii_lowercase());
+
+    match explicit.as_deref() {
+        Some("archive" | "index" | "save" | "store") => "archive",
+        Some("delete" | "delete_source" | "remove_source" | "remove") => "delete_source",
+        Some("clear" | "clear_index" | "purge") => "clear_index",
+        Some("export" | "export_bundle" | "export_research") => "export_bundle",
+        Some("import" | "import_bundle" | "import_research") => "import_bundle",
+        Some("list" | "list_sources" | "sources") => "list_sources",
+        _ => {
+            let has_content = ["content", "markdown", "text", "body"]
+                .into_iter()
+                .any(|k| arguments.get(k).and_then(Value::as_str).is_some_and(|s| !s.is_empty()));
+            let has_file_path = [
+                "file_path",
+                "filePath",
+                "path",
+                "bundle_path",
+                "bundlePath",
+                "output_path",
+                "outputPath",
+                "input_path",
+                "inputPath",
+            ]
+            .into_iter()
+            .any(|k| arguments.get(k).and_then(Value::as_str).is_some_and(|s| !s.is_empty()));
+            let has_merge = arguments.get("merge").is_some();
+            let has_delete_target = ["url_or_prefix", "urlOrPrefix", "prefix"]
+                .into_iter()
+                .any(|k| arguments.get(k).and_then(Value::as_str).is_some_and(|s| !s.is_empty()));
+            let has_confirm = arguments.get("confirm").is_some();
+
+            match (has_content, has_file_path, has_merge, has_delete_target, has_confirm) {
+                (true, _, _, _, _) => "archive",
+                (false, true, true, _, _) => "import_bundle",
+                (false, true, false, _, _) => "export_bundle",
+                (false, false, _, true, _) => "delete_source",
+                (false, false, _, false, true) => "clear_index",
+                _ => "archive",
+            }
+        }
+    }
+}
+
 pub struct ArchiveResearchTool;
 
 #[async_trait::async_trait]
@@ -317,54 +381,169 @@ impl Tool for ArchiveResearchTool {
     }
 
     fn description(&self) -> &str {
-        "Archive successful research results (e.g., scrape content, web searches, codebase mappings) to the local persistent knowledge base cache."
+        "Archive research content into the unified SQLite FTS5 + vector knowledge base, or manage indexed sources (delete_source, clear_index, export_bundle, import_bundle)."
     }
 
     fn parameters(&self) -> Value {
         json!({
             "type": "object",
             "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["archive", "list_sources", "delete_source", "clear_index", "export_bundle", "import_bundle"],
+                    "description": "Operation to run (default: 'archive'; auto-inferred for legacy bundle/cleanup calls)."
+                },
                 "query": {
                     "type": "string",
-                    "description": "The query, search topic, or file path describing the research."
+                    "description": "Query, title, or topic describing the research (aliases: title, topic)."
                 },
                 "content": {
                     "type": "string",
-                    "description": "The full plain text content or findings to archive."
+                    "description": "Plain text or Markdown content to archive (aliases: markdown, text)."
                 },
                 "source": {
                     "type": "string",
-                    "description": "The source of the research content (e.g. 'web_fetch: URL', 'web_search', 'local_file')."
+                    "description": "Origin tag (e.g. 'web_fetch: URL', 'github', 'manual'). Defaults to 'manual'."
+                },
+                "url": {
+                    "type": "string",
+                    "description": "Optional canonical source URL associated with the content."
+                },
+                "url_or_prefix": {
+                    "type": "string",
+                    "description": "Exact URL or URL prefix to remove when action='delete_source'."
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Explicit boolean true required for destructive delete_source or clear_index actions."
+                },
+                "file_path": {
+                    "type": "string",
+                    "description": "Validated filesystem path for export_bundle or import_bundle (aliases: bundle_path, path, output_path, input_path)."
+                },
+                "source_filter": {
+                    "type": "string",
+                    "description": "Optional source/domain/topic substring filter for list_sources or export_bundle (e.g. 'tokio.rs', 'github')."
+                },
+                "url_prefix": {
+                    "type": "string",
+                    "description": "Optional URL prefix filter for export_bundle (e.g. 'https://tokio.rs/')."
+                },
+                "merge": {
+                    "type": "boolean",
+                    "description": "When importing a research bundle, merge into existing index (default: true)."
                 }
-            },
-            "required": ["query", "content", "source"]
+            }
         })
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let query = arguments
-            .get("query")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
-        let content = arguments
-            .get("content")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'content' parameter"))?;
-        let source = arguments
-            .get("source")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'source' parameter"))?;
+        match infer_archive_action(arguments) {
+            "list_sources" => {
+                let source_filter = ["source_filter", "sourceFilter", "source"]
+                    .into_iter()
+                    .find_map(|k| arguments.get(k).and_then(Value::as_str));
+                let limit = get_u64_arg(arguments, &["limit", "max_results", "top_k"], 50) as usize;
+                let sources = list_indexed_sources(source_filter, limit).await?;
+                Ok(json!({
+                    "status": "success",
+                    "count": sources.len(),
+                    "sources": sources,
+                }))
+            }
+            "delete_source" => {
+                let target = [
+                    "url_or_prefix",
+                    "urlOrPrefix",
+                    "prefix",
+                    "url",
+                    "uri",
+                    "source",
+                ]
+                .into_iter()
+                .find_map(|k| arguments.get(k).and_then(Value::as_str))
+                .ok_or_else(|| anyhow!("Missing 'url_or_prefix' parameter for delete_source"))?;
+                let confirm = get_bool_arg(arguments, &["confirm", "confirmed"], false);
+                delete_indexed_source(target, confirm).await
+            }
+            "clear_index" => {
+                let confirm = get_bool_arg(arguments, &["confirm", "confirmed"], false);
+                clear_indexed_research(confirm).await
+            }
+            "export_bundle" => {
+                let file_path = [
+                    "file_path",
+                    "filePath",
+                    "bundle_path",
+                    "bundlePath",
+                    "path",
+                    "output_path",
+                    "outputPath",
+                ]
+                .into_iter()
+                .find_map(|k| arguments.get(k).and_then(Value::as_str))
+                .ok_or_else(|| anyhow!("Missing 'file_path' (or 'bundle_path') parameter for export_bundle"))?;
+                let source_filter = ["source_filter", "sourceFilter", "domain_filter", "domainFilter"]
+                    .into_iter()
+                    .find_map(|k| arguments.get(k).and_then(Value::as_str));
+                let url_prefix = ["url_prefix", "urlPrefix"]
+                    .into_iter()
+                    .find_map(|k| arguments.get(k).and_then(Value::as_str));
+                export_research_bundle_filtered(file_path, source_filter, url_prefix).await
+            }
+            "import_bundle" => {
+                let file_path = [
+                    "file_path",
+                    "filePath",
+                    "bundle_path",
+                    "bundlePath",
+                    "path",
+                    "input_path",
+                    "inputPath",
+                ]
+                .into_iter()
+                .find_map(|k| arguments.get(k).and_then(Value::as_str))
+                .ok_or_else(|| anyhow!("Missing 'file_path' (or 'bundle_path') parameter for import_bundle"))?;
+                let merge = get_bool_arg(arguments, &["merge"], true);
+                import_research_bundle(file_path, merge).await
+            }
+            _ => {
+                let explicit_url = ["url", "uri"]
+                    .into_iter()
+                    .find_map(|k| arguments.get(k).and_then(Value::as_str));
+                let title = ["title", "name"]
+                    .into_iter()
+                    .find_map(|k| arguments.get(k).and_then(Value::as_str))
+                    .unwrap_or("");
+                let query = ["query", "topic", "title", "url"]
+                    .into_iter()
+                    .find_map(|k| arguments.get(k).and_then(Value::as_str))
+                    .filter(|s| !s.trim().is_empty())
+                    .ok_or_else(|| anyhow!("Missing 'query' or 'title' parameter"))?;
+                let content = ["content", "markdown", "text", "body"]
+                    .into_iter()
+                    .find_map(|k| arguments.get(k).and_then(Value::as_str))
+                    .ok_or_else(|| anyhow!("Missing 'content' parameter"))?;
+                let source = arguments
+                    .get("source")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or("manual");
 
-        archive_research_entry(query, content, source).await?;
+                let chunks =
+                    archive_research_entry_with_meta(query, title, content, source, explicit_url)
+                        .await?;
 
-        Ok(json!({
-            "status": "success",
-            "message": "Research content archived successfully to the local knowledge base."
-        }))
+                Ok(json!({
+                    "status": "success",
+                    "chunks_indexed": chunks,
+                    "message": "Research content archived to the unified SQLite FTS5 + vector knowledge base."
+                }))
+            }
+        }
     }
 }
 
-// 5. SearchResearchTool
 pub struct SearchResearchTool;
 
 #[async_trait::async_trait]
@@ -374,7 +553,7 @@ impl Tool for SearchResearchTool {
     }
 
     fn description(&self) -> &str {
-        "Search the local persistent research archive (knowledge base) using semantic similarity and keyword matching before attempting external web searches or page scraping."
+        "Search the unified local research archive using hybrid SQLite FTS5 BM25 + semantic vector RRF, or list indexed research sources."
     }
 
     fn parameters(&self) -> Value {
@@ -383,29 +562,84 @@ impl Tool for SearchResearchTool {
             "properties": {
                 "query": {
                     "type": "string",
-                    "description": "The query or search term to look up in the archive (e.g. error message, library docs, command usage)."
+                    "description": "Search query to look up in the local research archive (omit or set action='list_sources' to list indexed sources)."
                 },
                 "top_k": {
                     "type": "integer",
-                    "description": "Optional number of top matches to return (default 5)."
+                    "description": "Maximum number of top matches to return (default: 5, aliases: max_results, limit)."
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["hybrid", "semantic", "keyword"],
+                    "description": "Retrieval mode: hybrid FTS5+vector RRF (default), semantic, or keyword."
+                },
+                "source_filter": {
+                    "type": "string",
+                    "description": "Optional filter by source tag (e.g. 'github', 'web_fetch', 'spider')."
+                },
+                "url_prefix": {
+                    "type": "string",
+                    "description": "Optional URL prefix filter (e.g. 'https://docs.rs/tokio')."
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["search", "list_sources"],
+                    "description": "Optional action ('search' default, or 'list_sources')."
                 }
-            },
-            "required": ["query"]
+            }
         })
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let query = arguments
-            .get("query")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'query' parameter"))?;
-        let top_k = arguments.get("top_k").and_then(|v| v.as_u64()).unwrap_or(5) as usize;
+        let direct_query = arguments.as_str().map(str::trim);
+        let action = arguments
+            .get("action")
+            .and_then(Value::as_str)
+            .unwrap_or("search");
+        let query = direct_query.or_else(|| {
+            ["query", "q", "search", "term", "topic"]
+                .into_iter()
+                .find_map(|k| arguments.get(k).and_then(Value::as_str))
+        });
+        let source_filter = ["source_filter", "sourceFilter", "source"]
+            .into_iter()
+            .find_map(|k| arguments.get(k).and_then(Value::as_str));
+        let limit =
+            get_u64_arg(arguments, &["top_k", "max_results", "maxResults", "limit"], 5) as usize;
 
-        let matches = search_research_entries(query, top_k).await?;
+        let should_list = action.eq_ignore_ascii_case("list_sources")
+            || query.map(str::trim).unwrap_or("").is_empty();
 
-        Ok(json!({
-            "status": "success",
-            "matches": matches
-        }))
+        match should_list {
+            true => {
+                let list_cap = get_u64_arg(
+                    arguments,
+                    &["limit", "max_results", "maxResults", "top_k"],
+                    25,
+                ) as usize;
+                let sources = list_indexed_sources(source_filter, list_cap).await?;
+                Ok(json!({
+                    "status": "success",
+                    "count": sources.len(),
+                    "sources": sources,
+                }))
+            }
+            false => {
+                let q = query.unwrap_or_default();
+                let mode = ResearchSearchMode::parse(
+                    arguments.get("mode").and_then(Value::as_str),
+                );
+                let url_prefix = ["url_prefix", "urlPrefix"]
+                    .into_iter()
+                    .find_map(|k| arguments.get(k).and_then(Value::as_str));
+                let matches =
+                    search_research_hybrid(q, limit, mode, source_filter, url_prefix).await?;
+                Ok(json!({
+                    "status": "success",
+                    "count": matches.len(),
+                    "matches": matches,
+                }))
+            }
+        }
     }
 }

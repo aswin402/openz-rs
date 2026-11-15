@@ -322,6 +322,7 @@ impl Tool for DiagnoseSystemTool {
             "tool_outputs": dir_stat_json(&openz_dir.join("tool_outputs")),
             "traces": dir_stat_json(&openz_dir.join("traces")),
             "skills": dir_stat_json(&openz_dir.join("skills")),
+            "searchxyz_repos": dir_stat_json(&openz_dir.join("searchxyz/repos")),
         });
 
         let databases = serde_json::json!({
@@ -369,6 +370,8 @@ impl Tool for DiagnoseSystemTool {
             _ => {}
         }
 
+        let web_engine = crate::tools::searchxyz::doctor_report::build_web_engine_health_json();
+
         Ok(serde_json::json!({
             "status": "success",
             "system": {
@@ -378,6 +381,7 @@ impl Tool for DiagnoseSystemTool {
             },
             "directories": directories,
             "databases": databases,
+            "web_engine": web_engine,
             "network": network_status
         }))
     }

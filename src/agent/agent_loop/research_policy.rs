@@ -16,6 +16,22 @@ const CURRENT_OR_LATEST_TERMS: &[&str] = &[
     "news",
     "what's new",
     "whats new",
+    "stock",
+    "stocks",
+    "share price",
+    "stock price",
+    "market cap",
+    "ticker",
+    "quote",
+    "quotes",
+    "earnings",
+    "price",
+    "prices",
+    "pricing",
+    "exchange rate",
+    "weather",
+    "forecast",
+    "standings",
 ];
 
 const REVALIDATION_TERMS: &[&str] = &[
@@ -196,18 +212,36 @@ pub fn classify_research_failure(error: &str) -> ResearchFailureKind {
         .unwrap_or(ResearchFailureKind::Other)
 }
 
-pub fn text_has_http_url(text: &str) -> bool {
-    text.split_whitespace().any(|part| {
+pub fn extract_distinct_http_urls(text: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut urls = Vec::new();
+    for part in text.split_whitespace() {
         let candidate = part.trim_matches(|c: char| {
             matches!(
                 c,
-                '<' | '>' | ')' | '(' | ']' | '[' | '"' | '\'' | ',' | '.'
+                '<' | '>' | ')' | '(' | ']' | '[' | '"' | '\'' | ',' | '.' | ';'
             )
         });
-        reqwest::Url::parse(candidate)
-            .map(|url| matches!(url.scheme(), "http" | "https"))
-            .unwrap_or(false)
-    })
+        match reqwest::Url::parse(candidate) {
+            Ok(mut url) => match matches!(url.scheme(), "http" | "https") {
+                true => {
+                    url.set_fragment(None);
+                    let normalized = url.to_string();
+                    match seen.insert(normalized.clone()) {
+                        true => urls.push(normalized),
+                        false => {}
+                    }
+                }
+                false => {}
+            },
+            Err(_) => {}
+        }
+    }
+    urls
+}
+
+pub fn text_has_http_url(text: &str) -> bool {
+    !extract_distinct_http_urls(text).is_empty()
 }
 
 pub fn value_contains_http_url(value: &serde_json::Value) -> bool {

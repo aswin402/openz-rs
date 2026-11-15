@@ -97,6 +97,8 @@ fn test_diagnose_system() {
     assert!(res["databases"]["graph_memory"].is_object());
     assert!(res["databases"]["ccr_cache"].is_object());
     assert!(res["databases"]["thoughts"].is_object());
+    assert!(res["directories"]["searchxyz_repos"].is_object());
+    assert_eq!(res["web_engine"]["engine"], "searchxyz_native");
 }
 
 #[test]

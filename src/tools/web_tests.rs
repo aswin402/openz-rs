@@ -126,7 +126,7 @@ fn web_fetch_detects_js_shell_pages_for_browser_retry() {
 fn web_fetch_browser_render_uses_broker_order() {
     assert_eq!(
         web_fetch_browser_render_backend_names(),
-        ["gsd_browser", "firefox_browser", "obscura_browser"]
+        ["obscura_headless", "firefox_headless", "gsd_chrome_gui"]
     );
 }
 
@@ -159,10 +159,15 @@ fn web_fetch_browser_retry_can_be_disabled_explicitly() {
 
 #[tokio::test]
 async fn test_validate_url() {
-    assert!(validate_url("http://example.com").await.is_ok());
-    assert!(validate_url("https://google.com/search?q=rust")
+    assert!(validate_url("http://1.1.1.1").await.is_ok());
+    assert!(validate_url("https://[2001:db8::1]/search?q=rust")
         .await
         .is_ok());
+
+    match validate_url("http://example.com").await {
+        Ok(ip) => assert!(is_safe_ip(&ip)),
+        Err(err) => assert!(err.to_string().contains("DNS lookup failed")),
+    }
 
     assert!(validate_url("ftp://example.com").await.is_err());
     assert!(validate_url("http://127.0.0.1").await.is_err());
@@ -171,6 +176,32 @@ async fn test_validate_url() {
     assert!(validate_url("http://[::1]").await.is_err());
     assert!(validate_url("http://[fc00::1]").await.is_err());
     assert!(validate_url("http://[::ffff:127.0.0.1]").await.is_err());
+    assert!(validate_url("http://[::ffff:169.254.169.254]").await.is_err());
+}
+
+#[tokio::test]
+async fn test_web_fetch_offline_cache_hit_and_markdown_format() {
+    let url = "https://cached-webfetch.example/guide";
+    let html = r#"<html><head><title>OpenZ Guide</title></head><body><main><h1>Unified Engine</h1><p>Fast SQLite cache with <a href="https://docs.rs">Docs</a>.</p></main></body></html>"#;
+    let headers = reqwest::header::HeaderMap::new();
+    save_http_cache(url, url, html, "text/html", &headers, 200, 3600).unwrap();
+
+    let tool = WebFetchTool::new();
+    let plain = tool
+        .call(&serde_json::json!({ "url": url, "format": "text" }))
+        .await
+        .unwrap();
+    let plain_str = plain.as_str().unwrap_or_default();
+    assert!(plain_str.contains("Unified Engine"));
+    assert!(plain_str.contains("Fast SQLite cache"));
+
+    let md = tool
+        .call(&serde_json::json!({ "url": url, "format": "markdown" }))
+        .await
+        .unwrap();
+    let md_str = md.as_str().unwrap_or_default();
+    assert!(md_str.contains("Unified Engine"));
+    assert!(md_str.contains("https://docs.rs"));
 }
 
 #[test]
@@ -245,6 +276,57 @@ fn test_web_fetch_parameters_schema_includes_max_length() {
     let props = params["properties"].as_object().expect("properties object");
     assert!(props.contains_key("max_length"));
     assert!(props.contains_key("url"));
+    assert!(props.contains_key("urls"));
+}
+
+#[tokio::test]
+async fn test_web_fetch_batch_urls_concurrent_offline_cache() {
+    let url_a = "https://cached-batch.example/quote-a";
+    let url_b = "https://cached-batch.example/quote-b";
+    let headers = reqwest::header::HeaderMap::new();
+    save_http_cache(
+        url_a,
+        url_a,
+        r#"{"symbol":"AMD","price":185.5}"#,
+        "application/json",
+        &headers,
+        200,
+        3600,
+    )
+    .unwrap();
+    save_http_cache(
+        url_b,
+        url_b,
+        "<html><head><title>AMD Overview</title></head><body><p>Market Cap 300B</p></body></html>",
+        "text/html",
+        &headers,
+        200,
+        3600,
+    )
+    .unwrap();
+
+    let tool = WebFetchTool::new();
+    let res = tool
+        .call(&serde_json::json!({
+            "urls": [url_a, url_b, url_a]
+        }))
+        .await
+        .unwrap();
+
+    assert_eq!(res["status"], "success");
+    assert_eq!(res["fetched"], 2);
+    assert_eq!(res["failed"], 0);
+    let results = res["results"].as_array().expect("results array");
+    assert_eq!(results.len(), 2);
+    assert!(results[0]["content"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("185.5"));
+    assert_eq!(results[1]["title"], "AMD Overview");
+    assert!(results[1]["content"]
+        .as_str()
+        .unwrap_or_default()
+        .contains("Market Cap 300B"));
 }
 
 #[test]

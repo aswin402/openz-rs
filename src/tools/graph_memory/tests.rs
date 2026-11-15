@@ -434,3 +434,55 @@ async fn test_graph_memory_aliases_and_resilience() {
     RollbackDatabaseBranchTool.call(&json!({})).await.unwrap();
 }
 
+#[tokio::test]
+async fn test_search_nodes_multi_hop_depth() {
+    let _l = test_lock().lock().await;
+    let scope_id = unique_scope("test_multihop");
+
+    CreateEntitiesTool
+        .call(&json!({
+            "entities": [
+                { "name": "HopRootTokio", "entityType": "Crate", "observations": ["async runtime"] },
+                { "name": "HopMidMio", "entityType": "Crate", "observations": ["epoll reactor"] },
+                { "name": "HopLeafLibc", "entityType": "Crate", "observations": ["os bindings"] }
+            ],
+            "sessionId": scope_id
+        }))
+        .await
+        .unwrap();
+
+    CreateRelationsTool
+        .call(&json!({
+            "relations": [
+                { "from": "HopRootTokio", "to": "HopMidMio", "relationType": "depends_on" },
+                { "from": "HopMidMio", "to": "HopLeafLibc", "relationType": "depends_on" }
+            ],
+            "sessionId": scope_id
+        }))
+        .await
+        .unwrap();
+
+    let depth1 = SearchNodesTool
+        .call(&json!({ "query": "HopRootTokio", "depth": 1, "sessionId": scope_id }))
+        .await
+        .unwrap();
+    assert_eq!(depth1["depth"], 1);
+    assert_eq!(depth1["relations"].as_array().unwrap().len(), 1);
+
+    let depth2 = SearchNodesTool
+        .call(&json!({ "query": "HopRootTokio", "depth": 2, "sessionId": scope_id }))
+        .await
+        .unwrap();
+    assert_eq!(depth2["depth"], 2);
+    assert_eq!(depth2["relations"].as_array().unwrap().len(), 2);
+    let names: Vec<&str> = depth2["entities"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["name"].as_str())
+        .collect();
+    assert!(names.contains(&"HopMidMio"));
+    assert!(names.contains(&"HopLeafLibc"));
+}
+
+

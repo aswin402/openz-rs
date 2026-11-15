@@ -122,6 +122,12 @@ impl SourceLedger {
 fn attempted_source_label(arguments: &serde_json::Value) -> Option<String> {
     arguments
         .get("url")
+        .or_else(|| {
+            arguments
+                .get("urls")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.first())
+        })
         .or_else(|| arguments.get("query"))
         .and_then(|value| value.as_str())
         .map(str::trim)

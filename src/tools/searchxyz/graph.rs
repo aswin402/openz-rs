@@ -1,112 +1,10 @@
 use super::get_server;
+use crate::tools::searchxyz::server::ReadGithubRepoRequest;
 use crate::tools::Tool;
 use anyhow::Result;
-use crate::tools::searchxyz::server::{IndexRelationshipRequest, QueryGraphRequest, ReadGithubRepoRequest};
 use serde_json::{json, Value};
 
-// ── 9. Index Relationship ─────────────────────────────────────
-pub struct SearchXyzIndexRelationshipTool;
-
-#[async_trait::async_trait]
-impl Tool for SearchXyzIndexRelationshipTool {
-    fn name(&self) -> &str {
-        "searchxyz_index_relationship"
-    }
-
-    fn description(&self) -> &str {
-        "Manually index entity-relationship connections into the Knowledge Graph."
-    }
-
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "source": {
-                    "type": "string",
-                    "description": "Source entity name."
-                },
-                "source_type": {
-                    "type": "string",
-                    "description": "Source entity type/label."
-                },
-                "target": {
-                    "type": "string",
-                    "description": "Target entity name."
-                },
-                "target_type": {
-                    "type": "string",
-                    "description": "Target entity type/label."
-                },
-                "relationship": {
-                    "type": "string",
-                    "description": "Relationship verb (e.g. 'depends_on')."
-                }
-            },
-            "required": ["source", "source_type", "target", "target_type", "relationship"]
-        })
-    }
-
-    async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = arguments.clone();
-        super::map_field_alias(&mut normalized, "source", &["from", "src", "source_entity", "sourceEntity", "url", "uri", "link"]);
-        super::map_field_alias(&mut normalized, "source_type", &["sourceType", "from_type", "src_type", "type"]);
-        super::map_field_alias(&mut normalized, "target", &["to", "dst", "target_entity", "targetEntity", "target_url", "uri", "link"]);
-        super::map_field_alias(&mut normalized, "target_type", &["targetType", "to_type", "dst_type"]);
-        super::map_field_alias(&mut normalized, "relationship", &["rel", "relation", "type", "predicate", "edge", "label"]);
-
-        super::default_entity_type_from_field(&mut normalized, "source_type", "source");
-        super::default_entity_type_from_field(&mut normalized, "target_type", "target");
-
-        let req: IndexRelationshipRequest = serde_json::from_value(normalized)?;
-        let res = get_server()
-            .index_relationship(req).await?;
-        Ok(json!(res))
-    }
-}
-
-// ── 10. Query Graph ───────────────────────────────────────────
-pub struct SearchXyzQueryGraphTool;
-
-#[async_trait::async_trait]
-impl Tool for SearchXyzQueryGraphTool {
-    fn name(&self) -> &str {
-        "searchxyz_query_graph"
-    }
-
-    fn description(&self) -> &str {
-        "Query connections and traverse relationships inside the local Knowledge Graph."
-    }
-
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "entity": {
-                    "type": "string",
-                    "description": "Entity name to traverse."
-                },
-                "max_depth": {
-                    "type": "integer",
-                    "description": "Max traversal depth (default: 2)."
-                }
-            },
-            "required": ["entity"]
-        })
-    }
-
-    async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = super::wrap_string_arg(arguments, "entity");
-        super::map_field_alias(&mut normalized, "entity", &["name", "node", "query", "target", "url", "source", "link", "id"]);
-        super::map_field_alias(&mut normalized, "max_depth", &["depth", "maxDepth"]);
-        super::coerce_numeric_fields(&mut normalized, &["max_depth"]);
-        let req: QueryGraphRequest = serde_json::from_value(normalized)?;
-        let res = get_server()
-            .query_graph(req).await?;
-        Ok(json!(res))
-    }
-}
-
-fn parse_github_file_limit_error(message: &str) -> Option<(u64, u64)> {
+pub(crate) fn parse_github_file_limit_error(message: &str) -> Option<(u64, u64)> {
     match message.contains("GitHub ingest file count limit exceeded") {
         false => return None,
         true => {}
@@ -128,7 +26,7 @@ fn parse_github_file_limit_error(message: &str) -> Option<(u64, u64)> {
     Some((files, max_files))
 }
 
-fn github_file_limit_error_value(message: &str) -> Option<Value> {
+pub(crate) fn github_file_limit_error_value(message: &str) -> Option<Value> {
     let (files, max_files) = parse_github_file_limit_error(message)?;
     Some(json!({
         "status": "limit_exceeded",
@@ -142,7 +40,11 @@ fn github_file_limit_error_value(message: &str) -> Option<Value> {
     }))
 }
 
-fn github_file_limit_should_auto_retry(arguments: &Value, files: u64, max_files: u64) -> bool {
+pub(crate) fn github_file_limit_should_auto_retry(
+    arguments: &Value,
+    files: u64,
+    max_files: u64,
+) -> bool {
     let auto_expand = arguments
         .get("auto_expand_max_files")
         .or_else(|| arguments.get("autoExpandMaxFiles"))
@@ -159,7 +61,7 @@ fn map_github_repo_err(err: anyhow::Error) -> anyhow::Error {
     }
 }
 
-// ── 11. Read GitHub Repo ───────────────────────────────────────
+// ── Read GitHub Repo ───────────────────────────────────────────
 pub struct SearchXyzReadGithubRepoTool;
 
 #[async_trait::async_trait]
@@ -169,7 +71,17 @@ impl Tool for SearchXyzReadGithubRepoTool {
     }
 
     fn description(&self) -> &str {
-        "Clone, recursively index, and map a GitHub repository codebase."
+        "Shallow-clone, recursively index into unified SQLite research memory, and map a GitHub repository codebase."
+    }
+
+    fn metadata(&self) -> crate::tools::ToolMetadata {
+        let mut m = crate::tools::ToolMetadata::infer(self.name());
+        m.domain = "web";
+        m.risk = crate::tools::ToolRisk::Medium;
+        m.uses_network = true;
+        m.writes_disk = true;
+        m.spawns_process = true;
+        m
     }
 
     fn parameters(&self) -> Value {
@@ -221,19 +133,56 @@ impl Tool for SearchXyzReadGithubRepoTool {
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
         let mut normalized = super::wrap_url_string_arg(arguments, "repo_url");
-        super::map_field_alias(&mut normalized, "repo_url", &["repoUrl", "url", "repo", "repository", "target", "link"]);
+        super::map_field_alias(
+            &mut normalized,
+            "repo_url",
+            &["repoUrl", "url", "repo", "repository", "target", "link"],
+        );
         super::normalize_url_field(&mut normalized, "repo_url");
         super::map_field_alias(&mut normalized, "branch", &["ref", "tag"]);
-        super::map_field_alias(&mut normalized, "include_extensions", &["includeExtensions", "extensions"]);
-        super::map_field_alias(&mut normalized, "exclude_paths", &["excludePaths", "ignore_paths", "ignore"]);
-        super::map_field_alias(&mut normalized, "max_files", &["maxFiles", "files_limit", "limit"]);
-        super::map_field_alias(&mut normalized, "max_total_bytes", &["maxTotalBytes", "max_bytes", "bytes_limit"]);
-        super::map_field_alias(&mut normalized, "auto_expand_max_files", &["autoExpandMaxFiles", "auto_expand"]);
-        super::map_field_alias(&mut normalized, "git_timeout_secs", &["gitTimeoutSecs", "timeout_secs", "timeout"]);
-        super::map_field_alias(&mut normalized, "max_chars", &["maxChars", "limit_chars", "maxLength"]);
+        super::map_field_alias(
+            &mut normalized,
+            "include_extensions",
+            &["includeExtensions", "extensions"],
+        );
+        super::map_field_alias(
+            &mut normalized,
+            "exclude_paths",
+            &["excludePaths", "ignore_paths", "ignore"],
+        );
+        super::map_field_alias(
+            &mut normalized,
+            "max_files",
+            &["maxFiles", "files_limit", "limit"],
+        );
+        super::map_field_alias(
+            &mut normalized,
+            "max_total_bytes",
+            &["maxTotalBytes", "max_bytes", "bytes_limit"],
+        );
+        super::map_field_alias(
+            &mut normalized,
+            "auto_expand_max_files",
+            &["autoExpandMaxFiles", "auto_expand"],
+        );
+        super::map_field_alias(
+            &mut normalized,
+            "git_timeout_secs",
+            &["gitTimeoutSecs", "timeout_secs", "timeout"],
+        );
+        super::map_field_alias(
+            &mut normalized,
+            "max_chars",
+            &["maxChars", "limit_chars", "maxLength"],
+        );
         super::coerce_numeric_fields(
             &mut normalized,
-            &["max_files", "max_total_bytes", "git_timeout_secs", "max_chars"],
+            &[
+                "max_files",
+                "max_total_bytes",
+                "git_timeout_secs",
+                "max_chars",
+            ],
         );
         super::coerce_bool_fields(&mut normalized, &["auto_expand_max_files"]);
         let req: ReadGithubRepoRequest = serde_json::from_value(normalized.clone())?;
@@ -241,9 +190,10 @@ impl Tool for SearchXyzReadGithubRepoTool {
             Ok(res) => res,
             Err(err) => {
                 let err_msg = err.to_string();
-                let auto_retry_pair = parse_github_file_limit_error(&err_msg).filter(|&(files, max_files)| {
-                    github_file_limit_should_auto_retry(&normalized, files, max_files)
-                });
+                let auto_retry_pair =
+                    parse_github_file_limit_error(&err_msg).filter(|&(files, max_files)| {
+                        github_file_limit_should_auto_retry(&normalized, files, max_files)
+                    });
                 match auto_retry_pair {
                     Some((files, max_files)) => {
                         let mut retry_args = normalized.clone();
@@ -279,4 +229,3 @@ impl Tool for SearchXyzReadGithubRepoTool {
 #[cfg(test)]
 #[path = "graph_tests.rs"]
 mod tests;
-

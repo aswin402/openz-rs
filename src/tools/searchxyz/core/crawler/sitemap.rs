@@ -158,59 +158,56 @@ mod tests {
 
     #[tokio::test]
     async fn test_discover_sitemap_urls_cached() {
-        use crate::tools::searchxyz::core::cache::{Cache, CacheEntry};
         use crate::tools::searchxyz::core::config::{CrawlerConfig, HeadlessConfig, ProxyConfig};
-        use std::sync::Arc;
-        use tokio::sync::Mutex;
+        use crate::tools::shared_memory::web_cache::save_http_cache;
+        use reqwest::header::HeaderMap;
 
-        let cache = Arc::new(Mutex::new(Cache::new(100, 3600)));
-        {
-            let mut c = cache.lock().await;
-            // robots.txt pointing to sitemap
-            c.put(
-                "https://example.com/robots.txt".to_string(),
-                CacheEntry::new(
-                    r#"
-                    User-agent: *
-                    Sitemap: https://example.com/my-sitemap.xml
-                    "#
-                    .to_string(),
-                    "https://example.com/robots.txt".to_string(),
-                ),
-            );
-            // sitemap content
-            c.put(
-                "https://example.com/my-sitemap.xml".to_string(),
-                CacheEntry::new(
-                    r#"
-                    <?xml version="1.0" encoding="UTF-8"?>
-                    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-                        <url><loc>https://example.com/page-a</loc></url>
-                        <url><loc>https://example.com/page-b</loc></url>
-                    </urlset>
-                    "#
-                    .to_string(),
-                    "https://example.com/my-sitemap.xml".to_string(),
-                ),
-            );
-        }
+        let headers = HeaderMap::new();
+        save_http_cache(
+            "https://sitemap-cached.example/sitemap.xml",
+            "https://sitemap-cached.example/sitemap.xml",
+            "<html></html>",
+            "text/html",
+            &headers,
+            200,
+            3600,
+        )
+        .unwrap();
+        save_http_cache(
+            "https://sitemap-cached.example/robots.txt",
+            "https://sitemap-cached.example/robots.txt",
+            "User-agent: *\nSitemap: https://sitemap-cached.example/my-sitemap.xml\n",
+            "text/plain",
+            &headers,
+            200,
+            3600,
+        )
+        .unwrap();
+        save_http_cache(
+            "https://sitemap-cached.example/my-sitemap.xml",
+            "https://sitemap-cached.example/my-sitemap.xml",
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><urlset><url><loc>https://sitemap-cached.example/page-a</loc></url><url><loc>https://sitemap-cached.example/page-b</loc></url></urlset>",
+            "application/xml",
+            &headers,
+            200,
+            3600,
+        )
+        .unwrap();
 
         let crawler = Crawler::new(
             CrawlerConfig::default(),
             HeadlessConfig::default(),
             ProxyConfig::default(),
-            cache,
         );
 
-        // Discover sitemap URLs (robots.txt fallback path)
-        let urls = discover_sitemap_urls(&crawler, "https://example.com/")
+        let urls = discover_sitemap_urls(&crawler, "https://sitemap-cached.example/")
             .await
             .unwrap();
         assert_eq!(
             urls,
             vec![
-                "https://example.com/page-a".to_string(),
-                "https://example.com/page-b".to_string(),
+                "https://sitemap-cached.example/page-a".to_string(),
+                "https://sitemap-cached.example/page-b".to_string(),
             ]
         );
     }

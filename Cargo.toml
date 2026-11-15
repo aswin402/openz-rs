@@ -1,6 +1,6 @@
 [package]
 name = "openz"
-version = "0.0.327"
+version = "0.0.328"
 edition = "2021"
 
 [lib]
@@ -66,7 +66,6 @@ prost = "0.12"
 calamine = "0.35.0"
 pdf-extract = "0.10.0"
 docx-rs = "0.4.20"
-spider = { version = "2.21.0", default-features = false, features = ["regex"] }
 wasmtime = "45.0.1"
 fastembed = { version = "5.16.0", default-features = false, features = ["hf-hub-rustls-tls", "ort-download-binaries-rustls-tls", "image-models"] }
 wasmtime-wasi = "45.0.1"
@@ -88,10 +87,7 @@ oxc_ast = "0.30.0"
 oxc_syntax = "0.30.0"
 libc = "0.2"
 mermaid-rs-renderer = "0.2.2"
-tantivy = "0.22"
 governor = "0.8"
-lru = "0.12"
-rmcp = { version = "1.7.0", features = ["server", "macros", "transport-io", "transport-streamable-http-server"] }
 schemars = "1.2"
 tower = { version = "0.5", features = ["util"] }
 url = "2"

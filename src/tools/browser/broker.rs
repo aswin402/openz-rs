@@ -75,6 +75,13 @@ pub async fn eval_with_browser_broker(
     ))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenderedBrowserPage {
+    pub html: String,
+    pub final_url: String,
+    pub broker: BrowserBrokerResult,
+}
+
 pub async fn render_with_browser_broker(
     url: &str,
     timeout_secs: u64,
@@ -85,6 +92,53 @@ pub async fn render_with_browser_broker(
         timeout_secs,
     )
     .await
+}
+
+pub async fn render_page_with_browser_broker(
+    url: &str,
+    timeout_secs: u64,
+) -> Result<RenderedBrowserPage> {
+    let broker = eval_with_browser_broker(
+        url,
+        "JSON.stringify({ html: document.documentElement ? document.documentElement.outerHTML : '', final_url: String(location.href || '') })",
+        timeout_secs,
+    )
+    .await?;
+
+    let (html, final_url) = match serde_json::from_str::<serde_json::Value>(broker.output.trim()) {
+        Ok(val) => {
+            let parsed = match val {
+                serde_json::Value::String(inner) => {
+                    serde_json::from_str::<serde_json::Value>(&inner).ok()
+                }
+                other => Some(other),
+            };
+            match parsed {
+                Some(obj) => {
+                    let html = obj
+                        .get("html")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let final_url = obj
+                        .get("final_url")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.trim().is_empty())
+                        .unwrap_or(url)
+                        .to_string();
+                    (html, final_url)
+                }
+                None => (broker.output.clone(), url.to_string()),
+            }
+        }
+        Err(_) => (broker.output.clone(), url.to_string()),
+    };
+
+    Ok(RenderedBrowserPage {
+        html,
+        final_url,
+        broker,
+    })
 }
 
 async fn eval_with_backend(

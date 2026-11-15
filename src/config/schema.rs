@@ -226,6 +226,70 @@ impl Default for BrowserConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct WebEngineConfig {
+    #[serde(alias = "search_policy")]
+    pub search_policy: String,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "searxng_url")]
+    pub searxng_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "websurfx_url")]
+    pub websurfx_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "brave_api_key")]
+    pub brave_api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "tavily_api_key")]
+    pub tavily_api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "exa_api_key")]
+    pub exa_api_key: Option<String>,
+    #[serde(alias = "user_agent")]
+    pub user_agent: String,
+    #[serde(alias = "fetch_timeout_secs")]
+    pub fetch_timeout_secs: u64,
+    #[serde(alias = "search_timeout_secs")]
+    pub search_timeout_secs: u64,
+    #[serde(alias = "max_content_bytes")]
+    pub max_content_bytes: usize,
+    #[serde(alias = "cache_ttl_secs")]
+    pub cache_ttl_secs: u64,
+    #[serde(alias = "max_concurrent_fetches")]
+    pub max_concurrent_fetches: usize,
+    #[serde(alias = "allow_private_network")]
+    pub allow_private_network: bool,
+    #[serde(alias = "github_max_files")]
+    pub github_max_files: usize,
+    #[serde(alias = "github_max_bytes")]
+    pub github_max_bytes: usize,
+    #[serde(alias = "github_clone_timeout_secs")]
+    pub github_clone_timeout_secs: u64,
+    #[serde(alias = "auto_read_top_results_limit")]
+    pub auto_read_top_results_limit: usize,
+}
+
+impl Default for WebEngineConfig {
+    fn default() -> Self {
+        Self {
+            search_policy: "native_only".to_string(),
+            searxng_url: None,
+            websurfx_url: None,
+            brave_api_key: None,
+            tavily_api_key: None,
+            exa_api_key: None,
+            user_agent: "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
+                .to_string(),
+            fetch_timeout_secs: 20,
+            search_timeout_secs: 15,
+            max_content_bytes: 5 * 1024 * 1024,
+            cache_ttl_secs: 3_600,
+            max_concurrent_fetches: 8,
+            allow_private_network: false,
+            github_max_files: 120,
+            github_max_bytes: 2 * 1024 * 1024,
+            github_clone_timeout_secs: 90,
+            auto_read_top_results_limit: 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentDefaults {
     #[serde(default = "default_workspace")]
@@ -858,6 +922,8 @@ pub struct Config {
     pub channels: ChannelsConfig,
     #[serde(default)]
     pub browser: BrowserConfig,
+    #[serde(default, alias = "searchxyz")]
+    pub web: WebEngineConfig,
     #[serde(default)]
     pub mcp_servers: HashMap<String, McpServerConfig>,
     #[serde(default)]
@@ -915,6 +981,7 @@ impl Default for Config {
             agents: AgentsConfig::default(),
             channels: ChannelsConfig::default(),
             browser: BrowserConfig::default(),
+            web: WebEngineConfig::default(),
             mcp_servers: HashMap::new(),
             embeddings: Some(EmbeddingsConfig::default()),
             skills: SkillsConfig::default(),

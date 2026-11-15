@@ -186,62 +186,36 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_youtube_transcript_cached() {
-        use crate::tools::searchxyz::core::cache::{Cache, CacheEntry};
         use crate::tools::searchxyz::core::config::{CrawlerConfig, HeadlessConfig, ProxyConfig};
-        use std::sync::Arc;
-        use tokio::sync::Mutex;
+        use crate::tools::shared_memory::web_cache::save_http_cache;
+        use reqwest::header::HeaderMap;
 
-        let cache = Arc::new(Mutex::new(Cache::new(100, 3600)));
-        {
-            let mut c = cache.lock().await;
-            // Simulated watch page html
-            c.put(
-                "https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string(),
-                CacheEntry::new(
-                    r#"
-                    <html>
-                        <body>
-                            <script>
-                                var ytInitialPlayerResponse = {
-                                    "captions": {
-                                        "playerCaptionsTracklistRenderer": {
-                                            "captionTracks": [
-                                                {
-                                                    "baseUrl": "https://www.youtube.com/api/timedtext?v=dQw4w9WgXcQ&lang=en",
-                                                    "languageCode": "en"
-                                                }
-                                            ]
-                                        }
-                                    }
-                                };
-                            </script>
-                        </body>
-                    </html>
-                    "#.to_string(),
-                    "https://www.youtube.com/watch?v=dQw4w9WgXcQ".to_string(),
-                ),
-            );
-            // Simulated XML captions response
-            c.put(
-                "https://www.youtube.com/api/timedtext?v=dQw4w9WgXcQ&lang=en".to_string(),
-                CacheEntry::new(
-                    r#"
-                    <?xml version="1.0" encoding="utf-8" ?>
-                    <transcript>
-                        <text start="0.0">Never gonna give you up</text>
-                    </transcript>
-                    "#
-                    .to_string(),
-                    "https://www.youtube.com/api/timedtext?v=dQw4w9WgXcQ&lang=en".to_string(),
-                ),
-            );
-        }
+        let headers = HeaderMap::new();
+        save_http_cache(
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+            r#"<html><body><script>var ytInitialPlayerResponse = {"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":[{"baseUrl":"https://www.youtube.com/api/timedtext?v=dQw4w9WgXcQ&lang=en","languageCode":"en"}]}}};</script></body></html>"#,
+            "text/html",
+            &headers,
+            200,
+            3600,
+        )
+        .unwrap();
+        save_http_cache(
+            "https://www.youtube.com/api/timedtext?v=dQw4w9WgXcQ&lang=en",
+            "https://www.youtube.com/api/timedtext?v=dQw4w9WgXcQ&lang=en",
+            r#"<?xml version="1.0" encoding="utf-8" ?><transcript><text start="0.0">Never gonna give you up</text></transcript>"#,
+            "text/xml",
+            &headers,
+            200,
+            3600,
+        )
+        .unwrap();
 
         let crawler = Crawler::new(
             CrawlerConfig::default(),
             HeadlessConfig::default(),
             ProxyConfig::default(),
-            cache,
         );
 
         let transcript =

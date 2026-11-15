@@ -79,7 +79,7 @@ pub const MEMORY_TABLES: &[MemoryTable] = &[
         name: "research_archive",
         layer: MemoryLayer::Research,
         scope: ScopeModel::Global,
-        uses_fts5: false,
+        uses_fts5: true,
         stores_embeddings: true,
     },
     MemoryTable {

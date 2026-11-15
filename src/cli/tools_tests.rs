@@ -179,9 +179,11 @@ async fn tool_registry_exposes_every_registered_tool() {
     assert!(names.contains(&"diagnose_system".to_string()));
     assert!(names.contains(&"web_search".to_string()));
     assert!(names.contains(&"searchxyz_browser_search".to_string()));
+    assert!(names.contains(&"searchxyz_deep_research".to_string()));
+    assert!(names.contains(&"searchxyz_read_github_repo".to_string()));
     assert!(names.contains(&"opendoc_open_document".to_string()));
     assert!(names.contains(&"opencaveman".to_string()));
-    assert_eq!(names.len(), 241, "expected 241 canonical native tools");
+    assert_eq!(names.len(), 232, "expected 232 canonical native tools");
 
     for (legacy_alias, expected_canonical) in [
         ("ping", "diagnose_system"),
@@ -204,6 +206,15 @@ async fn tool_registry_exposes_every_registered_tool() {
         ("searchxyz_search_and_read", "web_search"),
         ("searchxyz_read_url", "web_fetch"),
         ("searchxyz_site_map", "crawl_website"),
+        ("searchxyz_recall", "search_research"),
+        ("searchxyz_list_sources", "search_research"),
+        ("searchxyz_index_content", "archive_research"),
+        ("searchxyz_delete_source", "archive_research"),
+        ("searchxyz_clear_index", "archive_research"),
+        ("searchxyz_export_research", "archive_research"),
+        ("searchxyz_import_research", "archive_research"),
+        ("searchxyz_index_relationship", "create_relations"),
+        ("searchxyz_query_graph", "search_nodes"),
     ] {
         let resolved = registry
             .get(legacy_alias)

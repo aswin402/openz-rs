@@ -297,7 +297,8 @@ const PROMPT_DOMAIN_RULES: &[(&[&str], &[&str])] = &[
     (
         &[
             "website", "web", "url", "browser", "page", "crawl", "fetch", "search", "internet",
-            "research", "http", "https",
+            "research", "http", "https", "news", "latest", "today", "current", "price", "stock",
+            "stocks", "quote", "market", "rss", "feed", "weather",
         ],
         &["web"],
     ),

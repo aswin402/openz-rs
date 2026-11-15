@@ -1,344 +1,23 @@
 use super::get_server;
+use crate::tools::searchxyz::server::{
+    DeepResearchRequest, FetchCacheMode, ReadUrlRequest, SaveMode,
+};
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
-use crate::tools::searchxyz::server::{
-    DeepResearchRequest, ReadUrlRequest, SearchAndReadRequest, SearchWebRequest, SiteMapRequest,
-};
 use serde_json::{json, Value};
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
-use std::time::Instant;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SearchFailureKind {
-    RateLimited,
-    Blocked,
-    Timeout,
-    NoUsableResults,
-    Other,
-}
-
-impl SearchFailureKind {
-    fn as_str(self) -> &'static str {
-        match self {
-            SearchFailureKind::RateLimited => "rate_limited",
-            SearchFailureKind::Blocked => "blocked",
-            SearchFailureKind::Timeout => "timeout",
-            SearchFailureKind::NoUsableResults => "no_usable_results",
-            SearchFailureKind::Other => "other",
-        }
-    }
-}
-
-pub fn classify_search_failure(message: &str) -> SearchFailureKind {
-    let normalized = message.to_lowercase();
-    const FAILURE_RULES: &[(&[&str], SearchFailureKind)] = &[
-        (
-            &["429", "too many requests", "rate limit"],
-            SearchFailureKind::RateLimited,
-        ),
-        (
-            &["403", "forbidden", "captcha", "blocked", "unusual traffic"],
-            SearchFailureKind::Blocked,
-        ),
-        (&["timed out", "timeout"], SearchFailureKind::Timeout),
-        (
-            &["0 usable results", "all search backends exhausted"],
-            SearchFailureKind::NoUsableResults,
-        ),
-    ];
-    FAILURE_RULES
-        .iter()
-        .find_map(|(patterns, kind)| {
-            patterns
-                .iter()
-                .any(|pat| normalized.contains(pat))
-                .then_some(*kind)
-        })
-        .unwrap_or(SearchFailureKind::Other)
-}
-
-pub fn search_failure_cooldown_secs(kind: SearchFailureKind) -> u64 {
-    match kind {
-        SearchFailureKind::RateLimited => 1800,
-        SearchFailureKind::Blocked => 3600,
-        SearchFailureKind::Timeout => 300,
-        SearchFailureKind::NoUsableResults => 600,
-        SearchFailureKind::Other => 120,
-    }
-}
-
-#[derive(Debug, Clone)]
-struct BackendCooldown {
-    kind: SearchFailureKind,
-    until: Instant,
-}
-
-static SEARCH_BACKEND_COOLDOWNS: OnceLock<Mutex<HashMap<String, BackendCooldown>>> =
-    OnceLock::new();
-
-fn search_backend_cooldowns() -> &'static Mutex<HashMap<String, BackendCooldown>> {
-    SEARCH_BACKEND_COOLDOWNS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-pub fn record_search_backend_failure(backends: &[String], kind: SearchFailureKind) {
-    match backends.is_empty() {
-        true => return,
-        false => {}
-    }
-
-    let until = Instant::now() + std::time::Duration::from_secs(search_failure_cooldown_secs(kind));
-    let mut cooldowns = search_backend_cooldowns()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    for backend in backends.iter().filter(|b| !b.trim().is_empty()) {
-        cooldowns.insert(backend.clone(), BackendCooldown { kind, until });
-    }
-}
-
-pub fn active_search_backend_cooldowns() -> Vec<Value> {
-    let now = Instant::now();
-    let mut cooldowns = search_backend_cooldowns()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    cooldowns.retain(|_, cooldown| cooldown.until > now);
-
-    let mut active = cooldowns
-        .iter()
-        .map(|(backend, cooldown)| {
-            json!({
-                "backend": backend,
-                "error_kind": cooldown.kind.as_str(),
-                "cooldown_remaining_secs": cooldown.until.saturating_duration_since(now).as_secs().max(1),
-            })
-        })
-        .collect::<Vec<_>>();
-    active.sort_by(|a, b| {
-        a["backend"]
-            .as_str()
-            .unwrap_or_default()
-            .cmp(b["backend"].as_str().unwrap_or_default())
-    });
-    active
-}
-
+pub use super::core::search::cooldown::{
+    active_search_backend_cooldowns, classify_search_failure, record_search_backend_failure,
+    search_failure_cooldown_secs, search_failure_error_value, SearchFailureKind,
+};
 #[cfg(test)]
-fn clear_search_backend_cooldowns_for_tests() {
-    search_backend_cooldowns()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .clear();
-}
-
-fn search_failure_error_value(
-    raw_error: &str,
-    kind: SearchFailureKind,
-    backends: &[String],
-) -> Value {
-    json!({
-        "status": "search_failed",
-        "error_kind": kind.as_str(),
-        "retryable": true,
-        "cooldown_secs": search_failure_cooldown_secs(kind),
-        "affected_backends": backends,
-        "raw_error": raw_error,
-        "next_step": "Use searchxyz_browser_search for provider-free browser discovery, searchxyz_recall for local indexed content, or provide a direct URL for searchxyz_read_url."
-    })
-}
-
-fn backend_health_label(
-    name: &str,
-    configured_order: &[String],
-    config: &crate::tools::searchxyz::core::config::Config,
-) -> String {
-    let enabled = configured_order.iter().any(|backend| backend == name);
-    let preferred = configured_order
-        .first()
-        .is_some_and(|backend| backend == name);
-    match enabled {
-        false => return "disabled".to_string(),
-        true => {}
-    }
-
-    let base = match name {
-        "searxng" => match config.searxng.instance_url.trim().is_empty() {
-            true => "missing_config",
-            false => "configured",
-        },
-        "brave" => match config
-            .brave
-            .api_key
-            .as_ref()
-            .is_some_and(|key| !key.trim().is_empty())
-        {
-            true => "configured",
-            false => "missing_key",
-        },
-        "duckduckgo" | "google" | "bing" => "keyless",
-        _ => "configured",
-    };
-
-    match preferred {
-        true => format!("preferred ({base})"),
-        false => base.to_string(),
-    }
-}
-
-fn only_scraper_backends_enabled(configured_order: &[String]) -> bool {
-    !configured_order.is_empty()
-        && configured_order
-            .iter()
-            .all(|backend| matches!(backend.as_str(), "duckduckgo" | "google" | "bing"))
-}
-
-pub async fn build_searchxyz_doctor_report(include_paths: bool) -> Result<String> {
-    let server = get_server();
-    let config = server.config.as_ref();
-    let cache_len = server.cache.lock().await.len();
-    let (_, source_count) = server.index.list_documents(None, 1, 0)?;
-    let graph = server.graph.lock().await;
-    let graph_nodes = graph.nodes.len();
-    let graph_edges = graph.edges.len();
-    drop(graph);
-
-    let native_policy = std::env::var("OPENZ_WEB_SEARCH_POLICY")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .unwrap_or_else(|| "native_only".to_string());
-
-    let known_backends = ["searxng", "brave", "duckduckgo", "google", "bing"];
-    let headless_status = match (config.headless.enabled, &config.headless.chrome_path) {
-        (true, Some(path)) => format!("enabled ({path})"),
-        (true, None) => "enabled (auto chrome path)".to_string(),
-        (false, _) => "disabled".to_string(),
-    };
-
-    let mut report = String::new();
-    report.push_str("# SearchXyz Doctor\n\n");
-    report.push_str("## Policy\n");
-    report.push_str(&format!("- OpenZ web_search policy: `{}`\n", native_policy));
-    report.push_str("- Default behavior: native SearchXyz only unless `search_policy=native_then_external`, `external_only`, or the matching `OPENZ_WEB_SEARCH_POLICY` value is set. The default local stack includes browser discovery.\n\n");
-
-    report.push_str("## Search Backends\n");
-    report.push_str(&format!(
-        "- Configured order: `{}`\n",
-        config.search.backends.join(", ")
-    ));
-    report.push_str(&format!("- Max results: {}\n", config.search.max_results));
-    report.push_str("- Ranking: enabled (dynamic term rarity, coverage, phrase/entity matches, domain bonuses, generic-page and low-quality URL penalties)\n");
-    for backend in known_backends {
-        report.push_str(&format!(
-            "- {}: {}\n",
-            backend,
-            backend_health_label(backend, &config.search.backends, config)
-        ));
-    }
-    report.push_str("- Labels: preferred, configured, missing_key, disabled, keyless.\n\n");
-
-    report.push_str("## Fetch & Safety\n");
-    report.push_str(&format!("- Headless rendering: {}\n", headless_status));
-    report.push_str(&format!(
-        "- Private network fetches allowed: {}\n",
-        config.crawler.allow_private_network
-    ));
-    report.push_str(&format!(
-        "- Request timeout: {}s\n",
-        config.crawler.timeout_secs
-    ));
-    report.push_str(&format!(
-        "- Max redirects: {}\n",
-        config.crawler.max_redirects
-    ));
-    report.push_str(&format!(
-        "- Max body bytes: {}\n\n",
-        config.crawler.max_body_bytes
-    ));
-
-    report.push_str("## Local State\n");
-    report.push_str(&format!("- Cache entries loaded: {}\n", cache_len));
-    report.push_str(&format!("- Indexed sources: {}\n", source_count));
-    report.push_str(&format!("- Graph nodes: {}\n", graph_nodes));
-    report.push_str(&format!("- Graph edges: {}\n", graph_edges));
-    match include_paths {
-        true => {
-            report.push_str(&format!(
-                "- Index path: `{}`\n",
-                config.index.path.display()
-            ));
-            report.push_str(&format!(
-                "- Cache path: `{}`\n",
-                config.cache.path.display()
-            ));
-            report.push_str(&format!(
-                "- Graph path: `{}`\n",
-                config.index.path.join("graph.json").display()
-            ));
-        }
-        false => {}
-    }
-
-    let active_cooldowns = active_search_backend_cooldowns();
-    match active_cooldowns.is_empty() {
-        true => {}
-        false => {
-            report.push_str("\n## Backend Cooldowns\n");
-            for cooldown in active_cooldowns {
-                let backend = cooldown["backend"].as_str().unwrap_or("unknown");
-                let error_kind = cooldown["error_kind"].as_str().unwrap_or("unknown");
-                let remaining = cooldown["cooldown_remaining_secs"].as_u64().unwrap_or(0);
-                report.push_str(&format!(
-                    "- {}: {} ({}s remaining)\n",
-                    backend, error_kind, remaining
-                ));
-            }
-        }
-    }
-
-    report.push_str("\n## Hints\n");
-    match config
-        .search
-        .backends
-        .iter()
-        .any(|backend| backend == "searxng")
-    {
-        false => {
-            report.push_str("- SearXNG is not enabled in backend order. Configure `SEARCHXYZ_SEARXNG_URL` without explicit backend order, or include `searxng` in `SEARCHXYZ_SEARCH_BACKENDS`, for the strongest private/native discovery path.\n");
-        }
-        true => {}
-    }
-    match config
-        .search
-        .backends
-        .iter()
-        .any(|backend| backend == "brave")
-        && config
-            .brave
-            .api_key
-            .as_ref()
-            .is_none_or(|key| key.trim().is_empty())
-    {
-        true => {
-            report.push_str("- Brave is enabled but missing `SEARCHXYZ_BRAVE_API_KEY`; it will be skipped at runtime.\n");
-        }
-        false => {}
-    }
-    match only_scraper_backends_enabled(&config.search.backends) {
-        true => {
-            report.push_str("- Only keyless scraper backends are enabled; these can be blocked or return empty results under anti-bot pressure. Prefer SearXNG for native discovery.\n");
-        }
-        false => {}
-    }
-    match config.headless.enabled {
-        false => {
-            report.push_str("- Enable SearchXyz headless mode when scraper backends are blocked by JS or anti-bot pages.\n");
-        }
-        true => {}
-    }
-    report.push_str("- Provider-free browser fallback is automatic in default `web_search`; call `searchxyz_browser_search` directly only for explicit engine/debug control.\n");
-    report.push_str("- For one-off fallback to external engines, call `web_search` with `search_policy=native_then_external`.\n");
-
-    Ok(report)
-}
+pub use super::core::search::cooldown::{
+    clear_search_backend_cooldowns_for_tests, COOLDOWN_TEST_LOCK,
+};
+pub use super::doctor_report::{
+    backend_health_label, build_searchxyz_doctor_report, build_web_engine_health_json,
+    only_scraper_backends_enabled,
+};
 
 fn encode_browser_query(query: &str) -> String {
     percent_encoding::utf8_percent_encode(query, percent_encoding::NON_ALPHANUMERIC)
@@ -351,8 +30,9 @@ pub fn browser_search_url(engine: &str, query: &str) -> Result<String> {
     match engine {
         "duckduckgo" | "ddg" => Ok(format!("https://duckduckgo.com/html/?q={encoded}")),
         "bing" => Ok(format!("https://www.bing.com/search?q={encoded}")),
+        "mojeek" => Ok(format!("https://www.mojeek.com/search?q={encoded}")),
         other => Err(anyhow!(
-            "Unsupported browser search engine: {other}. Use duckduckgo or bing."
+            "Unsupported browser search engine: {other}. Use duckduckgo, bing, or mojeek."
         )),
     }
 }
@@ -401,6 +81,9 @@ fn is_likely_search_engine_internal_url(url: &str) -> bool {
         "go.microsoft.com",
         "microsoft.com/rewards",
         "privacy.microsoft.com",
+        "mojeek.com/search",
+        "mojeek.com/about",
+        "mojeek.com/preferences",
     ]
     .iter()
     .any(|needle| lowered.contains(needle))
@@ -412,6 +95,11 @@ fn browser_result_selectors(engine: &str) -> Vec<&'static str> {
             "li.b_algo h2 a[href]",
             "#b_results h2 a[href]",
             "#b_results a[href]",
+            "main a[href]",
+        ],
+        "mojeek" => vec![
+            "ul.results-standard a.title[href]",
+            "a.title[href]",
             "main a[href]",
         ],
         _ => vec![
@@ -458,7 +146,8 @@ fn browser_result_extraction_script(engine: &str, max_results: usize) -> String 
     results,
     rendered_link_count: anchors.length,
     page_url: location.href,
-    page_title: document.title
+    page_title: document.title,
+    body_hint: cleanText(document.body ? document.body.innerText : "").slice(0, 600)
   }});
 }})()"#
     )
@@ -477,7 +166,7 @@ fn rendered_payload_value(payload: &str) -> Option<Value> {
     }
 }
 
-fn extract_rendered_browser_search_results(
+pub fn extract_rendered_browser_search_results(
     engine: &str,
     payload: &str,
     max_results: usize,
@@ -612,19 +301,69 @@ fn html_has_bot_block(html: &str) -> bool {
         "checking your browser",
         "access denied",
         "temporarily blocked",
+        "bots use duckduckgo",
+        "please complete the following challenge",
+        "anomaly-modal",
+        "challenge-form",
     ]
     .iter()
     .any(|needle| lowered.contains(needle))
 }
 
-fn browser_search_read_top_results_enabled(arguments: &Value) -> bool {
+fn rendered_payload_has_bot_block(payload: &str) -> bool {
+    rendered_payload_value(payload).is_some_and(|val| {
+        let title = val.get("page_title").and_then(Value::as_str).unwrap_or("");
+        let hint = val.get("body_hint").and_then(Value::as_str).unwrap_or("");
+        html_has_bot_block(title) || html_has_bot_block(hint)
+    })
+}
+
+pub(crate) fn filter_relevant_browser_results(query: &str, results: Vec<Value>) -> (Vec<Value>, usize) {
+    let stop_words = [
+        "the", "and", "for", "with", "from", "what", "how", "why", "who", "are", "this", "that",
+    ];
+    let terms: Vec<String> = query
+        .split(|c: char| !c.is_alphanumeric())
+        .map(|tok| tok.trim().to_ascii_lowercase())
+        .filter(|tok| tok.chars().count() >= 3 && !stop_words.contains(&tok.as_str()))
+        .collect();
+
+    match terms.is_empty() || results.is_empty() {
+        true => (results, 0),
+        false => {
+            let total = results.len();
+            let filtered: Vec<Value> = results
+                .into_iter()
+                .filter(|item| {
+                    let title = item
+                        .get("title")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_ascii_lowercase();
+                    let url = item
+                        .get("url")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_ascii_lowercase();
+                    terms
+                        .iter()
+                        .any(|term| title.contains(term) || url.contains(term))
+                })
+                .collect();
+            let dropped = total.saturating_sub(filtered.len());
+            (filtered, dropped)
+        }
+    }
+}
+
+pub(crate) fn browser_search_read_top_results_enabled(arguments: &Value) -> bool {
     arguments
         .get("read_top_results")
         .and_then(|value| value.as_bool())
         .unwrap_or(false)
 }
 
-fn browser_search_max_pages(arguments: &Value, max_results: usize) -> usize {
+pub(crate) fn browser_search_max_pages(arguments: &Value, max_results: usize) -> usize {
     let default_pages = max_results.clamp(1, 3);
     arguments
         .get("max_pages")
@@ -639,11 +378,15 @@ async fn read_browser_search_results(
     max_results: usize,
 ) -> Vec<Value> {
     let max_pages = browser_search_max_pages(arguments, max_results);
-    let save_mode = arguments
+    let save_mode = match arguments
         .get("save_mode")
         .and_then(|value| value.as_str())
-        .unwrap_or("none");
-    let reader = SearchXyzReadUrlTool;
+        .unwrap_or("none")
+    {
+        "full" => SaveMode::Full,
+        _ => SaveMode::None,
+    };
+    let server = get_server();
     let mut reads = Vec::new();
 
     for result in results.iter().take(max_pages) {
@@ -651,13 +394,16 @@ async fn read_browser_search_results(
             Some(u) => u,
             None => continue,
         };
-        match reader
-            .call(&json!({
-                "url": url,
-                "cache_mode": "auto",
-                "save_mode": save_mode,
-                "max_chars": 6000,
-            }))
+        match server
+            .read_url(ReadUrlRequest {
+                url: url.to_string(),
+                depth: Some(1),
+                render_js: Some(false),
+                cache_mode: Some(FetchCacheMode::Auto),
+                save_mode: Some(save_mode),
+                include_diagnostics: Some(false),
+                max_chars: Some(6000),
+            })
             .await
         {
             Ok(content) => reads.push(json!({
@@ -699,7 +445,7 @@ fn apply_common_crawl_aliases(normalized: &mut Value) {
     super::map_field_alias(normalized, "exclude_domains", &["excludeDomains"]);
 }
 
-// ── Browser Search Fallback ───────────────────────────────────
+// ── 1. Browser Search Fallback ────────────────────────────────
 pub struct SearchXyzBrowserSearchTool;
 
 #[async_trait::async_trait]
@@ -731,8 +477,8 @@ impl Tool for SearchXyzBrowserSearchTool {
                 },
                 "engine": {
                     "type": "string",
-                    "enum": ["duckduckgo", "bing"],
-                    "description": "Browser search engine to use (default: duckduckgo)."
+                    "enum": ["duckduckgo", "bing", "mojeek"],
+                    "description": "Browser search engine to use (default: duckduckgo; mojeek is bot-friendly)."
                 },
                 "max_results": {
                     "type": "integer",
@@ -744,7 +490,7 @@ impl Tool for SearchXyzBrowserSearchTool {
                 },
                 "read_top_results": {
                     "type": "boolean",
-                    "description": "After browser discovery, fetch the top result pages through searchxyz_read_url (default: false)."
+                    "description": "After browser discovery, fetch the top result pages into Markdown (default: false)."
                 },
                 "max_pages": {
                     "type": "integer",
@@ -753,7 +499,7 @@ impl Tool for SearchXyzBrowserSearchTool {
                 "save_mode": {
                     "type": "string",
                     "enum": ["full", "none"],
-                    "description": "Whether fetched top-result pages should be persisted into SearchXyz memory (default: none)."
+                    "description": "Whether fetched top-result pages should be persisted into unified SQLite research memory (default: none)."
                 }
             },
             "required": ["query"]
@@ -798,6 +544,7 @@ impl Tool for SearchXyzBrowserSearchTool {
             .and_then(|v| v.as_u64())
             .unwrap_or(8)
             .clamp(1, 60);
+
         let search_url = browser_search_url(engine, query)?;
         let render_script = browser_result_extraction_script(engine, max_results);
         let broker_eval = crate::tools::browser_broker::eval_with_browser_broker(
@@ -807,38 +554,41 @@ impl Tool for SearchXyzBrowserSearchTool {
         )
         .await;
 
-        let (mut results, backend, cleanup, fallbacks_tried, broker_errors) = match broker_eval {
-            Ok(value) => {
-                let rendered =
-                    extract_rendered_browser_search_results(engine, &value.output, max_results);
-                (
-                    rendered,
-                    Some(value.backend.as_str().to_string()),
-                    Some(value.cleanup),
-                    value
-                        .fallbacks_tried
-                        .iter()
-                        .map(|backend| backend.as_str().to_string())
-                        .collect::<Vec<_>>(),
-                    value.errors,
-                )
-            }
-            Err(err) => {
-                return Ok(json!({
-                    "status": "browser_error",
-                    "error_kind": "browser_broker_failed",
-                    "retryable": true,
-                    "engine": engine,
-                    "query": query,
-                    "error": err.to_string(),
-                    "fallbacks_tried": ["obscura_headless", "firefox_headless", "gsd_chrome_gui"],
-                    "next_step": "Run inspect_browsers, use manage_tasks action=cleanup, retry with engine=bing, or use searchxyz_recall/direct URL readers."
-                }));
-            }
-        };
+        let (mut results, rendered_bot_blocked, backend, cleanup, fallbacks_tried, broker_errors) =
+            match broker_eval {
+                Ok(value) => {
+                    let bot_blocked = rendered_payload_has_bot_block(&value.output);
+                    let rendered =
+                        extract_rendered_browser_search_results(engine, &value.output, max_results);
+                    (
+                        rendered,
+                        bot_blocked,
+                        Some(value.backend.as_str().to_string()),
+                        Some(value.cleanup),
+                        value
+                            .fallbacks_tried
+                            .iter()
+                            .map(|backend| backend.as_str().to_string())
+                            .collect::<Vec<_>>(),
+                        value.errors,
+                    )
+                }
+                Err(err) => {
+                    return Ok(json!({
+                        "status": "browser_error",
+                        "error_kind": "browser_broker_failed",
+                        "retryable": true,
+                        "engine": engine,
+                        "query": query,
+                        "error": err.to_string(),
+                        "fallbacks_tried": ["obscura_headless", "firefox_headless", "gsd_chrome_gui"],
+                        "next_step": "Run inspect_browsers, use manage_tasks action=cleanup, retry with engine=mojeek, or use native web_search / web_fetch."
+                    }));
+                }
+            };
         let rendered_result_count = results.len();
 
-        let html = match results.is_empty() {
+        let html = match results.is_empty() && !rendered_bot_blocked {
             true => match crate::tools::browser_broker::render_with_browser_broker(
                 &search_url,
                 timeout_secs,
@@ -857,7 +607,7 @@ impl Tool for SearchXyzBrowserSearchTool {
         let static_results = extract_browser_search_results(engine, &html, max_results);
         let static_result_count = static_results.len();
         append_unique_browser_results(&mut results, static_results, max_results);
-        match results.is_empty() && html_has_bot_block(&html) {
+        match results.is_empty() && (rendered_bot_blocked || html_has_bot_block(&html)) {
             true => {
                 return Ok(json!({
                     "status": "blocked",
@@ -871,11 +621,35 @@ impl Tool for SearchXyzBrowserSearchTool {
                     "cleanup": cleanup,
                     "fallbacks_tried": fallbacks_tried,
                     "broker_errors": broker_errors,
-                    "next_step": "Retry later, try engine=bing, use a known URL, or build the local SearchXyz index from trusted seed sources."
+                    "next_step": "Use native web_search, retry with engine=mojeek, use web_fetch on a known URL, or query search_research."
                 }));
             }
             false => {}
         }
+
+        let (filtered_results, dropped_irrelevant) =
+            filter_relevant_browser_results(query, results);
+        match filtered_results.is_empty() && dropped_irrelevant > 0 {
+            true => {
+                return Ok(json!({
+                    "status": "degraded",
+                    "error_kind": "irrelevant_serp",
+                    "retryable": true,
+                    "engine": engine,
+                    "query": query,
+                    "result_count": 0,
+                    "dropped_irrelevant_count": dropped_irrelevant,
+                    "results": [],
+                    "backend": backend,
+                    "cleanup": cleanup,
+                    "fallbacks_tried": fallbacks_tried,
+                    "broker_errors": broker_errors,
+                    "next_step": "Browser SERP returned results unrelated to query tokens; use native web_search, retry with engine=mojeek, or use web_fetch on a known URL."
+                }));
+            }
+            false => {}
+        }
+        let results = filtered_results;
 
         let read_top_enabled = browser_search_read_top_results_enabled(&normalized);
         let read_results = match read_top_enabled {
@@ -916,278 +690,7 @@ impl Tool for SearchXyzBrowserSearchTool {
     }
 }
 
-// ── 0. Doctor ────────────────────────────────────────────────
-pub struct SearchXyzDoctorTool;
-
-#[async_trait::async_trait]
-impl Tool for SearchXyzDoctorTool {
-    fn name(&self) -> &str {
-        "searchxyz_doctor"
-    }
-
-    fn description(&self) -> &str {
-        "Report SearchXyz native search health, configured backends, cache/index paths, and fallback policy without performing a web search."
-    }
-
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "include_paths": {
-                    "type": "boolean",
-                    "description": "Include local cache/index/graph paths in the report (default: true)."
-                }
-            }
-        })
-    }
-
-    async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = super::wrap_string_arg(arguments, "include_paths");
-        super::map_field_alias(
-            &mut normalized,
-            "include_paths",
-            &["includePaths", "paths", "include_path"],
-        );
-        super::coerce_bool_fields(&mut normalized, &["include_paths"]);
-        let include_paths = normalized
-            .get("include_paths")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true);
-        Ok(json!(build_searchxyz_doctor_report(include_paths).await?))
-    }
-}
-
-// ── 1. Search Web ─────────────────────────────────────────────
-pub struct SearchXyzSearchWebTool;
-
-#[async_trait::async_trait]
-impl Tool for SearchXyzSearchWebTool {
-    fn name(&self) -> &str {
-        "searchxyz_search_web"
-    }
-
-    fn description(&self) -> &str {
-        "Search the web using searchxyz. Returns titles, URLs, and snippets. Useful for keyless searches."
-    }
-
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query string."
-                },
-                "max_results": {
-                    "type": "integer",
-                    "description": "Max results to return (default: 10)."
-                },
-                "include_domains": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Only keep results from these domains."
-                },
-                "exclude_domains": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Drop results from these domains."
-                },
-                "merge_backends": {
-                    "type": "boolean",
-                    "description": "Query all available backends and deduplicate results instead of stopping at the first success."
-                },
-                "include_diagnostics": {
-                    "type": "boolean",
-                    "description": "Append compact backend diagnostics to the output."
-                }
-            },
-            "required": ["query"]
-        })
-    }
-
-    async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = super::normalize_query_arg(arguments);
-        super::map_field_alias(
-            &mut normalized,
-            "max_results",
-            &["limit", "count", "maxResults", "max_pages"],
-        );
-        apply_common_crawl_aliases(&mut normalized);
-        super::coerce_numeric_fields(&mut normalized, &["max_results"]);
-        super::coerce_bool_fields(&mut normalized, &["merge_backends", "include_diagnostics"]);
-        let req: SearchWebRequest = serde_json::from_value(normalized)?;
-        let server = get_server();
-        let configured_backends = server.config.search.backends.clone();
-        match server.search_web(req).await {
-            Ok(res) => Ok(json!(res)),
-            Err(err) => {
-                let raw_error = err.to_string();
-                let kind = classify_search_failure(&raw_error);
-                record_search_backend_failure(&configured_backends, kind);
-                Err(anyhow!(
-                    "{}",
-                    search_failure_error_value(&raw_error, kind, &configured_backends)
-                ))
-            }
-        }
-    }
-}
-
-// ── 2. Read URL ───────────────────────────────────────────────
-pub struct SearchXyzReadUrlTool;
-
-#[async_trait::async_trait]
-impl Tool for SearchXyzReadUrlTool {
-    fn name(&self) -> &str {
-        "searchxyz_read_url"
-    }
-
-    fn description(&self) -> &str {
-        "Fetch a URL and extract its content as clean Markdown. Also handles PDFs, YouTube transcripts, and Git repos. For a direct URL, use this OR web_fetch, never both in the same turn."
-    }
-
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "The full URL to fetch."
-                },
-                "depth": {
-                    "type": "integer",
-                    "description": "Crawl depth for recursive crawling (default: 1)."
-                },
-                "render_js": {
-                    "type": "boolean",
-                    "description": "Enable headless JS rendering (default: false)."
-                },
-                "cache_mode": {
-                    "type": "string",
-                    "enum": ["auto", "prefer_cache", "revalidate", "bypass"],
-                    "description": "Cache behavior. Use revalidate/check-again or bypass for live refresh tasks."
-                },
-                "save_mode": {
-                    "type": "string",
-                    "enum": ["full", "none"],
-                    "description": "Whether to persist fetched content into SearchXyz memory. Use none for one-off checks."
-                },
-                "include_diagnostics": {
-                    "type": "boolean",
-                    "description": "Append compact diagnostics to the output."
-                },
-                "max_chars": {
-                    "type": "integer",
-                    "description": "Optional output character budget. Truncates large Markdown responses with metadata when exceeded."
-                }
-            },
-            "required": ["url"]
-        })
-    }
-
-    async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = super::normalize_url_arg(arguments);
-        super::map_field_alias(
-            &mut normalized,
-            "depth",
-            &["max_depth", "crawl_depth", "maxDepth"],
-        );
-        super::map_field_alias(&mut normalized, "max_chars", &["limit"]);
-        apply_common_crawl_aliases(&mut normalized);
-        super::coerce_numeric_fields(&mut normalized, &["depth", "max_chars"]);
-        super::coerce_bool_fields(&mut normalized, &["render_js", "include_diagnostics"]);
-        let req: ReadUrlRequest = serde_json::from_value(normalized)?;
-        let res = get_server().read_url(req).await?;
-        Ok(json!(res))
-    }
-}
-
-// ── 3. Search and Read ─────────────────────────────────────────
-pub struct SearchXyzSearchAndReadTool;
-
-#[async_trait::async_trait]
-impl Tool for SearchXyzSearchAndReadTool {
-    fn name(&self) -> &str {
-        "searchxyz_search_and_read"
-    }
-
-    fn description(&self) -> &str {
-        "Search the web AND crawl the top results in a single call. Returns full Markdown for each result page."
-    }
-
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "The search query string."
-                },
-                "max_pages": {
-                    "type": "integer",
-                    "description": "How many top results to crawl (default: 3)."
-                },
-                "include_domains": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Only keep search results from these domains before crawling."
-                },
-                "exclude_domains": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "Drop search results from these domains before crawling."
-                },
-                "merge_backends": {
-                    "type": "boolean",
-                    "description": "Query all available backends and deduplicate results before crawling."
-                },
-                "render_js": {
-                    "type": "boolean",
-                    "description": "Enable JS rendering (default: false)."
-                },
-                "cache_mode": {
-                    "type": "string",
-                    "enum": ["auto", "prefer_cache", "revalidate", "bypass"],
-                    "description": "Cache behavior. Use revalidate/check-again or bypass for live refresh tasks."
-                },
-                "save_mode": {
-                    "type": "string",
-                    "enum": ["full", "none"],
-                    "description": "Whether to persist fetched content into SearchXyz memory. Use none for one-off checks."
-                },
-                "include_diagnostics": {
-                    "type": "boolean",
-                    "description": "Append compact diagnostics to the output."
-                },
-                "max_chars": {
-                    "type": "integer",
-                    "description": "Optional output character budget. Truncates large Markdown responses with metadata when exceeded."
-                }
-            },
-            "required": ["query"]
-        })
-    }
-
-    async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = super::normalize_query_arg(arguments);
-        super::map_field_alias(
-            &mut normalized,
-            "max_pages",
-            &["limit", "max_results", "maxPages", "pages", "count"],
-        );
-        apply_common_crawl_aliases(&mut normalized);
-        super::coerce_numeric_fields(&mut normalized, &["max_pages", "max_chars"]);
-        super::coerce_bool_fields(
-            &mut normalized,
-            &["merge_backends", "render_js", "include_diagnostics"],
-        );
-        let req: SearchAndReadRequest = serde_json::from_value(normalized)?;
-        let res = get_server().search_and_read(req).await?;
-        Ok(json!(res))
-    }
-}
-
-// ── 6. Deep Research ──────────────────────────────────────────
+// ── 2. Deep Research ──────────────────────────────────────────
 pub struct SearchXyzDeepResearchTool;
 
 #[async_trait::async_trait]
@@ -1197,7 +700,16 @@ impl Tool for SearchXyzDeepResearchTool {
     }
 
     fn description(&self) -> &str {
-        "Perform iterative multi-query web crawls and compile a deep research markdown report."
+        "Perform iterative multi-query web crawls, claim synthesis, and hybrid SQLite indexing to compile a deep research Markdown dossier."
+    }
+
+    fn metadata(&self) -> crate::tools::ToolMetadata {
+        let mut m = crate::tools::ToolMetadata::infer(self.name());
+        m.domain = "web";
+        m.risk = crate::tools::ToolRisk::Medium;
+        m.uses_network = true;
+        m.writes_disk = true;
+        m
     }
 
     fn parameters(&self) -> Value {
@@ -1210,11 +722,11 @@ impl Tool for SearchXyzDeepResearchTool {
                 },
                 "breadth": {
                     "type": "integer",
-                    "description": "Number of expanded sub-queries to execute (default: 3)."
+                    "description": "Number of expanded sub-queries to execute (default: 3, max: 5)."
                 },
                 "max_pages_per_query": {
                     "type": "integer",
-                    "description": "How many top pages to crawl per sub-query (default: 2)."
+                    "description": "How many top pages to crawl per sub-query (default: 2, max: 4)."
                 },
                 "include_domains": {
                     "type": "array",
@@ -1228,21 +740,21 @@ impl Tool for SearchXyzDeepResearchTool {
                 },
                 "merge_backends": {
                     "type": "boolean",
-                    "description": "Query all available backends and deduplicate results before crawling."
+                    "description": "Query all available backends concurrently and deduplicate results before crawling."
                 },
                 "render_js": {
                     "type": "boolean",
-                    "description": "Enable headless JS rendering (default: false)."
+                    "description": "Enable headless JS rendering via OpenZ BrowserBroker (default: false)."
                 },
                 "cache_mode": {
                     "type": "string",
                     "enum": ["auto", "prefer_cache", "revalidate", "bypass"],
-                    "description": "Cache behavior. Use revalidate/check-again or bypass for live refresh tasks."
+                    "description": "HTTP cache behavior backed by unified SQLite web_fetch_cache."
                 },
                 "save_mode": {
                     "type": "string",
                     "enum": ["full", "none"],
-                    "description": "Whether to persist fetched content into SearchXyz memory. Use none for one-off checks."
+                    "description": "Whether to persist fetched content into unified SQLite memory.db and graph_memory.db."
                 },
                 "include_diagnostics": {
                     "type": "boolean",
@@ -1280,61 +792,6 @@ impl Tool for SearchXyzDeepResearchTool {
         );
         let req: DeepResearchRequest = serde_json::from_value(normalized)?;
         let res = get_server().deep_research(req).await?;
-        Ok(json!(res))
-    }
-}
-
-// ── 8. Sitemap ────────────────────────────────────────────────
-pub struct SearchXyzSiteMapTool;
-
-#[async_trait::async_trait]
-impl Tool for SearchXyzSiteMapTool {
-    fn name(&self) -> &str {
-        "searchxyz_site_map"
-    }
-
-    fn description(&self) -> &str {
-        "Discover sitemap URLs or map domain structure via fast recursive link crawling."
-    }
-
-    fn parameters(&self) -> Value {
-        json!({
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "Domain root to map."
-                },
-                "use_sitemap": {
-                    "type": "boolean",
-                    "description": "Try parsing sitemap.xml (default: true)."
-                },
-                "crawl_links": {
-                    "type": "boolean",
-                    "description": "Fallback to internal link spiders (default: true)."
-                },
-                "max_links": {
-                    "type": "integer",
-                    "description": "Max discovered links to return (default: 100)."
-                }
-            },
-            "required": ["url"]
-        })
-    }
-
-    async fn call(&self, arguments: &Value) -> Result<Value> {
-        let mut normalized = super::normalize_url_arg(arguments);
-        super::map_field_alias(
-            &mut normalized,
-            "max_links",
-            &["limit", "max_results", "maxLinks", "count"],
-        );
-        super::map_field_alias(&mut normalized, "use_sitemap", &["useSitemap", "sitemap"]);
-        super::map_field_alias(&mut normalized, "crawl_links", &["crawlLinks", "crawl"]);
-        super::coerce_numeric_fields(&mut normalized, &["max_links"]);
-        super::coerce_bool_fields(&mut normalized, &["use_sitemap", "crawl_links"]);
-        let req: SiteMapRequest = serde_json::from_value(normalized)?;
-        let res = get_server().site_map(req).await?;
         Ok(json!(res))
     }
 }

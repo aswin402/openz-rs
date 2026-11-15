@@ -110,3 +110,89 @@ fn test_crawl_arg_coercion_extra_aliases() {
     );
 }
 
+
+#[tokio::test]
+async fn execute_bfs_crawl_respects_robots_txt_and_follows_internal_links() {
+    use crate::tools::searchxyz::core::config::{
+        CrawlerConfig, ExtractorConfig, HeadlessConfig, ProxyConfig,
+    };
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        loop {
+            match listener.accept().await {
+                Ok((mut stream, _)) => {
+                    tokio::spawn(async move {
+                        let mut buf = [0_u8; 2048];
+                        let n = stream.read(&mut buf).await.unwrap_or(0);
+                        let req = String::from_utf8_lossy(&buf[..n]);
+                        let first_line = req.lines().next().unwrap_or("");
+                        let path = first_line.split_whitespace().nth(1).unwrap_or("/");
+
+                        let (ct, body) = match path {
+                            "/robots.txt" => ("text/plain", "User-agent: *\nDisallow: /private\n"),
+                            "/" => (
+                                "text/html",
+                                "<html><head><title>Home</title></head><body><p>Welcome home</p><a href=\"/docs\">Docs</a><a href=\"/private\">Secret</a></body></html>",
+                            ),
+                            "/docs" => (
+                                "text/html",
+                                "<html><head><title>Docs</title></head><body><p>Documentation body</p></body></html>",
+                            ),
+                            "/private" => (
+                                "text/html",
+                                "<html><head><title>Private</title></head><body><p>Should never be crawled</p></body></html>",
+                            ),
+                            _ => ("text/html", "<html><body>404</body></html>"),
+                        };
+                        let resp = format!(
+                            "HTTP/1.1 200 OK\r\ncontent-type: {ct}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = stream.write_all(resp.as_bytes()).await;
+                    });
+                }
+                Err(_) => return,
+            }
+        }
+    });
+
+    let mut crawler_cfg = CrawlerConfig::default();
+    crawler_cfg.allow_private_network = true;
+    crawler_cfg.rate_limit_per_sec = 50;
+    let crawler = Crawler::new(
+        crawler_cfg,
+        HeadlessConfig::default(),
+        ProxyConfig::default(),
+    );
+    let extractor = ExtractionPipeline::new(ExtractorConfig::default());
+    let sink = Arc::new(Mutex::new(Vec::new()));
+    let options = CrawlOptions {
+        limit: 10,
+        depth: 2,
+        respect_robots_txt: true,
+        use_sitemap: false,
+        extract_markdown: true,
+        render_js: false,
+        delay_ms: 0,
+    };
+
+    let start = format!("http://{addr}/");
+    execute_bfs_crawl(&start, &crawler, &extractor, &options, sink.clone())
+        .await
+        .unwrap();
+
+    let crawled = sink.lock().await;
+    assert_eq!(crawled.len(), 2);
+    let urls: Vec<&str> = crawled
+        .iter()
+        .filter_map(|p| p["url"].as_str())
+        .collect();
+    assert!(urls.iter().any(|u| u.ends_with('/')));
+    assert!(urls.iter().any(|u| u.ends_with("/docs")));
+    assert!(!urls.iter().any(|u| u.contains("/private")));
+    assert!(crawled[0].get("markdown").is_some());
+}

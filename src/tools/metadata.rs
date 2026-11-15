@@ -132,6 +132,14 @@ pub(crate) fn compatibility_canonical_name(requested: &str) -> Option<&'static s
         | "bookmarks" => Some("knowledge_source"),
         "save_memory" | "remember" | "record_memory" => Some("store_memory"),
         "search_memory" | "query_memory" | "find_memory" => Some("recall_memory"),
+        "searchxyz_recall" | "searchxyz_list_sources" => Some("search_research"),
+        "searchxyz_index_content"
+        | "searchxyz_delete_source"
+        | "searchxyz_clear_index"
+        | "searchxyz_export_research"
+        | "searchxyz_import_research" => Some("archive_research"),
+        "searchxyz_index_relationship" => Some("create_relations"),
+        "searchxyz_query_graph" => Some("search_nodes"),
         "curate_skills" | "manage_skills" | "save_skill" => Some("curate_skill"),
         "inventory" | "runtime_inventory" => Some("openz_inventory"),
         "catalog" | "list_tools" | "tool_search" | "search_tools" | "find_tools"
@@ -290,6 +298,7 @@ pub(crate) fn is_progress_sensitive_repeat(name: &str, args: &serde_json::Value)
         | "compress_content"
         | "compress_context"
         | "search_nodes"
+        | "search_research"
         | "open_nodes"
         | "read_graph"
         | "recall_memory"

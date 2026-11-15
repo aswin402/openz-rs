@@ -119,6 +119,22 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                 .to_string(),
             "web_fetch" | "read_url_content" | "read_url" => string_arg(map, URL_KEYS)
                 .map(|url| format!("\"{}\"", clip(url, 35)))
+                .or_else(|| {
+                    map.get("urls")
+                        .and_then(|v| v.as_array())
+                        .and_then(|arr| {
+                            let first = arr.first().and_then(|v| v.as_str())?;
+                            match arr.len() {
+                                1 => Some(format!("\"{}\"", clip(first, 35))),
+                                count => Some(format!(
+                                    "{} URLs (\"{}\", +{} more)",
+                                    count,
+                                    clip(first, 25),
+                                    count.saturating_sub(1)
+                                )),
+                            }
+                        })
+                })
                 .unwrap_or_default(),
             "ast_grep" => map
                 .get("pattern")

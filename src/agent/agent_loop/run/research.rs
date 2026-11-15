@@ -28,14 +28,23 @@ pub(super) fn direct_research_url(
 ) -> Option<String> {
     matches!(tool_name, "web_fetch" | "searchxyz_read_url").then_some(())?;
 
-    let raw_url = arguments.get("url").and_then(|value| value.as_str())?;
+    let raw_url = arguments
+        .get("url")
+        .and_then(|value| value.as_str())
+        .or_else(|| {
+            let urls = arguments.get("urls").and_then(|value| value.as_array())?;
+            (urls.len() == 1)
+                .then(|| urls.first().and_then(|value| value.as_str()))
+                .flatten()
+        })?;
     let mut parsed = reqwest::Url::parse(raw_url).ok()?;
     parsed.set_fragment(None);
     Some(parsed.to_string())
 }
 
 pub(super) fn direct_page_research_only(user_content: &str) -> bool {
-    match super::super::research_policy::text_has_http_url(user_content) {
+    let urls = super::super::research_policy::extract_distinct_http_urls(user_content);
+    match urls.len() == 1 {
         false => false,
         true => {
             let lower = user_content.to_lowercase();

@@ -1,12 +1,8 @@
 use serde::Deserialize;
 use std::path::PathBuf;
 
+use crate::config::schema::WebEngineConfig;
 use crate::tools::searchxyz::core::error::SearchXyzError;
-
-// ─────────────────────────────────────────────────────────────
-// Top-level config. Loaded from `searchxyz.toml` with env-var
-// overrides layered on top.
-// ─────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Clone, Default)]
 #[serde(default)]
@@ -21,75 +17,66 @@ pub struct Config {
     pub searxng: SearXngConfig,
     pub headless: HeadlessConfig,
     pub proxy: ProxyConfig,
+    pub websurfx_url: Option<String>,
+    pub tavily_api_key: Option<String>,
+    pub exa_api_key: Option<String>,
+    pub search_policy: String,
+    pub github_max_files: usize,
+    pub github_max_bytes: u64,
+    pub github_clone_timeout_secs: u64,
+    pub auto_read_top_results_limit: usize,
 }
-
-// ── Sub-configs ──────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct ServerConfig {
-    /// Server name reported in MCP initialize handshake.
     pub name: String,
-    /// Version string.
     pub version: String,
-    /// Log level filter (e.g. "info", "debug,hyper=warn").
     pub log_level: String,
-    /// Authentication token for remote HTTP server.
     pub auth_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct SearchConfig {
-    /// Ordered list of backend names to try: ["duckduckgo", "brave"]
     pub backends: Vec<String>,
-    /// Max results per search query.
     pub max_results: usize,
+    pub timeout_secs: u64,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct BraveConfig {
-    /// API key — overridable via SEARCHXYZ_BRAVE_API_KEY.
     pub api_key: Option<String>,
-    /// Max results from Brave API (1-20).
     pub max_results: usize,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct CrawlerConfig {
-    /// Request timeout in seconds.
     pub timeout_secs: u64,
-    /// User-Agent header string.
     pub user_agent: String,
-    /// Max response body size in bytes.
     pub max_body_bytes: usize,
-    /// Max redirect hops.
     pub max_redirects: usize,
-    /// Max retries on transient errors.
     pub max_retries: u32,
-    /// Per-domain max requests per second.
     pub rate_limit_per_sec: u64,
-    /// Allow localhost/private/link-local targets. Disabled by default to prevent SSRF.
     pub allow_private_network: bool,
+    pub default_cache_ttl_secs: u64,
+    pub max_concurrent_fetches: usize,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct ExtractorConfig {
-    /// Minimum content length (chars) to accept extraction.
     pub min_content_length: usize,
-    /// CSS selectors for elements to strip before extraction.
     pub strip_selectors: Vec<String>,
-    /// Priority selectors to try for main content.
     pub content_selectors: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct EmbeddingConfig {
-    pub provider: String, // "local", "openai", "gemini", "cohere"
+    pub provider: String,
     pub model: String,
     pub api_key: Option<String>,
     pub api_url: Option<String>,
@@ -109,9 +96,7 @@ impl Default for EmbeddingConfig {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct IndexConfig {
-    /// Directory to store the Tantivy index.
     pub path: PathBuf,
-    /// IndexWriter heap size in bytes.
     pub writer_heap_bytes: usize,
     pub embedding: EmbeddingConfig,
 }
@@ -119,15 +104,10 @@ pub struct IndexConfig {
 #[derive(Debug, Deserialize, Clone)]
 #[serde(default)]
 pub struct CacheConfig {
-    /// Max cached pages.
     pub max_entries: usize,
-    /// TTL per entry in seconds.
     pub ttl_secs: u64,
-    /// Path to store the persistent cache file.
     pub path: PathBuf,
 }
-
-// ── Defaults ─────────────────────────────────────────────────
 
 impl Default for ServerConfig {
     fn default() -> Self {
@@ -147,9 +127,11 @@ impl Default for SearchConfig {
                 "duckduckgo".into(),
                 "google".into(),
                 "bing".into(),
+                "mojeek".into(),
                 "brave".into(),
             ],
             max_results: 10,
+            timeout_secs: 12,
         }
     }
 }
@@ -167,13 +149,14 @@ impl Default for CrawlerConfig {
     fn default() -> Self {
         Self {
             timeout_secs: 30,
-            user_agent: "searchxyz/0.1 (AI-agent MCP tool; +https://github.com/user/searchxyz)"
-                .into(),
-            max_body_bytes: 5 * 1024 * 1024, // 5 MB
+            user_agent: "OpenZ-SearchXyz/1.0 (+https://github.com/aswin402/openz-rs)".into(),
+            max_body_bytes: 5 * 1024 * 1024,
             max_redirects: 5,
-            max_retries: 3,
-            rate_limit_per_sec: 2,
+            max_retries: 2,
+            rate_limit_per_sec: 4,
             allow_private_network: false,
+            default_cache_ttl_secs: 3600,
+            max_concurrent_fetches: 8,
         }
     }
 }
@@ -203,14 +186,20 @@ impl Default for ExtractorConfig {
     }
 }
 
+fn default_openz_base() -> PathBuf {
+    match std::env::var("OPENZ_CONFIG_DIR") {
+        Ok(dir) => PathBuf::from(dir),
+        Err(_) => dirs::home_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".openz"),
+    }
+}
+
 impl Default for IndexConfig {
     fn default() -> Self {
         Self {
-            path: dirs::data_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("searchxyz")
-                .join("index"),
-            writer_heap_bytes: 50 * 1024 * 1024, // 50 MB
+            path: default_openz_base().join("memory.db"),
+            writer_heap_bytes: 0,
             embedding: EmbeddingConfig::default(),
         }
     }
@@ -219,30 +208,89 @@ impl Default for IndexConfig {
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
-            max_entries: 1000,
+            max_entries: 2_000,
             ttl_secs: 3600,
-            path: dirs::data_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("searchxyz")
-                .join("cache.json"),
+            path: default_openz_base().join("memory.db"),
         }
     }
 }
 
-// ── Loading ──────────────────────────────────────────────────
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
+pub struct SearXngConfig {
+    pub instance_url: String,
+    pub engines: Option<String>,
+    pub timeout_secs: u64,
+}
 
-fn parse_backend_list(value: &str) -> Vec<String> {
+impl Default for SearXngConfig {
+    fn default() -> Self {
+        Self {
+            instance_url: String::new(),
+            engines: None,
+            timeout_secs: 8,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+#[serde(default)]
+pub struct HeadlessConfig {
+    pub enabled: bool,
+    pub chrome_path: Option<String>,
+    pub wait_after_load_ms: u64,
+    pub viewport_width: u32,
+    pub viewport_height: u32,
+}
+
+impl Default for HeadlessConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            chrome_path: None,
+            wait_after_load_ms: 1000,
+            viewport_width: 1280,
+            viewport_height: 800,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct ProxyConfig {
+    pub enabled: bool,
+    pub urls: Vec<String>,
+}
+
+pub(crate) fn parse_backend_list(value: &str) -> Vec<String> {
     value
         .split(',')
         .map(str::trim)
         .filter(|backend| !backend.is_empty())
-        .map(ToString::to_string)
+        .map(|s| s.to_ascii_lowercase())
         .collect()
+}
+
+fn non_empty(opt: Option<String>) -> Option<String> {
+    opt.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+fn env_non_empty(keys: &[&str]) -> Option<String> {
+    keys.iter().find_map(|key| {
+        std::env::var(key)
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    })
+}
+
+fn env_parsed<T: std::str::FromStr>(keys: &[&str]) -> Option<T> {
+    env_non_empty(keys).and_then(|val| val.parse().ok())
 }
 
 fn toml_has_key_path(contents: &str, path: &[&str]) -> Result<bool, SearchXyzError> {
     let value = contents.parse::<toml::Value>().map_err(|e| {
-        SearchXyzError::ConfigError(format!("Failed to parse searchxyz.toml metadata: {e}"))
+        SearchXyzError::ConfigError(format!("Failed to parse TOML config metadata: {e}"))
     })?;
     let mut current = &value;
     for key in path {
@@ -265,73 +313,115 @@ fn parse_toml_config(
     Ok((config, explicit_backends, explicit_searxng))
 }
 
-fn env_parsed<T: std::str::FromStr>(key: &str) -> Option<T> {
-    std::env::var(key).ok().and_then(|val| val.parse().ok())
-}
-
 impl Config {
-    /// Load config with the following precedence (highest wins):
-    /// 1. Environment variables (SEARCHXYZ_*)
-    /// 2. TOML file (searchxyz.toml)
-    /// 3. Compiled defaults
+    #[allow(clippy::field_reassign_with_default)]
+    pub fn from_web_engine_config(web: &WebEngineConfig) -> Self {
+        let mut cfg = Self::default();
+        cfg.search_policy = web.search_policy.clone();
+        cfg.searxng.instance_url = non_empty(web.searxng_url.clone()).unwrap_or_default();
+        cfg.searxng.timeout_secs = web.search_timeout_secs.max(1);
+        cfg.websurfx_url = non_empty(web.websurfx_url.clone());
+        cfg.brave.api_key = non_empty(web.brave_api_key.clone());
+        cfg.tavily_api_key = non_empty(web.tavily_api_key.clone());
+        cfg.exa_api_key = non_empty(web.exa_api_key.clone());
+        cfg.search.timeout_secs = web.search_timeout_secs.max(1);
+        cfg.crawler.user_agent = match web.user_agent.trim().is_empty() {
+            true => cfg.crawler.user_agent,
+            false => web.user_agent.clone(),
+        };
+        cfg.crawler.timeout_secs = web.fetch_timeout_secs.max(1);
+        cfg.crawler.max_body_bytes = web.max_content_bytes.max(1024);
+        cfg.crawler.default_cache_ttl_secs = web.cache_ttl_secs;
+        cfg.crawler.max_concurrent_fetches = web.max_concurrent_fetches.clamp(1, 32);
+        cfg.crawler.allow_private_network = web.allow_private_network;
+        cfg.cache.ttl_secs = web.cache_ttl_secs;
+        cfg.github_max_files = web.github_max_files.clamp(1, 10_000);
+        cfg.github_max_bytes = (web.github_max_bytes as u64).clamp(1024, 200 * 1024 * 1024);
+        cfg.github_clone_timeout_secs = web.github_clone_timeout_secs.clamp(5, 600);
+        cfg.auto_read_top_results_limit = web.auto_read_top_results_limit.clamp(1, 5);
+        cfg
+    }
+
     pub fn load(path: Option<&str>) -> Result<Self, SearchXyzError> {
         let (mut config, file_has_explicit_backends, file_has_explicit_searxng) = match path {
             Some(p) => {
                 let contents = std::fs::read_to_string(p)?;
                 parse_toml_config(&contents, p)?
             }
-            None => match std::fs::read_to_string("searchxyz.toml") {
-                Ok(contents) => parse_toml_config(&contents, "searchxyz.toml")?,
-                Err(_) => (Config::default(), false, false),
-            },
+            None => {
+                let web = crate::config::loader::load_config()
+                    .map(|c| c.web)
+                    .unwrap_or_default();
+                let explicit_searxng = web
+                    .searxng_url
+                    .as_deref()
+                    .is_some_and(|u| !u.trim().is_empty());
+                (Self::from_web_engine_config(&web), false, explicit_searxng)
+            }
         };
 
-        let env_has_explicit_backends = std::env::var_os("SEARCHXYZ_SEARCH_BACKENDS").is_some();
-        let env_has_explicit_searxng = std::env::var_os("SEARCHXYZ_SEARXNG_URL").is_some();
+        let env_has_explicit_backends =
+            env_non_empty(&["OPENZ_WEB_SEARCH_BACKENDS", "SEARCHXYZ_SEARCH_BACKENDS"]).is_some();
+        let env_has_explicit_searxng =
+            env_non_empty(&["OPENZ_SEARXNG_URL", "SEARCHXYZ_SEARXNG_URL", "SEARXNG_URL"]).is_some();
 
-        // Layer environment variable overrides.
         config.apply_env_overrides();
 
         let explicit_backend_order = file_has_explicit_backends || env_has_explicit_backends;
         let explicit_searxng = file_has_explicit_searxng || env_has_explicit_searxng;
         config.apply_native_backend_preferences(explicit_backend_order, explicit_searxng);
-
-        // Validate.
         config.validate()?;
-
         Ok(config)
     }
 
-    /// Override specific fields from well-known env vars.
-    fn apply_env_overrides(&mut self) {
-        if_ok_set(std::env::var("SEARCHXYZ_API_KEY"), |key| {
+    pub(crate) fn apply_env_overrides(&mut self) {
+        if_some_set(env_non_empty(&["SEARCHXYZ_API_KEY"]), |key| {
             self.server.auth_token = Some(key);
         });
-        if_ok_set(std::env::var("SEARCHXYZ_BRAVE_API_KEY"), |key| {
-            self.brave.api_key = Some(key);
-        });
-        if_ok_set(std::env::var("SEARCHXYZ_SEARXNG_URL"), |url| {
-            self.searxng.instance_url = url;
-        });
-        if_ok_set(std::env::var("SEARCHXYZ_SEARCH_BACKENDS"), |backends| {
-            self.search.backends = parse_backend_list(&backends);
-        });
-        if_ok_set(std::env::var("SEARCHXYZ_LOG_LEVEL"), |level| {
+        if_some_set(
+            env_non_empty(&["OPENZ_WEB_SEARCH_POLICY"]),
+            |policy| self.search_policy = policy,
+        );
+        if_some_set(
+            env_non_empty(&["OPENZ_BRAVE_API_KEY", "SEARCHXYZ_BRAVE_API_KEY", "BRAVE_API_KEY"]),
+            |key| self.brave.api_key = Some(key),
+        );
+        if_some_set(
+            env_non_empty(&["OPENZ_TAVILY_API_KEY", "SEARCHXYZ_TAVILY_API_KEY", "TAVILY_API_KEY"]),
+            |key| self.tavily_api_key = Some(key),
+        );
+        if_some_set(
+            env_non_empty(&["OPENZ_EXA_API_KEY", "SEARCHXYZ_EXA_API_KEY", "EXA_API_KEY"]),
+            |key| self.exa_api_key = Some(key),
+        );
+        if_some_set(
+            env_non_empty(&["OPENZ_WEBSURFX_URL", "SEARCHXYZ_WEBSURFX_URL", "WEBSURFX_URL"]),
+            |url| self.websurfx_url = Some(url),
+        );
+        if_some_set(
+            env_non_empty(&["OPENZ_SEARXNG_URL", "SEARCHXYZ_SEARXNG_URL", "SEARXNG_URL"]),
+            |url| self.searxng.instance_url = url,
+        );
+        if_some_set(
+            env_non_empty(&["OPENZ_WEB_SEARCH_BACKENDS", "SEARCHXYZ_SEARCH_BACKENDS"]),
+            |backends| self.search.backends = parse_backend_list(&backends),
+        );
+        if_some_set(env_non_empty(&["SEARCHXYZ_LOG_LEVEL"]), |level| {
             self.server.log_level = level;
         });
-        if_ok_set(std::env::var("SEARCHXYZ_INDEX_PATH"), |path| {
+        if_some_set(env_non_empty(&["SEARCHXYZ_INDEX_PATH"]), |path| {
             self.index.path = PathBuf::from(path);
         });
-        if_ok_set(std::env::var("SEARCHXYZ_EMBEDDING_PROVIDER"), |prov| {
+        if_some_set(env_non_empty(&["SEARCHXYZ_EMBEDDING_PROVIDER"]), |prov| {
             self.index.embedding.provider = prov;
         });
-        if_ok_set(std::env::var("SEARCHXYZ_EMBEDDING_MODEL"), |model| {
+        if_some_set(env_non_empty(&["SEARCHXYZ_EMBEDDING_MODEL"]), |model| {
             self.index.embedding.model = model;
         });
-        if_ok_set(std::env::var("SEARCHXYZ_EMBEDDING_API_KEY"), |key| {
+        if_some_set(env_non_empty(&["SEARCHXYZ_EMBEDDING_API_KEY"]), |key| {
             self.index.embedding.api_key = Some(key);
         });
-        if_ok_set(std::env::var("SEARCHXYZ_EMBEDDING_URL"), |url| {
+        if_some_set(env_non_empty(&["SEARCHXYZ_EMBEDDING_URL"]), |url| {
             self.index.embedding.api_url = Some(url);
         });
 
@@ -347,30 +437,43 @@ impl Config {
             }
         }
 
-        if_some_set(env_parsed("SEARCHXYZ_CACHE_MAX_ENTRIES"), |n| {
+        if_some_set(env_parsed(&["SEARCHXYZ_CACHE_MAX_ENTRIES"]), |n| {
             self.cache.max_entries = n;
         });
-        if_some_set(env_parsed("SEARCHXYZ_CACHE_TTL_SECS"), |n| {
-            self.cache.ttl_secs = n;
-        });
-        if_ok_set(std::env::var("SEARCHXYZ_CACHE_PATH"), |path| {
+        if_some_set(
+            env_parsed(&["OPENZ_WEB_CACHE_TTL_SECS", "SEARCHXYZ_CACHE_TTL_SECS"]),
+            |n| {
+                self.cache.ttl_secs = n;
+                self.crawler.default_cache_ttl_secs = n;
+            },
+        );
+        if_some_set(env_non_empty(&["SEARCHXYZ_CACHE_PATH"]), |path| {
             self.cache.path = PathBuf::from(path);
         });
-        if_some_set(env_parsed("SEARCHXYZ_HEADLESS_ENABLED"), |b| {
+        if_some_set(env_parsed(&["SEARCHXYZ_HEADLESS_ENABLED"]), |b| {
             self.headless.enabled = b;
         });
-        if_ok_set(std::env::var("SEARCHXYZ_CHROME_PATH"), |path| {
+        if_some_set(env_non_empty(&["SEARCHXYZ_CHROME_PATH"]), |path| {
             self.headless.chrome_path = Some(path);
         });
-        if_some_set(env_parsed("SEARCHXYZ_HEADLESS_WAIT_MS"), |n| {
+        if_some_set(env_parsed(&["SEARCHXYZ_HEADLESS_WAIT_MS"]), |n| {
             self.headless.wait_after_load_ms = n;
         });
-        if_some_set(env_parsed("SEARCHXYZ_PROXY_ENABLED"), |b| {
+        if_some_set(env_parsed(&["SEARCHXYZ_PROXY_ENABLED"]), |b| {
             self.proxy.enabled = b;
         });
-        if_ok_set(std::env::var("SEARCHXYZ_PROXY_URLS"), |urls_str| {
-            self.proxy.urls = parse_backend_list(&urls_str);
+        if_some_set(env_non_empty(&["SEARCHXYZ_PROXY_URLS"]), |urls_str| {
+            self.proxy.urls = urls_str
+                .split(',')
+                .map(str::trim)
+                .filter(|u| !u.is_empty())
+                .map(ToString::to_string)
+                .collect();
         });
+        if_some_set(
+            env_parsed(&["OPENZ_WEB_ALLOW_PRIVATE_NETWORK", "SEARCHXYZ_ALLOW_PRIVATE_NETWORK"]),
+            |allow| self.crawler.allow_private_network = allow,
+        );
     }
 
     fn apply_native_backend_preferences(
@@ -378,34 +481,43 @@ impl Config {
         explicit_backend_order: bool,
         explicit_searxng: bool,
     ) {
-        match explicit_backend_order
-            || !explicit_searxng
-            || self.searxng.instance_url.trim().is_empty()
-        {
-            true => {}
-            false => {
-                self.search.backends.retain(|backend| backend != "searxng");
-                self.search.backends.insert(0, "searxng".to_string());
+        match explicit_backend_order {
+            true => return,
+            false => {}
+        }
+
+        let priority_candidates = [
+            (
+                "searxng",
+                explicit_searxng && !self.searxng.instance_url.trim().is_empty(),
+            ),
+            ("websurfx", self.websurfx_url.is_some()),
+            ("tavily", self.tavily_api_key.is_some()),
+            ("exa", self.exa_api_key.is_some()),
+            ("brave", self.brave.api_key.is_some()),
+        ];
+
+        let mut preferred: Vec<String> = priority_candidates
+            .into_iter()
+            .filter(|(_, active)| *active)
+            .map(|(name, _)| name.to_string())
+            .collect();
+
+        for existing in &self.search.backends {
+            match preferred.iter().any(|item| item == existing) {
+                true => {}
+                false => preferred.push(existing.clone()),
             }
         }
+        self.search.backends = preferred;
     }
 
-    /// Validate invariants.
     fn validate(&self) -> Result<(), SearchXyzError> {
         match self.search.backends.is_empty() {
             true => {
                 return Err(SearchXyzError::ConfigError(
                     "At least one search backend must be configured".into(),
                 ));
-            }
-            false => {}
-        }
-        match self.search.backends.contains(&"brave".to_string()) && self.brave.api_key.is_none() {
-            true => {
-                tracing::warn!(
-                    "Brave backend is listed but no API key is set — \
-                     it will be skipped at runtime"
-                );
             }
             false => {}
         }
@@ -418,68 +530,11 @@ impl Config {
     }
 }
 
-fn if_ok_set<T, E, F: FnOnce(T)>(res: Result<T, E>, f: F) {
-    match res {
-        Ok(val) => f(val),
-        Err(_) => {}
-    }
-}
-
 fn if_some_set<T, F: FnOnce(T)>(opt: Option<T>, f: F) {
     match opt {
         Some(val) => f(val),
         None => {}
     }
-}
-
-#[derive(Debug, Deserialize, Clone)]
-#[serde(default)]
-pub struct SearXngConfig {
-    /// Base URL of the SearXNG instance
-    pub instance_url: String,
-    /// List of target search engines to query (comma-separated, e.g. "google,bing")
-    pub engines: Option<String>,
-    /// Search request timeout in seconds
-    pub timeout_secs: u64,
-}
-
-impl Default for SearXngConfig {
-    fn default() -> Self {
-        Self {
-            instance_url: "http://localhost:8080".into(),
-            engines: None,
-            timeout_secs: 5,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Clone)]
-#[serde(default)]
-pub struct HeadlessConfig {
-    pub enabled: bool,
-    pub chrome_path: Option<String>,
-    pub wait_after_load_ms: u64,
-    pub viewport_width: u32,
-    pub viewport_height: u32,
-}
-
-impl Default for HeadlessConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            chrome_path: None,
-            wait_after_load_ms: 1000,
-            viewport_width: 1280,
-            viewport_height: 800,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Clone, Default)]
-#[serde(default)]
-pub struct ProxyConfig {
-    pub enabled: bool,
-    pub urls: Vec<String>,
 }
 
 #[cfg(test)]
@@ -493,6 +548,7 @@ pub(crate) mod tests {
         let config = Config::default();
         assert!(!config.proxy.enabled);
         assert!(config.proxy.urls.is_empty());
+        assert!(config.index.path.ends_with("memory.db"));
     }
 
     #[test]
@@ -521,7 +577,6 @@ pub(crate) mod tests {
             PathBuf::from("/tmp/searchxyz-test-cache.json")
         );
 
-        // Clean up
         std::env::remove_var("SEARCHXYZ_PROXY_ENABLED");
         std::env::remove_var("SEARCHXYZ_PROXY_URLS");
         std::env::remove_var("SEARCHXYZ_CACHE_PATH");
@@ -532,6 +587,7 @@ pub(crate) mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("SEARCHXYZ_SEARXNG_URL", "http://searxng.local");
         std::env::remove_var("SEARCHXYZ_SEARCH_BACKENDS");
+        std::env::remove_var("OPENZ_WEB_SEARCH_BACKENDS");
 
         let config = Config::load(None).unwrap();
 
@@ -600,7 +656,6 @@ pub(crate) mod tests {
             Some("http://custom-url/v1".to_string())
         );
 
-        // Clean up
         std::env::remove_var("SEARCHXYZ_EMBEDDING_PROVIDER");
         std::env::remove_var("SEARCHXYZ_EMBEDDING_MODEL");
         std::env::remove_var("SEARCHXYZ_EMBEDDING_API_KEY");
@@ -621,7 +676,6 @@ pub(crate) mod tests {
             Some("my-secret-token".to_string())
         );
 
-        // Clean up
         std::env::remove_var("SEARCHXYZ_API_KEY");
     }
 }

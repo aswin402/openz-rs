@@ -288,10 +288,10 @@ fn print_disk_report(data_dir: &Path) {
         ),
         DiskItem::new(
             "SearchXyz repo cache",
-            home.join(".searchxyz"),
+            data_dir.join("searchxyz/repos"),
             5,
             20,
-            Some("Use SearchXyz source cleanup for repos you no longer need"),
+            Some("Use archive_research action=delete_source for cloned repos you no longer need"),
         ),
         DiskItem::new(
             "Cargo registry cache",
@@ -524,6 +524,37 @@ pub async fn handle_doctor(scrub_secrets: bool, clean_target: bool) -> Result<()
         Err(err) => println!("⚠️  Research brief topic repair skipped: {err}"),
     }
     println!();
+
+    // ── Step 3b: Relocate legacy ~/.searchxyz/repos clones into ~/.openz/searchxyz/repos ──
+    let legacy_repos = dirs::home_dir().map(|h| h.join(".searchxyz/repos"));
+    match legacy_repos.filter(|p| p.is_dir()) {
+        Some(legacy_dir) => {
+            let target_repos = data_dir.join("searchxyz/repos");
+            let _ = std::fs::create_dir_all(&target_repos);
+            let mut relocated_repos = 0usize;
+            match std::fs::read_dir(&legacy_dir) {
+                Ok(entries) => {
+                    for entry in entries.flatten() {
+                        let dest = target_repos.join(entry.file_name());
+                        match !dest.exists() && std::fs::rename(entry.path(), &dest).is_ok() {
+                            true => relocated_repos += 1,
+                            false => {}
+                        }
+                    }
+                }
+                Err(_) => {}
+            }
+            match relocated_repos > 0 {
+                true => println!(
+                    "✅ Relocated {} legacy SearchXyz repository clone(s) to {}.",
+                    relocated_repos,
+                    target_repos.display()
+                ),
+                false => {}
+            }
+        }
+        None => {}
+    }
 
     // ── Step 4: Optional historical secret scrub ──
     match scrub_secrets {

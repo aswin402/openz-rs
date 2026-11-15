@@ -298,6 +298,9 @@ fn direct_page_scope_requires_explicit_broader_intent() {
     assert!(!direct_page_research_only(
         "scrape the source code and assets from https://example.com/game"
     ));
+    assert!(!direct_page_research_only(
+        "Test web_fetch on 1) https://blog.rust-lang.org/feed.xml 2) https://tokio.rs 3) http://[::ffff:127.0.0.1]"
+    ));
 }
 
 #[test]
@@ -689,4 +692,105 @@ fn iteration_routing_prompt_evolves_with_assistant_reasoning_tools_and_errors() 
     assert!(iter1.contains("db_inspector"));
     assert!(iter1.contains("grep_search read_file"));
     assert!(iter1.contains("sqlite table missing"));
+}
+
+#[test]
+fn shell_multi_curl_python_scrape_rewrites_to_batch_web_fetch() {
+    let cmd = r#"echo "=== v7 quote ==="; curl -s -m 25 -H 'User-Agent: Mozilla/5.0' 'https://query1.finance.yahoo.com/v7/finance/quote?symbols=AMD,NVDA' | head -c 1500; echo; echo "=== stockanalysis ==="; curl -s -m 25 -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)' 'https://stockanalysis.com/stocks/amd/' | python3 -c " import sys,re; h=sys.stdin.read(); t=re.sub(r'<script.*?</script>','',h,flags=re.S); t=re.sub(r'<[^>]+>',' ',t); i=t.find('Market Cap'); print(t[max(0,i-600):i+1200] if i>0 else t[:1500]) ""#;
+    let call = crate::providers::ToolCallRequest {
+        id: "call_curl_multi".to_string(),
+        name: "exec_command".to_string(),
+        arguments: json!({ "command": cmd }),
+    };
+    let normalized =
+        auto_adjust_tool_call_for_user_intent(call, "compare AMD and NVDA stock prices today");
+    assert_eq!(normalized.name, "web_fetch");
+    assert_eq!(normalized.id, "call_curl_multi");
+    assert_eq!(
+        normalized.arguments["urls"],
+        json!([
+            "https://query1.finance.yahoo.com/v7/finance/quote?symbols=AMD,NVDA",
+            "https://stockanalysis.com/stocks/amd/"
+        ])
+    );
+    assert_eq!(normalized.arguments["cache_mode"], "revalidate");
+}
+
+#[test]
+fn shell_for_loop_curl_scrape_rewrites_to_batch_web_fetch() {
+    let cmd = r#"for u in "https://example.com/news/item-1" "https://example.org/rss/feed.xml"; do echo "=== $u ==="; curl -sL -m 25 "$u" 2>/dev/null | head -c 1500; done"#;
+    let call = crate::providers::ToolCallRequest {
+        id: "call_for_curl".to_string(),
+        name: "exec_command".to_string(),
+        arguments: json!({ "command": cmd }),
+    };
+    let normalized = auto_adjust_tool_call_for_user_intent(call, "summarize the market movers");
+    assert_eq!(normalized.name, "web_fetch");
+    assert_eq!(
+        normalized.arguments["urls"],
+        json!([
+            "https://example.com/news/item-1",
+            "https://example.org/rss/feed.xml"
+        ])
+    );
+}
+
+#[test]
+fn shell_single_curl_scrape_rewrites_to_single_web_fetch() {
+    let cmd = r#"curl -sL -m 30 -H 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)' "https://example.com/articles/report""#;
+    let call = crate::providers::ToolCallRequest {
+        id: "call_single_curl".to_string(),
+        name: "exec_command".to_string(),
+        arguments: json!({ "command": cmd }),
+    };
+    let normalized = auto_adjust_tool_call_for_user_intent(call, "read the report");
+    assert_eq!(normalized.name, "web_fetch");
+    assert_eq!(
+        normalized.arguments["url"],
+        "https://example.com/articles/report"
+    );
+}
+
+#[test]
+fn shell_curl_preserves_localhost_authenticated_post_and_explicit_curl_requests() {
+    let localhost_call = crate::providers::ToolCallRequest {
+        id: "c1".to_string(),
+        name: "exec_command".to_string(),
+        arguments: json!({ "command": "curl -s http://127.0.0.1:8765/health" }),
+    };
+    assert_eq!(
+        auto_adjust_tool_call_for_user_intent(localhost_call, "check local server health").name,
+        "exec_command"
+    );
+
+    let post_call = crate::providers::ToolCallRequest {
+        id: "c2".to_string(),
+        name: "exec_command".to_string(),
+        arguments: json!({ "command": "curl -X POST -d '{\"a\":1}' https://example.com/api" }),
+    };
+    assert_eq!(
+        auto_adjust_tool_call_for_user_intent(post_call, "send payload").name,
+        "exec_command"
+    );
+
+    let auth_call = crate::providers::ToolCallRequest {
+        id: "c3".to_string(),
+        name: "exec_command".to_string(),
+        arguments: json!({ "command": "curl -s -H 'Authorization: Bearer tok' https://example.com/api" }),
+    };
+    assert_eq!(
+        auto_adjust_tool_call_for_user_intent(auth_call, "fetch private endpoint").name,
+        "exec_command"
+    );
+
+    let explicit_curl = crate::providers::ToolCallRequest {
+        id: "c4".to_string(),
+        name: "exec_command".to_string(),
+        arguments: json!({ "command": "curl -s https://example.com" }),
+    };
+    assert_eq!(
+        auto_adjust_tool_call_for_user_intent(explicit_curl, "run curl against https://example.com")
+            .name,
+        "exec_command"
+    );
 }

@@ -1,45 +1,48 @@
 pub mod fast_spider;
 pub mod fingerprint;
 pub mod github;
-pub mod headless;
+pub mod robots;
 pub mod sitemap;
 pub mod spider;
+pub mod ssrf;
 pub mod youtube;
 
-use headless::HeadlessBrowser;
-use std::net::IpAddr;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::time::Duration;
 
 use governor::{clock::DefaultClock, state::keyed::DefaultKeyedStateStore, Quota, RateLimiter};
-use reqwest::{header, redirect::Policy, Client, StatusCode};
-use tokio::net::lookup_host;
-use tokio::sync::Mutex;
+use reqwest::{header, Client, StatusCode};
 use url::Url;
 
-use crate::tools::searchxyz::core::cache::{Cache, CacheEntry};
-use crate::tools::searchxyz::core::config::CrawlerConfig;
+use crate::tools::searchxyz::core::config::{CrawlerConfig, HeadlessConfig, ProxyConfig};
 use crate::tools::searchxyz::core::error::SearchXyzError;
+use crate::tools::shared_memory::web_cache::{
+    is_cache_fresh, load_http_cache, refresh_http_cache_validators, save_http_cache,
+    touch_http_cache, CachedHttpEntry,
+};
 
-/// Per-domain keyed rate limiter type.
+pub use ssrf::{
+    build_pinned_http_client, is_safe_ip, is_supported_web_content_type,
+    read_bounded_response_bytes, ssrf_redirect_policy, validate_http_url,
+    validate_http_url_addrs, validate_public_http_url, validate_url_sync_with_policy,
+};
+
 type DomainRateLimiter = RateLimiter<String, DefaultKeyedStateStore<String>, DefaultClock>;
 
-/// The crawler fetches HTML pages with timeouts, retries, and
-/// per-domain rate limiting.
+#[derive(Clone)]
 pub struct Crawler {
     clients: Vec<Client>,
+    proxy_urls: Vec<String>,
     config: CrawlerConfig,
+    headless_enabled: bool,
     rate_limiter: Arc<DomainRateLimiter>,
-    cache: Arc<Mutex<Cache>>,
-    headless_browser: HeadlessBrowser,
 }
 
-/// Raw fetch result before extraction.
 #[derive(Debug, Clone)]
 pub struct FetchResult {
     pub url: String,
-    pub final_url: String, // after redirects
+    pub final_url: String,
     pub body: String,
     pub content_type: String,
 }
@@ -53,30 +56,34 @@ pub enum FetchCacheMode {
 }
 
 impl FetchCacheMode {
-    fn may_read_cache(self) -> bool {
+    pub fn may_read_cache(self) -> bool {
         matches!(self, FetchCacheMode::Auto | FetchCacheMode::PreferCache)
     }
 
-    fn may_write_cache(self) -> bool {
+    pub fn may_write_cache(self) -> bool {
         !matches!(self, FetchCacheMode::Bypass)
     }
 }
 
-fn build_http_client(
+fn build_pool_client(
     config: &CrawlerConfig,
     proxy: Option<reqwest::Proxy>,
 ) -> Result<Client, reqwest::Error> {
-    let builder = Client::builder()
-        .timeout(Duration::from_secs(config.timeout_secs))
+    let base = Client::builder()
+        .use_rustls_tls()
+        .timeout(Duration::from_secs(config.timeout_secs.max(1)))
         .connect_timeout(Duration::from_secs(10))
         .user_agent(&config.user_agent)
-        .redirect(Policy::limited(config.max_redirects))
+        .redirect(ssrf_redirect_policy(
+            config.max_redirects,
+            config.allow_private_network,
+        ))
         .pool_max_idle_per_host(4)
         .gzip(true)
         .brotli(true);
     let builder = match proxy {
-        Some(p) => builder.proxy(p),
-        None => builder,
+        Some(p) => base.proxy(p),
+        None => base,
     };
     builder.build()
 }
@@ -84,17 +91,20 @@ fn build_http_client(
 impl Crawler {
     pub fn new(
         config: CrawlerConfig,
-        headless_config: crate::tools::searchxyz::core::config::HeadlessConfig,
-        proxy_config: crate::tools::searchxyz::core::config::ProxyConfig,
-        cache: Arc<Mutex<Cache>>,
+        headless_config: HeadlessConfig,
+        proxy_config: ProxyConfig,
     ) -> Self {
         let mut clients = Vec::new();
+        let mut active_proxy_urls = Vec::new();
         match proxy_config.enabled && !proxy_config.urls.is_empty() {
             true => {
                 for proxy_url in &proxy_config.urls {
                     match reqwest::Proxy::all(proxy_url) {
-                        Ok(proxy) => match build_http_client(&config, Some(proxy)) {
-                            Ok(client) => clients.push(client),
+                        Ok(proxy) => match build_pool_client(&config, Some(proxy)) {
+                            Ok(client) => {
+                                clients.push(client);
+                                active_proxy_urls.push(proxy_url.clone());
+                            }
                             Err(e) => {
                                 tracing::error!(proxy_url, error = %e, "Failed to build proxied HTTP client");
                             }
@@ -110,27 +120,25 @@ impl Crawler {
 
         match clients.is_empty() {
             true => {
-                let client = build_http_client(&config, None)
-                    .expect("Failed to build default HTTP client");
+                let client = build_pool_client(&config, None)
+                    .unwrap_or_else(|_| crate::core::http::default_http_client());
                 clients.push(client);
             }
             false => {}
         }
 
-        // Per-domain rate limiter: N requests/sec per domain.
         let quota = Quota::per_second(
-            NonZeroU32::new(config.rate_limit_per_sec as u32)
+            NonZeroU32::new(config.rate_limit_per_sec.max(1) as u32)
                 .unwrap_or(NonZeroU32::new(2).unwrap()),
         );
         let rate_limiter = Arc::new(RateLimiter::keyed(quota));
-        let headless_browser = HeadlessBrowser::new(headless_config, proxy_config);
 
         Self {
             clients,
+            proxy_urls: active_proxy_urls,
             config,
+            headless_enabled: headless_config.enabled,
             rate_limiter,
-            cache,
-            headless_browser,
         }
     }
 
@@ -138,11 +146,14 @@ impl Crawler {
         &self.clients
     }
 
-    pub fn headless_browser(&self) -> &HeadlessBrowser {
-        &self.headless_browser
+    pub fn config(&self) -> &CrawlerConfig {
+        &self.config
     }
 
-    /// Fetch a URL, respecting cache, rate limits, and retries.
+    pub fn headless_enabled(&self) -> bool {
+        self.headless_enabled
+    }
+
     pub async fn fetch_url(
         &self,
         url: &str,
@@ -152,68 +163,73 @@ impl Crawler {
             .await
     }
 
-    /// Fetch a URL with explicit cache behavior.
     pub async fn fetch_url_with_cache_mode(
         &self,
         url: &str,
         render_js: bool,
         cache_mode: FetchCacheMode,
     ) -> Result<FetchResult, SearchXyzError> {
-        validate_http_url(url, self.config.allow_private_network).await?;
-
-        // ── 1. Check cache ──
-        let cached_entry = {
-            let cache = self.cache.lock().await;
-            match cache_mode.may_read_cache() {
-                true => match cache.get(url) {
-                    Some(entry) => {
-                        tracing::debug!(url, "Cache hit");
-                        return Ok(FetchResult {
-                            url: url.to_string(),
-                            final_url: url.to_string(),
-                            body: entry.content.clone(),
-                            content_type: entry
-                                .content_type
-                                .clone()
-                                .unwrap_or_else(|| "text/html".into()),
-                        });
-                    }
-                    None => {
-                        match matches!(cache_mode, FetchCacheMode::PreferCache) {
-                            true => {
-                                tracing::debug!(
-                                    url,
-                                    "Prefer-cache requested but no fresh entry found"
-                                );
-                            }
-                            false => {}
-                        }
-                    }
-                },
-                false => {}
-            }
-            cache.get_any(url).cloned()
+        // 1. Check SQLite HTTP cache first (before DNS lookup so offline PreferCache / cached unit tests work cleanly)
+        let cached_entry = match cache_mode {
+            FetchCacheMode::Bypass => None,
+            _ => load_http_cache(url).ok().flatten(),
         };
 
-        // ── 2. Rate limit ──
-        let domain = Url::parse(url)
-            .map(|u| u.host_str().unwrap_or("unknown").to_string())
-            .unwrap_or_else(|_| "unknown".into());
+        match (&cached_entry, cache_mode) {
+            (Some(entry), FetchCacheMode::PreferCache) => {
+                validate_scheme_and_local_host_ok(url, self.config.allow_private_network)?;
+                let _ = touch_http_cache(url);
+                return Ok(cached_to_fetch_result(url, entry));
+            }
+            (Some(entry), FetchCacheMode::Auto) => {
+                match is_cache_fresh(&entry.expires_at, chrono::Utc::now()) {
+                    true => {
+                        validate_scheme_and_local_host_ok(url, self.config.allow_private_network)?;
+                        let _ = touch_http_cache(url);
+                        return Ok(cached_to_fetch_result(url, entry));
+                    }
+                    false => {}
+                }
+            }
+            _ => {}
+        }
 
+        let (_parsed_url, host_lc, resolved_addrs) =
+            validate_http_url_addrs(url, self.config.allow_private_network).await?;
+
+        let domain = Url::parse(url)
+            .ok()
+            .and_then(|u| u.host_str().map(ToString::to_string))
+            .unwrap_or_else(|| "unknown".into());
         self.rate_limiter.until_key_ready(&domain).await;
 
-        // ── 3. Headless JS execution if requested ──
+        // 2. Brokered Headless JS execution when requested
         match render_js {
             true => {
-                tracing::info!(url, "Fetching URL with headless browser");
-                let body = self.headless_browser.fetch_html(url).await?;
+                tracing::info!(url, "Fetching URL via OpenZ BrowserBroker");
+                let rendered = crate::tools::browser_broker::render_page_with_browser_broker(
+                    url,
+                    self.config.timeout_secs.clamp(5, 60),
+                )
+                .await
+                .map_err(|e| SearchXyzError::CrawlFailed {
+                    url: url.to_string(),
+                    reason: format!("BrowserBroker render failed: {e}"),
+                })?;
+
+                validate_http_url(&rendered.final_url, self.config.allow_private_network).await?;
 
                 match cache_mode.may_write_cache() {
                     true => {
-                        let mut cache = self.cache.lock().await;
-                        cache.put(
-                            url.to_string(),
-                            CacheEntry::new(body.clone(), url.to_string()),
+                        let empty_headers = header::HeaderMap::new();
+                        let _ = save_http_cache(
+                            url,
+                            &rendered.final_url,
+                            &rendered.html,
+                            "text/html",
+                            &empty_headers,
+                            200,
+                            self.config.default_cache_ttl_secs as i64,
                         );
                     }
                     false => {}
@@ -221,22 +237,30 @@ impl Crawler {
 
                 return Ok(FetchResult {
                     url: url.to_string(),
-                    final_url: url.to_string(),
-                    body,
+                    final_url: rendered.final_url,
+                    body: rendered.html,
                     content_type: "text/html".into(),
                 });
             }
             false => {}
         }
 
-        // ── 4. Fetch with retries (exponential backoff) ──
+        // 3. Build DNS-pinned client for live HTTP fetch
+        let chosen_proxy = self.pick_proxy();
+        let client = build_pinned_http_client(&self.config, &host_lc, &resolved_addrs, chosen_proxy)
+            .map_err(SearchXyzError::from)?;
+
         let allow_stale_fallback = !matches!(cache_mode, FetchCacheMode::Bypass);
+        let send_conditional = matches!(
+            cache_mode,
+            FetchCacheMode::Auto | FetchCacheMode::Revalidate
+        );
         let mut attempt = 0u32;
+
         loop {
             attempt += 1;
-
             let mut headers = fingerprint::HeaderGenerator::random_headers();
-            match (matches!(cache_mode, FetchCacheMode::Revalidate), &cached_entry) {
+            match (send_conditional, cached_entry.as_ref()) {
                 (true, Some(entry)) => {
                     match entry.etag.as_deref().and_then(|etag| etag.parse().ok()) {
                         Some(value) => {
@@ -257,11 +281,7 @@ impl Crawler {
                 }
                 _ => {}
             }
-            use rand::seq::SliceRandom;
-            let client = self
-                .clients
-                .choose(&mut rand::thread_rng())
-                .unwrap_or(&self.clients[0]);
+
             let resp = client.get(url).headers(headers).send().await;
 
             match resp {
@@ -270,37 +290,33 @@ impl Crawler {
                     validate_http_url(&final_url, self.config.allow_private_network).await?;
                     let status = response.status();
 
-                    // ── Handle common HTTP errors ──
                     match status {
                         StatusCode::OK => {}
 
                         StatusCode::NOT_MODIFIED => match cached_entry {
                             Some(entry) => {
-                                tracing::debug!(url, "Origin returned 304; reusing cached body");
                                 match cache_mode.may_write_cache() {
                                     true => {
-                                        let mut refreshed = entry.clone();
-                                        refreshed.fetched_at = chrono::Utc::now();
-                                        let mut cache = self.cache.lock().await;
-                                        cache.put(url.to_string(), refreshed);
+                                        let _ = refresh_http_cache_validators(
+                                            url,
+                                            response.headers(),
+                                            self.config.default_cache_ttl_secs as i64,
+                                        );
                                     }
                                     false => {}
                                 }
                                 return Ok(FetchResult {
-                                    url: url.into(),
+                                    url: url.to_string(),
                                     final_url,
-                                    body: entry.content,
-                                    content_type: entry
-                                        .content_type
-                                        .unwrap_or_else(|| "text/html".into()),
+                                    body: entry.body_text,
+                                    content_type: entry.content_type,
                                 });
                             }
                             None => {
                                 return Err(SearchXyzError::HttpError {
                                     url: url.into(),
                                     status: 304,
-                                    reason: "Origin returned 304 but SearchXyz has no cached body"
-                                        .into(),
+                                    reason: "Origin returned 304 without cached body".into(),
                                 });
                             }
                         },
@@ -324,7 +340,6 @@ impl Crawler {
                         StatusCode::TOO_MANY_REQUESTS => match attempt <= self.config.max_retries {
                             true => {
                                 let delay = Duration::from_millis(1000 * 2u64.pow(attempt - 1));
-                                tracing::warn!(url, attempt, "Rate limited, backing off");
                                 tokio::time::sleep(delay).await;
                                 continue;
                             }
@@ -336,42 +351,33 @@ impl Crawler {
                             }
                         },
 
-                        StatusCode::INTERNAL_SERVER_ERROR | StatusCode::SERVICE_UNAVAILABLE => {
-                            match attempt <= self.config.max_retries {
-                                true => {
-                                    let delay = Duration::from_millis(500 * 2u64.pow(attempt - 1));
-                                    tracing::warn!(
-                                        url, status = %status, attempt,
-                                        "Server error, retrying"
-                                    );
-                                    tokio::time::sleep(delay).await;
-                                    continue;
-                                }
-                                false => {
-                                    let err = SearchXyzError::HttpError {
-                                        url: url.into(),
-                                        status: status.as_u16(),
-                                        reason: format!(
-                                            "Server error after {} attempts",
-                                            self.config.max_retries
-                                        ),
-                                    };
-                                    match allow_stale_fallback
-                                        .then(|| {
-                                            stale_fallback(
-                                                url,
-                                                cached_entry.clone(),
-                                                err.to_string(),
-                                            )
-                                        })
-                                        .flatten()
-                                    {
-                                        Some(result) => return Ok(result),
-                                        None => return Err(err),
-                                    }
+                        StatusCode::INTERNAL_SERVER_ERROR
+                        | StatusCode::BAD_GATEWAY
+                        | StatusCode::SERVICE_UNAVAILABLE
+                        | StatusCode::GATEWAY_TIMEOUT => match attempt <= self.config.max_retries {
+                            true => {
+                                let delay = Duration::from_millis(500 * 2u64.pow(attempt - 1));
+                                tokio::time::sleep(delay).await;
+                                continue;
+                            }
+                            false => {
+                                let err = SearchXyzError::HttpError {
+                                    url: url.into(),
+                                    status: status.as_u16(),
+                                    reason: format!(
+                                        "Server error after {} attempts",
+                                        self.config.max_retries
+                                    ),
+                                };
+                                match allow_stale_fallback
+                                    .then(|| stale_fallback(url, cached_entry.clone(), err.to_string()))
+                                    .flatten()
+                                {
+                                    Some(result) => return Ok(result),
+                                    None => return Err(err),
                                 }
                             }
-                        }
+                        },
 
                         other => match other.is_success() {
                             true => {}
@@ -385,129 +391,87 @@ impl Crawler {
                         },
                     }
 
-                    // ── Content-Type guard ──
-                    let content_type = response
-                        .headers()
-                        .get(reqwest::header::CONTENT_TYPE)
+                    let resp_headers = response.headers().clone();
+                    let content_type = resp_headers
+                        .get(header::CONTENT_TYPE)
                         .and_then(|v| v.to_str().ok())
                         .unwrap_or("")
                         .to_string();
 
-                    let etag = response_header_string(&response, header::ETAG);
-                    let last_modified = response_header_string(&response, header::LAST_MODIFIED);
-                    let cache_control = response_header_string(&response, header::CACHE_CONTROL);
-
-                    let is_pdf = content_type.contains("application/pdf");
-                    let is_supported = is_pdf
-                        || content_type.contains("text/html")
-                        || content_type.contains("text/plain")
-                        || content_type.contains("application/xhtml");
-
-                    match is_supported {
+                    match is_supported_web_content_type(&content_type) {
                         true => {}
                         false => {
                             return Err(SearchXyzError::CrawlFailed {
                                 url: url.into(),
                                 reason: format!(
-                                    "Unsupported Content-Type: {content_type}. \
-                                     Only HTML pages and PDF documents are supported."
+                                    "Unsupported Content-Type: {content_type}. Supported types: HTML, text, Markdown, XML/RSS/Atom, JSON, and PDF."
                                 ),
                             });
                         }
                     }
 
-                    // ── Size guard ──
-                    match response
-                        .content_length()
-                        .filter(|&len| len as usize > self.config.max_body_bytes)
-                    {
-                        Some(len) => {
-                            return Err(SearchXyzError::CrawlFailed {
-                                url: url.into(),
-                                reason: format!(
-                                    "Response too large ({len} bytes, max {})",
-                                    self.config.max_body_bytes
-                                ),
-                            });
-                        }
-                        None => {}
-                    }
+                    let bytes = read_bounded_response_bytes(
+                        response,
+                        url,
+                        self.config.max_body_bytes,
+                    )
+                    .await?;
 
-                    // ── Read response bytes ──
-                    let bytes =
-                        response
-                            .bytes()
-                            .await
-                            .map_err(|e| SearchXyzError::CrawlFailed {
-                                url: url.into(),
-                                reason: format!("Failed to read response bytes: {e}"),
-                            })?;
-
-                    match bytes.len() > self.config.max_body_bytes {
-                        true => {
-                            return Err(SearchXyzError::CrawlFailed {
-                                url: url.into(),
-                                reason: format!("Body exceeds limit ({} bytes)", bytes.len()),
-                            });
-                        }
-                        false => {}
-                    }
-
-                    // ── Extract body string (HTML/text vs PDF) ──
+                    let is_pdf = content_type.to_ascii_lowercase().contains("application/pdf");
                     let body = match is_pdf {
-                        true => {
-                            tracing::info!(url, "Extracting text from PDF document");
-                            pdf_extract::extract_text_from_mem(&bytes).map_err(|e| {
-                                SearchXyzError::ExtractionFailed {
-                                    url: url.into(),
-                                    reason: format!("Failed to extract PDF text: {e}"),
-                                }
-                            })?
-                        }
+                        true => pdf_extract::extract_text_from_mem(&bytes).map_err(|e| {
+                            SearchXyzError::ExtractionFailed {
+                                url: url.into(),
+                                reason: format!("Failed to extract PDF text: {e}"),
+                            }
+                        })?,
                         false => String::from_utf8_lossy(&bytes).into_owned(),
                     };
 
-                    // ── Cache the response ──
                     match cache_mode.may_write_cache() {
                         true => {
-                            let mut entry = CacheEntry::new(body.clone(), url.to_string());
-                            entry.etag = etag;
-                            entry.last_modified = last_modified;
-                            entry.cache_control = cache_control;
-                            entry.content_type = Some(content_type.clone());
-
-                            let mut cache = self.cache.lock().await;
-                            cache.put(url.to_string(), entry);
+                            let stored_ct = match (is_pdf, content_type.trim().is_empty()) {
+                                (true, _) => "text/plain",
+                                (false, true) => "text/html",
+                                (false, false) => content_type.as_str(),
+                            };
+                            let _ = save_http_cache(
+                                url,
+                                &final_url,
+                                &body,
+                                stored_ct,
+                                &resp_headers,
+                                status.as_u16(),
+                                self.config.default_cache_ttl_secs as i64,
+                            );
                         }
                         false => {}
                     }
+
+                    let returned_ct = match is_pdf {
+                        true => "text/plain".to_string(),
+                        false => content_type,
+                    };
 
                     return Ok(FetchResult {
                         url: url.into(),
                         final_url,
                         body,
-                        content_type,
+                        content_type: returned_ct,
                     });
                 }
 
                 Err(e) => {
-                    // Network-level error — retry on transient failures.
                     match attempt <= self.config.max_retries && (e.is_timeout() || e.is_connect()) {
                         true => {
                             let delay = Duration::from_millis(500 * 2u64.pow(attempt - 1));
-                            tracing::warn!(
-                                url, error = %e, attempt,
-                                "Transient error, retrying"
-                            );
                             tokio::time::sleep(delay).await;
                             continue;
                         }
                         false => {
                             let err = SearchXyzError::from(e);
                             match allow_stale_fallback
-                                .then(|| {
-                                    stale_fallback(url, cached_entry.clone(), err.to_string())
-                                })
+                                .then(|| stale_fallback(url, cached_entry.clone(), err.to_string()))
                                 .flatten()
                             {
                                 Some(result) => return Ok(result),
@@ -519,13 +483,16 @@ impl Crawler {
             }
         }
     }
+
+    fn pick_proxy(&self) -> Option<reqwest::Proxy> {
+        use rand::seq::SliceRandom;
+        self.proxy_urls
+            .choose(&mut rand::thread_rng())
+            .and_then(|url| reqwest::Proxy::all(url).ok())
+    }
 }
 
-pub async fn validate_public_http_url(url: &str) -> Result<(), SearchXyzError> {
-    validate_http_url(url, false).await
-}
-
-pub async fn validate_http_url(
+fn validate_scheme_and_local_host_ok(
     url: &str,
     allow_private_network: bool,
 ) -> Result<(), SearchXyzError> {
@@ -533,7 +500,6 @@ pub async fn validate_http_url(
         url: url.to_string(),
         reason: format!("invalid URL: {e}"),
     })?;
-
     match parsed.scheme() {
         "http" | "https" => {}
         scheme => {
@@ -543,132 +509,64 @@ pub async fn validate_http_url(
             });
         }
     }
-
-    let host = parsed.host_str().ok_or_else(|| SearchXyzError::UnsafeUrl {
-        url: url.to_string(),
-        reason: "missing host".to_string(),
-    })?;
-    let host_lc = host.to_ascii_lowercase();
-    match !allow_private_network
-        && (matches!(host_lc.as_str(), "localhost" | "localhost.localdomain")
-            || host_lc.ends_with(".localhost"))
-    {
-        true => {
-            return Err(SearchXyzError::UnsafeUrl {
-                url: url.to_string(),
-                reason: "localhost targets are not allowed".to_string(),
-            });
-        }
-        false => {}
-    }
-
-    match host_lc.parse::<IpAddr>() {
-        Ok(ip) => {
-            match allow_private_network {
-                true => {}
-                false => reject_private_ip(url, ip)?,
-            }
-            return Ok(());
-        }
-        Err(_) => {}
-    }
-
-    let port = parsed.port_or_known_default().unwrap_or(443);
-    let addrs = lookup_host((host, port))
-        .await
-        .map_err(|e| SearchXyzError::UnsafeUrl {
-            url: url.to_string(),
-            reason: format!("DNS lookup failed: {e}"),
-        })?;
-
-    match allow_private_network {
-        true => {}
-        false => {
-            for addr in addrs {
-                reject_private_ip(url, addr.ip())?;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn stale_fallback(
-    url: &str,
-    cached_entry: Option<CacheEntry>,
-    reason: String,
-) -> Option<FetchResult> {
-    let entry = cached_entry?;
-    tracing::warn!(url, reason = %reason, "Live fetch failed; returning stale cached body");
-    Some(FetchResult {
-        url: url.to_string(),
-        final_url: url.to_string(),
-        body: entry.content,
-        content_type: entry.content_type.unwrap_or_else(|| "text/html".into()),
-    })
-}
-
-fn response_header_string(
-    response: &reqwest::Response,
-    name: header::HeaderName,
-) -> Option<String> {
-    response
-        .headers()
-        .get(name)
-        .and_then(|value| value.to_str().ok())
-        .map(|value| value.to_string())
-}
-
-fn reject_private_ip(url: &str, ip: IpAddr) -> Result<(), SearchXyzError> {
-    let blocked = match ip {
-        IpAddr::V4(v4) => {
-            v4.is_private()
-                || v4.is_loopback()
-                || v4.is_link_local()
-                || v4.is_broadcast()
-                || v4.is_documentation()
-                || v4.is_unspecified()
-        }
-        IpAddr::V6(v6) => {
-            v6.is_loopback()
-                || v6.is_unspecified()
-                || v6.is_unique_local()
-                || v6.is_unicast_link_local()
-                || (v6.segments()[0] == 0x2001 && v6.segments()[1] == 0x0db8)
-        }
-    };
-
-    match blocked {
+    let host = parsed.host_str().unwrap_or("").to_ascii_lowercase();
+    let is_local_literal = host == "localhost"
+        || host.ends_with(".localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .ok()
+            .is_some_and(|ip| !is_safe_ip(&ip));
+    match !allow_private_network && is_local_literal {
         true => Err(SearchXyzError::UnsafeUrl {
             url: url.to_string(),
-            reason: format!("host resolves to non-public address {ip}"),
+            reason: "private or localhost target is not allowed".to_string(),
         }),
         false => Ok(()),
     }
 }
 
+fn cached_to_fetch_result(url: &str, entry: &CachedHttpEntry) -> FetchResult {
+    FetchResult {
+        url: url.to_string(),
+        final_url: entry.final_url.clone(),
+        body: entry.body_text.clone(),
+        content_type: entry.content_type.clone(),
+    }
+}
+
+fn stale_fallback(
+    url: &str,
+    cached_entry: Option<CachedHttpEntry>,
+    reason: String,
+) -> Option<FetchResult> {
+    let entry = cached_entry?;
+    tracing::warn!(url, reason = %reason, "Live fetch failed; returning stale cached body");
+    Some(cached_to_fetch_result(url, &entry))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::searchxyz::core::cache::Cache;
-    use crate::tools::searchxyz::core::config::{CrawlerConfig, HeadlessConfig, ProxyConfig};
-    use std::sync::Arc;
-    use tokio::sync::Mutex;
 
     #[tokio::test]
     async fn revalidate_falls_back_to_stale_cache_on_fetch_failure() {
-        let cache = Arc::new(Mutex::new(Cache::new(10, 60)));
-        let mut entry = CacheEntry::new(
-            "<html><body>stale fallback</body></html>".to_string(),
-            "http://127.0.0.1:9/unreachable".to_string(),
+        let test_url = format!("http://127.0.0.1:9/stale-{}", uuid::Uuid::new_v4());
+        let mut headers = header::HeaderMap::new();
+        headers.insert(header::ETAG, header::HeaderValue::from_static("\"old\""));
+        headers.insert(
+            header::CACHE_CONTROL,
+            header::HeaderValue::from_static("max-age=0"),
         );
-        entry.ttl_secs = 0;
-        entry.etag = Some(r#""old""#.to_string());
-        entry.content_type = Some("text/html".to_string());
-        cache
-            .lock()
-            .await
-            .put("http://127.0.0.1:9/unreachable".to_string(), entry);
+        save_http_cache(
+            &test_url,
+            &test_url,
+            "<html><body>stale fallback</body></html>",
+            "text/html",
+            &headers,
+            200,
+            0,
+        )
+        .unwrap();
 
         let mut crawler_config = CrawlerConfig::default();
         crawler_config.allow_private_network = true;
@@ -677,15 +575,10 @@ mod tests {
             crawler_config,
             HeadlessConfig::default(),
             ProxyConfig::default(),
-            cache,
         );
 
         let result = crawler
-            .fetch_url_with_cache_mode(
-                "http://127.0.0.1:9/unreachable",
-                false,
-                FetchCacheMode::Revalidate,
-            )
+            .fetch_url_with_cache_mode(&test_url, false, FetchCacheMode::Revalidate)
             .await
             .unwrap();
 
@@ -715,13 +608,7 @@ mod tests {
                     true => {
                         let body = "<html><body>cached body</body></html>";
                         let response = format!(
-                            r#"HTTP/1.1 200 OK
-content-type: text/html
-etag: "v1"
-content-length: {}
-connection: close
-
-{}"#,
+                            "HTTP/1.1 200 OK\r\ncontent-type: text/html\r\netag: \"v1\"\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
                             body.len(),
                             body
                         );
@@ -729,28 +616,22 @@ connection: close
                     }
                     false => {
                         assert!(
-                            request.contains(r#"if-none-match: "v1""#)
-                                || request.contains(r#"If-None-Match: "v1""#),
+                            request.to_ascii_lowercase().contains("if-none-match: \"v1\""),
                             "revalidation request should send If-None-Match, got: {request}"
                         );
-                        let response = "HTTP/1.1 304 Not Modified
-connection: close
-
-";
+                        let response = "HTTP/1.1 304 Not Modified\r\nconnection: close\r\n\r\n";
                         stream.write_all(response.as_bytes()).await.unwrap();
                     }
                 }
             }
         });
 
-        let cache = Arc::new(Mutex::new(Cache::new(10, 60)));
         let mut crawler_config = CrawlerConfig::default();
         crawler_config.allow_private_network = true;
         let crawler = Crawler::new(
             crawler_config,
             HeadlessConfig::default(),
             ProxyConfig::default(),
-            cache,
         );
         let url = format!("http://{addr}/etag");
 
@@ -792,30 +673,22 @@ connection: close
     async fn test_crawler_client_pooling() {
         let crawler_config = CrawlerConfig::default();
         let headless_config = HeadlessConfig::default();
-        let cache = Arc::new(Mutex::new(Cache::new(10, 60)));
 
-        // Case 1: Proxy disabled
         let proxy_config = ProxyConfig {
             enabled: false,
             urls: vec!["http://127.0.0.1:8080".to_string()],
         };
-        let crawler = Crawler::new(
-            crawler_config.clone(),
-            headless_config.clone(),
-            proxy_config,
-            cache.clone(),
-        );
-        assert_eq!(crawler.clients.len(), 1);
+        let crawler = Crawler::new(crawler_config.clone(), headless_config.clone(), proxy_config);
+        assert_eq!(crawler.clients().len(), 1);
 
-        // Case 2: Proxy enabled with valid urls
-        let proxy_config = ProxyConfig {
+        let proxy_config_enabled = ProxyConfig {
             enabled: true,
             urls: vec![
                 "http://127.0.0.1:8080".to_string(),
                 "socks5://127.0.0.1:1080".to_string(),
             ],
         };
-        let crawler = Crawler::new(crawler_config, headless_config, proxy_config, cache);
-        assert_eq!(crawler.clients.len(), 2);
+        let crawler2 = Crawler::new(crawler_config, headless_config, proxy_config_enabled);
+        assert_eq!(crawler2.clients().len(), 2);
     }
 }

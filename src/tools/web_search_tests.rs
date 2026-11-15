@@ -270,3 +270,20 @@ fn test_web_search_schema_exposes_domain_parameter() {
     assert!(schema["properties"].get("domain").is_some());
 }
 
+
+#[test]
+fn build_search_query_parses_domain_filters_and_merge_flag() {
+    let sq = build_search_query(
+        "rust async",
+        &json!({
+            "include_domains": ["docs.rs", "crates.io"],
+            "exclude_domains": "medium.com, reddit.com",
+            "merge_backends": true,
+            "max_results": 15
+        }),
+    );
+    assert_eq!(sq.max_results, 15);
+    assert!(sq.merge_backends);
+    assert_eq!(sq.include_domains, vec!["docs.rs", "crates.io"]);
+    assert_eq!(sq.exclude_domains, vec!["medium.com", "reddit.com"]);
+}

@@ -225,8 +225,12 @@ impl Tool for CreateRelationsTool {
             &["relations", "relation", "edges", "links", "relationships"],
             &["relation", "edge", "link"],
             |args| {
-                (args.get("from").is_some() || args.get("source").is_some())
-                    && (args.get("to").is_some() || args.get("target").is_some())
+                (args.get("from").is_some()
+                    || args.get("source").is_some()
+                    || args.get("subject").is_some())
+                    && (args.get("to").is_some()
+                        || args.get("target").is_some()
+                        || args.get("object").is_some())
             },
             "Missing 'relations' array or relation object",
         )?;
@@ -238,12 +242,28 @@ impl Tool for CreateRelationsTool {
             for rel in &relations {
                 let from = extract_string_field(
                     rel,
-                    &["from", "source", "from_name", "fromName", "start", "origin"],
+                    &[
+                        "from",
+                        "source",
+                        "subject",
+                        "from_name",
+                        "fromName",
+                        "start",
+                        "origin",
+                    ],
                 )
                 .ok_or_else(|| anyhow!("Relation missing 'from'"))?;
                 let to = extract_string_field(
                     rel,
-                    &["to", "target", "to_name", "toName", "end", "destination"],
+                    &[
+                        "to",
+                        "target",
+                        "object",
+                        "to_name",
+                        "toName",
+                        "end",
+                        "destination",
+                    ],
                 )
                 .ok_or_else(|| anyhow!("Relation missing 'to'"))?;
                 let rel_type = extract_string_field(
@@ -259,6 +279,21 @@ impl Tool for CreateRelationsTool {
                     ],
                 )
                 .unwrap_or_else(|| "relates_to".to_string());
+                let source_obs =
+                    extract_string_field(rel, &["source_url", "sourceUrl", "url"]).map(|u| {
+                        serde_json::to_string(&vec![format!("source: {u}")])
+                            .unwrap_or_else(|_| "[]".to_string())
+                    });
+                let default_obs = source_obs.as_deref().unwrap_or("[]");
+
+                tx.execute(
+                    "INSERT OR IGNORE INTO graph_nodes (name, entity_type, observations, user_id, session_id, agent_id) VALUES (?1, 'Entity', ?2, ?3, ?4, ?5)",
+                    params![from, default_obs, user_id, session_id, agent_id],
+                )?;
+                tx.execute(
+                    "INSERT OR IGNORE INTO graph_nodes (name, entity_type, observations, user_id, session_id, agent_id) VALUES (?1, 'Entity', ?2, ?3, ?4, ?5)",
+                    params![to, default_obs, user_id, session_id, agent_id],
+                )?;
 
                 let exists: bool = tx.query_row(
                     "SELECT EXISTS(SELECT 1 FROM graph_edges WHERE from_name = ?1 AND to_name = ?2 AND relation_type = ?3 AND user_id = ?4 AND session_id = ?5 AND agent_id = ?6 AND valid_until IS NULL)",
@@ -717,7 +752,7 @@ impl Tool for SearchNodesTool {
     }
 
     fn description(&self) -> &str {
-        "Search for nodes in the knowledge graph based on a query."
+        "Search for nodes and multi-hop relationships in the knowledge graph based on a query."
     }
 
     fn parameters(&self) -> Value {
@@ -725,6 +760,7 @@ impl Tool for SearchNodesTool {
             "type": "object",
             "properties": {
                 "query": { "type": "string", "description": "Search query to match against entity names, types, and observation content (aliases: q, search, term, pattern)" },
+                "depth": { "type": "integer", "description": "Optional multi-hop relationship traversal depth from matched entities (default: 1, max: 4; aliases: max_depth, maxDepth)" },
                 "userId": { "type": "string" },
                 "sessionId": { "type": "string" },
                 "agentId": { "type": "string" }
@@ -734,11 +770,37 @@ impl Tool for SearchNodesTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
-        let query = extract_string_field(
-            arguments,
-            &["query", "q", "search", "term", "pattern", "keyword", "text"],
-        )
-        .unwrap_or_default();
+        let query = arguments
+            .as_str()
+            .map(str::to_string)
+            .or_else(|| {
+                extract_string_field(
+                    arguments,
+                    &[
+                        "query",
+                        "q",
+                        "search",
+                        "term",
+                        "pattern",
+                        "keyword",
+                        "text",
+                        "entity",
+                        "entity_name",
+                        "entityName",
+                        "node",
+                    ],
+                )
+            })
+            .unwrap_or_default();
+        let depth = ["depth", "max_depth", "maxDepth"]
+            .into_iter()
+            .find_map(|key| {
+                arguments
+                    .get(key)
+                    .and_then(|v| v.as_u64().or_else(|| v.as_str()?.trim().parse::<u64>().ok()))
+            })
+            .unwrap_or(1)
+            .clamp(1, 4) as usize;
         let (user_id, session_id, agent_id) = scope_from_args(arguments);
         let query_pattern = format!("%{}%", query.to_lowercase());
 
@@ -746,20 +808,160 @@ impl Tool for SearchNodesTool {
             let mut stmt_nodes = conn.prepare(
                 "SELECT name, entity_type, observations FROM graph_nodes WHERE (LOWER(name) LIKE ?1 OR LOWER(entity_type) LIKE ?1 OR LOWER(observations) LIKE ?1) AND (?2 IS NULL OR user_id = ?2 OR user_id = '*') AND (?3 IS NULL OR session_id = ?3 OR session_id = '*') AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')"
             )?;
-            let entities = collect_node_entities(
+            let mut entities = collect_node_entities(
                 stmt_nodes.query(params![query_pattern, user_id, session_id, agent_id])?,
             )?;
 
             let mut stmt_edges = conn.prepare(
-                "SELECT DISTINCT from_name, to_name, relation_type FROM graph_edges WHERE (from_name IN (SELECT name FROM graph_nodes WHERE (LOWER(name) LIKE ?1 OR LOWER(entity_type) LIKE ?1 OR LOWER(observations) LIKE ?1)) OR to_name IN (SELECT name FROM graph_nodes WHERE (LOWER(name) LIKE ?1 OR LOWER(entity_type) LIKE ?1 OR LOWER(observations) LIKE ?1))) AND (?2 IS NULL OR user_id = ?2 OR user_id = '*') AND (?3 IS NULL OR session_id = ?3 OR session_id = '*') AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*') AND valid_until IS NULL"
+                "SELECT DISTINCT from_name, to_name, relation_type FROM graph_edges WHERE (LOWER(from_name) LIKE ?1 OR LOWER(to_name) LIKE ?1 OR LOWER(relation_type) LIKE ?1 OR from_name IN (SELECT name FROM graph_nodes WHERE (LOWER(name) LIKE ?1 OR LOWER(entity_type) LIKE ?1 OR LOWER(observations) LIKE ?1)) OR to_name IN (SELECT name FROM graph_nodes WHERE (LOWER(name) LIKE ?1 OR LOWER(entity_type) LIKE ?1 OR LOWER(observations) LIKE ?1))) AND (?2 IS NULL OR user_id = ?2 OR user_id = '*') AND (?3 IS NULL OR session_id = ?3 OR session_id = '*') AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*') AND valid_until IS NULL"
             )?;
-            let relations = collect_edge_relations(
+            let mut relations = collect_edge_relations(
                 stmt_edges.query(params![query_pattern, user_id, session_id, agent_id])?,
             )?;
 
-            Ok(json!({ "entities": entities, "relations": relations }))
+            match depth > 1 {
+                true => {
+                    let mut known_entities: std::collections::HashSet<String> = entities
+                        .iter()
+                        .filter_map(|e| e.get("name").and_then(Value::as_str).map(str::to_string))
+                        .collect();
+                    let mut seen_edges: std::collections::HashSet<(String, String, String)> =
+                        relations
+                            .iter()
+                            .filter_map(|r| {
+                                Some((
+                                    r.get("from")?.as_str()?.to_string(),
+                                    r.get("to")?.as_str()?.to_string(),
+                                    r.get("relationType")?.as_str()?.to_string(),
+                                ))
+                            })
+                            .collect();
+                    let mut frontier: std::collections::HashSet<String> = seen_edges
+                        .iter()
+                        .flat_map(|(f, t, _)| [f.clone(), t.clone()])
+                        .chain(known_entities.iter().cloned())
+                        .collect();
+                    {
+                        let mut seed_node_stmt = conn.prepare(
+                            "SELECT name, entity_type, observations FROM graph_nodes WHERE name = ?1 AND (?2 IS NULL OR user_id = ?2 OR user_id = '*') AND (?3 IS NULL OR session_id = ?3 OR session_id = '*') AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')"
+                        )?;
+                        for seed_name in &frontier {
+                            match known_entities.insert(seed_name.clone()) {
+                                true => {
+                                    let seed_entities = collect_node_entities(
+                                        seed_node_stmt.query(params![
+                                            seed_name, user_id, session_id, agent_id
+                                        ])?,
+                                    )?;
+                                    entities.extend(seed_entities);
+                                }
+                                false => {}
+                            }
+                        }
+                    }
+
+                    for _hop in 1..depth {
+                        match frontier.is_empty() {
+                            true => break,
+                            false => {}
+                        }
+                        let mut next_frontier = std::collections::HashSet::new();
+                        let mut hop_stmt = conn.prepare(
+                            "SELECT DISTINCT from_name, to_name, relation_type FROM graph_edges WHERE (from_name = ?1 OR to_name = ?1) AND (?2 IS NULL OR user_id = ?2 OR user_id = '*') AND (?3 IS NULL OR session_id = ?3 OR session_id = '*') AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*') AND valid_until IS NULL"
+                        )?;
+                        for node_name in &frontier {
+                            let hop_rels = collect_edge_relations(hop_stmt.query(params![
+                                node_name, user_id, session_id, agent_id
+                            ])?)?;
+                            for rel in hop_rels {
+                                let from_s = rel
+                                    .get("from")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_string();
+                                let to_s = rel
+                                    .get("to")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_string();
+                                let ty_s = rel
+                                    .get("relationType")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_string();
+                                match seen_edges.insert((from_s.clone(), to_s.clone(), ty_s)) {
+                                    true => {
+                                        let _ = (!frontier.contains(&from_s))
+                                            .then(|| next_frontier.insert(from_s.clone()));
+                                        let _ = (!frontier.contains(&to_s))
+                                            .then(|| next_frontier.insert(to_s.clone()));
+                                        relations.push(rel);
+                                    }
+                                    false => {}
+                                }
+                            }
+                        }
+                        let mut node_stmt = conn.prepare(
+                            "SELECT name, entity_type, observations FROM graph_nodes WHERE name = ?1 AND (?2 IS NULL OR user_id = ?2 OR user_id = '*') AND (?3 IS NULL OR session_id = ?3 OR session_id = '*') AND (?4 IS NULL OR agent_id = ?4 OR agent_id = '*')"
+                        )?;
+                        for discovered in &next_frontier {
+                            match known_entities.insert(discovered.clone()) {
+                                true => {
+                                    let hop_entities = collect_node_entities(node_stmt.query(
+                                        params![discovered, user_id, session_id, agent_id],
+                                    )?)?;
+                                    entities.extend(hop_entities);
+                                }
+                                false => {}
+                            }
+                        }
+                        frontier = next_frontier;
+                    }
+                }
+                false => {}
+            }
+
+            Ok(json!({ "entities": entities, "relations": relations, "depth": depth }))
         })
     }
+}
+
+pub fn record_graph_relations_batch(
+    triples: &[(String, String, String)],
+    source_url: Option<&str>,
+) -> Result<usize> {
+    match triples.is_empty() {
+        true => return Ok(0),
+        false => {}
+    }
+    let obs_json = source_url
+        .filter(|u| !u.trim().is_empty())
+        .and_then(|u| serde_json::to_string(&vec![format!("source: {u}")]).ok())
+        .unwrap_or_else(|| "[]".to_string());
+
+    with_db(|conn| {
+        let tx = conn.unchecked_transaction()?;
+        let mut inserted = 0usize;
+        for (subject, predicate, object) in triples {
+            tx.execute(
+                "INSERT OR IGNORE INTO graph_nodes (name, entity_type, observations, user_id, session_id, agent_id)
+                 VALUES (?1, 'Entity', ?2, '*', '*', '*')",
+                params![subject, obs_json],
+            )?;
+            tx.execute(
+                "INSERT OR IGNORE INTO graph_nodes (name, entity_type, observations, user_id, session_id, agent_id)
+                 VALUES (?1, 'Entity', ?2, '*', '*', '*')",
+                params![object, obs_json],
+            )?;
+            inserted += tx.execute(
+                "INSERT OR IGNORE INTO graph_edges (from_name, to_name, relation_type, user_id, session_id, agent_id)
+                 VALUES (?1, ?2, ?3, '*', '*', '*')",
+                params![subject, object, predicate],
+            )?;
+        }
+        tx.commit()?;
+        Ok(inserted)
+    })
 }
 
 // ─── Tool 9: OpenNodesTool ──────────────────────────────────────

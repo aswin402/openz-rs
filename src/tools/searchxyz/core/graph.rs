@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, schemars::JsonSchema)]
 pub struct Node {
@@ -21,6 +20,96 @@ pub struct KnowledgeGraph {
     pub edges: Vec<Edge>,
 }
 
+const TECH_TOPIC_KEYWORDS: &[(&str, &str)] = &[
+    ("rust", "Rust"),
+    ("python", "Python"),
+    ("javascript", "JavaScript"),
+    ("typescript", "TypeScript"),
+    ("go", "Go"),
+    ("java", "Java"),
+    ("c++", "C++"),
+    ("docker", "Docker"),
+    ("kubernetes", "Kubernetes"),
+    ("aws", "AWS"),
+    ("gcp", "GCP"),
+    ("azure", "Azure"),
+    ("sqlite", "SQLite"),
+    ("postgresql", "PostgreSQL"),
+    ("mysql", "MySQL"),
+    ("mongodb", "MongoDB"),
+    ("redis", "Redis"),
+    ("elasticsearch", "Elasticsearch"),
+    ("tokio", "Tokio"),
+    ("actix", "Actix"),
+    ("axum", "Axum"),
+    ("fastapi", "FastAPI"),
+    ("django", "Django"),
+    ("flask", "Flask"),
+    ("react", "React"),
+    ("vue", "Vue"),
+    ("next.js", "Next.js"),
+    ("tailwind", "Tailwind"),
+    ("npm", "NPM"),
+    ("cargo", "Cargo"),
+    ("git", "Git"),
+    ("github", "GitHub"),
+    ("linux", "Linux"),
+    ("windows", "Windows"),
+    ("macos", "macOS"),
+    ("mcp", "MCP"),
+    ("fastembed", "Fastembed"),
+    ("neural", "Neural"),
+    ("embedding", "Embedding"),
+    ("search", "Search"),
+    ("crawl", "Crawl"),
+    ("vector", "Vector"),
+    ("semantic", "Semantic"),
+    ("llm", "LLM"),
+    ("ai", "AI"),
+    ("gemini", "Gemini"),
+];
+
+pub fn extract_heuristic_triples(
+    url: &str,
+    title: &str,
+    content: &str,
+) -> Vec<(String, String, String)> {
+    let combined_lower = format!("{title}\n{content}").to_lowercase();
+    TECH_TOPIC_KEYWORDS
+        .iter()
+        .filter(|(kw, _)| contains_keyword_boundary(&combined_lower, kw))
+        .map(|(_, canonical)| {
+            (
+                url.to_string(),
+                "mentions".to_string(),
+                (*canonical).to_string(),
+            )
+        })
+        .collect()
+}
+
+/// Extract heuristic relations from a crawled document or source file and persist
+/// them directly into OpenZ's native SQLite `graph_memory.db`.
+pub fn extract_and_persist_relations(url: &str, title: &str, content: &str) -> usize {
+    let triples = extract_heuristic_triples(url, title, content);
+    crate::tools::graph_memory::record_graph_relations_batch(&triples, Some(url)).unwrap_or(0)
+}
+
+fn contains_keyword_boundary(lower_text: &str, keyword: &str) -> bool {
+    lower_text.match_indices(keyword).any(|(idx, _)| {
+        let before_ok = match lower_text[..idx].chars().next_back() {
+            Some(ch) => !ch.is_alphanumeric() && ch != '_',
+            None => true,
+        };
+        let end = idx + keyword.len();
+        let after_ok = match lower_text[end..].chars().next() {
+            Some(ch) => !ch.is_alphanumeric() && ch != '_',
+            None => true,
+        };
+        before_ok && after_ok
+    })
+}
+
 impl KnowledgeGraph {
     pub fn new() -> Self {
         Self {
@@ -29,15 +118,12 @@ impl KnowledgeGraph {
         }
     }
 
-    /// Add or update an entity node.
     pub fn add_node(&mut self, name: String, entity_type: String) {
-        // If node already exists, preserve its details or update type if empty.
         self.nodes
             .entry(name.clone())
             .or_insert(Node { name, entity_type });
     }
 
-    /// Add a relationship edge, ensuring both endpoint nodes exist.
     pub fn add_edge(
         &mut self,
         source: String,
@@ -61,7 +147,6 @@ impl KnowledgeGraph {
         }
     }
 
-    /// Find a node case-insensitively.
     pub fn find_canonical_node_name(&self, name: &str) -> Option<String> {
         match self.nodes.contains_key(name) {
             true => Some(name.to_string()),
@@ -75,7 +160,6 @@ impl KnowledgeGraph {
         }
     }
 
-    /// Query neighbors of a node using BFS up to a maximum depth.
     pub fn query_neighbors(&self, start_entity: &str, max_depth: usize) -> (Vec<Node>, Vec<Edge>) {
         let mut visited_nodes = HashSet::new();
         let mut visited_edges = HashSet::new();
@@ -124,86 +208,19 @@ impl KnowledgeGraph {
         (nodes, edges)
     }
 
-    /// Extract key technologies/topics from content and link them to the Document node.
-    pub fn extract_heuristics(&mut self, url: &str, _title: &str, content: &str) {
-        // List of technical keywords we look for (case-insensitive).
-        let keywords = [
-            "rust",
-            "python",
-            "javascript",
-            "typescript",
-            "go",
-            "java",
-            "c++",
-            "docker",
-            "kubernetes",
-            "aws",
-            "gcp",
-            "azure",
-            "sqlite",
-            "postgresql",
-            "mysql",
-            "mongodb",
-            "redis",
-            "elasticsearch",
-            "tokio",
-            "actix",
-            "axum",
-            "fastapi",
-            "django",
-            "flask",
-            "react",
-            "vue",
-            "next.js",
-            "tailwind",
-            "npm",
-            "cargo",
-            "git",
-            "github",
-            "linux",
-            "windows",
-            "macos",
-            "mcp",
-            "tantivy",
-            "fastembed",
-            "neural",
-            "embedding",
-            "search",
-            "crawl",
-            "vector",
-            "semantic",
-            "llm",
-            "ai",
-            "gemini",
-        ];
-
-        let content_lower = content.to_lowercase();
-        let matched: Vec<&str> = keywords
-            .iter()
-            .copied()
-            .filter(|kw| {
-                let kw_pattern = format!(" {}", kw);
-                let kw_pattern_start = format!("{}:", kw);
-                content_lower.contains(&kw_pattern)
-                    || content_lower.starts_with(kw)
-                    || content_lower.contains(&kw_pattern_start)
-            })
-            .collect();
-
-        match matched.is_empty() {
+    pub fn extract_heuristics(&mut self, url: &str, title: &str, content: &str) {
+        let triples = extract_heuristic_triples(url, title, content);
+        match triples.is_empty() {
             true => {}
             false => {
-                let doc_name = url.to_string();
-                self.add_node(doc_name.clone(), "Document".to_string());
-
-                for term in matched {
-                    let canonical_term = capitalize_keyword(term);
+                self.add_node(url.to_string(), "Document".to_string());
+                for (source, rel, target) in triples {
                     self.add_edge(
-                        doc_name.clone(),
+                        source,
                         "Document".to_string(),
-                        canonical_term,
+                        target,
                         "Technology/Topic".to_string(),
-                        "mentions".to_string(),
+                        rel,
                     );
                 }
             }
@@ -222,77 +239,6 @@ impl KnowledgeGraph {
     pub fn clear(&mut self) {
         self.nodes.clear();
         self.edges.clear();
-    }
-
-    /// Load the graph from a JSON file.
-    pub fn load_from_file(path: &Path) -> Result<Self, std::io::Error> {
-        match path.exists() {
-            false => Ok(Self::new()),
-            true => {
-                let file = std::fs::File::open(path)?;
-                let reader = std::io::BufReader::new(file);
-                let graph = serde_json::from_reader(reader)?;
-                Ok(graph)
-            }
-        }
-    }
-
-    /// Save the graph to a JSON file.
-    pub fn save_to_file(&self, path: &Path) -> Result<(), std::io::Error> {
-        crate::config::loader::save_pretty_json(path, self).map_err(std::io::Error::other)
-    }
-}
-
-fn capitalize_keyword(kw: &str) -> String {
-    match kw {
-        "rust" => "Rust".to_string(),
-        "python" => "Python".to_string(),
-        "javascript" => "JavaScript".to_string(),
-        "typescript" => "TypeScript".to_string(),
-        "go" => "Go".to_string(),
-        "java" => "Java".to_string(),
-        "c++" => "C++".to_string(),
-        "docker" => "Docker".to_string(),
-        "kubernetes" => "Kubernetes".to_string(),
-        "aws" => "AWS".to_string(),
-        "gcp" => "GCP".to_string(),
-        "azure" => "Azure".to_string(),
-        "sqlite" => "SQLite".to_string(),
-        "postgresql" => "PostgreSQL".to_string(),
-        "mysql" => "MySQL".to_string(),
-        "mongodb" => "MongoDB".to_string(),
-        "redis" => "Redis".to_string(),
-        "elasticsearch" => "Elasticsearch".to_string(),
-        "tokio" => "Tokio".to_string(),
-        "actix" => "Actix".to_string(),
-        "axum" => "Axum".to_string(),
-        "fastapi" => "FastAPI".to_string(),
-        "django" => "Django".to_string(),
-        "flask" => "Flask".to_string(),
-        "react" => "React".to_string(),
-        "vue" => "Vue".to_string(),
-        "next.js" => "Next.js".to_string(),
-        "tailwind" => "Tailwind".to_string(),
-        "npm" => "NPM".to_string(),
-        "cargo" => "Cargo".to_string(),
-        "git" => "Git".to_string(),
-        "github" => "GitHub".to_string(),
-        "linux" => "Linux".to_string(),
-        "windows" => "Windows".to_string(),
-        "macos" => "macOS".to_string(),
-        "mcp" => "MCP".to_string(),
-        "tantivy" => "Tantivy".to_string(),
-        "fastembed" => "Fastembed".to_string(),
-        "llm" => "LLM".to_string(),
-        "ai" => "AI".to_string(),
-        "gemini" => "Gemini".to_string(),
-        other => {
-            let mut chars = other.chars();
-            match chars.next() {
-                None => String::new(),
-                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-            }
-        }
     }
 }
 
@@ -341,7 +287,6 @@ mod tests {
             "link".into(),
         );
 
-        // Depth 1 from B should reach A and C
         let (nodes, edges) = graph.query_neighbors("B", 1);
         let mut names: Vec<String> = nodes.into_iter().map(|n| n.name).collect();
         names.sort();
@@ -351,13 +296,11 @@ mod tests {
         );
         assert_eq!(edges.len(), 2);
 
-        // Case-insensitive query
         let (nodes_ci, _) = graph.query_neighbors("b", 1);
         assert_eq!(nodes_ci.len(), 3);
 
-        // Depth 2 from A should reach B and C
         let (nodes_a, _) = graph.query_neighbors("A", 2);
-        assert_eq!(nodes_a.len(), 3); // A, B, C
+        assert_eq!(nodes_a.len(), 3);
     }
 
     #[test]
@@ -373,7 +316,6 @@ mod tests {
         assert!(graph.nodes.contains_key("Rust"));
         assert!(graph.nodes.contains_key("Tokio"));
 
-        // Mentions relationship
         let has_rust_edge = graph
             .edges
             .iter()

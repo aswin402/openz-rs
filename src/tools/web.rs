@@ -1,16 +1,47 @@
-use crate::memory::MemoryService;
+#[cfg(test)]
+use crate::tools::browser_broker::browser_backend_priority;
+use crate::tools::browser_broker::render_page_with_browser_broker;
+use crate::tools::searchxyz::core::crawler::ssrf::{
+    build_pinned_http_client, is_safe_ip as ssrf_is_safe_ip, is_supported_web_content_type,
+    read_bounded_response_bytes, ssrf_redirect_policy as shared_ssrf_redirect_policy,
+    validate_http_url_addrs, validate_url_sync_with_policy, validate_url_without_dns,
+};
+#[cfg(test)]
+use crate::tools::shared_memory::web_cache::compute_expires_at;
+use crate::tools::shared_memory::web_cache::{
+    is_cache_fresh, load_http_cache, now_utc, refresh_http_cache_validators, save_http_cache,
+    touch_http_cache, CachedHttpEntry, WebCacheMode,
+};
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
-use futures_util::StreamExt;
-use reqwest::{header, Client};
-use rusqlite::OptionalExtension;
+use reqwest::header;
 use scraper::node::Node;
 use scraper::Html;
-use std::time::Duration;
 
-const WEB_CONNECT_TIMEOUT_SECS: u64 = 10;
-const WEB_READ_TIMEOUT_SECS: u64 = 30;
-const WEB_TOTAL_TIMEOUT_SECS: u64 = 45;
+type WebFetchCacheMode = WebCacheMode;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WebFetchOutputFormat {
+    Text,
+    Markdown,
+}
+
+impl WebFetchOutputFormat {
+    fn from_args(arguments: &serde_json::Value) -> Self {
+        let raw = arguments
+            .get("format")
+            .or_else(|| arguments.get("output_format"))
+            .or_else(|| arguments.get("outputFormat"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("text")
+            .trim()
+            .to_ascii_lowercase();
+        match raw.as_str() {
+            "markdown" | "md" => Self::Markdown,
+            _ => Self::Text,
+        }
+    }
+}
 
 fn collapse_spaces(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
@@ -48,315 +79,33 @@ fn collapse_blank_lines(input: &str) -> String {
 
 /// Validate that an IP address is safe (not private, loopback, or reserved).
 pub fn is_safe_ip(ip: &std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(v4) => {
-            !(v4.is_private()
-                || v4.is_loopback()
-                || v4.is_link_local()
-                || v4.is_unspecified()
-                || v4.is_broadcast())
-        }
-        std::net::IpAddr::V6(v6) => {
-            let v4_ok = v6
-                .to_ipv4()
-                .map(|v4| is_safe_ip(&std::net::IpAddr::V4(v4)))
-                .unwrap_or(true);
-            let segments = v6.segments();
-            let is_ula = (segments[0] & 0xfe00) == 0xfc00;
-            let is_link_local = (segments[0] & 0xffc0) == 0xfe80;
-            v4_ok
-                && !v6.is_loopback()
-                && !v6.is_unspecified()
-                && !v6.is_multicast()
-                && !is_ula
-                && !is_link_local
-        }
-    }
+    ssrf_is_safe_ip(ip)
 }
 
 pub fn validate_url_sync(url: &reqwest::Url) -> Result<std::net::IpAddr> {
-    let host = url
-        .host_str()
-        .ok_or_else(|| anyhow!("URL has no host"))?
-        .to_lowercase();
-
-    // Block non-HTTP schemes
-    matches!(url.scheme(), "http" | "https")
-        .then_some(())
-        .ok_or_else(|| {
-            anyhow!(
-                "SSRF blocked: only http/https URLs are allowed (got '{}')",
-                url.scheme()
-            )
-        })?;
-
-    // Block cloud metadata endpoints by hostname
-    (!matches!(host.as_str(), "169.254.169.254" | "metadata.google.internal"))
-        .then_some(())
-        .ok_or_else(|| anyhow!("SSRF blocked: cloud metadata endpoints are not allowed"))?;
-
-    // If the host is already a literal IP, check it directly
-    match host.parse::<std::net::IpAddr>() {
-        Ok(ip) => {
-            is_safe_ip(&ip).then_some(ip).ok_or_else(|| {
-                anyhow!("SSRF blocked: private/reserved IP addresses are not allowed")
-            })
-        }
-        Err(_) => {
-            // DNS resolution check
-            use std::net::ToSocketAddrs;
-            let resolved_ips = format!("{}:0", host)
-                .to_socket_addrs()
-                .map(|iter| iter.map(|addr| addr.ip()).collect::<Vec<_>>())
-                .unwrap_or_default();
-
-            for ip in &resolved_ips {
-                is_safe_ip(ip).then_some(()).ok_or_else(|| {
-                    anyhow!(
-                        "SSRF blocked: hostname '{}' resolved to private/reserved IP {}",
-                        host,
-                        ip
-                    )
-                })?;
-            }
-
-            resolved_ips.first().copied().ok_or_else(|| {
-                anyhow!(
-                    "SSRF blocked: hostname '{}' could not be resolved to any IP",
-                    host
-                )
-            })
-        }
-    }
+    let addrs = validate_url_sync_with_policy(url, false).map_err(|err| anyhow!("{err}"))?;
+    addrs
+        .first()
+        .map(std::net::SocketAddr::ip)
+        .ok_or_else(|| anyhow!("SSRF blocked: URL resolved to zero socket addresses"))
 }
 
 pub async fn validate_url(url: &str) -> Result<std::net::IpAddr> {
-    let parsed = reqwest::Url::parse(url).map_err(|e| anyhow!("Invalid URL: {}", e))?;
-    validate_url_sync(&parsed)
+    let (_parsed, _host, addrs) = validate_http_url_addrs(url, false)
+        .await
+        .map_err(|err| anyhow!("{err}"))?;
+    addrs
+        .first()
+        .map(std::net::SocketAddr::ip)
+        .ok_or_else(|| anyhow!("SSRF blocked: URL resolved to zero socket addresses"))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WebFetchCacheMode {
-    Auto,
-    PreferCache,
-    Revalidate,
-    Bypass,
-}
-
-impl WebFetchCacheMode {
-    fn from_args(arguments: &serde_json::Value) -> Result<Self> {
-        let raw = arguments
-            .get("cache_mode")
-            .or_else(|| arguments.get("cacheMode"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("auto")
-            .trim()
-            .to_lowercase();
-        match raw.as_str() {
-            "auto" | "" => Ok(Self::Auto),
-            "prefer_cache" | "prefer-cache" | "cache" => Ok(Self::PreferCache),
-            "revalidate" | "validate" | "refresh" => Ok(Self::Revalidate),
-            "bypass" | "no_cache" | "no-cache" | "fresh" => Ok(Self::Bypass),
-            other => Err(anyhow!(
-                "Invalid cache_mode '{}'. Use auto, prefer_cache, revalidate, or bypass.",
-                other
-            )),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-struct CachedWebFetch {
-    body_text: String,
-    etag: Option<String>,
-    last_modified: Option<String>,
-    expires_at: String,
-}
-
-fn now_utc() -> chrono::DateTime<chrono::Utc> {
-    chrono::Utc::now()
-}
-
-fn parse_http_date(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
-    chrono::DateTime::parse_from_rfc2822(raw)
-        .ok()
-        .map(|dt| dt.with_timezone(&chrono::Utc))
-}
-
-fn cache_control_directives(cache_control: &str) -> Vec<String> {
-    cache_control
-        .split(',')
-        .map(|part| part.trim().to_ascii_lowercase())
-        .filter(|part| !part.is_empty())
-        .collect()
-}
-
-fn cache_control_max_age(cache_control: &str) -> Option<i64> {
-    cache_control_directives(cache_control)
-        .into_iter()
-        .find_map(|directive| {
-            directive
-                .strip_prefix("max-age=")
-                .and_then(|raw| raw.trim_matches('"').parse::<i64>().ok())
-        })
-        .filter(|age| *age >= 0)
-}
-
-fn cache_control_has(cache_control: &str, needle: &str) -> bool {
-    cache_control_directives(cache_control)
-        .iter()
-        .any(|directive| directive == needle)
-}
-
-fn compute_expires_at(
-    cache_control: Option<&str>,
-    last_modified: Option<&str>,
-    fetched_at: chrono::DateTime<chrono::Utc>,
-) -> Option<chrono::DateTime<chrono::Utc>> {
-    match cache_control.map(str::trim).filter(|s| !s.is_empty()) {
-        Some(cc) => {
-            (!cache_control_has(cc, "no-store")).then_some(())?;
-            let immediate_revalidate =
-                cache_control_has(cc, "no-cache") || cache_control_has(cc, "must-revalidate");
-            match immediate_revalidate {
-                true => return Some(fetched_at),
-                false => {}
-            }
-            match cache_control_max_age(cc) {
-                Some(max_age) => return Some(fetched_at + chrono::Duration::seconds(max_age)),
-                None => {}
-            }
-        }
-        None => {}
-    }
-
-    last_modified
-        .and_then(parse_http_date)
-        .map(|lm| {
-            let age = fetched_at.signed_duration_since(lm).num_seconds().max(0);
-            let heuristic = (age / 10).clamp(60, 86_400);
-            fetched_at + chrono::Duration::seconds(heuristic)
-        })
-        .or(Some(fetched_at))
-}
-
-fn is_cache_fresh(expires_at: &str, now: chrono::DateTime<chrono::Utc>) -> bool {
-    chrono::DateTime::parse_from_rfc3339(expires_at)
-        .ok()
-        .map(|dt| dt.with_timezone(&chrono::Utc) > now)
-        .unwrap_or(false)
-}
-
-fn header_to_string(headers: &header::HeaderMap, name: header::HeaderName) -> Option<String> {
-    headers
-        .get(name)
-        .and_then(|value| value.to_str().ok())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToString::to_string)
-}
-
-fn load_cached_web_fetch(url: &str) -> Result<Option<CachedWebFetch>> {
-    MemoryService::current().with_shared_db(|conn| {
-        let mut stmt = conn.prepare(
-            "SELECT body_text, etag, last_modified, expires_at FROM web_fetch_cache WHERE url = ?1",
-        )?;
-        let cached = stmt
-            .query_row(rusqlite::params![url], |row| {
-                Ok(CachedWebFetch {
-                    body_text: row.get(0)?,
-                    etag: row.get(1)?,
-                    last_modified: row.get(2)?,
-                    expires_at: row.get(3)?,
-                })
-            })
-            .optional()?;
-        Ok(cached)
-    })
-}
-
-fn save_cached_web_fetch(
-    url: &str,
-    body_text: &str,
-    headers: &header::HeaderMap,
-    status_code: u16,
-) -> Result<()> {
-    let fetched_at = now_utc();
-    let etag = header_to_string(headers, header::ETAG);
-    let last_modified = header_to_string(headers, header::LAST_MODIFIED);
-    let cache_control = header_to_string(headers, header::CACHE_CONTROL);
-    let expires_at = match compute_expires_at(
-        cache_control.as_deref(),
-        last_modified.as_deref(),
-        fetched_at,
-    ) {
-        Some(expires_at) => expires_at,
-        None => return Ok(()),
-    };
-    MemoryService::current().with_shared_db(|conn| {
-        conn.execute(
-            "INSERT INTO web_fetch_cache (url, body_text, etag, last_modified, cache_control, fetched_at, expires_at, status_code, use_count)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 0)
-             ON CONFLICT(url) DO UPDATE SET body_text=excluded.body_text, etag=excluded.etag, last_modified=excluded.last_modified, cache_control=excluded.cache_control, fetched_at=excluded.fetched_at, expires_at=excluded.expires_at, status_code=excluded.status_code",
-            rusqlite::params![
-                url,
-                body_text,
-                etag,
-                last_modified,
-                cache_control,
-                fetched_at.to_rfc3339(),
-                expires_at.to_rfc3339(),
-                i64::from(status_code),
-            ],
-        )?;
-        Ok(())
-    })
-}
-
-fn refresh_cached_web_fetch_validators(url: &str, headers: &header::HeaderMap) -> Result<()> {
-    let fetched_at = now_utc();
-    let etag = header_to_string(headers, header::ETAG);
-    let last_modified = header_to_string(headers, header::LAST_MODIFIED);
-    let cache_control = header_to_string(headers, header::CACHE_CONTROL);
-    let expires_at = match compute_expires_at(
-        cache_control.as_deref(),
-        last_modified.as_deref(),
-        fetched_at,
-    ) {
-        Some(expires_at) => expires_at,
-        None => return Ok(()),
-    };
-    MemoryService::current().with_shared_db(|conn| {
-        conn.execute(
-            "UPDATE web_fetch_cache
-             SET etag = COALESCE(?2, etag),
-                 last_modified = COALESCE(?3, last_modified),
-                 cache_control = COALESCE(?4, cache_control),
-                 fetched_at = ?5,
-                 expires_at = ?6,
-                 use_count = use_count + 1
-             WHERE url = ?1",
-            rusqlite::params![
-                url,
-                etag,
-                last_modified,
-                cache_control,
-                fetched_at.to_rfc3339(),
-                expires_at.to_rfc3339(),
-            ],
-        )?;
-        Ok(())
-    })
-}
-
-fn mark_cached_web_fetch_used(url: &str) -> Result<()> {
-    MemoryService::current().with_shared_db(|conn| {
-        conn.execute(
-            "UPDATE web_fetch_cache SET use_count = use_count + 1 WHERE url = ?1",
-            rusqlite::params![url],
-        )?;
-        Ok(())
-    })
+pub fn ssrf_redirect_policy() -> reqwest::redirect::Policy {
+    let max_redirects = crate::tools::searchxyz::get_server()
+        .config
+        .crawler
+        .max_redirects;
+    shared_ssrf_redirect_policy(max_redirects, false)
 }
 
 fn extract_text_from_html(html: &str) -> String {
@@ -377,6 +126,50 @@ fn extract_text_from_html(html: &str) -> String {
     final_text.trim().to_string()
 }
 
+fn extract_title_from_html(html: &str) -> Option<String> {
+    let document = Html::parse_document(html);
+    let selector = scraper::Selector::parse("title").ok()?;
+    document
+        .select(&selector)
+        .next()
+        .map(|el| el.text().collect::<Vec<_>>().join(" ").trim().to_string())
+        .filter(|title| !title.is_empty())
+}
+
+fn render_body_for_output(
+    body: &str,
+    content_type: &str,
+    final_url: &str,
+    format: WebFetchOutputFormat,
+) -> (String, Option<String>) {
+    let ct_lc = content_type.to_ascii_lowercase();
+    let looks_like_html = ct_lc.contains("text/html")
+        || ct_lc.contains("application/xhtml+xml")
+        || (ct_lc.trim().is_empty()
+            && (body.contains("<html") || body.contains("<body") || body.contains("<!doctype")));
+
+    match looks_like_html {
+        false => (body.trim().to_string(), None),
+        true => match format {
+            WebFetchOutputFormat::Markdown => {
+                match crate::tools::searchxyz::get_server()
+                    .extractor
+                    .extract(final_url, body, Some(content_type))
+                {
+                    Ok(extracted) => {
+                        let title = (!extracted.title.trim().is_empty()).then_some(extracted.title);
+                        (extracted.content_markdown, title)
+                    }
+                    Err(_) => (extract_text_from_html(body), extract_title_from_html(body)),
+                }
+            }
+            WebFetchOutputFormat::Text => {
+                (extract_text_from_html(body), extract_title_from_html(body))
+            }
+        },
+    }
+}
+
 fn web_fetch_render_js_enabled(arguments: &serde_json::Value) -> bool {
     let val = arguments
         .get("render_js")
@@ -384,10 +177,23 @@ fn web_fetch_render_js_enabled(arguments: &serde_json::Value) -> bool {
     match val {
         Some(serde_json::Value::Bool(b)) => *b,
         Some(serde_json::Value::String(s)) => {
-            let s = s.trim().to_lowercase();
+            let s = s.trim().to_ascii_lowercase();
             s != "false" && s != "0" && s != "no"
         }
         _ => true,
+    }
+}
+
+fn web_fetch_force_render_js(arguments: &serde_json::Value) -> bool {
+    let val = arguments
+        .get("force_render_js")
+        .or_else(|| arguments.get("forceRenderJs"));
+    match val {
+        Some(serde_json::Value::Bool(b)) => *b,
+        Some(serde_json::Value::String(s)) => {
+            matches!(s.trim().to_ascii_lowercase().as_str(), "true" | "1" | "yes")
+        }
+        _ => false,
     }
 }
 
@@ -423,128 +229,25 @@ fn web_fetch_should_retry_browser_render(
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WebFetchBrowserRenderBackend {
-    Gsd,
-    Firefox,
-    Obscura,
-}
-
-impl WebFetchBrowserRenderBackend {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Gsd => "gsd_browser",
-            Self::Firefox => "firefox_browser",
-            Self::Obscura => "obscura_browser",
-        }
-    }
-}
-
-fn web_fetch_browser_render_backends() -> [WebFetchBrowserRenderBackend; 3] {
-    [
-        WebFetchBrowserRenderBackend::Gsd,
-        WebFetchBrowserRenderBackend::Firefox,
-        WebFetchBrowserRenderBackend::Obscura,
-    ]
-}
-
 #[cfg(test)]
 fn web_fetch_browser_render_backend_names() -> [&'static str; 3] {
-    web_fetch_browser_render_backends().map(WebFetchBrowserRenderBackend::name)
+    browser_backend_priority().map(|backend| backend.as_str())
 }
 
-fn web_fetch_extract_browser_output(value: serde_json::Value) -> Result<String> {
-    value
-        .as_str()
-        .or_else(|| value.get("output").and_then(|output| output.as_str()))
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("Browser render returned no readable text"))
+async fn web_fetch_browser_render(url: &str) -> Result<(String, String)> {
+    let timeout_secs = crate::tools::searchxyz::get_server()
+        .config
+        .crawler
+        .timeout_secs
+        .clamp(10, 45);
+    let rendered = render_page_with_browser_broker(url, timeout_secs).await?;
+    validate_url(&rendered.final_url).await?;
+    (!rendered.html.trim().is_empty())
+        .then_some((rendered.final_url, rendered.html))
+        .ok_or_else(|| anyhow!("Browser render returned empty HTML"))
 }
 
-async fn web_fetch_render_with_backend(
-    backend: WebFetchBrowserRenderBackend,
-    url: &str,
-) -> Result<String> {
-    match backend {
-        WebFetchBrowserRenderBackend::Gsd => {
-            let browser = crate::tools::gsd_browser::GsdBrowserTool;
-            browser
-                .call(&serde_json::json!({
-                    "action": "navigate",
-                    "url": url,
-                }))
-                .await?;
-            let page_source = browser
-                .call(&serde_json::json!({ "action": "page_source" }))
-                .await?;
-            let html = page_source
-                .get("output")
-                .and_then(|output| output.as_str())
-                .ok_or_else(|| anyhow!("gsd_browser page_source returned no output"))?;
-            let markdown = html2md::parse_html(html).trim().to_string();
-            (!markdown.is_empty())
-                .then_some(markdown)
-                .ok_or_else(|| anyhow!("gsd_browser rendered empty text"))
-        }
-        WebFetchBrowserRenderBackend::Firefox => {
-            let browser = crate::tools::firefox::FirefoxBrowserTool::new();
-            let rendered = browser
-                .call(&serde_json::json!({
-                    "url": url,
-                    "action": "render",
-                }))
-                .await?;
-            web_fetch_extract_browser_output(rendered)
-        }
-        WebFetchBrowserRenderBackend::Obscura => {
-            let browser = crate::tools::obscura::ObscuraBrowserTool;
-            let rendered = browser
-                .call(&serde_json::json!({
-                    "url": url,
-                    "action": "render",
-                    "timeout": 20,
-                }))
-                .await?;
-            web_fetch_extract_browser_output(rendered)
-        }
-    }
-}
-
-async fn web_fetch_browser_render(url: &str) -> Result<String> {
-    let mut failures = Vec::new();
-    for backend in web_fetch_browser_render_backends() {
-        match web_fetch_render_with_backend(backend, url).await {
-            Ok(text) => return Ok(text),
-            Err(err) => {
-                tracing::warn!(
-                    backend = backend.name(),
-                    url = %url,
-                    error = ?err,
-                    "web_fetch browser render backend failed; trying next backend"
-                );
-                failures.push(format!("{}: {}", backend.name(), err));
-            }
-        }
-    }
-
-    Err(anyhow!(
-        "All browser render backends failed: {}",
-        failures.join("; ")
-    ))
-}
-
-pub fn ssrf_redirect_policy() -> reqwest::redirect::Policy {
-    reqwest::redirect::Policy::custom(|attempt| match validate_url_sync(attempt.url()) {
-        Ok(_) => attempt.follow(),
-        Err(_) => attempt.stop(),
-    })
-}
-
-pub struct WebFetchTool {
-    #[allow(dead_code)]
-    client: Client,
-}
+pub struct WebFetchTool;
 
 impl Default for WebFetchTool {
     fn default() -> Self {
@@ -554,16 +257,7 @@ impl Default for WebFetchTool {
 
 impl WebFetchTool {
     pub fn new() -> Self {
-        WebFetchTool {
-            client: Client::builder()
-                .use_rustls_tls()
-                .redirect(ssrf_redirect_policy())
-                .connect_timeout(Duration::from_secs(WEB_CONNECT_TIMEOUT_SECS))
-                .read_timeout(Duration::from_secs(WEB_READ_TIMEOUT_SECS))
-                .timeout(Duration::from_secs(WEB_TOTAL_TIMEOUT_SECS))
-                .build()
-                .unwrap_or_default(),
-        }
+        WebFetchTool
     }
 }
 
@@ -625,6 +319,8 @@ pub fn normalize_web_url(raw: &str) -> String {
     }
 }
 
+const MAX_BATCH_WEB_FETCH_URLS: usize = 12;
+
 const WEB_FETCH_URL_ALIASES: &[&str] = &[
     "url",
     "target_url",
@@ -642,6 +338,8 @@ const WEB_FETCH_URL_ALIASES: &[&str] = &[
     "host",
     "path",
 ];
+
+const WEB_FETCH_BATCH_URL_ALIASES: &[&str] = &["urls", "targets", "links", "pages", "endpoints"];
 
 pub fn parse_max_length(arguments: &serde_json::Value) -> Option<usize> {
     crate::tools::arguments::extract_usize_arg(
@@ -673,13 +371,387 @@ pub fn extract_web_fetch_url(arguments: &serde_json::Value) -> Result<String> {
     )
 }
 
-fn return_cached_body(
+pub fn extract_web_fetch_urls(arguments: &serde_json::Value) -> Vec<String> {
+    let raw_items = match arguments {
+        serde_json::Value::Array(items) => Some(items),
+        serde_json::Value::Object(map) => WEB_FETCH_BATCH_URL_ALIASES
+            .iter()
+            .find_map(|key| map.get(*key).and_then(|v| v.as_array())),
+        _ => None,
+    };
+
+    let mut seen = std::collections::HashSet::new();
+    let mut normalized_urls = Vec::new();
+    for item in raw_items.into_iter().flatten() {
+        let candidate = item
+            .as_str()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(normalize_web_url);
+        match candidate {
+            Some(url) => {
+                let _ = (seen.insert(url.clone())
+                    && normalized_urls.len() < MAX_BATCH_WEB_FETCH_URLS)
+                    .then(|| normalized_urls.push(url));
+            }
+            None => {}
+        }
+    }
+    normalized_urls
+}
+
+fn return_cached_entry(
     url_str: &str,
-    body_text: String,
+    cached_item: &CachedHttpEntry,
+    output_format: WebFetchOutputFormat,
     max_length: Option<usize>,
-) -> serde_json::Value {
-    let _ = mark_cached_web_fetch_used(url_str);
-    serde_json::Value::String(truncate_web_fetch_output(body_text, max_length))
+) -> (String, Option<String>) {
+    let _ = touch_http_cache(url_str);
+    let (rendered, title) = render_body_for_output(
+        &cached_item.body_text,
+        &cached_item.content_type,
+        &cached_item.final_url,
+        output_format,
+    );
+    (truncate_web_fetch_output(rendered, max_length), title)
+}
+
+async fn fetch_single_url(
+    normalized_url: &str,
+    arguments: &serde_json::Value,
+) -> Result<(String, Option<String>)> {
+    let url_str = normalized_url;
+    let max_length = parse_max_length(arguments);
+    let cache_mode = WebFetchCacheMode::from_args(arguments)?;
+    let output_format = WebFetchOutputFormat::from_args(arguments);
+    let depth = crate::tools::arguments::extract_usize_arg(arguments, &["depth"])
+        .unwrap_or(1)
+        .clamp(1, 3);
+
+    let server = crate::tools::searchxyz::get_server();
+
+    // Multi-page depth>1 delegates directly to SearchXyz's unified Spider + Extractor pipeline
+    match depth > 1 {
+        true => {
+            let server_cache_mode = match cache_mode {
+                WebFetchCacheMode::Auto => crate::tools::searchxyz::server::FetchCacheMode::Auto,
+                WebFetchCacheMode::PreferCache => {
+                    crate::tools::searchxyz::server::FetchCacheMode::PreferCache
+                }
+                WebFetchCacheMode::Revalidate => {
+                    crate::tools::searchxyz::server::FetchCacheMode::Revalidate
+                }
+                WebFetchCacheMode::Bypass => {
+                    crate::tools::searchxyz::server::FetchCacheMode::Bypass
+                }
+            };
+            let markdown = server
+                .read_url(crate::tools::searchxyz::server::ReadUrlRequest {
+                    url: normalized_url.to_string(),
+                    depth: Some(depth),
+                    render_js: Some(web_fetch_force_render_js(arguments)),
+                    cache_mode: Some(server_cache_mode),
+                    save_mode: None,
+                    include_diagnostics: Some(false),
+                    max_chars: max_length,
+                })
+                .await?;
+            return Ok((markdown, None));
+        }
+        false => {}
+    }
+
+    // YouTube transcript extraction shortcut
+    match crate::tools::searchxyz::core::crawler::youtube::extract_video_id(url_str) {
+        Some(vid) => {
+            match crate::tools::searchxyz::core::crawler::youtube::fetch_youtube_transcript(
+                &server.crawler,
+                &vid,
+            )
+            .await
+            {
+                Ok(transcript) => {
+                    let yt_title = format!("YouTube Video {vid}");
+                    let _ = crate::tools::shared_memory::archive_research_entry_with_meta(
+                        url_str,
+                        &yt_title,
+                        &transcript,
+                        &format!("web_fetch:youtube:{vid}"),
+                        Some(url_str),
+                    )
+                    .await;
+                    return Ok((
+                        truncate_web_fetch_output(transcript, max_length),
+                        Some(yt_title),
+                    ));
+                }
+                Err(err) => {
+                    tracing::debug!(video_id = %vid, error = ?err, "YouTube transcript unavailable; falling back to page fetch");
+                }
+            }
+        }
+        None => {}
+    }
+
+    let server = crate::tools::searchxyz::get_server();
+    let default_ttl_secs = server.config.crawler.default_cache_ttl_secs as i64;
+    let max_response_bytes = server.config.crawler.max_body_bytes;
+
+    let cached = match cache_mode {
+        WebFetchCacheMode::Bypass => None,
+        _ => load_http_cache(url_str).unwrap_or_else(|err| {
+            tracing::debug!(error = ?err, url = %url_str, "web_fetch cache lookup skipped");
+            None
+        }),
+    };
+
+    match cached.as_ref() {
+        Some(cached_item) => {
+            let use_immediately = match cache_mode {
+                WebFetchCacheMode::PreferCache => true,
+                WebFetchCacheMode::Auto => is_cache_fresh(&cached_item.expires_at, now_utc()),
+                _ => false,
+            };
+            match use_immediately {
+                true => {
+                    validate_url_without_dns(url_str, false).map_err(|err| anyhow!("{err}"))?;
+                    return Ok(return_cached_entry(
+                        url_str,
+                        cached_item,
+                        output_format,
+                        max_length,
+                    ));
+                }
+                false => {}
+            }
+        }
+        None => {}
+    }
+
+    let (_parsed_url, host_lc, resolved_addrs) = validate_http_url_addrs(url_str, false)
+        .await
+        .map_err(|err| anyhow!("{err}"))?;
+
+    match web_fetch_force_render_js(arguments) {
+        true => {
+            let (final_url, rendered_html) = web_fetch_browser_render(url_str).await?;
+            let empty_headers = header::HeaderMap::new();
+            let _ = (cache_mode != WebFetchCacheMode::Bypass).then(|| {
+                save_http_cache(
+                    url_str,
+                    &final_url,
+                    &rendered_html,
+                    "text/html",
+                    &empty_headers,
+                    200,
+                    default_ttl_secs,
+                )
+            });
+            let (rendered_output, title) = render_body_for_output(
+                &rendered_html,
+                "text/html",
+                &final_url,
+                output_format,
+            );
+            let _ = crate::tools::shared_memory::archive_research_entry_with_meta(
+                url_str,
+                title.as_deref().unwrap_or(url_str),
+                &rendered_output,
+                &format!("web_fetch: {}", url_str),
+                Some(&final_url),
+            )
+            .await;
+            return Ok((
+                truncate_web_fetch_output(rendered_output, max_length),
+                title,
+            ));
+        }
+        false => {}
+    }
+
+    let client =
+        build_pinned_http_client(&server.config.crawler, &host_lc, &resolved_addrs, None)?;
+
+    let base_request = client.get(url_str);
+    let request = match (cache_mode != WebFetchCacheMode::Bypass, cached.as_ref()) {
+        (true, Some(cached_item)) => {
+            let req_with_etag = match cached_item.etag.as_deref() {
+                Some(etag) => base_request.header(header::IF_NONE_MATCH, etag),
+                None => base_request,
+            };
+            match cached_item.last_modified.as_deref() {
+                Some(last_modified) => req_with_etag.header(header::IF_MODIFIED_SINCE, last_modified),
+                None => req_with_etag,
+            }
+        }
+        _ => base_request,
+    };
+
+    let res = match request.send().await {
+        Ok(res) => res,
+        Err(err) => match cached.as_ref() {
+            Some(cached_item) => {
+                tracing::warn!(error = ?err, url = %url_str, "web_fetch live request failed; using stale cached response");
+                return Ok(return_cached_entry(
+                    url_str,
+                    cached_item,
+                    output_format,
+                    max_length,
+                ));
+            }
+            None => return Err(err.into()),
+        },
+    };
+
+    let final_url = res.url().to_string();
+    validate_url(&final_url).await?;
+
+    match (
+        res.status() == reqwest::StatusCode::NOT_MODIFIED,
+        cached.as_ref(),
+    ) {
+        (true, Some(cached_item)) => {
+            let headers = res.headers().clone();
+            let _ = refresh_http_cache_validators(url_str, &headers, default_ttl_secs)
+                .or_else(|_| touch_http_cache(url_str));
+            return Ok(return_cached_entry(
+                url_str,
+                cached_item,
+                output_format,
+                max_length,
+            ));
+        }
+        _ => {}
+    }
+
+    match res.status().is_success() {
+        true => {}
+        false => match cached.as_ref() {
+            Some(cached_item) => {
+                tracing::warn!(status = %res.status(), url = %url_str, "web_fetch live request returned error; using stale cached response");
+                return Ok(return_cached_entry(
+                    url_str,
+                    cached_item,
+                    output_format,
+                    max_length,
+                ));
+            }
+            None => return Err(anyhow!("Failed to fetch URL: HTTP {}", res.status())),
+        },
+    }
+
+    let status_code = res.status().as_u16();
+    let headers = res.headers().clone();
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    match is_supported_web_content_type(&content_type) {
+        true => {}
+        false => {
+            return Err(anyhow!(
+                "Unsupported Content-Type '{}' for URL '{}'",
+                content_type,
+                url_str
+            ));
+        }
+    }
+
+    let body_bytes = read_bounded_response_bytes(res, url_str, max_response_bytes)
+        .await
+        .map_err(|err| anyhow!("{err}"))?;
+
+    let is_pdf = content_type.to_ascii_lowercase().contains("application/pdf")
+        || body_bytes.starts_with(b"%PDF-");
+
+    let (mut stored_body, mut stored_ct, mut effective_final_url) = match is_pdf {
+        true => {
+            let pdf_text = pdf_extract::extract_text_from_mem(&body_bytes)
+                .map_err(|err| anyhow!("Failed to extract PDF text: {err}"))?;
+            (pdf_text, "text/plain".to_string(), final_url)
+        }
+        false => {
+            let raw_text = String::from_utf8_lossy(&body_bytes).into_owned();
+            let ct = match content_type.trim().is_empty() {
+                true => "text/html".to_string(),
+                false => content_type,
+            };
+            (raw_text, ct, final_url)
+        }
+    };
+
+    let (mut result_text, mut page_title) = render_body_for_output(
+        &stored_body,
+        &stored_ct,
+        &effective_final_url,
+        output_format,
+    );
+
+    let should_retry_js = !is_pdf
+        && stored_ct.to_ascii_lowercase().contains("html")
+        && web_fetch_should_retry_browser_render(&stored_body, &result_text, arguments);
+
+    match should_retry_js {
+        true => match web_fetch_browser_render(url_str).await {
+            Ok((rendered_final_url, rendered_html)) => {
+                let (rendered_output, rendered_title) = render_body_for_output(
+                    &rendered_html,
+                    "text/html",
+                    &rendered_final_url,
+                    output_format,
+                );
+                match rendered_output.trim().is_empty() {
+                    false => {
+                        tracing::info!(url = %url_str, "web_fetch static output looked like a JS shell; using headless-first BrowserBroker output");
+                        stored_body = rendered_html;
+                        stored_ct = "text/html".to_string();
+                        effective_final_url = rendered_final_url;
+                        result_text = rendered_output;
+                        page_title = rendered_title;
+                    }
+                    true => {
+                        tracing::warn!(url = %url_str, "web_fetch browser render retry returned empty text; using static fetch output");
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::warn!(url = %url_str, error = ?err, "web_fetch browser render retry failed; using static fetch output");
+            }
+        },
+        false => {}
+    }
+
+    match cache_mode != WebFetchCacheMode::Bypass {
+        true => {
+            let _ = save_http_cache(
+                url_str,
+                &effective_final_url,
+                &stored_body,
+                &stored_ct,
+                &headers,
+                status_code,
+                default_ttl_secs,
+            )
+            .map_err(|err| {
+                tracing::debug!(error = ?err, url = %url_str, "web_fetch cache save skipped");
+                err
+            });
+        }
+        false => {}
+    }
+
+    let _ = crate::tools::shared_memory::archive_research_entry_with_meta(
+        url_str,
+        page_title.as_deref().unwrap_or(url_str),
+        &result_text,
+        &format!("web_fetch: {}", url_str),
+        Some(&effective_final_url),
+    )
+    .await;
+
+    Ok((truncate_web_fetch_output(result_text, max_length), page_title))
 }
 
 #[async_trait::async_trait]
@@ -689,14 +761,24 @@ impl Tool for WebFetchTool {
     }
 
     fn description(&self) -> &str {
-        "Fetch contents of a web page and return it as clean plain text."
+        "Fetch one URL ('url') or multiple URLs concurrently ('urls', up to 12) — web pages, JSON/REST APIs, CSV endpoints, PDFs, RSS/Atom XML feeds, or YouTube transcripts — returning clean plain text, JSON, or Markdown without shell approval prompts."
     }
 
     fn parameters(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "url": { "type": "string", "description": "The URL to fetch (supports bare domains, href/target aliases, or direct string)" },
+                "url": { "type": "string", "description": "Single URL to fetch (supports bare domains, href/target aliases, JSON APIs, RSS feeds, PDFs, or YouTube links)." },
+                "urls": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional list of up to 12 URLs to fetch concurrently in a single call instead of shell curl loops."
+                },
+                "format": {
+                    "type": "string",
+                    "enum": ["text", "markdown"],
+                    "description": "Output format: 'text' (default clean plain text) or 'markdown' (readability-extracted Markdown)."
+                },
                 "cache_mode": {
                     "type": "string",
                     "enum": ["auto", "prefer_cache", "revalidate", "bypass"],
@@ -704,194 +786,102 @@ impl Tool for WebFetchTool {
                 },
                 "render_js": {
                     "type": "boolean",
-                    "description": "Automatically retry through local browser rendering when static fetch looks like an empty JavaScript app shell. Defaults to true; set false to opt out."
+                    "description": "Automatically retry through OpenZ's headless-first BrowserBroker when static fetch looks like an empty JavaScript app shell. Defaults to true; set false to opt out."
+                },
+                "depth": {
+                    "type": "integer",
+                    "description": "Link-following depth (1 = single page default, 2-3 = follow internal links on the same domain)."
                 },
                 "max_length": {
                     "type": "integer",
-                    "description": "Optional maximum character limit for returned text. Truncated output includes a notice with the total length."
+                    "description": "Optional maximum character limit per fetched URL. Truncated output includes a notice with the total length."
                 }
-            },
-            "required": ["url"]
+            }
         })
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let normalized_url = extract_web_fetch_url(arguments)?;
-        let url_str = &normalized_url;
-        let max_length = parse_max_length(arguments);
-        let cache_mode = WebFetchCacheMode::from_args(arguments)?;
-        let cached = load_cached_web_fetch(url_str).unwrap_or_else(|err| {
-            tracing::debug!(error = ?err, url = %url_str, "web_fetch cache lookup skipped");
-            None
-        });
-
-        match cached.as_ref() {
-            Some(cached_item) => {
-                let use_immediately = match cache_mode {
-                    WebFetchCacheMode::PreferCache => true,
-                    WebFetchCacheMode::Auto => is_cache_fresh(&cached_item.expires_at, now_utc()),
-                    _ => false,
-                };
-                match use_immediately {
-                    true => {
-                        return Ok(return_cached_body(
-                            url_str,
-                            cached_item.body_text.clone(),
-                            max_length,
-                        ));
+        let batch_urls = extract_web_fetch_urls(arguments);
+        match batch_urls.is_empty() {
+            true => {
+                let normalized_url = extract_web_fetch_url(arguments)?;
+                let (content, _title) = fetch_single_url(&normalized_url, arguments).await?;
+                Ok(serde_json::Value::String(content))
+            }
+            false => {
+                let concurrency = crate::tools::searchxyz::get_server()
+                    .config
+                    .crawler
+                    .max_concurrent_fetches
+                    .clamp(1, 8);
+                let sem = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency));
+                let tasks = batch_urls.iter().map(|url| {
+                    let sem = sem.clone();
+                    async move {
+                        let _permit = sem.acquire_owned().await.ok();
+                        match fetch_single_url(url, arguments).await {
+                            Ok((content, title)) => (
+                                true,
+                                None,
+                                serde_json::json!({
+                                    "url": url,
+                                    "title": title,
+                                    "status": "success",
+                                    "content": content,
+                                }),
+                            ),
+                            Err(err) => {
+                                let err_text = err.to_string();
+                                (
+                                    false,
+                                    Some(err_text.clone()),
+                                    serde_json::json!({
+                                        "url": url,
+                                        "status": "error",
+                                        "error": err_text,
+                                    }),
+                                )
+                            }
+                        }
                     }
-                    false => {}
+                });
+
+                let outcomes = futures_util::future::join_all(tasks).await;
+                let mut fetched = 0usize;
+                let mut failed = 0usize;
+                let mut first_error: Option<String> = None;
+                let mut results = Vec::with_capacity(outcomes.len());
+                for (ok, maybe_err, entry) in outcomes {
+                    match ok {
+                        true => fetched += 1,
+                        false => {
+                            failed += 1;
+                            let _ = first_error
+                                .is_none()
+                                .then(|| first_error = maybe_err);
+                        }
+                    }
+                    results.push(entry);
+                }
+
+                match fetched > 0 {
+                    true => Ok(serde_json::json!({
+                        "status": "success",
+                        "fetched": fetched,
+                        "failed": failed,
+                        "results": results,
+                    })),
+                    false => Err(anyhow!(
+                        "Failed to fetch all {} URLs: {}",
+                        failed,
+                        first_error.unwrap_or_else(|| "unknown fetch error".to_string())
+                    )),
                 }
             }
-            None => {}
         }
-
-        let resolved_ip = validate_url(url_str).await?;
-
-        // Parse host and port to build the resolved Client
-        let parsed_url = reqwest::Url::parse(url_str).map_err(|e| anyhow!("Invalid URL: {}", e))?;
-        let host = parsed_url
-            .host_str()
-            .ok_or_else(|| anyhow!("URL has no host"))?
-            .to_lowercase();
-        let port = parsed_url.port_or_known_default().unwrap_or(80);
-
-        let socket_addr = std::net::SocketAddr::new(resolved_ip, port);
-        let client = Client::builder()
-            .use_rustls_tls()
-            .redirect(ssrf_redirect_policy())
-            .resolve(&host, socket_addr)
-            .connect_timeout(Duration::from_secs(WEB_CONNECT_TIMEOUT_SECS))
-            .read_timeout(Duration::from_secs(WEB_READ_TIMEOUT_SECS))
-            .timeout(Duration::from_secs(WEB_TOTAL_TIMEOUT_SECS))
-            .build()?;
-
-        let base_request = client
-            .get(url_str)
-            .header("user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
-        let request = match (cache_mode != WebFetchCacheMode::Bypass, cached.as_ref()) {
-            (true, Some(cached_item)) => {
-                let req_with_etag = match cached_item.etag.as_deref() {
-                    Some(etag) => base_request.header(header::IF_NONE_MATCH, etag),
-                    None => base_request,
-                };
-                match cached_item.last_modified.as_deref() {
-                    Some(last_modified) => {
-                        req_with_etag.header(header::IF_MODIFIED_SINCE, last_modified)
-                    }
-                    None => req_with_etag,
-                }
-            }
-            _ => base_request,
-        };
-
-        let res = match request.send().await {
-            Ok(res) => res,
-            Err(err) => match cached {
-                Some(cached_item) => {
-                    tracing::warn!(error = ?err, url = %url_str, "web_fetch live request failed; using stale cached response");
-                    return Ok(return_cached_body(url_str, cached_item.body_text, max_length));
-                }
-                None => return Err(err.into()),
-            },
-        };
-
-        match (res.status() == reqwest::StatusCode::NOT_MODIFIED, cached.as_ref()) {
-            (true, Some(cached_item)) => {
-                let headers = res.headers().clone();
-                let _ = refresh_cached_web_fetch_validators(url_str, &headers)
-                    .or_else(|_| mark_cached_web_fetch_used(url_str));
-                return Ok(serde_json::Value::String(truncate_web_fetch_output(
-                    cached_item.body_text.clone(),
-                    max_length,
-                )));
-            }
-            _ => {}
-        }
-
-        match res.status().is_success() {
-            true => {}
-            false => match cached {
-                Some(cached_item) => {
-                    tracing::warn!(status = %res.status(), url = %url_str, "web_fetch live request returned error; using stale cached response");
-                    return Ok(return_cached_body(url_str, cached_item.body_text, max_length));
-                }
-                None => return Err(anyhow!("Failed to fetch URL: HTTP {}", res.status())),
-            },
-        }
-
-        let status_code = res.status().as_u16();
-        let headers = res.headers().clone();
-
-        // Check Content-Length to avoid downloading enormous pages
-        const MAX_RESPONSE_SIZE: usize = 10 * 1024 * 1024; // 10MB
-        match res
-            .content_length()
-            .filter(|&len| len > MAX_RESPONSE_SIZE as u64)
-        {
-            Some(content_length) => {
-                return Err(anyhow!(
-                    "Response too large ({} bytes, max {} bytes)",
-                    content_length,
-                    MAX_RESPONSE_SIZE
-                ));
-            }
-            None => {}
-        }
-
-        let mut stream = res.bytes_stream();
-        let mut body_bytes = Vec::new();
-        while let Some(chunk_result) = stream.next().await {
-            let chunk = chunk_result?;
-            (body_bytes.len() + chunk.len() <= MAX_RESPONSE_SIZE)
-                .then_some(())
-                .ok_or_else(|| {
-                    anyhow!("Response too large (exceeds max {} bytes)", MAX_RESPONSE_SIZE)
-                })?;
-            body_bytes.extend_from_slice(&chunk);
-        }
-        let html = String::from_utf8_lossy(&body_bytes).into_owned();
-        let mut result_text = extract_text_from_html(&html);
-
-        match web_fetch_should_retry_browser_render(&html, &result_text, arguments) {
-            true => match web_fetch_browser_render(url_str).await {
-                Ok(rendered_text) => match rendered_text.trim().is_empty() {
-                    false => {
-                        tracing::info!(url = %url_str, "web_fetch static output looked like a JS shell; using browser-rendered text");
-                        result_text = rendered_text;
-                    }
-                    true => {
-                        tracing::warn!(url = %url_str, "web_fetch browser render retry returned empty text; using static fetch output");
-                    }
-                },
-                Err(err) => {
-                    tracing::warn!(url = %url_str, error = ?err, "web_fetch browser render retry failed; using static fetch output");
-                }
-            },
-            false => {}
-        }
-
-        let _ =
-            save_cached_web_fetch(url_str, &result_text, &headers, status_code).map_err(|err| {
-                tracing::debug!(error = ?err, url = %url_str, "web_fetch cache save skipped");
-                err
-            });
-
-        let _ = crate::tools::shared_memory::archive_research_entry(
-            url_str,
-            &result_text,
-            &format!("web_fetch: {}", url_str),
-        )
-        .await;
-
-        Ok(serde_json::Value::String(truncate_web_fetch_output(
-            result_text,
-            max_length,
-        )))
     }
 }
 
 #[cfg(test)]
 #[path = "web_tests.rs"]
 mod tests;
-

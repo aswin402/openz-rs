@@ -139,42 +139,15 @@ pub(crate) fn register_lazy_mcp_tools(registry: &ToolRegistry, config: &Config) 
 }
 
 pub(crate) fn register_searchxyz_tools(registry: &ToolRegistry) {
-    // ── searchxyz tools ───────────────────────────────────────────────────────
+    // ── searchxyz power tools (all duplicate search/fetch/crawl/index/graph/doctor tools unified into native OpenZ tools) ──
     registry.register(std::sync::Arc::new(
         crate::tools::searchxyz::SearchXyzBrowserSearchTool,
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::searchxyz::SearchXyzRecallTool,
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::searchxyz::SearchXyzListSourcesTool,
     ));
     registry.register(std::sync::Arc::new(
         crate::tools::searchxyz::SearchXyzDeepResearchTool,
     ));
     registry.register(std::sync::Arc::new(
-        crate::tools::searchxyz::SearchXyzIndexContentTool,
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::searchxyz::SearchXyzIndexRelationshipTool,
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::searchxyz::SearchXyzQueryGraphTool,
-    ));
-    registry.register(std::sync::Arc::new(
         crate::tools::searchxyz::SearchXyzReadGithubRepoTool,
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::searchxyz::SearchXyzExportResearchTool,
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::searchxyz::SearchXyzImportResearchTool,
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::searchxyz::SearchXyzDeleteSourceTool,
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::searchxyz::SearchXyzClearIndexTool,
     ));
 }
 

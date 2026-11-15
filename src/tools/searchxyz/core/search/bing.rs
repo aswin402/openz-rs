@@ -128,6 +128,20 @@ impl SearchBackend for BingBackend {
 
         let results = Self::parse_results(&html_body, query.max_results);
 
+        match super::is_poisoned_scraper_serp(query, &results) {
+            true => {
+                tracing::warn!(
+                    query = %query.query,
+                    "Bing returned bot-decoy irrelevant SERP; marking blocked"
+                );
+                return Err(SearchXyzError::SearchFailed {
+                    query: query.query.clone(),
+                    reason: "Bing returned bot-decoy irrelevant SERP (blocked)".to_string(),
+                });
+            }
+            false => {}
+        }
+
         match results.is_empty() {
             true => tracing::warn!(query = %query.query, "Bing returned no parsable results"),
             false => {}
@@ -184,5 +198,25 @@ mod tests {
 
         let regular = "https://rust-lang.org/learn";
         assert_eq!(unwrap_bing_redirect(regular), regular);
+    }
+
+    #[test]
+    fn test_bing_detects_poisoned_decoy_serp() {
+        let decoy_html = r#"
+            <html><body><ol id="b_results">
+                <li class="b_algo">
+                    <h2><a href="https://chromewebstore.google.com/detail/auto-tab-discard/abc">Auto Tab Discard - Chrome Web Store</a></h2>
+                    <div class="b_caption"><p>Increase browser speed and reduce memory load.</p></div>
+                </li>
+                <li class="b_algo">
+                    <h2><a href="https://www.google.com/chrome/index.html">Chrome Web Browser - Google Chrome</a></h2>
+                    <div class="b_caption"><p>A fast, secure, and free web browser.</p></div>
+                </li>
+            </ol></body></html>
+        "#;
+        let parsed = BingBackend::parse_results(decoy_html, 10);
+        assert_eq!(parsed.len(), 2);
+        let query = SearchQuery::new("AMD stock news November 13 2026", 5);
+        assert!(super::super::is_poisoned_scraper_serp(&query, &parsed));
     }
 }

@@ -51,3 +51,20 @@ fn repo_edit_and_test_request_routes_to_local_execution() {
     assert_eq!(decision.intent, TurnIntent::LocalExecution);
     assert_eq!(decision.knowledge_policy, KnowledgePolicy::UseLocalContext);
 }
+
+#[test]
+fn external_stock_and_price_check_routes_to_live_web_research_not_shell() {
+    let decision = classify_turn_intent("check AMD and NVDA stock price and market cap");
+    assert_eq!(decision.intent, TurnIntent::ExternalResearch);
+    assert_eq!(
+        decision.knowledge_policy,
+        KnowledgePolicy::RequireLiveResearch
+    );
+}
+
+#[test]
+fn check_the_build_still_routes_to_local_execution() {
+    let decision = classify_turn_intent("check the build");
+    assert_eq!(decision.intent, TurnIntent::LocalExecution);
+    assert_eq!(decision.knowledge_policy, KnowledgePolicy::UseLocalContext);
+}

@@ -11,8 +11,9 @@ pub(crate) use db::with_db;
 pub(crate) use db::scope_from_args;
 
 pub use graph::{
-    AddObservationsTool, CreateEntitiesTool, CreateRelationsTool, DeleteEntitiesTool,
-    DeleteObservationsTool, DeleteRelationsTool, OpenNodesTool, ReadGraphTool, SearchNodesTool,
+    record_graph_relations_batch, AddObservationsTool, CreateEntitiesTool, CreateRelationsTool,
+    DeleteEntitiesTool, DeleteObservationsTool, DeleteRelationsTool, OpenNodesTool, ReadGraphTool,
+    SearchNodesTool,
 };
 
 pub use branch::{CommitDatabaseBranchTool, CreateDatabaseBranchTool, RollbackDatabaseBranchTool};

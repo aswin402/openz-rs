@@ -369,7 +369,7 @@ fn research_self_healing_hint(tool_lower: &str, error_str: &str) -> Option<&'sta
                     "Research browser fallback lost its active browser session. Use inspect_browsers, restart the browser backend once if healthy, then stop retrying that backend if the same failure repeats.",
                 ),
                 super::research_policy::ResearchFailureKind::SearchExhausted => Some(
-                    "Search backends returned no usable results. Run searchxyz_doctor for backend health, then use configured fallback policy or answer from cached/official sources with a clear source caveat.",
+                    "Search backends returned no usable results. Run diagnose_system for web_engine backend health, then use configured fallback policy or answer from cached/official sources with a clear source caveat.",
                 ),
                 other => other.is_retryable().then_some(
                     "Research lookup failed with a transient backend/network condition. Retry within the configured research budget; after budget exhaustion, return partial findings and cite which sources could not be verified.",

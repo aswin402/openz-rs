@@ -3,14 +3,13 @@ use reqwest::Client;
 
 use super::{SearchBackend, SearchQuery, SearchResult};
 use crate::tools::searchxyz::core::crawler::fingerprint::HeaderGenerator;
-use crate::tools::searchxyz::core::crawler::headless::HeadlessBrowser;
 use crate::tools::searchxyz::core::error::SearchXyzError;
 
 /// Native Google Scraper Backend — no API key required.
 pub struct GoogleBackend {
     client: Client,
     clients: Option<Vec<Client>>,
-    headless_browser: Option<HeadlessBrowser>,
+    headless_enabled: bool,
 }
 
 impl GoogleBackend {
@@ -18,7 +17,7 @@ impl GoogleBackend {
         Self {
             client,
             clients: None,
-            headless_browser: None,
+            headless_enabled: false,
         }
     }
 
@@ -27,8 +26,8 @@ impl GoogleBackend {
         self
     }
 
-    pub fn with_headless(mut self, headless_browser: HeadlessBrowser) -> Self {
-        self.headless_browser = Some(headless_browser);
+    pub fn with_headless_enabled(mut self, enabled: bool) -> Self {
+        self.headless_enabled = enabled;
         self
     }
 
@@ -79,7 +78,7 @@ impl SearchBackend for GoogleBackend {
     }
 
     fn is_available(&self) -> bool {
-        true // no key needed
+        true
     }
 
     async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>, SearchXyzError> {
@@ -93,7 +92,7 @@ impl SearchBackend for GoogleBackend {
             request,
             "https://www.google.com/search",
             query,
-            &self.headless_browser,
+            self.headless_enabled,
             Self::parse_results,
         )
         .await

@@ -6,6 +6,8 @@ pub mod embeddings;
 pub mod interaction;
 pub mod knowledge;
 pub mod research;
+pub mod research_bundle;
+pub mod web_cache;
 pub mod workflows;
 
 #[cfg(test)]
@@ -23,8 +25,19 @@ pub use cognitive::{
 };
 
 pub use research::{
-    archive_research_entries, archive_research_entry, chunk_content_by_headings,
-    search_research_entries, ArchiveResearchTool, SearchResearchTool,
+    archive_research_entries, archive_research_entry, archive_research_entry_with_meta,
+    chunk_content_by_headings, search_research_entries, ArchiveResearchTool, SearchResearchTool,
+};
+pub use research_bundle::{
+    clear_indexed_research, delete_indexed_source, export_research_bundle,
+    export_research_bundle_filtered, import_research_bundle, list_indexed_sources,
+    research_index_stats, search_research_hybrid, searchxyz_repos_dir, ResearchIndexStats,
+    ResearchSearchMode,
+};
+pub use web_cache::{
+    compute_expires_at, compute_expires_at_with_default_ttl, header_to_string, http_cache_stats,
+    is_cache_fresh, load_http_cache, now_utc, refresh_http_cache_validators, save_http_cache,
+    touch_http_cache, CachedHttpEntry, HttpCacheStats, WebCacheMode,
 };
 
 pub use consolidation::consolidate_shared_memory;

@@ -1,8 +1,13 @@
 pub mod bing;
 pub mod brave;
+pub mod cooldown;
 pub mod duckduckgo;
+pub mod exa;
 pub mod google;
+pub mod mojeek;
 pub mod searxng;
+pub mod tavily;
+pub mod websurfx;
 
 use crate::tools::searchxyz::core::error::SearchXyzError;
 use async_trait::async_trait;
@@ -11,7 +16,7 @@ use async_trait::async_trait;
 // Core data types
 // ─────────────────────────────────────────────────────────────
 
-/// Incoming search request from an MCP tool call.
+/// Incoming search request.
 #[derive(Debug, Clone)]
 pub struct SearchQuery {
     pub query: String,
@@ -39,7 +44,7 @@ pub struct SearchResult {
     pub title: String,
     pub url: String,
     pub snippet: String,
-    pub source: String, // "duckduckgo", "brave", etc.
+    pub source: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -67,7 +72,6 @@ pub trait SearchBackend: Send + Sync {
     fn name(&self) -> &str;
 
     /// Pre-flight check: is this backend configured and reachable?
-    /// E.g. Brave returns false when no API key is set.
     fn is_available(&self) -> bool;
 
     /// Execute a search query and return results.
@@ -75,7 +79,7 @@ pub trait SearchBackend: Send + Sync {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Dispatcher — tries backends in order until one succeeds.
+// Dispatcher — tries backends in order or merges concurrently.
 // ─────────────────────────────────────────────────────────────
 
 pub struct SearchDispatcher {
@@ -87,8 +91,7 @@ impl SearchDispatcher {
         Self { backends }
     }
 
-    /// Run the query against backends in configured order.
-    /// Defaults to first successful backend; `merge_backends` deduplicates and reranks all available results.
+    /// Run the query against backends in configured order (or concurrently when `merge_backends` is set).
     pub async fn search(&self, query: &SearchQuery) -> Result<Vec<SearchResult>, SearchXyzError> {
         Ok(self.search_with_diagnostics(query).await?.results)
     }
@@ -103,12 +106,30 @@ impl SearchDispatcher {
         }
     }
 
+    fn probe_backend_when_all_cooling(&self) -> Option<String> {
+        let available_names: Vec<&str> = self
+            .backends
+            .iter()
+            .filter(|b| b.is_available())
+            .map(|b| b.name())
+            .collect();
+        let all_cooling = !available_names.is_empty()
+            && available_names
+                .iter()
+                .all(|name| cooldown::is_backend_cooling_down(name).is_some());
+        match all_cooling {
+            true => cooldown::shortest_cooldown_backend(&available_names),
+            false => None,
+        }
+    }
+
     async fn search_first_success(
         &self,
         query: &SearchQuery,
     ) -> Result<SearchReport, SearchXyzError> {
         let mut tried: Vec<String> = Vec::new();
         let mut attempts = Vec::new();
+        let probe_backend = self.probe_backend_when_all_cooling();
 
         for backend in &self.backends {
             match backend.is_available() {
@@ -119,6 +140,21 @@ impl SearchDispatcher {
                 true => {}
             }
 
+            let cooldown_skip = cooldown::is_backend_cooling_down(backend.name())
+                .filter(|_| probe_backend.as_deref() != Some(backend.name()));
+            match cooldown_skip {
+                Some((kind, remaining_secs)) => {
+                    attempts.push(cooldown_backend_attempt(
+                        backend.name(),
+                        kind,
+                        remaining_secs,
+                    ));
+                    tried.push(format!("{} (cooldown: {})", backend.name(), kind.as_str()));
+                    continue;
+                }
+                None => {}
+            }
+
             tracing::info!(backend = backend.name(), query = %query.query, "Trying search backend");
 
             match backend.search(query).await {
@@ -126,6 +162,7 @@ impl SearchDispatcher {
                     let results = rank_results(query, filter_results(query, results));
                     match results.is_empty() {
                         false => {
+                            cooldown::clear_backend_cooldown(backend.name());
                             tracing::info!(
                                 backend = backend.name(),
                                 count = results.len(),
@@ -162,14 +199,16 @@ impl SearchDispatcher {
                     tried.push(format!("{} (0 usable results)", backend.name()));
                 }
                 Err(err) => {
-                    tracing::error!(backend = backend.name(), error = %err, "Backend failed");
+                    let err_msg = err.to_string();
+                    cooldown::record_transient_backend_error(backend.name(), &err_msg);
+                    tracing::error!(backend = backend.name(), error = %err_msg, "Backend failed");
                     attempts.push(BackendAttempt {
                         backend: backend.name().to_string(),
                         status: "error".to_string(),
                         usable_results: 0,
-                        detail: Some(err.to_string()),
+                        detail: Some(err_msg.clone()),
                     });
-                    tried.push(format!("{} ({})", backend.name(), err));
+                    tried.push(format!("{} ({})", backend.name(), err_msg));
                 }
             }
         }
@@ -182,53 +221,110 @@ impl SearchDispatcher {
 
     async fn search_merged(&self, query: &SearchQuery) -> Result<SearchReport, SearchXyzError> {
         let mut tried: Vec<String> = Vec::new();
-        let mut attempts = Vec::new();
-        let mut merged = Vec::new();
-        let mut seen = std::collections::HashSet::new();
+        let mut pre_attempts: Vec<(usize, BackendAttempt)> = Vec::new();
+        let mut runnable: Vec<(usize, &dyn SearchBackend)> = Vec::new();
+        let probe_backend = self.probe_backend_when_all_cooling();
 
-        for backend in &self.backends {
+        for (slot, backend) in self.backends.iter().enumerate() {
             match backend.is_available() {
                 false => {
-                    attempts.push(skipped_backend_attempt(backend.name()));
+                    pre_attempts.push((slot, skipped_backend_attempt(backend.name())));
                     continue;
                 }
                 true => {}
             }
 
-            tracing::info!(backend = backend.name(), query = %query.query, "Trying search backend for merge");
-            match backend.search(query).await {
-                Ok(results) => {
-                    let before = merged.len();
-                    for result in filter_results(query, results) {
+            let cooldown_skip = cooldown::is_backend_cooling_down(backend.name())
+                .filter(|_| probe_backend.as_deref() != Some(backend.name()));
+            match cooldown_skip {
+                Some((kind, remaining_secs)) => {
+                    pre_attempts.push((
+                        slot,
+                        cooldown_backend_attempt(backend.name(), kind, remaining_secs),
+                    ));
+                    tried.push(format!("{} (cooldown: {})", backend.name(), kind.as_str()));
+                }
+                None => runnable.push((slot, backend.as_ref())),
+            }
+        }
+
+        let futures = runnable.iter().map(|(_, backend)| {
+            tracing::info!(backend = backend.name(), query = %query.query, "Querying search backend concurrently for merge");
+            backend.search(query)
+        });
+        let outcomes = futures_util::future::join_all(futures).await;
+
+        let mut merged: Vec<SearchResult> = Vec::new();
+        let mut key_to_index: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        let mut rrf_scores: std::collections::HashMap<String, i32> =
+            std::collections::HashMap::new();
+        let mut post_attempts: Vec<(usize, BackendAttempt)> = Vec::new();
+
+        for ((slot, backend), outcome) in runnable.into_iter().zip(outcomes) {
+            match outcome {
+                Ok(raw_results) => {
+                    let filtered = rank_results(query, filter_results(query, raw_results));
+                    match filtered.is_empty() {
+                        false => cooldown::clear_backend_cooldown(backend.name()),
+                        true => {}
+                    }
+                    let usable_count = filtered.len();
+                    for (rank, result) in filtered.into_iter().enumerate() {
                         let key = normalize_url_key(&result.url);
-                        match seen.insert(key) {
-                            true => merged.push(result),
-                            false => {}
+                        let rrf_delta = 60 / (rank as i32 + 10);
+                        *rrf_scores.entry(key.clone()).or_insert(0) += rrf_delta;
+                        match key_to_index.get(&key).copied() {
+                            Some(existing_idx) => {
+                                let existing = &mut merged[existing_idx];
+                                match result.snippet.len() > existing.snippet.len() {
+                                    true => existing.snippet = result.snippet,
+                                    false => {}
+                                }
+                            }
+                            None => {
+                                key_to_index.insert(key, merged.len());
+                                merged.push(result);
+                            }
                         }
                     }
-                    let usable_results = merged.len() - before;
-                    let status = match usable_results == 0 {
+                    let status = match usable_count == 0 {
                         true => "empty",
                         false => "success",
                     };
-                    attempts.push(BackendAttempt {
-                        backend: backend.name().to_string(),
-                        status: status.to_string(),
-                        usable_results,
-                        detail: None,
-                    });
-                    tried.push(format!(
-                        "{} ({} usable results)",
-                        backend.name(),
-                        usable_results
+                    post_attempts.push((
+                        slot,
+                        BackendAttempt {
+                            backend: backend.name().to_string(),
+                            status: status.to_string(),
+                            usable_results: usable_count,
+                            detail: None,
+                        },
                     ));
+                    tried.push(format!("{} ({} usable results)", backend.name(), usable_count));
                 }
                 Err(err) => {
-                    tracing::error!(backend = backend.name(), error = %err, "Backend failed during merge");
-                    tried.push(format!("{} ({})", backend.name(), err));
+                    let err_msg = err.to_string();
+                    cooldown::record_transient_backend_error(backend.name(), &err_msg);
+                    tracing::error!(backend = backend.name(), error = %err_msg, "Backend failed during merge");
+                    post_attempts.push((
+                        slot,
+                        BackendAttempt {
+                            backend: backend.name().to_string(),
+                            status: "error".to_string(),
+                            usable_results: 0,
+                            detail: Some(err_msg.clone()),
+                        },
+                    ));
+                    tried.push(format!("{} ({})", backend.name(), err_msg));
                 }
             }
         }
+
+        pre_attempts.extend(post_attempts);
+        pre_attempts.sort_by_key(|(slot, _)| *slot);
+        let attempts: Vec<BackendAttempt> =
+            pre_attempts.into_iter().map(|(_, attempt)| attempt).collect();
 
         match merged.is_empty() {
             true => Err(SearchXyzError::AllBackendsExhausted {
@@ -236,7 +332,7 @@ impl SearchDispatcher {
                 backends_tried: tried.join(", "),
             }),
             false => {
-                let merged = rank_results(query, merged);
+                let merged = rank_merged_results(query, merged, &rrf_scores);
                 Ok(SearchReport {
                     results: merged.into_iter().take(query.max_results).collect(),
                     attempts,
@@ -254,6 +350,29 @@ fn skipped_backend_attempt(name: &str) -> BackendAttempt {
         status: "skipped".to_string(),
         usable_results: 0,
         detail: Some("backend unavailable or missing configuration".to_string()),
+    }
+}
+
+fn cooldown_backend_attempt(
+    name: &str,
+    kind: cooldown::SearchFailureKind,
+    remaining_secs: u64,
+) -> BackendAttempt {
+    tracing::debug!(
+        backend = name,
+        kind = kind.as_str(),
+        remaining_secs,
+        "Skipping cooling-down search backend"
+    );
+    BackendAttempt {
+        backend: name.to_string(),
+        status: "cooldown".to_string(),
+        usable_results: 0,
+        detail: Some(format!(
+            "backend cooling down ({}, {}s remaining)",
+            kind.as_str(),
+            remaining_secs
+        )),
     }
 }
 
@@ -316,6 +435,7 @@ pub(crate) fn find_ancestor_http_href(element: &scraper::ElementRef<'_>) -> Opti
     None
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn parse_container_or_heading_results<F, G>(
     html_body: &str,
     max_results: usize,
@@ -400,15 +520,12 @@ where
 pub(crate) async fn execute_html_search_with_headless_fallback(
     backend_label: &str,
     request: reqwest::RequestBuilder,
-    #[cfg_attr(not(feature = "js-rendering"), allow(unused_variables))]
     fallback_base_url: &str,
     query: &SearchQuery,
-    #[cfg_attr(not(feature = "js-rendering"), allow(unused_variables))]
-    headless_browser: &Option<crate::tools::searchxyz::core::crawler::headless::HeadlessBrowser>,
+    headless_enabled: bool,
     parse_fn: fn(&str, usize) -> Vec<SearchResult>,
 ) -> Result<Vec<SearchResult>, SearchXyzError> {
     let mut results = Vec::new();
-    #[cfg(feature = "js-rendering")]
     let mut http_failed = false;
 
     match request.send().await {
@@ -416,19 +533,25 @@ pub(crate) async fn execute_html_search_with_headless_fallback(
             true => match resp.text().await {
                 Ok(html_body) => {
                     results = parse_fn(&html_body, query.max_results);
+                    match is_poisoned_scraper_serp(query, &results) {
+                        true => {
+                            tracing::warn!(
+                                query = %query.query,
+                                "{} returned bot-decoy irrelevant SERP over HTTP",
+                                backend_label
+                            );
+                            results.clear();
+                            http_failed = true;
+                        }
+                        false => {}
+                    }
                 }
                 Err(_) => {
-                    #[cfg(feature = "js-rendering")]
-                    {
-                        http_failed = true;
-                    }
+                    http_failed = true;
                 }
             },
             false => {
-                #[cfg(feature = "js-rendering")]
-                {
-                    http_failed = true;
-                }
+                http_failed = true;
                 tracing::warn!(
                     "{} HTTP request returned status {}",
                     backend_label,
@@ -437,36 +560,58 @@ pub(crate) async fn execute_html_search_with_headless_fallback(
             }
         },
         Err(e) => {
-            #[cfg(feature = "js-rendering")]
-            {
-                http_failed = true;
-            }
+            http_failed = true;
             tracing::warn!("{} HTTP request failed: {:?}", backend_label, e);
         }
     }
 
-    #[cfg(feature = "js-rendering")]
-    match (http_failed || results.is_empty(), headless_browser) {
-        (true, Some(headless)) => {
-            let mut url_parsed = url::Url::parse(fallback_base_url).unwrap();
-            url_parsed.query_pairs_mut().append_pair("q", &query.query);
-            let search_url = url_parsed.to_string();
-
-            tracing::info!(
-                url = %search_url,
-                "{} raw HTTP blocked or empty, falling back to headless browser",
-                backend_label
-            );
-            match headless.fetch_html(&search_url).await {
-                Ok(html_body) => {
-                    results = parse_fn(&html_body, query.max_results);
+    match (http_failed || results.is_empty()) && headless_enabled {
+        true => {
+            let parsed_base = url::Url::parse(fallback_base_url);
+            match parsed_base {
+                Ok(mut url_parsed) => {
+                    url_parsed.query_pairs_mut().append_pair("q", &query.query);
+                    let search_url = url_parsed.to_string();
+                    tracing::info!(
+                        url = %search_url,
+                        "{} raw HTTP blocked or empty, falling back to OpenZ BrowserBroker",
+                        backend_label
+                    );
+                    match crate::tools::browser_broker::render_page_with_browser_broker(
+                        &search_url,
+                        15,
+                    )
+                    .await
+                    {
+                        Ok(rendered) => {
+                            results = parse_fn(&rendered.html, query.max_results);
+                            match is_poisoned_scraper_serp(query, &results) {
+                                true => {
+                                    results.clear();
+                                    return Err(SearchXyzError::SearchFailed {
+                                        query: query.query.clone(),
+                                        reason: format!(
+                                            "{} returned bot-decoy irrelevant SERP (blocked)",
+                                            backend_label
+                                        ),
+                                    });
+                                }
+                                false => {}
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "{} BrowserBroker fallback failed: {:?}",
+                                backend_label,
+                                e
+                            );
+                        }
+                    }
                 }
-                Err(e) => {
-                    tracing::error!("{} headless fallback failed: {:?}", backend_label, e);
-                }
+                Err(_) => {}
             }
         }
-        _ => {}
+        false => {}
     }
 
     match results.is_empty() {
@@ -486,6 +631,29 @@ fn rank_results(query: &SearchQuery, mut results: Vec<SearchResult>) -> Vec<Sear
     results.sort_by(|a, b| {
         let score_b = score_result(&model, b);
         let score_a = score_result(&model, a);
+        score_b
+            .cmp(&score_a)
+            .then_with(|| {
+                a.title
+                    .to_ascii_lowercase()
+                    .cmp(&b.title.to_ascii_lowercase())
+            })
+            .then_with(|| a.url.cmp(&b.url))
+    });
+    results
+}
+
+fn rank_merged_results(
+    query: &SearchQuery,
+    mut results: Vec<SearchResult>,
+    rrf_scores: &std::collections::HashMap<String, i32>,
+) -> Vec<SearchResult> {
+    let model = RankingModel::from_results(query, &results);
+    results.sort_by(|a, b| {
+        let key_a = normalize_url_key(&a.url);
+        let key_b = normalize_url_key(&b.url);
+        let score_a = score_result(&model, a) + rrf_scores.get(&key_a).copied().unwrap_or(0);
+        let score_b = score_result(&model, b) + rrf_scores.get(&key_b).copied().unwrap_or(0);
         score_b
             .cmp(&score_a)
             .then_with(|| {
@@ -585,6 +753,16 @@ fn score_result(model: &RankingModel, result: &SearchResult) -> i32 {
     score -= generic_low_coverage_penalty(model, result, matched_terms);
     score -= low_quality_url_penalty(&url);
     score
+}
+
+pub(crate) fn is_poisoned_scraper_serp(query: &SearchQuery, results: &[SearchResult]) -> bool {
+    let terms = query_terms(&query.query);
+    !results.is_empty()
+        && !terms.is_empty()
+        && query.include_domains.is_empty()
+        && results
+            .iter()
+            .all(|res| terms.iter().all(|term| !result_contains_term(res, term)))
 }
 
 fn result_contains_term(result: &SearchResult, term: &str) -> bool {
@@ -725,7 +903,7 @@ fn low_quality_url_penalty(url: &str) -> i32 {
     bad_count * 18 + tracking_count * 6 + tail_penalty
 }
 
-fn filter_results(query: &SearchQuery, results: Vec<SearchResult>) -> Vec<SearchResult> {
+pub fn filter_results(query: &SearchQuery, results: Vec<SearchResult>) -> Vec<SearchResult> {
     results
         .into_iter()
         .filter(|result| {
@@ -734,7 +912,7 @@ fn filter_results(query: &SearchQuery, results: Vec<SearchResult>) -> Vec<Search
         .collect()
 }
 
-fn domain_allowed(url: &str, include_domains: &[String], exclude_domains: &[String]) -> bool {
+pub fn domain_allowed(url: &str, include_domains: &[String], exclude_domains: &[String]) -> bool {
     let parsed = match url::Url::parse(url) {
         Ok(p) => p,
         Err(_) => return false,
@@ -759,16 +937,66 @@ fn domain_matches(host: &str, domain: &str) -> bool {
     host == domain || host.ends_with(&format!(".{domain}"))
 }
 
-fn normalize_url_key(url: &str) -> String {
+fn is_tracking_query_param(key_lower: &str) -> bool {
+    key_lower.starts_with("utm_")
+        || matches!(
+            key_lower,
+            "utm"
+                | "fbclid"
+                | "gclid"
+                | "dclid"
+                | "mc_cid"
+                | "mc_eid"
+                | "msclkid"
+                | "yclid"
+                | "igshid"
+                | "ref"
+                | "ref_src"
+                | "si"
+                | "_hsenc"
+                | "_hsmi"
+        )
+}
+
+pub fn normalize_url_key(url: &str) -> String {
     match url::Url::parse(url) {
         Err(_) => url.trim().to_ascii_lowercase(),
         Ok(mut parsed) => {
             parsed.set_fragment(None);
-            parsed.set_query(None);
-            parsed
-                .to_string()
-                .trim_end_matches('/')
-                .to_ascii_lowercase()
+            let mut semantic_pairs: Vec<(String, String)> = parsed
+                .query_pairs()
+                .filter_map(|(k, v)| {
+                    let key_lower = k.to_ascii_lowercase();
+                    (!is_tracking_query_param(&key_lower)).then(|| (key_lower, v.into_owned()))
+                })
+                .collect();
+            semantic_pairs.sort();
+            match semantic_pairs.is_empty() {
+                true => parsed.set_query(None),
+                false => {
+                    let mut qp = url::form_urlencoded::Serializer::new(String::new());
+                    for (k, v) in &semantic_pairs {
+                        qp.append_pair(k, v);
+                    }
+                    let encoded = qp.finish();
+                    parsed.set_query(Some(&encoded));
+                }
+            }
+            let rendered = parsed.to_string();
+            match semantic_pairs.is_empty() {
+                true => rendered.trim_end_matches('/').to_ascii_lowercase(),
+                false => {
+                    let host_normalized = match parsed.query() {
+                        Some(q) => {
+                            let mut base = parsed.clone();
+                            base.set_query(None);
+                            format!("{}?{}", base.to_string().trim_end_matches('/').to_ascii_lowercase(), q)
+                        }
+                        None => rendered.to_ascii_lowercase(),
+                    };
+                    host_normalized
+                }
+            }
         }
     }
 }
@@ -874,6 +1102,89 @@ mod tests {
         assert!(results
             .iter()
             .any(|r| r.url == "https://rust-lang.org/learn"));
+    }
+
+    #[test]
+    fn normalize_url_key_preserves_semantic_query_params_and_strips_tracking() {
+        assert_ne!(
+            normalize_url_key("https://www.youtube.com/watch?v=AbCdEf12345"),
+            normalize_url_key("https://www.youtube.com/watch?v=ZyXwVu98765")
+        );
+        assert_eq!(
+            normalize_url_key("https://www.youtube.com/watch?v=AbCdEf12345&utm_source=share&si=xyz"),
+            normalize_url_key("https://www.youtube.com/watch?v=AbCdEf12345")
+        );
+        assert_eq!(
+            normalize_url_key("https://example.com/docs?page=2&lang=en&fbclid=123"),
+            normalize_url_key("https://example.com/docs/?lang=en&page=2")
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatcher_skips_cooling_down_backend_and_probes_when_all_cooling() {
+        let _guard = cooldown::COOLDOWN_TEST_LOCK.lock().unwrap();
+        cooldown::clear_search_backend_cooldowns_for_tests();
+        cooldown::record_search_backend_failure(
+            &["cooldown_primary".to_string()],
+            cooldown::SearchFailureKind::Blocked,
+        );
+
+        let dispatcher = SearchDispatcher::new(vec![
+            Box::new(StaticBackend {
+                name: "cooldown_primary",
+                results: vec![result("https://primary.example/page", "cooldown_primary")],
+            }),
+            Box::new(StaticBackend {
+                name: "healthy_secondary",
+                results: vec![result("https://secondary.example/page", "healthy_secondary")],
+            }),
+        ]);
+        let report = dispatcher
+            .search_with_diagnostics(&SearchQuery::new("rust", 5))
+            .await
+            .unwrap();
+        assert_eq!(report.attempts[0].backend, "cooldown_primary");
+        assert_eq!(report.attempts[0].status, "cooldown");
+        assert_eq!(report.attempts[1].backend, "healthy_secondary");
+        assert_eq!(report.attempts[1].status, "success");
+
+        // When every available backend is in cooldown, probe the shortest remaining cooldown instead of deadlocking.
+        let single_dispatcher = SearchDispatcher::new(vec![Box::new(StaticBackend {
+            name: "cooldown_primary",
+            results: vec![result("https://primary.example/page", "cooldown_primary")],
+        })]);
+        let recovered = single_dispatcher
+            .search_with_diagnostics(&SearchQuery::new("rust", 5))
+            .await
+            .unwrap();
+        assert_eq!(recovered.results.len(), 1);
+        assert!(cooldown::is_backend_cooling_down("cooldown_primary").is_none());
+        cooldown::clear_search_backend_cooldowns_for_tests();
+    }
+
+    #[tokio::test]
+    async fn merge_backends_records_error_attempts_and_boosts_consensus() {
+        let dispatcher = SearchDispatcher::new(vec![
+            Box::new(FailingBackend),
+            Box::new(StaticBackend {
+                name: "b1",
+                results: vec![
+                    result("https://example.com/solo", "b1"),
+                    result("https://example.com/consensus", "b1"),
+                ],
+            }),
+            Box::new(StaticBackend {
+                name: "b2",
+                results: vec![result("https://example.com/consensus?utm_source=b2", "b2")],
+            }),
+        ]);
+        let mut query = SearchQuery::new("rust", 10);
+        query.merge_backends = true;
+
+        let report = dispatcher.search_with_diagnostics(&query).await.unwrap();
+        assert_eq!(report.attempts.len(), 3);
+        assert_eq!(report.attempts[0].status, "error");
+        assert_eq!(report.results[0].url, "https://example.com/consensus");
     }
 
     #[tokio::test]

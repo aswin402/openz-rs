@@ -1,14 +1,7 @@
 use thiserror::Error;
 
-// ─────────────────────────────────────────────────────────────
-// Unified error type. Every variant carries a human-readable
-// message that is directly useful to an AI agent consuming MCP
-// tool responses.
-// ─────────────────────────────────────────────────────────────
-
 #[derive(Debug, Error)]
 pub enum SearchXyzError {
-    // ── Search ──
     #[error("Search failed for query `{query}`: {reason}")]
     SearchFailed { query: String, reason: String },
 
@@ -18,7 +11,6 @@ pub enum SearchXyzError {
         backends_tried: String,
     },
 
-    // ── Crawl ──
     #[error("Crawl failed for `{url}`: {reason}")]
     CrawlFailed { url: String, reason: String },
 
@@ -35,30 +27,24 @@ pub enum SearchXyzError {
     #[error("Blocked unsafe URL `{url}`: {reason}")]
     UnsafeUrl { url: String, reason: String },
 
-    // ── Extraction ──
     #[error("Content extraction failed for `{url}`: {reason}")]
     ExtractionFailed { url: String, reason: String },
 
     #[error("Extracted content from `{url}` is empty or below {min_length} chars")]
     EmptyContent { url: String, min_length: usize },
 
-    // ── Index ──
     #[error("Index operation failed: {0}")]
     IndexError(String),
 
-    // ── Config ──
     #[error("Configuration error: {0}")]
     ConfigError(String),
 
-    // ── Rate limiting ──
     #[error("Rate limited by `{provider}` — retry after {retry_after_secs}s")]
     RateLimited {
         provider: String,
         retry_after_secs: u64,
     },
 }
-
-// ── Conversions ──────────────────────────────────────────────
 
 impl From<reqwest::Error> for SearchXyzError {
     fn from(err: reqwest::Error) -> Self {
@@ -79,12 +65,6 @@ impl From<reqwest::Error> for SearchXyzError {
     }
 }
 
-impl From<tantivy::TantivyError> for SearchXyzError {
-    fn from(err: tantivy::TantivyError) -> Self {
-        SearchXyzError::IndexError(format!("Tantivy error: {err}"))
-    }
-}
-
 impl From<std::io::Error> for SearchXyzError {
     fn from(err: std::io::Error) -> Self {
         SearchXyzError::ConfigError(format!("I/O error: {err}"))
@@ -97,8 +77,8 @@ impl From<serde_json::Error> for SearchXyzError {
     }
 }
 
-impl From<SearchXyzError> for rmcp::ErrorData {
-    fn from(err: SearchXyzError) -> Self {
-        rmcp::ErrorData::internal_error(err.to_string(), None)
+impl From<anyhow::Error> for SearchXyzError {
+    fn from(err: anyhow::Error) -> Self {
+        SearchXyzError::IndexError(err.to_string())
     }
 }

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use crate::tools::searchxyz::core::extractor::ExtractedContent;
 
 pub fn build_evidence_summary(query: &str, pages: &[ExtractedContent]) -> String {
@@ -10,7 +12,7 @@ pub fn build_evidence_summary(query: &str, pages: &[ExtractedContent]) -> String
     push_bullet_section(
         &mut output,
         "### Claims\n",
-        &extract_claims(pages, 8),
+        &extract_claims(query, pages, 8),
         "- No concise claims extracted from retrieved pages.\n",
     );
 
@@ -48,20 +50,55 @@ fn push_bullet_section(output: &mut String, heading: &str, items: &[String], emp
     }
 }
 
-fn extract_claims(pages: &[ExtractedContent], limit: usize) -> Vec<String> {
-    pages
+fn extract_query_terms(query: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    query
+        .split(|ch: char| !ch.is_alphanumeric())
+        .map(str::trim)
+        .filter(|tok| tok.chars().count() >= 2)
+        .map(str::to_ascii_lowercase)
+        .filter(|tok| seen.insert(tok.clone()))
+        .collect()
+}
+
+fn score_claim_sentence(sentence: &str, query_terms: &[String], position_idx: usize) -> i32 {
+    let lower = sentence.to_ascii_lowercase();
+    let term_hits = query_terms
         .iter()
-        .flat_map(|page| {
-            split_sentences(&page.content_markdown)
-                .into_iter()
-                .filter_map(move |sentence| {
-                    let trimmed = sentence.trim();
-                    let valid_len = (24..=240).contains(&trimmed.len());
-                    (valid_len && !looks_like_boilerplate(trimmed))
-                        .then(|| format!("{} [{}]", trimmed, page.url))
-                })
-        })
+        .filter(|term| lower.contains(term.as_str()))
+        .count() as i32;
+    let has_numbers_or_units = sentence
+        .chars()
+        .any(|c| c.is_ascii_digit() || matches!(c, '$' | '€' | '£' | '%'));
+    let early_bonus = (4_i32).saturating_sub(position_idx.min(4) as i32);
+    term_hits * 10 + (has_numbers_or_units as i32) * 6 + early_bonus
+}
+
+fn extract_claims(query: &str, pages: &[ExtractedContent], limit: usize) -> Vec<String> {
+    let query_terms = extract_query_terms(query);
+    let mut seen = HashSet::new();
+    let mut scored = Vec::new();
+
+    for page in pages {
+        for (idx, sentence) in split_sentences(&page.content_markdown).into_iter().enumerate() {
+            let trimmed = sentence.trim();
+            let valid_len = (24..=240).contains(&trimmed.len());
+            let key = trimmed.to_ascii_lowercase();
+            match valid_len && !looks_like_boilerplate(trimmed) && seen.insert(key) {
+                true => {
+                    let score = score_claim_sentence(trimmed, &query_terms, idx);
+                    scored.push((score, format!("{trimmed} [{}]", page.url)));
+                }
+                false => {}
+            }
+        }
+    }
+
+    scored.sort_by_key(|entry| std::cmp::Reverse(entry.0));
+    scored
+        .into_iter()
         .take(limit)
+        .map(|(_, claim)| claim)
         .collect()
 }
 
@@ -95,7 +132,8 @@ fn detect_conflicts(pages: &[ExtractedContent]) -> Vec<String> {
 
     rules
         .into_iter()
-        .filter_map(|(cond, msg)| cond.then(|| msg.to_string()))
+        .filter(|(cond, _)| *cond)
+        .map(|(_, msg)| msg.to_string())
         .collect()
 }
 
@@ -186,7 +224,7 @@ mod tests {
         let pages = vec![ExtractedContent {
             url: "https://example.com/fugu".to_string(),
             title: "Fugu Pricing".to_string(),
-            description: "".to_string(),
+            description: String::new(),
             content_markdown: "Fugu pricing starts at $20/month. No free tier is available. However, routing internals are not publicly disclosed.".to_string(),
             links: vec![],
         }];
@@ -206,11 +244,26 @@ mod tests {
         let utf8_pages = vec![ExtractedContent {
             url: "https://example.com/utf8".to_string(),
             title: "UTF8 — Pricing".to_string(),
-            description: "".to_string(),
+            description: String::new(),
             content_markdown: "Platform — 🚀🔥✨• open source and cloud-hosted — €20/month.".to_string(),
             links: vec![],
         }];
         let utf8_summary = build_evidence_summary("utf8 pricing", &utf8_pages);
         assert!(utf8_summary.contains("## Evidence Summary"));
+    }
+
+    #[test]
+    fn extract_claims_ranks_query_relevant_specific_sentences_first() {
+        let pages = vec![ExtractedContent {
+            url: "https://example.com/bench".to_string(),
+            title: "Benchmark".to_string(),
+            description: String::new(),
+            content_markdown: "Welcome to our general engineering blog post today. General overview of modern computer software engineering practices. Tokio async runtime handles 120000 requests per second with 2ms latency.".to_string(),
+            links: vec![],
+        }];
+
+        let claims = extract_claims("tokio latency benchmark", &pages, 1);
+        assert_eq!(claims.len(), 1);
+        assert!(claims[0].contains("120000 requests per second"));
     }
 }

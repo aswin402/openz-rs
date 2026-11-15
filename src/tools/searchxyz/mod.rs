@@ -1,68 +1,29 @@
-use std::sync::{Arc, OnceLock};
+use std::sync::OnceLock;
 
 pub mod core;
+pub mod doctor_report;
 pub mod graph;
-pub mod index;
 pub mod server;
 pub mod web;
 
 pub use core::{
-    cache::Cache,
     config::Config,
     crawler::Crawler,
     extractor::ExtractionPipeline,
     graph::KnowledgeGraph,
     index::SearchIndex,
     search::{
-        bing::BingBackend, brave::BraveBackend, duckduckgo::DuckDuckGoBackend,
-        google::GoogleBackend, searxng::SearXngBackend, SearchBackend, SearchDispatcher,
+        bing::BingBackend, brave::BraveBackend, duckduckgo::DuckDuckGoBackend, exa::ExaBackend,
+        google::GoogleBackend, mojeek::MojeekBackend, searxng::SearXngBackend,
+        tavily::TavilyBackend, websurfx::WebsurfxBackend, SearchBackend, SearchDispatcher,
     },
 };
+pub use graph::SearchXyzReadGithubRepoTool;
 pub use server::SearchXyzServer;
-
-pub use graph::{
-    SearchXyzIndexRelationshipTool, SearchXyzQueryGraphTool, SearchXyzReadGithubRepoTool,
-};
-pub use index::{
-    SearchXyzClearIndexTool, SearchXyzDeleteSourceTool, SearchXyzExportResearchTool,
-    SearchXyzImportResearchTool, SearchXyzIndexContentTool, SearchXyzListSourcesTool,
-    SearchXyzRecallTool,
-};
-pub use web::{
-    SearchXyzBrowserSearchTool, SearchXyzDeepResearchTool, SearchXyzDoctorTool,
-    SearchXyzReadUrlTool, SearchXyzSearchAndReadTool, SearchXyzSearchWebTool, SearchXyzSiteMapTool,
-};
-
-fn openz_config_dir() -> std::path::PathBuf {
-    match std::env::var("OPENZ_CONFIG_DIR") {
-        Ok(path) => std::path::PathBuf::from(path),
-        Err(_) => dirs::home_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join(".openz"),
-    }
-}
-
-fn apply_openz_embedded_paths(config: &mut Config) {
-    let defaults = Config::default();
-    let base = openz_config_dir().join("searchxyz");
-
-    match std::env::var_os("SEARCHXYZ_INDEX_PATH").is_none()
-        && config.index.path == defaults.index.path
-    {
-        true => config.index.path = base.join("index"),
-        false => {}
-    }
-
-    match std::env::var_os("SEARCHXYZ_CACHE_PATH").is_none()
-        && config.cache.path == defaults.cache.path
-    {
-        true => config.cache.path = base.join("cache.json"),
-        false => {}
-    }
-}
+pub use web::{SearchXyzBrowserSearchTool, SearchXyzDeepResearchTool};
 
 pub(crate) use crate::tools::arguments::{
-    coerce_bool_fields, coerce_numeric_fields, map_field_alias, wrap_string_arg,
+    coerce_bool_fields, coerce_numeric_fields, map_field_alias,
 };
 
 pub(crate) fn wrap_url_string_arg(val: &serde_json::Value, key: &str) -> serde_json::Value {
@@ -80,27 +41,6 @@ pub(crate) fn normalize_url_field(val: &mut serde_json::Value, key: &str) {
     match normalized_url {
         Some(u) => val[key] = serde_json::Value::String(u),
         None => {}
-    }
-}
-
-pub(crate) fn default_entity_type_from_field(
-    val: &mut serde_json::Value,
-    type_field: &str,
-    name_field: &str,
-) {
-    match val.get(type_field).is_none() {
-        false => {}
-        true => {
-            let is_url = val
-                .get(name_field)
-                .and_then(|v| v.as_str())
-                .is_some_and(|s| s.contains("://"));
-            let label = match is_url {
-                true => "Document",
-                false => "Entity",
-            };
-            val[type_field] = serde_json::json!(label);
-        }
     }
 }
 
@@ -139,6 +79,7 @@ pub(crate) fn normalize_query_arg(val: &serde_json::Value) -> serde_json::Value 
     }
 }
 
+#[cfg(test)]
 pub(crate) fn normalize_url_arg(val: &serde_json::Value) -> serde_json::Value {
     match val {
         serde_json::Value::String(s) => {
@@ -182,33 +123,86 @@ pub(crate) fn normalize_url_arg(val: &serde_json::Value) -> serde_json::Value {
     }
 }
 
+pub fn build_backends_for_config(
+    config: &Config,
+    http_client: &reqwest::Client,
+    crawler: &Crawler,
+) -> Vec<Box<dyn SearchBackend>> {
+    let mut backends: Vec<Box<dyn SearchBackend>> = Vec::new();
+    for name in &config.search.backends {
+        match name.as_str() {
+            "searxng" => {
+                backends.push(Box::new(SearXngBackend::new(
+                    http_client.clone(),
+                    config.searxng.clone(),
+                )));
+            }
+            "websurfx" => {
+                backends.push(Box::new(WebsurfxBackend::new(
+                    http_client.clone(),
+                    config.websurfx_url.clone(),
+                    config.search.timeout_secs,
+                )));
+            }
+            "tavily" => {
+                backends.push(Box::new(TavilyBackend::new(
+                    http_client.clone(),
+                    config.tavily_api_key.clone(),
+                    config.search.timeout_secs,
+                )));
+            }
+            "exa" => {
+                backends.push(Box::new(ExaBackend::new(
+                    http_client.clone(),
+                    config.exa_api_key.clone(),
+                    config.search.timeout_secs,
+                )));
+            }
+            "brave" => {
+                backends.push(Box::new(BraveBackend::new(
+                    http_client.clone(),
+                    config.brave.clone(),
+                )));
+            }
+            "duckduckgo" => {
+                let b = DuckDuckGoBackend::new(http_client.clone())
+                    .with_proxies(crawler.clients().to_vec())
+                    .with_headless_enabled(crawler.headless_enabled());
+                backends.push(Box::new(b));
+            }
+            "google" => {
+                let b = GoogleBackend::new(http_client.clone())
+                    .with_proxies(crawler.clients().to_vec())
+                    .with_headless_enabled(crawler.headless_enabled());
+                backends.push(Box::new(b));
+            }
+            "bing" => {
+                backends.push(Box::new(BingBackend::new(http_client.clone())));
+            }
+            "mojeek" => {
+                let b = MojeekBackend::new(http_client.clone())
+                    .with_proxies(crawler.clients().to_vec());
+                backends.push(Box::new(b));
+            }
+            _ => {}
+        }
+    }
+    backends
+}
 
 pub fn get_server() -> &'static SearchXyzServer {
     static SERVER: OnceLock<SearchXyzServer> = OnceLock::new();
     SERVER.get_or_init(|| {
-        let mut config = Config::load(None).unwrap_or_default();
-        apply_openz_embedded_paths(&mut config);
-        match cfg!(test) {
-            true => {
-                let temp_dir = std::env::temp_dir()
-                    .join(format!("searchxyz_test_index_{}", uuid::Uuid::new_v4()));
-                config.index.path = temp_dir.clone();
-                config.cache.path = temp_dir.join("cache.json");
-            }
-            false => {}
-        }
-        let cache = Arc::new(tokio::sync::Mutex::new(Cache::load_from_file(
-            config.cache.max_entries,
-            config.cache.ttl_secs,
-            &config.cache.path,
-        )));
+        let config = Config::load(None).unwrap_or_default();
 
         let http_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(config.crawler.timeout_secs))
+            .timeout(std::time::Duration::from_secs(config.search.timeout_secs))
             .user_agent(&config.crawler.user_agent)
             .build()
             .unwrap_or_else(|e| {
-                tracing::warn!("Failed to build custom reqwest::Client for searchxyz: {e}, falling back to default");
+                tracing::warn!(
+                    "Failed to build custom reqwest::Client for searchxyz: {e}, falling back to default"
+                );
                 crate::core::http::default_http_client().clone()
             });
 
@@ -216,68 +210,18 @@ pub fn get_server() -> &'static SearchXyzServer {
             config.crawler.clone(),
             config.headless.clone(),
             config.proxy.clone(),
-            cache.clone(),
         );
 
-        let mut backends: Vec<Box<dyn SearchBackend>> = Vec::new();
-        for name in &config.search.backends {
-            match name.as_str() {
-                "duckduckgo" => {
-                    let b = DuckDuckGoBackend::new(http_client.clone())
-                        .with_proxies(crawler.clients().to_vec())
-                        .with_headless(crawler.headless_browser().clone());
-                    backends.push(Box::new(b));
-                }
-                "google" => {
-                    let b = GoogleBackend::new(http_client.clone())
-                        .with_proxies(crawler.clients().to_vec())
-                        .with_headless(crawler.headless_browser().clone());
-                    backends.push(Box::new(b));
-                }
-                "bing" => {
-                    backends.push(Box::new(BingBackend::new(http_client.clone())));
-                }
-                "brave" => {
-                    backends.push(Box::new(BraveBackend::new(
-                        http_client.clone(),
-                        config.brave.clone(),
-                    )));
-                }
-                "searxng" => {
-                    backends.push(Box::new(SearXngBackend::new(
-                        http_client.clone(),
-                        config.searxng.clone(),
-                    )));
-                }
-                _ => {}
-            }
-        }
-
+        let backends = build_backends_for_config(&config, &http_client, &crawler);
         let dispatcher = SearchDispatcher::new(backends);
         let extractor = ExtractionPipeline::new(config.extractor.clone());
-        let index = SearchIndex::open(&config.index).unwrap_or_else(|e| {
-            tracing::warn!(
-                "Failed to open searchxyz index at {:?}: {e}; falling back to temp index directory",
-                config.index.path
-            );
-            let mut fallback_config = config.index.clone();
-            let temp_dir =
-                std::env::temp_dir().join(format!("searchxyz_index_{}", std::process::id()));
-            let _ = std::fs::create_dir_all(&temp_dir);
-            fallback_config.path = temp_dir;
-            SearchIndex::open(&fallback_config).expect("failed to open fallback searchxyz index")
-        });
+        let index =
+            SearchIndex::open(&config.index).expect("failed to initialize unified SQLite SearchIndex");
 
-        let graph_path = std::path::Path::new(&config.index.path).join("graph.json");
-        let graph = Arc::new(tokio::sync::Mutex::new(
-            KnowledgeGraph::load_from_file(&graph_path).unwrap_or_else(|_| KnowledgeGraph::new()),
-        ));
-
-        SearchXyzServer::new(dispatcher, crawler, extractor, index, cache, graph, config)
+        SearchXyzServer::new(dispatcher, crawler, extractor, index, config)
     })
 }
 
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
-

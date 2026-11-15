@@ -1,5 +1,6 @@
 //! Tool-call normalization and local artifact follow-up helpers.
 
+use super::shell_http_rewrite::web_fetch_call_from_shell_http_scrape;
 use super::user_content_requests_fresh_fetch;
 
 pub(super) fn saved_tool_output_ref_from_read_file(
@@ -40,6 +41,11 @@ pub(super) fn auto_adjust_tool_call_for_user_intent(
                 arguments: serde_json::json!({ "ccr_id": original_ref }),
             };
         }
+        None => {}
+    }
+
+    match web_fetch_call_from_shell_http_scrape(&call, user_content) {
+        Some(rewritten) => call = rewritten,
         None => {}
     }
 
