@@ -222,6 +222,7 @@ fn failed_open_path_suggestion_dedupes_same_target() {
 
 #[test]
 fn browser_backed_readers_count_as_research_lookup_tools() {
+    assert!(is_research_lookup_tool("browser"));
     assert!(is_research_lookup_tool("obscura_browser"));
     assert!(is_research_lookup_tool("firefox_browser"));
     assert!(is_research_lookup_tool("gsd_browser"));

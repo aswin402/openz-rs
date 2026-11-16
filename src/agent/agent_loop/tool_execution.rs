@@ -146,11 +146,19 @@ pub(crate) fn format_tool_args(name: &str, raw_args: &serde_json::Value) -> Stri
                 .and_then(|v| v.as_str())
                 .map(|url| format!("url: \"{}\"", clip(url, 30)))
                 .unwrap_or_default(),
-            "obscura_browser" | "obscura" => format_browser_action(map, "render"),
-            "gsd_browser" | "gsd" | "firefox_browser" | "firefox" => {
-                format_browser_action(map, "navigate")
+            "browser"
+            | "openz_browser"
+            | "obscura_browser"
+            | "obscura"
+            | "gsd_browser"
+            | "gsd"
+            | "firefox_browser"
+            | "firefox" => {
+                let resolved_action =
+                    crate::tools::browser::tool::resolve_canonical_browser_action(&args);
+                format_browser_action(map, &resolved_action)
             }
-            "inspect_browsers" => "check health".to_string(),
+            "inspect_browsers" | "browser_status" => "action: status".to_string(),
             "generate_image" => {
                 let path = string_arg(map, OUTPUT_KEYS).unwrap_or("output.png");
                 let filename = file_name_of(path);

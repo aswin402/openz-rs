@@ -207,6 +207,16 @@ impl Default for ToolRoutingConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct BrowserConfig {
+    #[serde(alias = "default_mode")]
+    pub default_mode: String,
+    #[serde(alias = "default_width")]
+    pub default_width: i32,
+    #[serde(alias = "default_height")]
+    pub default_height: i32,
+    #[serde(alias = "memory_limit_mb")]
+    pub memory_limit_mb: u32,
+    #[serde(alias = "idle_timeout_secs")]
+    pub idle_timeout_secs: u64,
     #[serde(alias = "firefox_webdriver_port")]
     pub firefox_webdriver_port: u16,
     #[serde(alias = "firefox_attach_port")]
@@ -218,6 +228,11 @@ pub struct BrowserConfig {
 impl Default for BrowserConfig {
     fn default() -> Self {
         Self {
+            default_mode: "headless".to_string(),
+            default_width: 1280,
+            default_height: 800,
+            memory_limit_mb: 128,
+            idle_timeout_secs: 180,
             firefox_webdriver_port: 4444,
             firefox_attach_port: 4445,
             cdp_port: 9222,

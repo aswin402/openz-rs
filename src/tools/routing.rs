@@ -536,8 +536,7 @@ pub(crate) fn explicitly_requested_tool_names(
                 });
             let spaced = name_lower.replace('_', " ");
             let spaced_match = spaced.len() >= 4 && contains_phrase_bounded(&lower, &spaced);
-            let browser_match = browser_request
-                && (name_lower.contains("browser") || name_lower == "inspect_browsers");
+            let browser_match = browser_request && name_lower.contains("browser");
 
             (direct_name_match || alias_match || spaced_match || browser_match)
                 .then(|| name.clone())

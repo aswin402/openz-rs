@@ -39,7 +39,7 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "check_port",
     "ast_grep",
     "crawl_website",
-    "obscura_browser",
+    "browser",
     "recall_memory",
 ];
 

@@ -126,7 +126,7 @@ fn web_fetch_detects_js_shell_pages_for_browser_retry() {
 fn web_fetch_browser_render_uses_broker_order() {
     assert_eq!(
         web_fetch_browser_render_backend_names(),
-        ["obscura_headless", "firefox_headless", "gsd_chrome_gui"]
+        ["openz_native_headless"]
     );
 }
 

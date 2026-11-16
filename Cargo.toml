@@ -1,6 +1,6 @@
 [package]
 name = "openz"
-version = "0.0.328"
+version = "0.0.329"
 edition = "2021"
 
 [lib]
@@ -72,7 +72,6 @@ wasmtime-wasi = "45.0.1"
 diffy = "0.5.0"
 html2md = "0.2.15"
 ab_glyph = "0.2"
-thirtyfour = "0.37.1"
 imap = { version = "3.0.0-alpha.12", default-features = false, features = ["rustls-tls"] }
 lettre = { version = "0.11.7", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
 mailparse = "0.15.0"
@@ -102,7 +101,6 @@ wgpu = "23.0"
 bytemuck = "1.19"
 glob = "0.3"
 pollster = "0.3"
-chromiumoxide = { version = "0.7", default-features = false, features = ["tokio-runtime"] }
 ndarray = "0.17"
 ort = { version = "2.0.0-rc.9", default-features = false, features = ["half", "ndarray", "std", "tls-rustls", "download-binaries"] }
 toml = "0.8"

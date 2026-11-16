@@ -1071,7 +1071,7 @@ async fn handle_sandbox_submenu(config: &mut Config) -> Result<()> {
         "The process sandbox (seccomp) restricts system calls (network, browser, tools like ps/which) inside the command execution sandbox."
     );
     println!(
-        "Disabling it allows browser automation tools (gsd_browser, chromewright) and local compiler tools to run without seccomp blocking."
+        "Disabling it allows native browser workers (`browser`) and local compiler tools to run without seccomp blocking."
     );
     println!("Security is still enforced via openz's internal SecurityGuard prompt confirmations.");
     println!();

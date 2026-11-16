@@ -83,7 +83,7 @@ fn appends_live_research_caveat_when_sources_are_missing_or_weak() {
 fn records_successful_source_url_from_tool_arguments() {
     let mut ledger = SourceLedger::default();
     ledger.record_tool_result(
-        "obscura_browser",
+        "browser",
         &serde_json::json!({ "url": "https://example.com/live" }),
         &serde_json::json!({ "status": "success", "output": "rendered page" }),
     );

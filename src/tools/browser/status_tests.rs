@@ -1,88 +1,61 @@
 use super::*;
 
 #[test]
-fn browser_preflight_prefers_running_chrome_cdp() {
-    let health = BrowserHealth {
-        chrome_cdp: BrowserBackendStatus::Running,
-        gsd_browser: BrowserBackendStatus::Stopped,
-        geckodriver: BrowserBackendStatus::Missing,
+fn browser_preflight_recommends_native_webkit_when_ready_or_running() {
+    let ready_health = BrowserHealth {
+        native_webkit: BrowserBackendStatus::Ready,
+        active_sessions: 0,
     };
-
     assert_eq!(
-        recommended_browser_backend(&health),
-        Some(BrowserBackend::ChromeCdp)
+        recommended_browser_backend(&ready_health),
+        Some(BrowserBackend::OpenzNativeWebKit)
+    );
+    assert!(ready_health.actionable_summary().contains("0 MB idle RAM"));
+
+    let running_health = BrowserHealth {
+        native_webkit: BrowserBackendStatus::Running,
+        active_sessions: 2,
+    };
+    assert_eq!(
+        recommended_browser_backend(&running_health),
+        Some(BrowserBackend::OpenzNativeWebKit)
     );
 }
 
 #[test]
-fn browser_preflight_reports_missing_all_backends() {
+fn browser_preflight_reports_missing_native_runtime() {
     let health = BrowserHealth {
-        chrome_cdp: BrowserBackendStatus::Missing,
-        gsd_browser: BrowserBackendStatus::Missing,
-        geckodriver: BrowserBackendStatus::Missing,
+        native_webkit: BrowserBackendStatus::Missing,
+        active_sessions: 0,
     };
-
     assert_eq!(recommended_browser_backend(&health), None);
     assert!(health
         .actionable_summary()
-        .contains("No browser backend available"));
+        .contains("Native WebKit2GTK runtime unavailable"));
 }
 
 #[test]
 fn browser_preflight_error_payload_is_machine_readable() {
     let payload = browser_preflight_error_value(
-        "geckodriver missing",
+        "display missing",
         BrowserHealth {
-            chrome_cdp: BrowserBackendStatus::Stopped,
-            gsd_browser: BrowserBackendStatus::Stopped,
-            geckodriver: BrowserBackendStatus::Missing,
+            native_webkit: BrowserBackendStatus::Missing,
+            active_sessions: 0,
         },
     );
-
-    assert_eq!(payload["error"], "geckodriver missing");
+    assert_eq!(payload["error"], "display missing");
     assert_eq!(
-        payload["browser_preflight"]["health"]["geckodriver"],
+        payload["browser_preflight"]["health"]["openz_webkit2gtk"],
         "missing"
     );
-    assert!(payload["browser_preflight"]["summary"]
-        .as_str()
-        .expect("summary string")
-        .contains("No browser backend available"));
 }
 
 #[tokio::test]
-async fn test_inspect_browsers_metadata() -> Result<()> {
-    let tool = InspectBrowsersTool;
-    assert_eq!(tool.name(), "inspect_browsers");
-    assert_eq!(tool.metadata().domain, "browser");
-    Ok(())
-}
-
-#[tokio::test]
-async fn test_inspect_browsers_execution() -> Result<()> {
-    let tool = InspectBrowsersTool;
-    let res = tool.call(&serde_json::json!({})).await?;
-    assert!(res.get("firefox_geckodriver").is_some());
-    assert!(res.get("chrome_obscura").is_some());
-    assert!(res.get("gsd_browser").is_some());
+async fn collect_browser_status_report_returns_structured_payload() -> Result<()> {
+    let res = collect_browser_status_report().await?;
+    assert_eq!(res["engine"], "openz_webkit2gtk");
+    assert!(res.get("runtime_probe").is_some());
     assert!(res.get("browser_preflight").is_some());
-    assert!(res.get("recent_browser_errors").is_some());
+    assert!(res.get("active_sessions").is_some());
     Ok(())
-}
-
-#[test]
-fn status_value_to_backend_status_marks_unhealthy_as_broken() {
-    let unhealthy_val = json!({
-        "status": "unhealthy",
-        "health": "Daemon: unhealthy\nPID: 1234\nReason: daemon socket exists without a live daemon PID"
-    });
-    let status = status_value_to_backend_status(&unhealthy_val, &["not found"]);
-    assert_eq!(status, BrowserBackendStatus::Broken);
-
-    let running_val = json!({
-        "status": "running",
-        "health": "Daemon: healthy (pid: 1234)"
-    });
-    let status2 = status_value_to_backend_status(&running_val, &["not found"]);
-    assert_eq!(status2, BrowserBackendStatus::Running);
 }

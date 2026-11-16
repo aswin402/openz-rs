@@ -88,7 +88,7 @@ fn research_browser_dependency_errors_get_actionable_hint() {
         "searchxyz_search_and_read",
         "Failed to start geckodriver on port 4444",
     );
-    assert!(hint.contains("inspect_browsers"));
+    assert!(hint.contains("browser(action=\"status\")"));
     assert!(hint.contains("browser fallback"));
 }
 
@@ -326,8 +326,8 @@ fn repeated_mutating_tools_still_count_even_with_different_outputs() {
 }
 
 #[test]
-fn repeated_gsd_browser_snapshots_with_new_state_are_not_loops() {
-    let args = json!({ "action": "snapshot" });
+fn repeated_browser_snapshots_with_new_state_are_not_loops() {
+    let args = json!({ "action": "ui_tree" });
     let messages = vec![
         Message {
             role: "user".to_string(),
@@ -335,21 +335,21 @@ fn repeated_gsd_browser_snapshots_with_new_state_are_not_loops() {
             timestamp: None,
             extra: serde_json::Map::new(),
         },
-        assistant_named_tool_call("gsd_browser", "call_1", args.clone()),
-        tool_result("call_1", "gsd_browser", "page state 1"),
-        assistant_named_tool_call("gsd_browser", "call_2", args.clone()),
-        tool_result("call_2", "gsd_browser", "page state 2"),
+        assistant_named_tool_call("browser", "call_1", args.clone()),
+        tool_result("call_1", "browser", "page state 1"),
+        assistant_named_tool_call("browser", "call_2", args.clone()),
+        tool_result("call_2", "browser", "page state 2"),
     ];
 
     assert_eq!(
-        count_previous_tool_calls(&messages, "gsd_browser", &args),
+        count_previous_tool_calls(&messages, "browser", &args),
         0
     );
 }
 
 #[test]
-fn repeated_gsd_browser_snapshots_with_same_state_count_as_stale() {
-    let args = json!({ "action": "snapshot" });
+fn repeated_browser_snapshots_with_same_state_count_as_stale() {
+    let args = json!({ "action": "ui_tree" });
     let messages = vec![
         Message {
             role: "user".to_string(),
@@ -357,14 +357,14 @@ fn repeated_gsd_browser_snapshots_with_same_state_count_as_stale() {
             timestamp: None,
             extra: serde_json::Map::new(),
         },
-        assistant_named_tool_call("gsd_browser", "call_1", args.clone()),
-        tool_result("call_1", "gsd_browser", "same page state"),
-        assistant_named_tool_call("gsd_browser", "call_2", args.clone()),
-        tool_result("call_2", "gsd_browser", "same page state"),
+        assistant_named_tool_call("browser", "call_1", args.clone()),
+        tool_result("call_1", "browser", "same page state"),
+        assistant_named_tool_call("browser", "call_2", args.clone()),
+        tool_result("call_2", "browser", "same page state"),
     ];
 
     assert_eq!(
-        count_previous_tool_calls(&messages, "gsd_browser", &args),
+        count_previous_tool_calls(&messages, "browser", &args),
         1
     );
 }

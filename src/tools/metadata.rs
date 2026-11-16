@@ -104,10 +104,26 @@ pub(crate) fn compatibility_canonical_name(requested: &str) -> Option<&'static s
         | "tavily_search"
         | "searchxyz_search_web"
         | "searchxyz_search_and_read" => Some("web_search"),
-        "obscura" | "obscura_tool" | "chrome_cdp" => Some("obscura_browser"),
-        "gsd" | "gsd_tool" | "chrome_gui" => Some("gsd_browser"),
-        "firefox" | "firefox_tool" => Some("firefox_browser"),
-        "inspect_browser" | "browser_status" | "browser_health" => Some("inspect_browsers"),
+        "openz_browser"
+        | "obscura_browser"
+        | "obscura"
+        | "obscura_tool"
+        | "chrome_cdp"
+        | "gsd_browser"
+        | "gsd"
+        | "gsd_tool"
+        | "chrome_gui"
+        | "firefox_browser"
+        | "firefox"
+        | "firefox_tool"
+        | "inspect_browsers"
+        | "inspect_browser"
+        | "browser_status"
+        | "browser_health"
+        | "headless_browser"
+        | "gui_browser"
+        | "playwright"
+        | "cdp_browser" => Some("browser"),
         "db_writer" | "sqlite_write" | "sqlite_writer" => Some("db_write"),
         "sqlite" | "sqlite_query" | "sqlite_inspector" => Some("db_inspector"),
         "diagnose"
@@ -227,7 +243,7 @@ pub fn compact_presentation_name(name: &str) -> String {
         "git_manager" => "Git".to_string(),
         "cargo_manager" => "Cargo".to_string(),
         "web_search" => "WebSearch".to_string(),
-        "gsd_browser" => "Browser".to_string(),
+        "browser" => "Browser".to_string(),
         "clipboard" => "Clipboard".to_string(),
         "open_path" | "open" => "Open".to_string(),
         "web_fetch" | "read_url_content" | "read_url" => "Fetch".to_string(),
@@ -235,7 +251,6 @@ pub fn compact_presentation_name(name: &str) -> String {
         "generate_video" => "Video".to_string(),
         "html_to_video" => "HtmlVideo".to_string(),
         "create_animated_svg" | "svg_animator" => "SvgAnim".to_string(),
-        "obscura_browser" => "Obscura".to_string(),
         "db_inspector" => "DbInspect".to_string(),
         "db_write" => "DbWrite".to_string(),
         "read_doc" => "DocRead".to_string(),
@@ -288,8 +303,6 @@ pub(crate) fn is_progress_sensitive_repeat(name: &str, args: &serde_json::Value)
         | "read_doc"
         | "system_info"
         | "check_port"
-        | "browser_status"
-        | "inspect_browsers"
         | "git_manager"
         | "open_path"
         | "device_inventory"
@@ -307,13 +320,17 @@ pub(crate) fn is_progress_sensitive_repeat(name: &str, args: &serde_json::Value)
         | "rust_docs"
         | "get_working_memory"
         | "list_jobs" => true,
-        "gsd_browser" => matches!(
-            args.get("action").and_then(|value| value.as_str()),
-            Some("snapshot" | "page_source" | "accessibility_tree" | "screenshot" | "eval")
-        ),
-        "obscura_browser" | "firefox_browser" => matches!(
-            args.get("action").and_then(|value| value.as_str()),
-            Some("render" | "screenshot" | "eval" | "page_source" | "accessibility_tree")
+        "browser" => matches!(
+            crate::tools::browser::tool::resolve_canonical_browser_action(args).as_str(),
+            "status"
+                | "render"
+                | "html"
+                | "text"
+                | "ui_tree"
+                | "screenshot"
+                | "eval_js"
+                | "logs"
+                | "network"
         ),
         _ => false,
     }
@@ -544,7 +561,6 @@ fn tool_recommended_timeout(name: &str) -> Option<u64> {
         Some(def) => def.recommended_timeout_secs,
         None => match (
             name.contains("browser")
-                || name.contains("obscura")
                 || matches!(
                     name,
                     "delegate_task" | "parallel_research" | "evaluator_optimizer_loop"

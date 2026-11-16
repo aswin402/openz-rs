@@ -183,7 +183,8 @@ async fn tool_registry_exposes_every_registered_tool() {
     assert!(names.contains(&"searchxyz_read_github_repo".to_string()));
     assert!(names.contains(&"opendoc_open_document".to_string()));
     assert!(names.contains(&"opencaveman".to_string()));
-    assert_eq!(names.len(), 232, "expected 232 canonical native tools");
+    assert!(names.contains(&"browser".to_string()));
+    assert_eq!(names.len(), 229, "expected 229 canonical native tools");
 
     for (legacy_alias, expected_canonical) in [
         ("ping", "diagnose_system"),
@@ -215,6 +216,11 @@ async fn tool_registry_exposes_every_registered_tool() {
         ("searchxyz_import_research", "archive_research"),
         ("searchxyz_index_relationship", "create_relations"),
         ("searchxyz_query_graph", "search_nodes"),
+        ("obscura_browser", "browser"),
+        ("gsd_browser", "browser"),
+        ("firefox_browser", "browser"),
+        ("inspect_browsers", "browser"),
+        ("browser_status", "browser"),
     ] {
         let resolved = registry
             .get(legacy_alias)
@@ -493,7 +499,7 @@ fn prompt_aware_format_selects_relevant_tool_domains() {
         risk: crate::tools::ToolRisk::Medium,
     }));
     registry.register(Arc::new(MetaTestTool {
-        name: "gsd_browser".to_string(),
+        name: "browser".to_string(),
         domain: "web",
         priority: 80,
         risk: crate::tools::ToolRisk::Medium,
@@ -520,7 +526,7 @@ fn prompt_aware_format_selects_relevant_tool_domains() {
         .map(|tool| tool["function"]["name"].as_str().unwrap().to_string())
         .collect();
     assert!(website_names.contains(&"web_fetch".to_string()));
-    assert!(website_names.contains(&"gsd_browser".to_string()));
+    assert!(website_names.contains(&"browser".to_string()));
 
     let image_tools =
         registry.to_openai_format_for_prompt("resize this image and make an svg preview");

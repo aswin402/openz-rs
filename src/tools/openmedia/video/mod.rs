@@ -1,6 +1,3 @@
-use chromiumoxide::browser::{Browser, BrowserConfig};
-use chromiumoxide::handler::viewport::Viewport;
-use futures_util::StreamExt;
 use crate::tools::openmedia::core::{ImageOutput, OpenMediaError, Result, VideoSpec};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -795,47 +792,27 @@ fn render_element_to_svg(el: &SceneElement, t: f64, total_w: f64, total_h: f64) 
     }
 }
 
-// === Browser Frame Renderer (CDP Headless Chrome) ===
+// === Browser Frame Renderer (Native OpenZ WebKit2GTK Offscreen Engine) ===
 pub struct BrowserFrameRenderer {
-    browser: Browser,
-    page: tokio::sync::Mutex<chromiumoxide::page::Page>,
+    session: tokio::sync::Mutex<crate::tools::browser::BrowserSessionClient>,
 }
 
 impl BrowserFrameRenderer {
     pub async fn launch() -> Result<Self> {
-        let profile_dir =
-            std::env::temp_dir().join(format!("chrome-profile-{}", uuid::Uuid::new_v4()));
-        let config = BrowserConfig::builder()
-            .no_sandbox()
-            .user_data_dir(profile_dir)
-            .build()
-            .map_err(|e| OpenMediaError::ConfigError(e.to_string()))?;
-        let (browser, mut handler) = Browser::launch(config)
-            .await
-            .map_err(|_| OpenMediaError::ChromeNotFound)?;
-
-        tokio::spawn(async move {
-            while let Some(h) = handler.next().await {
-                match h {
-                    Err(err) => tracing::warn!("BrowserFrameRenderer loop error: {:?}", err),
-                    Ok(_) => {}
-                }
-            }
-        });
-
-        let page = browser
-            .new_page("about:blank")
-            .await
-            .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
+        let client = crate::tools::browser::BrowserSessionClient::spawn_ephemeral_headless(
+            1920, 1080,
+        )
+        .await
+        .map_err(|_| OpenMediaError::ChromeNotFound)?;
 
         Ok(Self {
-            browser,
-            page: tokio::sync::Mutex::new(page),
+            session: tokio::sync::Mutex::new(client),
         })
     }
 
-    pub async fn close(mut self) {
-        let _ = self.browser.close().await;
+    pub async fn close(self) {
+        let guard = self.session.lock().await;
+        let _ = guard.close().await;
     }
 }
 
@@ -849,36 +826,37 @@ impl FrameRenderer for BrowserFrameRenderer {
         height: u32,
     ) -> Result<image::RgbaImage> {
         let html_content = compile_scene_to_html(scene, time, width, height).await?;
+        let session = self.session.lock().await;
 
-        let page = self.page.lock().await;
-
-        let params = chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams::builder()
-            .width(width as i64)
-            .height(height as i64)
-            .device_scale_factor(1.0)
-            .mobile(false)
-            .build()
-            .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
-        page.execute(params)
+        session
+            .resize(width as i32, height as i32, 1.0)
             .await
             .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
 
-        page.set_content(html_content)
+        session
+            .load_html(&html_content, None, 40)
             .await
             .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
 
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-        let params = chromiumoxide::page::ScreenshotParams::builder()
-            .format(chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat::Png)
-            .build();
-
-        let screenshot_bytes = page
-            .screenshot(params)
+        let temp_png = std::env::temp_dir().join(format!(
+            "openz_openmedia_frame_{}.png",
+            uuid::Uuid::new_v4()
+        ));
+        session
+            .screenshot(&crate::tools::browser::ScreenshotRequest {
+                path: temp_png.clone(),
+                full_page: false,
+                transparent: false,
+                annotated: false,
+                selector: None,
+            })
             .await
             .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
 
-        let img = image::load_from_memory(&screenshot_bytes)
+        let png_bytes = std::fs::read(&temp_png).map_err(OpenMediaError::IoError)?;
+        let _ = std::fs::remove_file(&temp_png);
+
+        let img = image::load_from_memory(&png_bytes)
             .map_err(|e| OpenMediaError::ImageDecodeError(e.to_string()))?
             .to_rgba8();
 
@@ -1831,7 +1809,7 @@ pub async fn render_video_scene(
     })
 }
 
-// === Legacy helper matching the old schema ===
+// === Native WebKit2GTK HTML-to-Image Helper ===
 pub async fn html_to_image(
     html_content: &str,
     width: Option<u32>,
@@ -1840,72 +1818,18 @@ pub async fn html_to_image(
     format: &str,
     output_path: &Path,
 ) -> Result<ImageOutput> {
-    use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
-    use chromiumoxide::page::ScreenshotParams;
     use std::time::Instant;
 
     let start_time = Instant::now();
-
     let w = width.unwrap_or(1920);
     let h = height.unwrap_or(1080);
     let scale = device_scale_factor.unwrap_or(1.0);
 
-    let profile_dir = std::env::temp_dir().join(format!("chrome-profile-{}", uuid::Uuid::new_v4()));
-    let config = BrowserConfig::builder()
-        .viewport(Viewport {
-            width: w,
-            height: h,
-            device_scale_factor: Some(scale),
-            emulating_mobile: false,
-            is_landscape: w > h,
-            has_touch: false,
-        })
-        .no_sandbox()
-        .user_data_dir(profile_dir)
-        .build()
-        .map_err(|e| OpenMediaError::ConfigError(e.to_string()))?;
-
-    let (mut browser, mut handler) = Browser::launch(config)
-        .await
-        .map_err(|_| OpenMediaError::ChromeNotFound)?;
-
-    tokio::spawn(async move {
-        while let Some(h) = handler.next().await {
-            match h {
-                Err(err) => tracing::error!("Legacy browser handler error: {:?}", err),
-                Ok(_) => {}
-            }
-        }
-    });
-
-    let page = browser
-        .new_page("about:blank")
-        .await
-        .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
-
-    let html_path = Path::new(html_content);
-    match html_path.exists() && html_path.is_file() {
-        true => {
-            let abs_path = html_path.canonicalize().map_err(OpenMediaError::IoError)?;
-            let url = format!("file://{}", abs_path.to_string_lossy());
-            page.goto(&url)
-                .await
-                .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
-        }
-        false => {
-            page.set_content(html_content)
-                .await
-                .map_err(|e| OpenMediaError::Internal(e.to_string()))?;
-        }
-    }
-
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-
     let clean_format = format.to_lowercase();
-    let cdp_format = match clean_format.as_str() {
-        "png" => CaptureScreenshotFormat::Png,
-        "jpeg" | "jpg" => CaptureScreenshotFormat::Jpeg,
-        "webp" => CaptureScreenshotFormat::Webp,
+    let img_fmt = match clean_format.as_str() {
+        "png" => None,
+        "jpeg" | "jpg" => Some(image::ImageFormat::Jpeg),
+        "webp" => Some(image::ImageFormat::WebP),
         other => {
             return Err(OpenMediaError::InvalidParameter {
                 param: "output_format".to_string(),
@@ -1914,16 +1838,57 @@ pub async fn html_to_image(
         }
     };
 
-    let params = ScreenshotParams::builder().format(cdp_format).build();
+    let html_path = Path::new(html_content);
+    let file_url = (html_path.exists() && html_path.is_file())
+        .then(|| {
+            html_path
+                .canonicalize()
+                .ok()
+                .map(|abs| format!("file://{}", abs.to_string_lossy()))
+        })
+        .flatten();
 
-    page.save_screenshot(params, output_path)
-        .await
-        .map_err(|e| OpenMediaError::ImageEncodeError {
-            format: clean_format.clone(),
-            reason: e.to_string(),
-        })?;
+    let png_target = match img_fmt.is_none() {
+        true => output_path.to_path_buf(),
+        false => std::env::temp_dir().join(format!(
+            "openz_openmedia_snap_{}.png",
+            uuid::Uuid::new_v4()
+        )),
+    };
 
-    let _ = browser.close().await;
+    crate::tools::browser::render_target_to_png(
+        file_url.as_deref(),
+        file_url.is_none().then_some(html_content),
+        None,
+        w as i32,
+        h as i32,
+        scale,
+        200,
+        None,
+        false,
+        &png_target,
+    )
+    .await
+    .map_err(|_| OpenMediaError::ChromeNotFound)?;
+
+    match img_fmt {
+        None => {}
+        Some(target_fmt) => {
+            let decoded = image::open(&png_target)
+                .map_err(|e| OpenMediaError::ImageDecodeError(e.to_string()))?;
+            let _ = std::fs::remove_file(&png_target);
+            match output_path.parent() {
+                Some(parent) => std::fs::create_dir_all(parent).map_err(OpenMediaError::IoError)?,
+                None => {}
+            }
+            decoded.save_with_format(output_path, target_fmt).map_err(|e| {
+                OpenMediaError::ImageEncodeError {
+                    format: clean_format.clone(),
+                    reason: e.to_string(),
+                }
+            })?;
+        }
+    }
 
     let file_size = std::fs::metadata(output_path)?.len();
     let generation_time = start_time.elapsed().as_secs_f64();
@@ -1938,8 +1903,8 @@ pub async fn html_to_image(
         generation_id: uuid::Uuid::now_v7().to_string(),
         clip_score: None,
         aesthetic_score: None,
-        model_used: "headless-chrome".to_string(),
-        backend_used: "chromiumoxide".to_string(),
+        model_used: "openz-webkit2gtk".to_string(),
+        backend_used: "openz_webkit2gtk".to_string(),
         generation_time,
     })
 }

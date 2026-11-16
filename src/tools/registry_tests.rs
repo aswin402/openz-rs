@@ -434,10 +434,10 @@ fn explicit_open_path_request_overrides_prompt_scope() {
 #[test]
 fn explicit_browser_request_exposes_browser_tools() {
     let registry =
-        registry_with_named_tools(&[("firefox_browser", "web"), ("inspect_browsers", "web")]);
-    let names = exposed_tool_names(&registry, "open Firefox and play a song on YouTube");
-    assert!(names.contains(&"firefox_browser".to_string()));
-    assert!(names.contains(&"inspect_browsers".to_string()));
+        registry_with_named_tools(&[("browser", "web"), ("searchxyz_browser_search", "web")]);
+    let names = exposed_tool_names(&registry, "open browser and play a song on YouTube");
+    assert!(names.contains(&"browser".to_string()));
+    assert!(names.contains(&"searchxyz_browser_search".to_string()));
 }
 
 #[test]
@@ -523,7 +523,7 @@ async fn test_dynamic_tool_retrieval_and_scoping_benchmark() {
     crate::cli::tools::register_all_tools(&registry, &config, provider, sessions).unwrap();
 
     let total_tools = registry.read_tools().len();
-    assert_eq!(total_tools, 240, "Must have exactly 240 registered native tools");
+    assert_eq!(total_tools, 229, "Must have exactly 229 registered native tools");
 
     // 1. Code Engineering Domain Benchmark
     let code_prompt = "Inspect src/main.rs and run cargo check on the workspace";
@@ -622,7 +622,10 @@ fn canonical_tool_name_resolves_compatibility_aliases() {
     assert_eq!(crate::tools::canonical_tool_name("db_writer"), "db_write");
     assert_eq!(crate::tools::canonical_tool_name("doc_reader"), "read_doc");
     assert_eq!(crate::tools::canonical_tool_name("crawl_site"), "crawl_website");
-    assert_eq!(crate::tools::canonical_tool_name("browser_status"), "inspect_browsers");
+    assert_eq!(crate::tools::canonical_tool_name("browser_status"), "browser");
+    assert_eq!(crate::tools::canonical_tool_name("obscura_browser"), "browser");
+    assert_eq!(crate::tools::canonical_tool_name("gsd_browser"), "browser");
+    assert_eq!(crate::tools::canonical_tool_name("firefox_browser"), "browser");
     assert!(crate::agent::security::SecurityGuard::is_sensitive(
         "sqlite_write",
         &serde_json::json!({"query": "DELETE FROM items"})

@@ -86,15 +86,13 @@ pub use scope_engine as scope;
 // 2. Grouped Domain Subsystems (11 Subdirectories)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Browser automation and CDP integration (`firefox_browser`, `gsd_browser`, `obscura_browser`).
+/// Native WebKit2GTK + PageController headless and GUI browser engine (`browser`).
 pub mod browser;
 pub use browser::{
     broker as browser_broker,
     common as browser_common,
-    firefox,
-    gsd as gsd_browser,
-    obscura,
     status as browser_status,
+    NativeBrowserTool,
 };
 
 /// Entity-relation knowledge graph memory and database branching checkpoints.

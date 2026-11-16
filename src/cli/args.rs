@@ -79,6 +79,54 @@ pub enum Command {
     },
     Changelog,
     Streaming,
+    /// Launch OpenZ's native low-RAM WebKit2GTK browser (GUI window or headless renderer)
+    Browser {
+        /// Optional initial URL or local HTML file path
+        #[arg(index = 1)]
+        url: Option<String>,
+        /// Run offscreen without opening a desktop window
+        #[arg(long)]
+        headless: bool,
+        /// Force visible OpenZ Browser GUI window
+        #[arg(long)]
+        gui: bool,
+        /// Named session identifier
+        #[arg(long, default_value = "default")]
+        session: String,
+        /// Optional persistent storage profile name
+        #[arg(long)]
+        profile: Option<String>,
+        /// Viewport preset ('desktop', 'tablet', 'mobile', '1080p') or 'WIDTHxHEIGHT'
+        #[arg(long)]
+        size: Option<String>,
+        /// Memory pressure ceiling in MB (default from config: 128)
+        #[arg(long)]
+        memory_mb: Option<u32>,
+        /// Save one-shot PNG screenshot to path and exit
+        #[arg(long)]
+        screenshot: Option<PathBuf>,
+        /// Save one-shot multi-page PDF to path and exit
+        #[arg(long)]
+        pdf: Option<PathBuf>,
+        /// Print JSON WebKit2GTK runtime availability probe and exit
+        #[arg(long)]
+        probe: bool,
+        /// Print full JSON browser status report (runtime + active sessions) and exit
+        #[arg(long)]
+        status: bool,
+        #[arg(long, hide = true)]
+        worker: bool,
+        #[arg(long, hide = true)]
+        socket: Option<PathBuf>,
+        #[arg(long, hide = true)]
+        width: Option<i32>,
+        #[arg(long, hide = true)]
+        height: Option<i32>,
+        #[arg(long, hide = true)]
+        idle_timeout: Option<u64>,
+        #[arg(long, hide = true)]
+        parent_death_sigterm: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]

@@ -1,36 +1,36 @@
 use super::*;
 
 #[test]
-fn browser_backend_priority_prefers_obscura_then_firefox_then_gsd() {
+fn browser_backend_priority_uses_openz_native_headless() {
     assert_eq!(
         browser_backend_priority(),
-        [
-            BrowserBackendChoice::ObscuraHeadless,
-            BrowserBackendChoice::FirefoxHeadless,
-            BrowserBackendChoice::GsdChromeGui,
-        ]
+        [BrowserBackendChoice::OpenzNativeHeadless]
+    );
+    assert_eq!(
+        BrowserBackendChoice::OpenzNativeHeadless.as_str(),
+        "openz_native_headless"
     );
 }
 
 #[test]
-fn gsd_fallback_cleanup_stops_daemon() {
+fn native_broker_cleanup_label_reflects_ephemeral_worker() {
     assert_eq!(
-        cleanup_label(BrowserBackendChoice::GsdChromeGui),
-        "stopped_daemon"
+        cleanup_label(BrowserBackendChoice::OpenzNativeHeadless),
+        "closed_ephemeral_worker"
     );
 }
 
 #[test]
 fn broker_result_records_backend_and_cleanup() {
     let result = BrowserBrokerResult {
-        backend: BrowserBackendChoice::ObscuraHeadless,
+        backend: BrowserBackendChoice::OpenzNativeHeadless,
         status: "success".to_string(),
         output: "content".to_string(),
-        cleanup: "closed_tab".to_string(),
-        fallbacks_tried: vec![BrowserBackendChoice::ObscuraHeadless],
+        cleanup: "closed_ephemeral_worker".to_string(),
+        fallbacks_tried: vec![BrowserBackendChoice::OpenzNativeHeadless],
         errors: Vec::new(),
     };
 
-    assert_eq!(result.backend, BrowserBackendChoice::ObscuraHeadless);
-    assert_eq!(result.cleanup, "closed_tab");
+    assert_eq!(result.backend, BrowserBackendChoice::OpenzNativeHeadless);
+    assert_eq!(result.cleanup, "closed_ephemeral_worker");
 }

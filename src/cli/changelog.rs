@@ -231,7 +231,7 @@ pub async fn handle_changelog() -> Result<()> {
         reset = COLOR_RESET
     );
     println!(
-        "  {gold}• Browsing & Web:{reset}     `web_search` (Tavily), `web_fetch`, `crawl_website` (spider-rs), `gsd_browser` (Playwright)",
+        "  {gold}• Browsing & Web:{reset}     `web_search`, `web_fetch`, `crawl_website` (spider-rs), `browser` (Native WebKit2GTK Headless + GUI)",
         gold = AURA_GOLD,
         reset = COLOR_RESET
     );

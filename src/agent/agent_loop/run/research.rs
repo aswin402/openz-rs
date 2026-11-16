@@ -1,12 +1,14 @@
 //! Research lookup classification and fresh-result reuse policies.
 
 pub(super) fn is_research_lookup_tool(tool_name: &str) -> bool {
+    let canonical = crate::tools::canonical_tool_name(tool_name);
     matches!(
-        tool_name,
+        canonical.as_str(),
         "web_search"
             | "web_fetch"
             | "crawl"
             | "crawl_site"
+            | "crawl_website"
             | "parallel_research"
             | "searchxyz_search_web"
             | "searchxyz_read_url"
@@ -16,9 +18,7 @@ pub(super) fn is_research_lookup_tool(tool_name: &str) -> bool {
             | "searchxyz_site_map"
             | "searchxyz_read_github_repo"
             | "social_search"
-            | "obscura_browser"
-            | "firefox_browser"
-            | "gsd_browser"
+            | "browser"
     )
 }
 

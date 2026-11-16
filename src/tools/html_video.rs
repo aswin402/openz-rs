@@ -1,12 +1,8 @@
 use crate::config::resolve_path;
-use crate::tools::browser_common::{
-    browser_cdp_port, connect_to_tab, ensure_browser_running, kill_browser_on_cdp_port,
-    obtain_tab_websocket_url, send_cdp_cmd,
-};
+use crate::tools::browser::{BrowserSessionClient, ScreenshotRequest};
 use crate::tools::image_generator::{serve_local_html_file, LocalHtmlServerGuard};
 use crate::tools::Tool;
 use anyhow::{anyhow, Result};
-use base64::prelude::*;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
@@ -92,7 +88,7 @@ impl Tool for HtmlToVideoTool {
     }
 
     fn description(&self) -> &str {
-        "Render a video (MP4) from an HTML page frame-by-frame using headless Chrome. Useful for rendering high-fidelity animations, transitions, and HTML/CSS timelines (similar to Remotion)."
+        "Render a video (MP4) from an HTML page frame-by-frame using OpenZ's native headless WebKit2GTK browser. Useful for rendering high-fidelity animations, transitions, and HTML/CSS timelines (similar to Remotion)."
     }
 
     fn parameters(&self) -> Value {
@@ -198,81 +194,16 @@ impl Tool for HtmlToVideoTool {
         let temp_frames_dir = std::env::temp_dir().join(format!("openz_html_video_{}", uuid));
         fs::create_dir_all(&temp_frames_dir)?;
 
-        ensure_browser_running().await?;
-
-        let cdp_port = browser_cdp_port();
-        let (tab_id, web_socket_debugger_url) = match obtain_tab_websocket_url(cdp_port).await {
-            Ok(pair) => pair,
-            Err(_) => {
-                kill_browser_on_cdp_port();
-                sleep(Duration::from_millis(500)).await;
-                ensure_browser_running().await?;
-                obtain_tab_websocket_url(cdp_port).await?
-            }
-        };
-
-        let (mut write, mut read) = connect_to_tab(&web_socket_debugger_url).await?;
-        let mut message_id = 0u64;
-
-        let _ = send_cdp_cmd(
-            &mut write,
-            &mut read,
-            &mut message_id,
-            "Page.enable",
-            json!({}),
-        )
-        .await?;
-        let _ = send_cdp_cmd(
-            &mut write,
-            &mut read,
-            &mut message_id,
-            "Runtime.enable",
-            json!({}),
-        )
-        .await?;
-
-        let _ = send_cdp_cmd(
-            &mut write,
-            &mut read,
-            &mut message_id,
-            "Emulation.setDeviceMetricsOverride",
-            json!({
-                "width": width,
-                "height": height,
-                "deviceScaleFactor": 1,
-                "mobile": false
-            }),
-        )
-        .await?;
-
-        let _ = send_cdp_cmd(
-            &mut write,
-            &mut read,
-            &mut message_id,
-            "Page.navigate",
-            json!({
-                "url": target_url
-            }),
-        )
-        .await?;
-
-        sleep(Duration::from_millis(load_delay_ms as u64)).await;
+        let browser = BrowserSessionClient::spawn_ephemeral_headless(width as i32, height as i32).await?;
+        browser
+            .navigate_url(&target_url, 15_000, load_delay_ms.max(0) as u64)
+            .await?;
 
         for frame in 0..total_frames {
             match tick_js {
                 Some(js) => {
                     let js_injected = js.replace("{frame}", &frame.to_string());
-                    let _ = send_cdp_cmd(
-                        &mut write,
-                        &mut read,
-                        &mut message_id,
-                        "Runtime.evaluate",
-                        json!({
-                            "expression": js_injected,
-                            "returnByValue": true
-                        }),
-                    )
-                    .await?;
+                    let _ = browser.eval_js(&js_injected, Duration::from_secs(10)).await?;
                 }
                 None => {}
             }
@@ -282,32 +213,20 @@ impl Tool for HtmlToVideoTool {
                 false => {}
             }
 
-            let screenshot_res = send_cdp_cmd(
-                &mut write,
-                &mut read,
-                &mut message_id,
-                "Page.captureScreenshot",
-                json!({
-                    "format": "png"
-                }),
-            )
-            .await?;
-
-            let base64_data = screenshot_res
-                .pointer("/result/data")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow!("Failed to capture screenshot data for frame {}", frame))?;
-
-            let image_bytes = BASE64_STANDARD.decode(base64_data)?;
             let frame_file = temp_frames_dir.join(format!("frame_{:05}.png", frame));
-            fs::write(&frame_file, image_bytes)?;
+            browser
+                .screenshot(&ScreenshotRequest {
+                    path: frame_file,
+                    full_page: false,
+                    transparent: false,
+                    annotated: false,
+                    selector: None,
+                })
+                .await
+                .map_err(|e| anyhow!("Failed to capture screenshot data for frame {}: {}", frame, e))?;
         }
 
-        let client = crate::core::http::default_http_client();
-        let _ = client
-            .get(format!("http://127.0.0.1:{cdp_port}/json/close/{}", tab_id))
-            .send()
-            .await;
+        let _ = browser.close().await;
 
         match output_path.parent() {
             Some(parent) => fs::create_dir_all(parent)?,

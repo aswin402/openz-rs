@@ -371,6 +371,9 @@ impl Tool for DiagnoseSystemTool {
         }
 
         let web_engine = crate::tools::searchxyz::doctor_report::build_web_engine_health_json();
+        let browser_engine = crate::tools::browser_status::collect_browser_status_report()
+            .await
+            .unwrap_or_else(|e| serde_json::json!({ "status": "error", "error": e.to_string() }));
 
         Ok(serde_json::json!({
             "status": "success",
@@ -382,6 +385,7 @@ impl Tool for DiagnoseSystemTool {
             "directories": directories,
             "databases": databases,
             "web_engine": web_engine,
+            "browser_engine": browser_engine,
             "network": network_status
         }))
     }

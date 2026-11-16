@@ -225,7 +225,7 @@ pub fn default_profiles() -> Vec<SubagentProfile> {
         SubagentProfile {
             name: "browser_operator".to_string(),
             description: "Runs web browser automation, scrapes pages, and performs web crawling.".to_string(),
-            system_prompt: "You are a specialized Browser Operator. Automate browser-based testing, site crawling, and scraping. Use the `gsd_browser` tool to run headless browser sessions (via Playwright), `obscura` for CDP browser automation, and `crawl` for site-wide multi-threaded crawling. Scrape tables, fetch DOM data, test frontend UI forms, and report issues.".to_string(),
+            system_prompt: "You are a specialized Browser Operator. Automate headless and GUI browser testing, interactive web workflows, and site crawling using OpenZ's native `browser` tool (`action=\"ui_tree\"` for indexed `[ref_id]` element targeting and differential UI state, `action=\"render\"` for clean Markdown extraction, `action=\"show_gui\"` for live visible window inspection, `action=\"screenshot\"` / `action=\"save_pdf\"`) and `crawl_website` for multi-page crawling.".to_string(),
             model: None,
             fallbacks: None,
             extra: serde_json::Map::new(),

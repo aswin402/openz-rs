@@ -139,46 +139,22 @@ impl Tool for CompileTemplateTool {
 
         match output_format.as_str() {
             "pdf" => {
-                // Write to a temporary HTML file in output directory
-                let temp_html_path = output_path.with_extension("temp.html");
-                fs::write(&temp_html_path, &rendered)
-                    .map_err(|e| anyhow!("Failed to write temporary HTML file: {}", e))?;
-
-                // Navigate and print to PDF using gsd_browser
-                let gsd_browser = crate::tools::gsd_browser::GsdBrowserTool;
-                let temp_url = format!("file://{}", temp_html_path.to_string_lossy());
-
-                let nav_res = gsd_browser
-                    .call(&json!({
-                        "action": "navigate",
-                        "url": temp_url
-                    }))
-                    .await;
-
-                match nav_res {
-                    Ok(_) => {}
-                    Err(e) => {
-                        let _ = fs::remove_file(&temp_html_path);
-                        return Err(anyhow!(
-                            "Failed to navigate browser to temporary page: {}",
-                            e
-                        ));
-                    }
-                }
-
-                let save_res = gsd_browser
-                    .call(&json!({
-                        "action": "save_pdf",
-                        "path": output_path.to_string_lossy()
-                    }))
-                    .await;
-
-                let _ = fs::remove_file(&temp_html_path);
-
-                save_res.map_err(|e| anyhow!("Failed to save page as PDF: {}", e))?;
+                let base_uri = template_path
+                    .parent()
+                    .and_then(|p| p.canonicalize().ok())
+                    .map(|abs| format!("file://{}/", abs.to_string_lossy()));
+                crate::tools::browser::export_html_or_url_to_pdf(
+                    None,
+                    Some(&rendered),
+                    base_uri.as_deref(),
+                    &output_path,
+                )
+                .await
+                .map_err(|e| anyhow!("Failed to export template as PDF: {}", e))?;
 
                 Ok(json!({
                     "status": "success",
+                    "backend": "openz_webkit2gtk_cairo_pdf",
                     "message": format!("Successfully compiled template to PDF at {:?}", output_path)
                 }))
             }

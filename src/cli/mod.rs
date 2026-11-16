@@ -222,6 +222,16 @@ pub async fn run_cli() -> Result<()> {
         Some(Command::Streaming) => {
             streaming::handle_streaming().await?;
         }
+        Some(Command::Browser { status, .. }) => match status {
+            true => {
+                let report = crate::tools::browser_status::collect_browser_status_report().await?;
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            }
+            false => match crate::tools::browser::maybe_run_browser_cli_from_env_args() {
+                Some(res) => res?,
+                None => {}
+            },
+        },
     }
     Ok(())
 }

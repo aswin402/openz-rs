@@ -67,16 +67,16 @@ The core engine drives tool registration, argument normalization, metadata infer
 
 Large or highly cohesive tool families are partitioned into 11 dedicated domain subdirectories under [`src/tools/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/):
 
-### 1. `browser/` — Browser Automation & CDP
+### 1. `browser/` — Native Headless + GUI Browser Engine
 - **Directory:** [`src/tools/browser/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/browser/)
-- **Description:** Headless and automated browser control across Playwright/CDP and native Firefox.
+- **Description:** Zero-external-dependency native Rust GTK3 + WebKit2GTK browser engine (`browser`) supporting both headless (`GtkOffscreenWindow`) and live GUI (`GtkWindow`) execution with an embedded `PageController`.
 - **Key Modules:**
-  - `broker.rs`: Shared browser daemon process management and IPC.
-  - `common.rs`: DOM extraction, navigation, and page interaction helpers.
-  - `firefox.rs`: Native Firefox Marionette/CDP controller (`firefox_browser`).
-  - `gsd.rs`: Playwright-based browser driver wrapper (`gsd_browser`).
-  - `obscura.rs`: Pure CDP lightweight browser engine (`obscura_browser`).
-  - `status.rs`: Active browser inspection and diagnostics (`inspect_browsers`).
+  - `webkit_ffi.rs`: Dynamic `dlopen` shared-library FFI loader for GTK3, Cairo, JSC, and WebKit2GTK (`4.1` / `4.0`).
+  - `worker.rs`: Isolated low-memory (`128 MB` cap) browser worker daemon, Unix socket IPC server, headless/GUI reparenting, Cairo PNG snapshot, and multi-page PDF export.
+  - `page_controller.js`: Combined Shadow DOM + iframe + `<flt-semantics>` `PageController` with `[ref_id]` element indexing, differential `ui_diff`, password masking, Set-of-Mark overlays, and `Human Takeover` banner.
+  - `client.rs`: Async Tokio IPC client, worker auto-spawner with `OnTurnEnd` process-group cleanup, PNG renderer, and PDF exporter.
+  - `tool.rs`: Unified canonical `browser` tool (`NativeBrowserTool`) consolidating all legacy browser aliases.
+  - `broker.rs` & `status.rs`: Shared headless Markdown/HTML rendering broker and runtime health inspection.
 
 ### 2. `graph_memory/` — Knowledge Graph & Database Branching
 - **Directory:** [`src/tools/graph_memory/`](file:///home/aswin/programming/vscode/myProjects/ai_agent_tools/openz/src/tools/graph_memory/)

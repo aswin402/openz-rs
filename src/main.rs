@@ -39,6 +39,15 @@ fn rotate_logs(log_path: &std::path::Path) {
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 fn main() -> anyhow::Result<()> {
+    match openz::tools::browser::maybe_run_browser_cli_from_env_args() {
+        Some(Ok(())) => std::process::exit(0),
+        Some(Err(err)) => {
+            eprintln!("Error: {:?}", err);
+            std::process::exit(1);
+        }
+        None => {}
+    }
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
         .thread_stack_size(8 * 1024 * 1024)

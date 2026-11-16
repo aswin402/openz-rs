@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.328-orange.svg" alt="Version 0.0.328"/></a>
+  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.329-orange.svg" alt="Version 0.0.329"/></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.82%2B-blue.svg" alt="Rust 1.82+"/></a>
   <a href="https://tokio.rs/"><img src="https://img.shields.io/badge/runtime-tokio-purple.svg" alt="Tokio Async"/></a>
   <a href="https://github.com/aswin402/openz-rs/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-green.svg" alt="License"/></a>
@@ -18,7 +18,7 @@
 
 ---
 
-OpenZ is a local-first AI agent runtime built in Rust. It combines an interactive terminal agent (Ratatui TUI), **232 native in-process tools**, durable SQLite cognitive memory (`~/.openz/memory.db`), browser-backed research, document/media automation pipelines, multi-channel communication (Ratatui TUI, WebUI, Telegram, Discord, WhatsApp, Email), and isolated subagents into one fast desktop-oriented binary.
+OpenZ is a local-first AI agent runtime built in Rust. It combines an interactive terminal agent (Ratatui TUI), **229 native in-process tools**, durable SQLite cognitive memory (`~/.openz/memory.db`), native WebKit2GTK headless + GUI browser automation, document/media automation pipelines, multi-channel communication (Ratatui TUI, WebUI, Telegram, Discord, WhatsApp, Email), and isolated subagents into one fast desktop-oriented binary.
 
 Maintainer: **Aswin** ([@aswin402](https://github.com/aswin402)) — Rebranded from `nanobot`.
 
@@ -29,7 +29,7 @@ Maintainer: **Aswin** ([@aswin402](https://github.com/aswin402)) — Rebranded f
 Most agent frameworks require users to manually select tools, switch providers, or manage complex configuration options. OpenZ is engineered to handle tool orchestration and self-healing automatically:
 
 - 🔍 **Resilient Web Research**: Scraper blocked? OpenZ falls back to provider-free local browser discovery.
-- 🌐 **JS App Shell Handling**: Dynamic single-page web app? Retries automatically through GSD → Firefox → Obscura CDP rendering.
+- 🌐 **JS App Shell Handling**: Dynamic single-page web app? Retries automatically through OpenZ's native WebKit2GTK headless engine (`~66 MB` active private heap, `0 MB` idle RAM).
 - 📄 **Document Intelligence**: Scanned PDF or image with no text? Automatically triggers native OCR.
 - 📂 **Context Scoping**: Modifying code? Automatically walks directory trees and loads local `AGENTS.md` rules via `scope_context` before editing.
 - 📦 **Transactional Edits**: Performs Rust edits via `zenflow_edit` checkpoints (`.zenflow_bak`), runs `cargo check` and `cargo clippy`, and rolls back cleanly if checks fail.
@@ -43,7 +43,7 @@ Most agent frameworks require users to manually select tools, switch providers, 
 |---|---|
 | 🖥 **Agent Runtime** | Interactive TUI, streaming/non-streaming completions, parallel read-only tool batches, cancellation, session persistence, SHA-256 Merkle history verification (`ChainIntegrity`) |
 | 🔎 **Web & Research** | `SearchXyz` local-first search engine, direct URL fetching with SSRF IP-pinning, cache revalidation, source ledger, research briefs |
-| 🌐 **Browser Automation** | GSD browser engine, Firefox/WebDriver, Obscura CDP headless browser, preflight diagnostics |
+| 🌐 **Browser Automation** | Native Rust GTK3 + WebKit2GTK engine (`openz browser` + `browser` tool): `GtkOffscreenWindow` headless & live GTK3 GUI window, in-page `PageController` (`ui_tree`, `ui_diff`, Shadow DOM, Set-of-Mark `[0]` overlay, password masking, Cairo PNG/PDF) |
 | 🧠 **Cognitive Memory** | SQLite structured memory (`~/.openz/memory.db`), vector embeddings (`embeddings_cache.db`), working memory, knowledge graph (`graph_memory.db`) |
 | 🛠 **Native Code Tools** | Structural `ast_grep`, code outline, grep, Rust docs lookup, Cargo manager, compiler auto-heal |
 | 📝 **Filesystem & Edits** | `Hashline` content-hash anchors (`read_file` + `replace_lines`), exact/fuzzy/search-replace `patch_file`, transactional Zenflow checkpoint edits, `PathPolicy` containment |
@@ -57,6 +57,11 @@ Most agent frameworks require users to manually select tools, switch providers, 
 ---
 
 ## 🆕 Latest Highlights
+
+### 🌐 Native Rust GTK3 + WebKit2GTK Headless & GUI Browser Engine (`v0.0.329`)
+- **Zero-External-Browser Native Engine (`~66 MB` Active Private Heap, `0 MB` Idle RAM)**: Replaced Chrome CDP `:9222`, Obscura, Playwright/`gsd-browser`, Firefox/`geckodriver`/`thirtyfour`, and `chromiumoxide` with OpenZ's own pure-Rust `libc::dlopen` GTK3 + WebKit2GTK + Cairo engine (`src/tools/browser/`). Supports zero-popup `GtkOffscreenWindow` headless execution (including automatic pure-Unix-socket GDK Broadway fallback on displayless servers/sandboxes), a sleek dark-themed GTK3 GUI browser (`openz browser [url] --gui`), and live `show`/`hide` window reparenting without dropping DOM state.
+- **Unified In-Page `PageController` & Single Canonical `browser` Tool (`229` Native Tools)**: Consolidated `obscura_browser`, `gsd_browser`, `firefox_browser`, and `inspect_browsers` into one canonical `browser` tool (retaining full alias compatibility), featuring compact `[0]` indexed `ui_tree` extraction across open Shadow DOM + same-origin `<iframe>` + `<flt-semantics>`, differential `ui_diff` (`[+]`, `[~]`, `[-]`), client-side password masking (`••••••••`), `Prune4Web` filtering, Set-of-Mark `[0]` annotated Cairo PNG snapshots, multi-page Cairo PDF export, and GUI Human Takeover pause/resume.
+- **Full Media, Document & Diagnostic Wiring**: Wired `generate_image`, `html_to_video`, `compile_template`, `openmedia`, `web_fetch` JS-shell retry, `searchxyz_browser_search`, and `diagnose_system` (`browser_engine` health telemetry) directly onto the native WebKit2GTK engine.
 
 ### 🔎 Unified Native Web, SearchXyz, Headless Browser & SQLite Research Engine (`v0.0.328`)
 - **Single-Engine Native Web & Search Stack (`232` Canonical Tools, Zero Duplicates)**: Consolidated 12 overlapping `searchxyz_*` wrappers into OpenZ's canonical native tools (`web_search`, `web_fetch`, `crawl_website`, `search_research`, `archive_research`, `create_relations`, `search_nodes`, `diagnose_system`) with full backward-compatible alias routing, while preserving dedicated power tools (`searchxyz_browser_search`, `searchxyz_deep_research`, `searchxyz_read_github_repo`).

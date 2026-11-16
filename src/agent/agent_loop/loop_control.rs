@@ -363,10 +363,10 @@ fn research_self_healing_hint(tool_lower: &str, error_str: &str) -> Option<&'sta
                     "Research browser fallback hit an anti-bot or CAPTCHA page. Do not keep retrying the same browser path; switch to official URLs, cached sources, or return a partial answer with an unverified-source caveat.",
                 ),
                 super::research_policy::ResearchFailureKind::BrowserDependencyMissing => Some(
-                    "Research browser fallback cannot run because a browser dependency is missing. Use inspect_browsers to check Chrome CDP, gsd-browser, and geckodriver status before trying another browser tool.",
+                    "Research browser fallback cannot run because the native WebKit2GTK runtime library is unavailable. Call browser(action=\"status\") to inspect shared-library availability and fallback options.",
                 ),
                 super::research_policy::ResearchFailureKind::BrowserSessionLost => Some(
-                    "Research browser fallback lost its active browser session. Use inspect_browsers, restart the browser backend once if healthy, then stop retrying that backend if the same failure repeats.",
+                    "Research browser fallback lost its active worker session. Call browser(action=\"status\"), relaunch the session once if the native WebKit2GTK runtime is available, and stop retrying if the failure repeats.",
                 ),
                 super::research_policy::ResearchFailureKind::SearchExhausted => Some(
                     "Search backends returned no usable results. Run diagnose_system for web_engine backend health, then use configured fallback policy or answer from cached/official sources with a clear source caveat.",

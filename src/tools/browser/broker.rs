@@ -1,22 +1,24 @@
-use crate::tools::Tool;
-use anyhow::{anyhow, Result};
+//! Headless Browser Broker backed by OpenZ's native low-RAM WebKit2GTK engine.
+//!
+//! Spawns an ephemeral offscreen WebKit2GTK worker (`GtkOffscreenWindow`), validates
+//! target URLs against SSRF, evaluates JavaScript or extracts rendered HTML/Markdown,
+//! and tears down the worker immediately after completion so idle RAM returns to 0 MB.
+
+use super::client::BrowserSessionClient;
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BrowserBackendChoice {
-    ObscuraHeadless,
-    FirefoxHeadless,
-    GsdChromeGui,
+    OpenzNativeHeadless,
 }
 
 impl BrowserBackendChoice {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::ObscuraHeadless => "obscura_headless",
-            Self::FirefoxHeadless => "firefox_headless",
-            Self::GsdChromeGui => "gsd_chrome_gui",
+            Self::OpenzNativeHeadless => "openz_native_headless",
         }
     }
 }
@@ -31,12 +33,8 @@ pub struct BrowserBrokerResult {
     pub errors: Vec<String>,
 }
 
-pub fn browser_backend_priority() -> [BrowserBackendChoice; 3] {
-    [
-        BrowserBackendChoice::ObscuraHeadless,
-        BrowserBackendChoice::FirefoxHeadless,
-        BrowserBackendChoice::GsdChromeGui,
-    ]
+pub fn browser_backend_priority() -> [BrowserBackendChoice; 1] {
+    [BrowserBackendChoice::OpenzNativeHeadless]
 }
 
 pub async fn eval_with_browser_broker(
@@ -44,35 +42,44 @@ pub async fn eval_with_browser_broker(
     script: &str,
     timeout_secs: u64,
 ) -> Result<BrowserBrokerResult> {
-    let mut errors = Vec::new();
-    let mut tried = Vec::new();
+    crate::tools::web::validate_url(url).await?;
 
-    for backend in browser_backend_priority() {
-        tried.push(backend);
-        match eval_with_backend(backend, url, script, timeout_secs).await {
-            Ok(output) => {
-                register_browser_task(backend, url, cleanup_label(backend));
-                cleanup_backend_after_use(backend).await;
-                return Ok(BrowserBrokerResult {
-                    backend,
-                    status: "success".to_string(),
-                    output,
-                    cleanup: cleanup_label(backend).to_string(),
-                    fallbacks_tried: tried,
-                    errors,
-                });
-            }
-            Err(err) => {
-                errors.push(format!("{}: {err}", backend.as_str()));
-                cleanup_backend_after_use(backend).await;
-            }
+    let clamped_secs = timeout_secs.clamp(3, 45);
+    let backend = BrowserBackendChoice::OpenzNativeHeadless;
+    let client = BrowserSessionClient::spawn_ephemeral_headless(1280, 800).await?;
+    let nav_timeout_ms = (clamped_secs * 1000).min(25_000);
+
+    let nav_res = client.navigate_url(url, nav_timeout_ms, 220).await;
+    match nav_res {
+        Ok(_) => {}
+        Err(err) => {
+            let _ = client.close().await;
+            return Err(err);
         }
     }
 
-    Err(anyhow!(
-        "All browser backends failed: {}",
-        errors.join("; ")
-    ))
+    let eval_res = client
+        .eval_js(script, Duration::from_secs(clamped_secs))
+        .await;
+    let _ = client.close().await;
+
+    let data = eval_res?;
+    let raw_output = data
+        .get("output")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let output = normalize_browser_output(&raw_output);
+    register_browser_task(backend, url, cleanup_label(backend));
+
+    Ok(BrowserBrokerResult {
+        backend,
+        status: "success".to_string(),
+        output,
+        cleanup: cleanup_label(backend).to_string(),
+        fallbacks_tried: vec![backend],
+        errors: Vec::new(),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,19 +148,6 @@ pub async fn render_page_with_browser_broker(
     })
 }
 
-async fn eval_with_backend(
-    backend: BrowserBackendChoice,
-    url: &str,
-    script: &str,
-    timeout_secs: u64,
-) -> Result<String> {
-    match backend {
-        BrowserBackendChoice::ObscuraHeadless => eval_obscura(url, script, timeout_secs).await,
-        BrowserBackendChoice::FirefoxHeadless => eval_firefox(url, script).await,
-        BrowserBackendChoice::GsdChromeGui => eval_gsd(url, script).await,
-    }
-}
-
 fn normalize_browser_output(output: &str) -> String {
     match serde_json::from_str::<serde_json::Value>(output.trim()) {
         Ok(serde_json::Value::String(inner)) => inner,
@@ -161,85 +155,9 @@ fn normalize_browser_output(output: &str) -> String {
     }
 }
 
-async fn eval_obscura(url: &str, script: &str, timeout_secs: u64) -> Result<String> {
-    let tool = crate::tools::obscura::ObscuraBrowserTool::new();
-    let value = tool
-        .call(&json!({
-            "url": url,
-            "action": "eval_js",
-            "script": script,
-            "timeout": timeout_secs,
-        }))
-        .await?;
-    Ok(normalize_browser_output(
-        value
-            .get("output")
-            .and_then(|value| value.as_str())
-            .unwrap_or(""),
-    ))
-}
-
-async fn eval_firefox(url: &str, script: &str) -> Result<String> {
-    let tool = crate::tools::firefox::FirefoxBrowserTool::new();
-    tool.call(&json!({
-        "action": "navigate",
-        "url": url,
-    }))
-    .await?;
-    let firefox_script = format!("return ({script});");
-    let value = tool
-        .call(&json!({
-            "action": "eval",
-            "script": firefox_script,
-        }))
-        .await?;
-    Ok(normalize_browser_output(
-        value
-            .get("output")
-            .and_then(|value| value.as_str())
-            .unwrap_or(""),
-    ))
-}
-
-async fn eval_gsd(url: &str, script: &str) -> Result<String> {
-    let tool = crate::tools::gsd_browser::GsdBrowserTool;
-    tool.call(&json!({
-        "action": "navigate",
-        "url": url,
-    }))
-    .await?;
-    let value = tool
-        .call(&json!({
-            "action": "eval",
-            "script": script,
-        }))
-        .await?;
-    Ok(normalize_browser_output(
-        value
-            .get("output")
-            .and_then(|value| value.as_str())
-            .unwrap_or(""),
-    ))
-}
-
 fn cleanup_label(backend: BrowserBackendChoice) -> &'static str {
     match backend {
-        BrowserBackendChoice::ObscuraHeadless => "closed_tab",
-        BrowserBackendChoice::FirefoxHeadless => "closed_session",
-        BrowserBackendChoice::GsdChromeGui => "stopped_daemon",
-    }
-}
-
-async fn cleanup_backend_after_use(backend: BrowserBackendChoice) {
-    match backend {
-        BrowserBackendChoice::FirefoxHeadless => {
-            let tool = crate::tools::firefox::FirefoxBrowserTool::new();
-            let _ = tool.call(&json!({ "action": "close" })).await;
-        }
-        BrowserBackendChoice::GsdChromeGui => {
-            crate::tools::gsd_browser::stop_gsd_browser_daemon().await;
-        }
-        BrowserBackendChoice::ObscuraHeadless => {}
+        BrowserBackendChoice::OpenzNativeHeadless => "closed_ephemeral_worker",
     }
 }
 
@@ -258,4 +176,3 @@ fn register_browser_task(backend: BrowserBackendChoice, url: &str, cleanup: &str
 #[cfg(test)]
 #[path = "broker_tests.rs"]
 mod tests;
-

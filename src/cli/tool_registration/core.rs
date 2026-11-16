@@ -22,7 +22,7 @@ pub(crate) fn register_foundation_tools(registry: &ToolRegistry) {
 use crate::config::schema::Config;
 use crate::providers::LLMProvider;
 use crate::session::SessionManager;
-use crate::tools::browser_status::InspectBrowsersTool;
+use crate::tools::browser::NativeBrowserTool;
 use crate::tools::cron::{
     GetJobLogsTool, GetJobTool, ListJobsTool, PauseJobTool, RemoveJobTool, ResumeJobTool,
     RunJobNowTool, ScheduleJobTool,
@@ -79,7 +79,7 @@ pub(crate) fn register_core_tools(
             config: config.clone(),
         },
     ));
-    registry.register(std::sync::Arc::new(InspectBrowsersTool));
+    registry.register(std::sync::Arc::new(NativeBrowserTool::new()));
     registry.register(std::sync::Arc::new(DelegateTaskTool {
         config: config.clone(),
         parent_provider: provider.clone(),
@@ -162,9 +162,6 @@ pub(crate) fn register_core_tools(
     registry.register(std::sync::Arc::new(crate::tools::watcher::FileWatcherTool));
     registry.register(std::sync::Arc::new(crate::tools::ast_grep::AstGrepTool));
     registry.register(std::sync::Arc::new(
-        crate::tools::gsd_browser::GsdBrowserTool,
-    ));
-    registry.register(std::sync::Arc::new(
         crate::tools::web_search::WebSearchTool::new(),
     ));
     registry.register(std::sync::Arc::new(crate::tools::onpkg::OnpkgTool));
@@ -203,12 +200,6 @@ pub(crate) fn register_core_tools(
     ));
     registry.register(std::sync::Arc::new(
         crate::tools::crawl::CrawlSiteTool::new(),
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::obscura::ObscuraBrowserTool::new(),
-    ));
-    registry.register(std::sync::Arc::new(
-        crate::tools::firefox::FirefoxBrowserTool::new(),
     ));
     registry.register(std::sync::Arc::new(IndexNotesTool));
     registry.register(std::sync::Arc::new(SocialSearchTool::new()));

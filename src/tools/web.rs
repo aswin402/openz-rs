@@ -230,7 +230,7 @@ fn web_fetch_should_retry_browser_render(
 }
 
 #[cfg(test)]
-fn web_fetch_browser_render_backend_names() -> [&'static str; 3] {
+fn web_fetch_browser_render_backend_names() -> [&'static str; 1] {
     browser_backend_priority().map(|backend| backend.as_str())
 }
 

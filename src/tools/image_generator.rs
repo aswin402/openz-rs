@@ -1,16 +1,10 @@
 use crate::config::resolve_path;
-use crate::tools::browser_common::{
-    browser_cdp_port, connect_to_tab, ensure_browser_running, kill_browser_on_cdp_port,
-    obtain_tab_websocket_url, send_cdp_cmd,
-};
+use crate::tools::browser::render_target_to_png;
 use crate::tools::Tool;
-use anyhow::{anyhow, Result};
-use base64::prelude::*;
+use anyhow::Result;
 use serde_json::{json, Value};
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
-use tokio::time::sleep;
+use std::path::PathBuf;
 
 pub struct GenerateImageTool;
 
@@ -238,44 +232,6 @@ fn cleanup_temp_file(temp_file_path: &Option<PathBuf>) {
 
 use crate::tools::wavyte::ensure_parent_dir;
 
-async fn try_openmedia_fallback(
-    html_content: &str,
-    width: i64,
-    height: i64,
-    device_scale_factor: f64,
-    output_path: &Path,
-    temp_file_path: &Option<PathBuf>,
-) -> Option<Value> {
-    let server = crate::tools::openmedia::get_server().await.ok()?;
-    let req = crate::tools::openmedia::server::HtmlToImageRequest {
-        html: html_content.to_string(),
-        width: Some(width as u32),
-        height: Some(height as u32),
-        device_scale_factor: Some(device_scale_factor),
-        output_format: Some("png".to_string()),
-    };
-    let val = server.html_to_image(req).await.ok()?;
-    let path_str = val.get("path").and_then(|v| v.as_str())?;
-    let gen_path = Path::new(path_str);
-    gen_path.exists().then_some(())?;
-    match output_path.parent() {
-        Some(parent) => {
-            let _ = fs::create_dir_all(parent);
-        }
-        None => {}
-    }
-    let _ = fs::copy(gen_path, output_path);
-    cleanup_temp_file(temp_file_path);
-    Some(json!({
-        "status": "success",
-        "complete": true,
-        "output_path": output_path.to_string_lossy(),
-        "backend": "openmedia_chromiumoxide_fallback",
-        "width": width,
-        "height": height,
-    }))
-}
-
 #[async_trait::async_trait]
 impl Tool for GenerateImageTool {
     fn name(&self) -> &str {
@@ -283,7 +239,7 @@ impl Tool for GenerateImageTool {
     }
 
     fn description(&self) -> &str {
-        "Generates a premium, high-fidelity PNG image from HTML/CSS, a local template file, or an online URL using headless Chromium. Supports legacy geometric shape inputs as fallback."
+        "Generates a premium, high-fidelity PNG image from HTML/CSS, a local template file, or an online URL using OpenZ's native headless WebKit2GTK renderer. Supports legacy geometric shape inputs as fallback."
     }
 
     fn parameters(&self) -> Value {
@@ -417,246 +373,32 @@ impl Tool for GenerateImageTool {
             None => (initial_target_url, LocalHtmlServerGuard(None)),
         };
 
-        // Ensure browser is running
-        ensure_browser_running().await?;
-
-        let cdp_port = browser_cdp_port();
-        let (tab_id, ws_url) = match obtain_tab_websocket_url(cdp_port).await {
-            Ok(pair) => pair,
-            Err(_) => {
-                kill_browser_on_cdp_port();
-                sleep(Duration::from_millis(500)).await;
-                ensure_browser_running().await?;
-                obtain_tab_websocket_url(cdp_port).await?
-            }
-        };
-
-        // Connect to WebSocket
-        let (mut write, mut read) = connect_to_tab(&ws_url).await?;
-        let mut message_id = 0u64;
-
-        // Enable Page and Runtime domains
-        let _ = send_cdp_cmd(
-            &mut write,
-            &mut read,
-            &mut message_id,
-            "Page.enable",
-            json!({}),
-        )
-        .await?;
-        let _ = send_cdp_cmd(
-            &mut write,
-            &mut read,
-            &mut message_id,
-            "Runtime.enable",
-            json!({}),
-        )
-        .await?;
-
-        // Set device metrics
-        let _ = send_cdp_cmd(
-            &mut write,
-            &mut read,
-            &mut message_id,
-            "Emulation.setDeviceMetricsOverride",
-            json!({
-                "width": width,
-                "height": height,
-                "deviceScaleFactor": device_scale_factor,
-                "mobile": false
-            }),
-        )
-        .await?;
-
-        // Navigate to target URL
-        let _ = send_cdp_cmd(
-            &mut write,
-            &mut read,
-            &mut message_id,
-            "Page.navigate",
-            json!({ "url": target_url }),
-        )
-        .await?;
-
-        // Poll document.readyState until complete or timeout (max 10 seconds)
-        let start_time = Instant::now();
-        let max_duration = Duration::from_secs(10);
-        let mut is_complete = false;
-
-        while start_time.elapsed() < max_duration {
-            sleep(Duration::from_millis(200)).await;
-
-            let eval_res = send_cdp_cmd(
-                &mut write,
-                &mut read,
-                &mut message_id,
-                "Runtime.evaluate",
-                json!({
-                    "expression": "document.readyState",
-                    "returnByValue": true
-                }),
-            )
-            .await?;
-
-            let ready = eval_res
-                .get("result")
-                .and_then(|r| r.get("result"))
-                .and_then(|res| res.get("value"))
-                .and_then(|v| v.as_str())
-                == Some("complete");
-            match ready {
-                true => {
-                    is_complete = true;
-                    break;
-                }
-                false => {}
-            }
-        }
-
-        // Inject custom CSS if provided
-        match arguments.get("css").and_then(|v| v.as_str()) {
-            Some(css_str) => {
-                let inject_css_js = format!(
-                    r#"(() => {{
-                        const style = document.createElement('style');
-                        style.textContent = `{}`;
-                        document.head.appendChild(style);
-                    }})()"#,
-                    css_str
-                        .replace('\\', "\\\\")
-                        .replace('`', "\\`")
-                        .replace("${", "\\${")
-                );
-                let _ = send_cdp_cmd(
-                    &mut write,
-                    &mut read,
-                    &mut message_id,
-                    "Runtime.evaluate",
-                    json!({
-                        "expression": inject_css_js,
-                        "returnByValue": true
-                    }),
-                )
-                .await?;
-            }
-            None => {}
-        }
-
-        // Settle delay
-        match settle_ms > 0 {
-            true => sleep(Duration::from_millis(settle_ms as u64)).await,
-            false => {}
-        }
-
-        // Determine screenshot bounding box if selector is provided
-        let mut screenshot_params = json!({
-            "format": "png"
-        });
-
-        match selector {
-            Some(sel) => {
-                let escaped_sel = sel
-                    .replace('\\', "\\\\")
-                    .replace('"', "\\\"")
-                    .replace('\'', "\\'")
-                    .replace('\n', "\\n")
-                    .replace('\r', "\\r");
-                let js_expr = format!(
-                    r#"((sel) => {{
-                        const el = document.querySelector(sel);
-                        if (!el) return null;
-                        const rect = el.getBoundingClientRect();
-                        return {{
-                            x: rect.left + window.scrollX,
-                            y: rect.top + window.scrollY,
-                            width: rect.width,
-                            height: rect.height,
-                            scale: 1.0
-                        }};
-                    }})('{}')"#,
-                    escaped_sel
-                );
-
-                let eval_res = send_cdp_cmd(
-                    &mut write,
-                    &mut read,
-                    &mut message_id,
-                    "Runtime.evaluate",
-                    json!({
-                        "expression": js_expr,
-                        "returnByValue": true
-                    }),
-                )
-                .await?;
-
-                match eval_res
-                    .get("result")
-                    .and_then(|r| r.get("result"))
-                    .and_then(|res| res.get("value"))
-                    .filter(|v| !v.is_null())
-                {
-                    Some(rect_val) => {
-                        screenshot_params["clip"] = rect_val.clone();
-                    }
-                    None => {}
-                }
-            }
-            None => {}
-        }
-
-        // Capture screenshot
-        let screenshot_res = send_cdp_cmd(
-            &mut write,
-            &mut read,
-            &mut message_id,
-            "Page.captureScreenshot",
-            screenshot_params,
-        )
-        .await?;
-
-        let image_bytes = match screenshot_res
-            .pointer("/result/data")
-            .and_then(|v| v.as_str())
-        {
-            Some(base64_data) => BASE64_STANDARD.decode(base64_data)?,
-            None => match arguments.get("html").and_then(|v| v.as_str()) {
-                Some(html_content) => {
-                    match try_openmedia_fallback(
-                        html_content,
-                        width,
-                        height,
-                        device_scale_factor,
-                        &output_path,
-                        &temp_file_path,
-                    )
-                    .await
-                    {
-                        Some(fallback_res) => return Ok(fallback_res),
-                        None => {
-                            return Err(anyhow!(
-                                "Failed to capture screenshot data via CDP and fallback renderer"
-                            ));
-                        }
-                    }
-                }
-                None => return Err(anyhow!("Failed to capture screenshot data")),
-            },
-        };
-
         ensure_parent_dir(&output_path)?;
-        fs::write(&output_path, image_bytes)?;
-
-        // Close the tab
-        let client = crate::core::http::default_http_client();
-        let close_url = format!("http://127.0.0.1:{cdp_port}/json/close/{}", tab_id);
-        let _ = client.get(&close_url).send().await;
+        let custom_css = arguments.get("css").and_then(|v| v.as_str());
+        let render_res = render_target_to_png(
+            Some(&target_url),
+            None,
+            custom_css,
+            width as i32,
+            height as i32,
+            device_scale_factor,
+            settle_ms.max(0) as u64,
+            selector,
+            false,
+            &output_path,
+        )
+        .await;
 
         cleanup_temp_file(&temp_file_path);
+        let snap = render_res?;
 
         Ok(json!({
             "status": "success",
-            "complete": is_complete,
+            "complete": true,
+            "backend": "openz_webkit2gtk",
             "output_path": output_path.to_string_lossy(),
+            "width": snap.get("width").cloned().unwrap_or_else(|| json!(width)),
+            "height": snap.get("height").cloned().unwrap_or_else(|| json!(height)),
             "message": format!("High-fidelity image successfully generated and saved to '{}'.", output_path_str)
         }))
     }

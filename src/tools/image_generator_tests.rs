@@ -23,13 +23,10 @@ async fn test_generate_image_tool_execution() -> Result<()> {
         "output_path": temp_png.to_string_lossy()
     });
 
-    match ensure_browser_running().await {
-        Ok(()) => {}
-        Err(e) => {
-            tracing::warn!(
-                "Skipping execution test as headless browser is unavailable: {}",
-                e
-            );
+    match crate::tools::browser::probe_webkit_runtime().available {
+        true => {}
+        false => {
+            tracing::warn!("Skipping execution test as native WebKit2GTK runtime is unavailable");
             return Ok(());
         }
     }

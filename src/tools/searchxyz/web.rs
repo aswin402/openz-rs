@@ -581,8 +581,8 @@ impl Tool for SearchXyzBrowserSearchTool {
                         "engine": engine,
                         "query": query,
                         "error": err.to_string(),
-                        "fallbacks_tried": ["obscura_headless", "firefox_headless", "gsd_chrome_gui"],
-                        "next_step": "Run inspect_browsers, use manage_tasks action=cleanup, retry with engine=mojeek, or use native web_search / web_fetch."
+                        "fallbacks_tried": ["openz_native_headless"],
+                        "next_step": "Run browser(action=\"status\"), use manage_tasks action=cleanup, retry with engine=mojeek, or use native web_search / web_fetch."
                     }));
                 }
             };
