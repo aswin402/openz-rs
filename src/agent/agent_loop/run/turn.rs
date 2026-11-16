@@ -21,6 +21,7 @@ pub(crate) struct TurnToolWindow {
 }
 
 impl TurnToolWindow {
+    #[cfg(test)]
     pub(crate) fn resolve_iteration_tools(
         &mut self,
         fresh_tools: Vec<serde_json::Value>,
@@ -29,8 +30,31 @@ impl TurnToolWindow {
         max_expanded_tools: usize,
         max_provider_tools: usize,
     ) -> Vec<serde_json::Value> {
+        self.resolve_iteration_tools_for_step(
+            0,
+            fresh_tools,
+            explicit_mount_names,
+            preserve_prefix_cache,
+            max_expanded_tools,
+            max_provider_tools,
+        )
+    }
+
+    pub(crate) fn resolve_iteration_tools_for_step(
+        &mut self,
+        iteration: usize,
+        fresh_tools: Vec<serde_json::Value>,
+        explicit_mount_names: &HashSet<String>,
+        preserve_prefix_cache: bool,
+        max_expanded_tools: usize,
+        max_provider_tools: usize,
+    ) -> Vec<serde_json::Value> {
         let provider_cap = max_provider_tools.max(1);
-        let expanded_cap = max_expanded_tools.max(1).min(provider_cap);
+        let phase_headroom = (iteration / 4).saturating_mul(8);
+        let expanded_cap = max_expanded_tools
+            .max(1)
+            .saturating_add(phase_headroom)
+            .min(provider_cap);
         match preserve_prefix_cache {
             false => {
                 let mut direct = fresh_tools;
@@ -89,7 +113,7 @@ impl TurnToolWindow {
 /// iterations without being mixed into the durable TurnContext.
 pub(crate) struct RunContext {
     pub(crate) iterations: usize,
-    pub(crate) loop_blocked_count: usize,
+    pub(crate) loop_state: super::super::security_approval::LoopEscalationState,
     pub(crate) max_iterations: usize,
     pub(crate) turn_capture_summaries: Vec<AutoCaptureSummary>,
     pub(crate) turn_source_ledger: SourceLedger,
@@ -107,7 +131,7 @@ impl RunContext {
     pub(crate) fn new(ctx: &TurnContext<'_>) -> Self {
         Self {
             iterations: 0,
-            loop_blocked_count: 0,
+            loop_state: super::super::security_approval::LoopEscalationState::default(),
             max_iterations: ctx.config.agents.defaults.max_tool_iterations,
             turn_capture_summaries: Vec::new(),
             turn_source_ledger: SourceLedger::default(),
@@ -335,6 +359,30 @@ mod tests {
         assert_eq!(
             extract_names(&iter1),
             vec!["read_file", "tool_catalog", "patch_file", "opendoc_create_xlsx"]
+        );
+
+        // Late-phase multi-step turn (iteration 8): phase headroom unlocks phase-3/4 routed tools beyond initial 4-tool expanded cap
+        let iter8 = window.resolve_iteration_tools_for_step(
+            8,
+            vec![
+                mock_tool("git_manager"),
+                mock_tool("browser"),
+            ],
+            &no_mounts,
+            true,
+            4,
+            128,
+        );
+        assert_eq!(
+            extract_names(&iter8),
+            vec![
+                "read_file",
+                "tool_catalog",
+                "patch_file",
+                "opendoc_create_xlsx",
+                "git_manager",
+                "browser"
+            ]
         );
     }
 }

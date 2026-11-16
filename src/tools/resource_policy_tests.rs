@@ -226,3 +226,24 @@ fn process_limit_blocks_extra_process_tools() {
         .reason()
         .is_some_and(|reason| reason.contains("process tool limit")));
 }
+
+#[tokio::test]
+async fn async_process_guard_waits_for_released_slot_without_failing() {
+    let start = active_process_tools();
+    let cap = start + 1;
+    let guard = try_acquire_process_tool(cap).expect("initial slot acquired");
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        drop(guard);
+    });
+
+    let cancel = crate::tools::subagent::CancellationToken::new();
+    let waited = acquire_process_tool_async(
+        cap,
+        std::time::Duration::from_secs(2),
+        &cancel,
+    )
+    .await
+    .expect("async backpressure waiter should acquire freed slot");
+    drop(waited);
+}

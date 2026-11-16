@@ -359,12 +359,20 @@ pub(crate) fn is_state_changing_tool(name: &str) -> bool {
             | "multi_replace_file_content"
             | "patch_file"
             | "replace_lines"
+            | "zenflow_edit"
             | "exec_command"
             | "run_command"
             | "cargo_manager"
             | "git_manager"
             | "db_write"
     )
+}
+
+pub(crate) fn is_state_changing_tool_call(name: &str, args: &serde_json::Value) -> bool {
+    let canonical = canonical_tool_name(name);
+    is_state_changing_tool(&canonical)
+        || (canonical == "browser" && !is_progress_sensitive_repeat("browser", args))
+        || tool_writes_disk(&canonical)
 }
 
 type DomainRule = (&'static str, fn(&str) -> bool);
@@ -415,7 +423,7 @@ const DOMAIN_INFERENCE_RULES: &[DomainRule] = &[
         )
     }),
     ("shell", |name| {
-        matches!(name, "exec_command" | "python_sandbox" | "wasm_sandbox")
+        matches!(name, "exec_command" | "python_sandbox" | "wasm_sandbox" | "wasm_execute")
     }),
     ("git", |name| {
         name.starts_with("git") || name.starts_with("github")
@@ -427,7 +435,16 @@ const DOMAIN_INFERENCE_RULES: &[DomainRule] = &[
             || name.contains("outline")
             || name.contains("ast_grep")
             || name.contains("rust_docs")
-            || matches!(name, "onpkg" | "js_format" | "compile_template")
+            || matches!(
+                name,
+                "onpkg"
+                    | "js_format"
+                    | "compile_template"
+                    | "index_codebase"
+                    | "query_code_graph"
+                    | "analyze_code_impact"
+                    | "summarize_codebase"
+            )
     }),
     ("web", |name| {
         name.starts_with("web")
@@ -439,11 +456,19 @@ const DOMAIN_INFERENCE_RULES: &[DomainRule] = &[
     }),
     ("memory", |name| {
         name.contains("memory")
+            || name.contains("memories")
             || name.contains("entities")
             || name.contains("relations")
             || name.contains("observations")
             || name.contains("graph")
             || name.contains("recall")
+            || name.contains("episode")
+            || name.contains("reflection")
+            || name.contains("fact")
+            || name.contains("evolution")
+            || name.contains("conflict")
+            || name.contains("database_branch")
+            || name.contains("tool_performance")
             || matches!(
                 name,
                 "db_inspector"
@@ -452,6 +477,10 @@ const DOMAIN_INFERENCE_RULES: &[DomainRule] = &[
                     | "research_brief"
                     | "archive_research"
                     | "search_research"
+                    | "search_text"
+                    | "hybrid_search"
+                    | "find_path"
+                    | "query_as_of"
             )
     }),
     ("context", |name| {
@@ -459,12 +488,19 @@ const DOMAIN_INFERENCE_RULES: &[DomainRule] = &[
             || name.contains("compress")
             || name.contains("cache")
             || name.contains("scope_context")
+            || name == "count_tokens"
+            || name == "retrieve_original"
     }),
     ("reasoning", |name| {
-        name.contains("thinking") || name.contains("reasoning")
+        name.contains("thinking")
+            || name.contains("reasoning")
+            || name == "export_session"
     }),
     ("document", |name| {
-        name.starts_with("opendoc") || name.starts_with("docs_") || name.contains("document")
+        name.starts_with("opendoc")
+            || name.starts_with("docs_")
+            || name.contains("document")
+            || matches!(name, "read_doc" | "doc_reader")
     }),
     ("media", |name| {
         name.starts_with("openmedia")
@@ -490,6 +526,8 @@ const DOMAIN_INFERENCE_RULES: &[DomainRule] = &[
                     | "system_info"
                     | "clipboard"
                     | "open"
+                    | "open_path"
+                    | "opencaveman"
                     | "send_remote_input"
             )
     }),

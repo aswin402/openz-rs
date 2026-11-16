@@ -19,17 +19,17 @@ mod tool_pipeline;
 mod turn;
 
 use self::artifacts::{
-    auto_adjust_tool_call_for_user_intent, auto_device_inventory_suggest_call_after_open_failure,
-    auto_open_artifact_call_after_tool, auto_scope_context_before_edit,
-    should_record_auto_scope_result,
+    auto_adjust_tool_call_with_availability,
+    auto_device_inventory_suggest_call_after_open_failure, auto_open_artifact_call_after_tool,
+    auto_scope_context_before_edit, should_record_auto_scope_result,
 };
 use self::events::{
     compact_reasoning_summary, normalize_tui_thought_display, publish_auto_capture_notice,
     should_send_public_reasoning_progress, should_show_tui_thoughts, stream_content_chunk,
 };
 use self::research::{
-    direct_research_url, fresh_research_brief_blocks_lookup, is_research_lookup_tool,
-    user_content_requests_fresh_fetch,
+    direct_research_fetch_key, direct_research_url, fresh_research_brief_blocks_lookup,
+    is_research_lookup_tool,
 };
 use self::response::normalize_response;
 use self::tool_pipeline::{
@@ -128,9 +128,22 @@ async fn stream_provider_response(
     let stream_cancel_tx = crate::shutdown::cli_cancel_tx();
     let mut stream_cancel_rx = stream_cancel_tx.subscribe();
     let stream_cancel_initial = *stream_cancel_rx.borrow();
+    let estimated_tokens = crate::providers::DynamicContextRegistry::estimate_request_tokens(
+        &ctx.messages,
+        &ctx.system_prompt,
+        tools_openai,
+    );
+    let prefill_timeout = std::time::Duration::from_secs(
+        loop_ref.provider_prefill_timeout_secs(estimated_tokens),
+    );
     let stream_idle_timeout = loop_ref.provider_attempt_timeout_duration();
+    let mut received_any_chunk = false;
 
     loop {
+        let active_timeout = match received_any_chunk {
+            true => stream_idle_timeout,
+            false => prefill_timeout,
+        };
         let chunk = tokio::select! {
             biased;
             _ = turn_cancel_clone.wait_for_cancellation() => {
@@ -143,14 +156,17 @@ async fn stream_provider_response(
             } => {
                 return Err(anyhow::anyhow!("Cancelled by user"));
             }
-            next = tokio::time::timeout(stream_idle_timeout, stream.next()) => {
+            next = tokio::time::timeout(active_timeout, stream.next()) => {
                 match next {
-                    Ok(Some(c)) => c,
+                    Ok(Some(c)) => {
+                        received_any_chunk = true;
+                        c
+                    }
                     Ok(None) => break,
                     Err(_) => {
                         return Err(anyhow::anyhow!(
                             "Provider stream timed out after {}s without output",
-                            stream_idle_timeout.as_secs()
+                            active_timeout.as_secs()
                         ));
                     }
                 }
@@ -539,73 +555,109 @@ async fn dispatch_tool_call(
 
     match classify_approval_gate(approval) {
         ApprovalGateOutcome::LoopBlocked => {
-            let warning_str = format!(
-                "Loop detected: You have already executed the tool '{}' with these exact arguments {} times in this turn. To prevent infinite loops, execution was blocked. Do NOT call this tool again. Analyze previous tool outputs and use a different strategy, or finish your response.",
-                call.name, approval.repeat_count
-            );
+            let warning_str = approval.loop_message.clone().unwrap_or_else(|| {
+                format!(
+                    "Loop detected: You have already executed the tool '{}' with these exact arguments {} times in this turn. To prevent infinite loops, execution was blocked. Do NOT call this tool again. Analyze previous tool outputs and use a different strategy, or finish your response.",
+                    call.name, approval.repeat_count
+                )
+            });
             let _ = (!silent).then(|| {
                 let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                 crate::tui_println!(
-                    "{}{}{}↶ Loop detected for tool '{}'! Blocking execution. (Count: {}){}",
+                    "{}{}{}↶ Loop detected for tool '{}'! Steering away. (Streak: {}, Total: {}){}",
                     AURA_SLATE,
                     leaf_prefix,
                     AURA_GOLD,
                     call.name,
-                    run.loop_blocked_count,
+                    run.loop_state.consecutive_blocks,
+                    run.loop_state.total_blocks,
                     COLOR_RESET
                 );
             });
             tracing::warn!(
                 session = %ctx.session_key,
                 tool = %call.name,
-                "Tool execution blocked (repetition/loop detected)"
+                streak = run.loop_state.consecutive_blocks,
+                total_blocks = run.loop_state.total_blocks,
+                "Tool execution blocked (repetition/cycle detected)"
             );
-            serde_json::json!({ "error": warning_str })
+            let cycle_period = approval
+                .loop_cycle
+                .as_ref()
+                .map(|c| c.period)
+                .unwrap_or(1);
+            let repeated_steps = approval
+                .loop_cycle
+                .as_ref()
+                .map(|c| c.cycle_tools.clone())
+                .unwrap_or_else(|| vec![call.name.clone()]);
+            serde_json::json!({
+                "error": warning_str,
+                "stage": "steer",
+                "cycle_period": cycle_period,
+                "repeated_steps": repeated_steps,
+                "consecutive_stalls": run.loop_state.consecutive_blocks,
+                "required_action": "change_strategy_or_parameters"
+            })
         }
         ApprovalGateOutcome::Forbidden => {
+            let reason_str = approval.forbidden_reason.unwrap_or(
+                "Execution denied by host: This command is forbidden by security rules.",
+            );
             let reject_msg = format!(
-                "✕ *{}* - Rejected: Dangerous command is forbidden",
-                formatted_args
+                "✕ *{}* - Rejected: {}",
+                formatted_args, reason_str
             );
             super::tool_execution::send_progress_update(ctx.session_key, &reject_msg).await;
             let _ = (!silent).then(|| {
                 let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                 crate::tui_println!(
-                    "{}{}{}✕ {} - Rejected: Dangerous command is forbidden{}",
+                    "{}{}{}✕ {} - Rejected: {}{}",
                     AURA_SLATE,
                     leaf_prefix,
                     ERROR_RED,
                     formatted_args,
+                    reason_str,
                     COLOR_RESET
                 );
             });
             tracing::warn!(
                 session = %ctx.session_key,
                 tool = %call.name,
+                reason = reason_str,
                 "Tool execution forbidden by security guard"
             );
-            serde_json::json!({ "error": "Execution denied by host: This command is forbidden by security rules." })
+            serde_json::json!({ "error": reason_str })
         }
         ApprovalGateOutcome::UserDenied => {
-            let deny_msg = format!("✕ *{}* - Denied by user", formatted_args);
+            let error_msg = match approval.unattended_denied {
+                true => format!(
+                    "Execution denied by autonomous background policy: sensitive action '{}' requires an interactive session; pivot to a workspace-scoped or read-only approach.",
+                    call.name
+                ),
+                false => "Execution denied by user.".to_string(),
+            };
+            let deny_msg = format!("✕ *{}* - {}", formatted_args, error_msg);
             super::tool_execution::send_progress_update(ctx.session_key, &deny_msg).await;
             let _ = (!silent).then(|| {
                 let leaf_prefix = crate::agent::style::get_tree_prefix(true);
                 crate::tui_println!(
-                    "{}{}{}✕ {} - Denied by user{}",
+                    "{}{}{}✕ {} - {}{}",
                     AURA_SLATE,
                     leaf_prefix,
                     ERROR_RED,
                     formatted_args,
+                    error_msg,
                     COLOR_RESET
                 );
             });
             tracing::warn!(
                 session = %ctx.session_key,
                 tool = %call.name,
-                "Tool execution denied by user approval request"
+                unattended = approval.unattended_denied,
+                "Tool execution denied by approval gate"
             );
-            serde_json::json!({ "error": "Execution denied by user." })
+            serde_json::json!({ "error": error_msg })
         }
         ApprovalGateOutcome::Approved => match loop_ref.tools.get(&call.name) {
             None => {
@@ -621,6 +673,18 @@ async fn dispatch_tool_call(
             }
             Some(t) => {
                 let metadata = t.metadata();
+                let _ = metadata.spawns_process.then_some(());
+                match metadata.spawns_process {
+                    true => {
+                        crate::tools::resource_policy::wait_for_process_slot(
+                            config.agents.defaults.max_concurrent_process_tools,
+                            std::time::Duration::from_secs(30),
+                            turn_cancel,
+                        )
+                        .await;
+                    }
+                    false => {}
+                }
                 let runtime = crate::tools::resource_policy::RuntimeResourceSnapshot::current();
                 let policy_decision = crate::tools::resource_policy::ToolResourcePolicy::evaluate(
                     &metadata,
@@ -780,6 +844,75 @@ async fn emit_turn_halt_message(ctx: &mut TurnContext<'_>, icon: &str, msg: &str
     });
 }
 
+/// Perform a final tool-free LLM synthesis pass (`tools = &[]`) when a long-horizon
+/// turn reaches `max_iterations` or loop-escalation saturation so all completed work,
+/// findings, and next steps are delivered to the user instead of a bare warning stub.
+async fn synthesize_turn_checkpoint(
+    loop_ref: &AgentLoop,
+    ctx: &mut TurnContext<'_>,
+    settings: &GenerationSettings,
+    turn_cancel: &crate::tools::subagent::CancellationToken,
+    notice: &str,
+) {
+    match turn_cancel.is_cancelled() {
+        true => {
+            emit_turn_halt_message(ctx, "⚠️", notice).await;
+            return;
+        }
+        false => {}
+    }
+
+    let mut synthesis_messages = ctx.messages.clone();
+    synthesis_messages.push(Message {
+        role: "user".to_string(),
+        content: format!(
+            "[System Checkpoint: {notice}] Do NOT call any tools. Synthesize a concise, structured summary of: (1) what was completed and verified so far, (2) files/resources inspected or modified, and (3) any remaining steps or blockers."
+        ),
+        timestamp: Some(chrono::Utc::now().to_rfc3339()),
+        extra: serde_json::Map::new(),
+    });
+
+    let activity_msg = format!("{}▶ Synthesizing checkpoint summary{}", RED_ORANGE, COLOR_RESET);
+    let synthesized = loop_ref
+        .chat_with_fallback(
+            &mut ctx.active_provider,
+            &ctx.system_prompt,
+            &synthesis_messages,
+            &[],
+            settings,
+            &activity_msg,
+        )
+        .await
+        .ok()
+        .and_then(|resp| {
+            let (clean, _) = crate::providers::openai::split_think_blocks(
+                resp.content.as_deref().unwrap_or(""),
+            );
+            clean.map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+        });
+
+    match synthesized {
+        Some(summary) => {
+            let combined = format!("{notice}\n\n{summary}");
+            ctx.final_content = combined.clone();
+            ctx.streamed = false;
+            super::tool_execution::send_progress_update(ctx.session_key, notice).await;
+            let _ = (!crate::agent::style::spinner::is_silent()).then(|| {
+                crate::tui_println!("{}⚠️ {}{}", AURA_GOLD, notice, COLOR_RESET);
+            });
+            ctx.messages.push(Message {
+                role: "assistant".to_string(),
+                content: combined,
+                timestamp: Some(chrono::Utc::now().to_rfc3339()),
+                extra: serde_json::Map::new(),
+            });
+        }
+        None => {
+            emit_turn_halt_message(ctx, "⚠️", notice).await;
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn run_and_record_optional_auto_tool(
     tools: &crate::tools::ToolRegistry,
@@ -874,7 +1007,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     "⚠️ Reached tool iteration limit ({}). Summarizing work so far.",
                     run.max_iterations
                 );
-                emit_turn_halt_message(ctx, "⚠️", &msg).await;
+                synthesize_turn_checkpoint(loop_ref, ctx, &settings, &turn_cancel, &msg).await;
                 break;
             }
             false => {}
@@ -893,12 +1026,20 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             .layered_tool_routing
             .resolve_budgets(&config.agents.defaults.model);
         let (pending_tools, _) = loop_ref.tools.current_turn_scope();
-        let explicit_mount_set: std::collections::HashSet<String> =
+        let mut explicit_mount_set: std::collections::HashSet<String> =
             pending_tools.into_iter().collect();
+        let _ = (run.iterations > 0).then(|| {
+            explicit_mount_set.extend(
+                loop_ref
+                    .tools
+                    .explicitly_requested_for_prompt(&routing_prompt),
+            );
+        });
         let fresh_tools_openai = loop_ref
             .tools
             .to_openai_format_for_prompt_with_config(&routing_prompt, Some(&config));
-        let tools_openai = run.tool_window.resolve_iteration_tools(
+        let tools_openai = run.tool_window.resolve_iteration_tools_for_step(
+            run.iterations,
             fresh_tools_openai,
             &explicit_mount_set,
             routing_budgets.preserve_prefix_cache,
@@ -1140,12 +1281,17 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         let mut tool_results = Vec::new();
         let mut assistant_tool_calls_json = Vec::new();
         let mut loop_detection_messages = ctx.messages.clone();
+        let retrieve_original_available = loop_ref.tools.get("retrieve_original").is_some();
         let normalized_calls: Vec<crate::providers::ToolCallRequest> = resp
             .tool_calls
             .into_iter()
             .map(|mut call| {
                 call.name = loop_ref.tools.resolve_canonical_name(&call.name);
-                auto_adjust_tool_call_for_user_intent(call, ctx.user_content)
+                auto_adjust_tool_call_with_availability(
+                    call,
+                    ctx.user_content,
+                    retrieve_original_available,
+                )
             })
             .collect();
         let mut prefetched_outputs = prefetch_parallel_safe_batch(
@@ -1214,15 +1360,19 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             let tool_spinner_msg =
                 crate::agent::style::get_tree_spinner_msg(&call.name, &formatted_args);
             let direct_url = direct_research_url(&call.name, &call.arguments);
-            let duplicate_direct_url = direct_url
+            let direct_fetch_key = direct_research_fetch_key(&call.name, &call.arguments);
+            let duplicate_direct_url = direct_fetch_key
                 .as_ref()
-                .is_some_and(|url| run.completed_direct_research_urls.contains(url));
+                .is_some_and(|key| run.completed_direct_research_urls.contains(key));
+            let is_same_user_direct_url = direct_url.as_ref().is_some_and(|url| {
+                super::research_policy::extract_distinct_http_urls(ctx.user_content)
+                    .iter()
+                    .any(|u| u == url)
+            });
             let out_of_scope_direct_page_lookup = run.direct_page_only
                 && run.direct_page_fetched
                 && is_research_lookup_tool(&call.name)
-                && !direct_url
-                    .as_ref()
-                    .is_some_and(|url| run.completed_direct_research_urls.contains(url));
+                && !is_same_user_direct_url;
 
             let tool_msg = format!("▸ Running *{}*...", formatted_args);
             super::tool_execution::send_progress_update(ctx.session_key, &tool_msg).await;
@@ -1268,14 +1418,14 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 ctx.session_key,
                 &config.agents.defaults.security_mode,
                 silent,
-                &mut run.loop_blocked_count,
+                &mut run.loop_state,
             )
             .await;
             let _ = approval.should_halt.then(|| {
                 should_halt = true;
             });
 
-            let result_val = dispatch_tool_call(
+            let mut result_val = dispatch_tool_call(
                 loop_ref,
                 ctx,
                 &mut run,
@@ -1292,6 +1442,24 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 fresh_brief_blocks_lookup,
             )
             .await;
+
+            let is_repeat_error = (!approval.is_loop)
+                && approval.repeat_count >= 1
+                && (result_val.get("error").is_some()
+                    || result_val.get("status_code").is_some_and(|c| c != 0)
+                    || result_val.get("exit_code").is_some_and(|c| c != 0));
+            let _ = is_repeat_error.then(|| {
+                let _ = result_val.as_object_mut().map(|obj| {
+                    obj.insert(
+                        "z_guard_diagnostic".to_string(),
+                        serde_json::json!({
+                            "stage": "diagnostic_tag",
+                            "repeat_attempt": approval.repeat_count + 1,
+                            "required_action": "inspect_state_and_vary_parameters_before_retry"
+                        }),
+                    );
+                });
+            });
 
             let _ = crate::channels::websocket::ws_chat_id(ctx.session_key).map(|chat_id| {
                 let status = result_val
@@ -1340,10 +1508,10 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 run.turn_source_ledger
                     .record_tool_result(&call.name, &call.arguments, &result_val);
             });
-            let _ = direct_url
+            let _ = direct_fetch_key
                 .filter(|_| result_val.get("error").is_none())
-                .map(|url| {
-                    run.completed_direct_research_urls.insert(url);
+                .map(|key| {
+                    run.completed_direct_research_urls.insert(key);
                     run.direct_page_fetched = true;
                 });
 
@@ -1511,10 +1679,12 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         run.iterations += 1;
         match should_halt {
             true => {
-                emit_turn_halt_message(
+                synthesize_turn_checkpoint(
+                    loop_ref,
                     ctx,
-                    "⚠️",
-                    "⚠️ Halted execution: Too many repeating tool calls blocked by loop detection. Halting to save RAM and tokens.",
+                    &settings,
+                    &turn_cancel,
+                    "⚠️ Halted execution: Too many repeating tool calls blocked by loop detection. Summarizing progress so far.",
                 )
                 .await;
                 break;

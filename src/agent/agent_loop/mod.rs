@@ -6,8 +6,9 @@ use crate::tools::ToolRegistry;
 use anyhow::Result;
 use std::sync::Arc;
 
-const DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_SECS: u64 = 45;
-const MAX_PROVIDER_ATTEMPT_TIMEOUT_SECS: u64 = 120;
+const DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_SECS: u64 = 90;
+const DEFAULT_STREAM_CHUNK_IDLE_TIMEOUT_SECS: u64 = 60;
+const MAX_PROVIDER_ATTEMPT_TIMEOUT_SECS: u64 = 300;
 const DEFAULT_MAX_FALLBACK_ATTEMPTS: usize = 2;
 const HARD_MAX_FALLBACK_ATTEMPTS: usize = 8;
 
@@ -356,18 +357,30 @@ impl AgentLoop {
         }
     }
 
-    pub(crate) fn provider_attempt_timeout_secs(&self) -> u64 {
+    pub(crate) fn provider_prefill_timeout_secs(&self, estimated_tokens: usize) -> u64 {
+        let scaled_base = DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_SECS
+            .saturating_add((estimated_tokens / 2_000) as u64);
         let configured = std::env::var("OPENZ_PROVIDER_ATTEMPT_TIMEOUT_SECS")
             .ok()
             .and_then(|raw| raw.parse::<u64>().ok())
-            .unwrap_or(DEFAULT_PROVIDER_ATTEMPT_TIMEOUT_SECS);
+            .unwrap_or(scaled_base);
+        configured
+            .min(self.config.agents.defaults.tool_timeout_secs.max(1))
+            .clamp(1, MAX_PROVIDER_ATTEMPT_TIMEOUT_SECS)
+    }
+
+    pub(crate) fn provider_stream_idle_timeout_secs(&self) -> u64 {
+        let configured = std::env::var("OPENZ_PROVIDER_ATTEMPT_TIMEOUT_SECS")
+            .ok()
+            .and_then(|raw| raw.parse::<u64>().ok())
+            .unwrap_or(DEFAULT_STREAM_CHUNK_IDLE_TIMEOUT_SECS);
         configured
             .min(self.config.agents.defaults.tool_timeout_secs.max(1))
             .clamp(1, MAX_PROVIDER_ATTEMPT_TIMEOUT_SECS)
     }
 
     pub(crate) fn provider_attempt_timeout_duration(&self) -> std::time::Duration {
-        std::time::Duration::from_secs(self.provider_attempt_timeout_secs())
+        std::time::Duration::from_secs(self.provider_stream_idle_timeout_secs())
     }
 
     fn cleanup_old_files() {
@@ -422,7 +435,12 @@ impl AgentLoop {
                 || current_turn_cancellation_context()
                     .is_some_and(|context| context.token.is_cancelled())
         };
-        let provider_timeout_secs = self.provider_attempt_timeout_secs();
+        let estimated_tokens = crate::providers::DynamicContextRegistry::estimate_request_tokens(
+            messages,
+            system_prompt,
+            tools,
+        );
+        let provider_timeout_secs = self.provider_prefill_timeout_secs(estimated_tokens);
 
         let chat_fut = active_provider.chat(system_prompt, messages, tools, settings);
         let mut chat_result = cancel_aware_provider_call(
@@ -554,7 +572,12 @@ impl AgentLoop {
                 || current_turn_cancellation_context()
                     .is_some_and(|context| context.token.is_cancelled())
         };
-        let provider_timeout_secs = self.provider_attempt_timeout_secs();
+        let estimated_tokens = crate::providers::DynamicContextRegistry::estimate_request_tokens(
+            messages,
+            system_prompt,
+            tools,
+        );
+        let provider_timeout_secs = self.provider_prefill_timeout_secs(estimated_tokens);
 
         let chat_fut = active_provider.chat_stream(system_prompt, messages, tools, settings);
         let mut chat_result = cancel_aware_provider_call(

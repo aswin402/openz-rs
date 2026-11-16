@@ -568,6 +568,7 @@ impl SecurityGuard {
         matches!(
             canonical.as_str(),
             "exec_command"
+                | "retrieve_original"
                 | "curate_skill"
                 | "manage_config"
                 | "manage_mcp"
@@ -578,6 +579,39 @@ impl SecurityGuard {
                 | "git_provider"
                 | "onpkg"
         )
+    }
+
+    /// True when `session_key` belongs to an unattended background/cron/daemon/subagent
+    /// execution context with no interactive human terminal or WebUI socket attached.
+    pub fn is_unattended_session(session_key: &str) -> bool {
+        let actual = crate::agent::style::spinner::get_current_session_key()
+            .unwrap_or_else(|| session_key.to_string());
+        let has_interactive_channel = actual.starts_with("telegram:")
+            || actual.starts_with("ws:")
+            || actual.starts_with("cli:")
+            || crate::agent::style::spinner::is_websocket();
+        !has_interactive_channel && crate::cli::headless::current_headless_policy().is_none()
+    }
+
+    /// Deterministic session-aware boundary check (combines host-level forbidden commands
+    /// with Hermes-style cron anti-recursion so 24/7 scheduled runs cannot fork-bomb cron).
+    pub fn forbidden_reason_for_session(
+        session_key: &str,
+        tool_name: &str,
+        arguments: &Value,
+    ) -> Option<&'static str> {
+        let canonical = crate::tools::canonical_tool_name(tool_name);
+        let cron_recursion = session_key.starts_with("cron:")
+            && matches!(canonical.as_str(), "schedule_job" | "run_job_now");
+        match (Self::is_forbidden(&canonical, arguments), cron_recursion) {
+            (true, _) => {
+                Some("Execution denied by host: This command is forbidden by security rules.")
+            }
+            (false, true) => Some(
+                "Cron recursion guard: scheduled cron sessions cannot spawn or trigger new cron jobs.",
+            ),
+            (false, false) => None,
+        }
     }
 
     /// Check whether a tool call is sensitive under the strictest (`high`) detector.
@@ -807,6 +841,39 @@ impl SecurityGuard {
         top_unsafe || nested_unsafe
     }
 
+    fn is_self_owned_tool_output_retrieval(tool_name: &str, arguments: &Value) -> bool {
+        (tool_name == "retrieve_original")
+            && arguments
+                .get("ccr_id")
+                .and_then(Value::as_str)
+                .or_else(|| Self::tool_path_arg(arguments))
+                .map(|raw| {
+                    let trimmed = raw.trim();
+                    let file_target = trimmed.strip_prefix("file://").or_else(|| {
+                        (trimmed.starts_with('/')
+                            || trimmed.starts_with('~')
+                            || trimmed.contains(".."))
+                        .then_some(trimmed)
+                    });
+                    match file_target {
+                        None => !trimmed.is_empty(),
+                        Some(path_str) => {
+                            let resolved = crate::config::loader::resolve_path(path_str);
+                            let canonical =
+                                crate::config::path_policy::canonicalize_with_missing_leaf(
+                                    &resolved,
+                                );
+                            let tool_outputs_root =
+                                crate::config::path_policy::canonicalize_with_missing_leaf(
+                                    &crate::config::loader::runtime_data_dir().join("tool_outputs"),
+                                );
+                            canonical.starts_with(&tool_outputs_root)
+                        }
+                    }
+                })
+                .unwrap_or(false)
+    }
+
     fn tool_has_unsafe_target_path(
         tool_name: &str,
         arguments: &Value,
@@ -859,8 +926,9 @@ impl SecurityGuard {
                             .iter()
                             .any(|key| arguments.get(*key).is_some())
                         || crate::core::secrets::contains_secret_material(arguments));
-                let is_read_only_action =
-                    !has_cred_action && Self::is_read_only_tool_action(tool_name, &action);
+                let is_read_only_action = !has_cred_action
+                    && (Self::is_read_only_tool_action(tool_name, &action)
+                        || Self::is_self_owned_tool_output_retrieval(tool_name, arguments));
 
                 let low_tool_sensitive = unsafe_path
                     || has_cred_action

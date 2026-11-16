@@ -345,3 +345,70 @@ async fn test_tool_retry_on_transient_error() -> anyhow::Result<()> {
     let _ = std::fs::remove_dir_all(&temp_dir);
     res
 }
+
+#[tokio::test]
+async fn test_max_iterations_synthesizes_checkpoint_summary() -> anyhow::Result<()> {
+    let temp_dir =
+        std::env::temp_dir().join(format!("openz_checkpoint_test_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir)?;
+    std::fs::write(temp_dir.join("config.json"), "{}")?;
+    let sessions_dir = temp_dir.join("sessions");
+    std::fs::create_dir_all(&sessions_dir)?;
+
+    let res = crate::config::loader::CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            crate::config::loader::ACTIVE_WORKSPACE
+                .scope(temp_dir.clone(), async {
+                    let mock_responses = vec![
+                        MockResponse {
+                            content: None,
+                            tool_calls: vec![ToolCallRequest {
+                                id: "call_1".to_string(),
+                                name: "calculator".to_string(),
+                                arguments: json!({ "expression": "2 + 2" }),
+                            }],
+                            finish_reason: "tool_calls".to_string(),
+                        },
+                        MockResponse {
+                            content: Some(
+                                "Completed calculation: 2 + 2 = 4. No blockers remain.".to_string(),
+                            ),
+                            tool_calls: Vec::new(),
+                            finish_reason: "stop".to_string(),
+                        },
+                    ];
+
+                    let provider = Arc::new(TestMockProvider::new(mock_responses));
+                    let session_manager = SessionManager::new(sessions_dir);
+
+                    let mut config = Config::default();
+                    config.agents.defaults.model = "mock-model".to_string();
+                    config.agents.defaults.provider = "mock-provider".to_string();
+                    config.agents.defaults.max_tool_iterations = 1;
+
+                    let registry = ToolRegistry::new_with_context(
+                        config.clone(),
+                        provider.clone(),
+                        session_manager.clone(),
+                    );
+                    registry.register(Arc::new(CalculatorTool));
+
+                    let agent = AgentLoop::new(config, provider.clone(), registry, session_manager);
+                    let run_res = agent.run("Calculate 2 + 2", "session-ckpt").await?;
+
+                    assert!(run_res.content.contains("Reached tool iteration limit (1)"));
+                    assert!(
+                        run_res
+                            .content
+                            .contains("Completed calculation: 2 + 2 = 4. No blockers remain.")
+                    );
+                    assert_eq!(provider.call_count.load(Ordering::SeqCst), 2);
+                    Ok::<(), anyhow::Error>(())
+                })
+                .await
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+    res
+}

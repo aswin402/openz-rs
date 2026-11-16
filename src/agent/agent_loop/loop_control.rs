@@ -38,8 +38,39 @@ pub(crate) fn tool_arg_fingerprint(args: &serde_json::Value) -> Option<String> {
 pub(crate) use crate::tools::metadata::tool_repetition_block_threshold;
 use crate::tools::metadata::{
     exact_arg_repeat_counts_without_result_signature, is_progress_sensitive_repeat,
-    is_state_changing_tool,
+    is_state_changing_tool_call,
 };
+use std::collections::BTreeMap;
+
+/// Active sliding window of recent tool invocations inspected for loop/cycle detection.
+/// Prevents legitimate file re-reads 30+ steps later in a 200-step long-horizon turn
+/// from being falsely flagged as infinite loops.
+pub(crate) const TRAJECTORY_WINDOW_CALLS: usize = 24;
+const MAX_PERIODIC_CYCLE_LEN: usize = 6;
+const MIN_PERIODIC_REPETITIONS: usize = 2;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TrajectoryCycle {
+    pub period: usize,
+    pub repetitions: usize,
+    pub cycle_tools: Vec<String>,
+}
+
+impl TrajectoryCycle {
+    pub(crate) fn format_steering_error(&self, candidate_tool: &str) -> String {
+        let trace = self.cycle_tools.join(" -> ");
+        format!(
+            "Loop detected: Periodic {}-step cycle [{}] repeated {} times with identical outcomes when calling '{}'. Execution was skipped so you can pivot: change your strategy, vary parameters, inspect new context, or synthesize findings.",
+            self.period, trace, self.repetitions, candidate_tool
+        )
+    }
+}
+
+fn fnv1a_hash64(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf29ce484222325u64, |acc, &b| {
+        (acc ^ u64::from(b)).wrapping_mul(0x100000001b3)
+    })
+}
 
 fn tool_call_id(call: &serde_json::Value) -> Option<&str> {
     call.get("id")
@@ -54,7 +85,40 @@ fn object_arg_value<'a>(
     keys.iter().find_map(|key| map.get(*key))
 }
 
+fn canonicalize_json_structure(value: &serde_json::Value) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(s) => serde_json::Value::String(s.trim().to_string()),
+        serde_json::Value::Array(items) => {
+            serde_json::Value::Array(items.iter().map(canonicalize_json_structure).collect())
+        }
+        serde_json::Value::Object(map) => {
+            let sorted: BTreeMap<String, serde_json::Value> = map
+                .iter()
+                .filter(|(_, v)| !v.is_null())
+                .map(|(k, v)| (crate::tools::to_snake_case(k), canonicalize_json_structure(v)))
+                .collect();
+            let mut out = serde_json::Map::new();
+            for (k, v) in sorted {
+                out.insert(k, v);
+            }
+            serde_json::Value::Object(out)
+        }
+        other => other.clone(),
+    }
+}
+
+fn parse_and_canonicalize_args(args: &serde_json::Value) -> serde_json::Value {
+    let parsed = match args.as_str() {
+        Some(raw) => serde_json::from_str::<serde_json::Value>(raw)
+            .unwrap_or_else(|_| serde_json::Value::String(raw.trim().to_string())),
+        None => args.clone(),
+    };
+    let normalized = crate::tools::normalize_tool_args(&parsed);
+    canonicalize_json_structure(&normalized)
+}
+
 fn canonical_tool_args_key(tool_name: &str, args: &serde_json::Value) -> Option<String> {
+    let canonical_name = crate::tools::canonical_tool_name(tool_name);
     let parsed;
     let args = match args.as_str() {
         Some(raw) => {
@@ -65,7 +129,7 @@ fn canonical_tool_args_key(tool_name: &str, args: &serde_json::Value) -> Option<
     };
     let map = args.as_object()?;
 
-    match tool_name {
+    match canonical_name.as_str() {
         "grep_search" => {
             let query = object_arg_value(map, QUERY_KEYS)
                 .and_then(|v| v.as_str())?
@@ -74,11 +138,11 @@ fn canonical_tool_args_key(tool_name: &str, args: &serde_json::Value) -> Option<
                 .and_then(|v| v.as_str())
                 .unwrap_or(".")
                 .trim();
-            let is_regex = object_arg_value(map, &["is_regex", "isRegex", "regex"])
+            let use_pattern = object_arg_value(map, &["is_regex", "isRegex", "regex"])
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             Some(format!(
-                "grep_search|query={query}|dir={dir}|regex={is_regex}"
+                "grep_search|query={query}|dir={dir}|pattern={use_pattern}"
             ))
         }
         "read_file" | "view_file" => {
@@ -89,18 +153,20 @@ fn canonical_tool_args_key(tool_name: &str, args: &serde_json::Value) -> Option<
                 object_arg_value(map, &["start_line", "startLine"]).and_then(|v| v.as_u64());
             let end_line = object_arg_value(map, &["end_line", "endLine"]).and_then(|v| v.as_u64());
             Some(format!(
-                "{tool_name}|path={path}|start={start_line:?}|end={end_line:?}"
+                "read_file|path={path}|start={start_line:?}|end={end_line:?}"
             ))
         }
         _ => None,
     }
 }
 
-fn normalized_json_arg(args: &serde_json::Value) -> Option<serde_json::Value> {
-    match args.as_str() {
-        Some(raw) => serde_json::from_str::<serde_json::Value>(raw).ok(),
-        None => Some(args.clone()),
-    }
+fn canonical_call_fingerprint_hash(tool_name: &str, args: &serde_json::Value) -> u64 {
+    let canonical_name = crate::tools::canonical_tool_name(tool_name);
+    let key = canonical_tool_args_key(&canonical_name, args).unwrap_or_else(|| {
+        let structural = parse_and_canonicalize_args(args);
+        format!("{canonical_name}|{structural}")
+    });
+    fnv1a_hash64(key.as_bytes())
 }
 
 fn tool_args_match(
@@ -113,11 +179,29 @@ fn tool_args_match(
         canonical_tool_args_key(tool_name, previous),
     ) {
         (Some(current_key), Some(previous_key)) => current_key == previous_key,
-        _ => match (normalized_json_arg(current), normalized_json_arg(previous)) {
-            (Some(current), Some(previous)) => current == previous,
-            _ => previous == current,
-        },
+        _ => parse_and_canonicalize_args(current) == parse_and_canonicalize_args(previous),
     }
+}
+
+fn find_tool_result_message<'a>(
+    messages: &'a [Message],
+    call_id: Option<&str>,
+    tool_name: &str,
+) -> Option<&'a Message> {
+    let canonical_target = crate::tools::canonical_tool_name(tool_name);
+    messages.iter().find(|msg| {
+        msg.role == "tool" && {
+            let same_call = call_id.is_some_and(|id| {
+                msg.extra.get("tool_call_id").and_then(|v| v.as_str()) == Some(id)
+            });
+            let same_name = msg
+                .extra
+                .get("name")
+                .and_then(|v| v.as_str())
+                .is_some_and(|n| crate::tools::canonical_tool_name(n) == canonical_target);
+            same_call || (call_id.is_none() && same_name)
+        }
+    })
 }
 
 fn tool_result_signature(
@@ -125,16 +209,34 @@ fn tool_result_signature(
     call_id: Option<&str>,
     tool_name: &str,
 ) -> Option<String> {
-    messages.iter().find_map(|msg| {
-        (msg.role == "tool").then_some(())?;
-        let same_call = call_id
-            .is_some_and(|id| msg.extra.get("tool_call_id").and_then(|v| v.as_str()) == Some(id));
-        let same_name = msg.extra.get("name").and_then(|v| v.as_str()) == Some(tool_name);
-        (same_call || (call_id.is_none() && same_name)).then(|| {
-            let mut hasher = Sha256::new();
-            hasher.update(msg.content.as_bytes());
-            format!("sha256:{:x}", hasher.finalize())
-        })
+    find_tool_result_message(messages, call_id, tool_name).map(|msg| {
+        let mut hasher = Sha256::new();
+        hasher.update(msg.content.as_bytes());
+        format!("sha256:{:x}", hasher.finalize())
+    })
+}
+
+fn tool_result_is_error(
+    messages: &[Message],
+    call_id: Option<&str>,
+    tool_name: &str,
+) -> bool {
+    find_tool_result_message(messages, call_id, tool_name).is_some_and(|msg| {
+        let trimmed = msg.content.trim();
+        match serde_json::from_str::<serde_json::Value>(trimmed) {
+            Ok(serde_json::Value::Object(map)) => {
+                map.get("error").is_some_and(|v| !v.is_null())
+                    || map
+                        .get("status_code")
+                        .and_then(|v| v.as_i64())
+                        .is_some_and(|code| code != 0)
+                    || map
+                        .get("exit_code")
+                        .and_then(|v| v.as_i64())
+                        .is_some_and(|code| code != 0)
+            }
+            _ => trimmed.starts_with("Error:"),
+        }
     })
 }
 
@@ -151,37 +253,18 @@ fn extract_call_args(tc: &serde_json::Value) -> Option<&serde_json::Value> {
         .or_else(|| tc.get("function").and_then(|f| f.get("arguments")))
 }
 
-pub(crate) fn count_previous_tool_calls(
-    messages: &[Message],
-    tool_name: &str,
-    tool_args: &serde_json::Value,
-) -> usize {
-    let last_user_idx = messages.iter().rposition(|m| m.role == "user").unwrap_or(0);
-    let turn_messages = &messages[last_user_idx..];
-    let progress_sensitive_repeat = is_progress_sensitive_repeat(tool_name, tool_args);
-    let exact_arg_repeat = exact_arg_repeat_counts_without_result_signature(tool_name);
-    let mut state_epoch = 0usize;
-    let mut call_epochs = Vec::new();
+struct RecordedCallRef<'a> {
+    msg_idx: usize,
+    tc: &'a serde_json::Value,
+    canonical_name: String,
+    args_val: &'a serde_json::Value,
+    call_hash: u64,
+    mutated_ok: bool,
+}
 
-    for msg in turn_messages.iter().filter(|m| m.role == "assistant") {
-        let tool_calls = match msg.extra.get("tool_calls").and_then(|v| v.as_array()) {
-            Some(tc) => tc,
-            None => continue,
-        };
-        for tc in tool_calls {
-            call_epochs.push(state_epoch);
-            let _ = extract_call_name(tc)
-                .filter(|name_str| is_state_changing_tool(name_str))
-                .map(|_| {
-                    state_epoch += 1;
-                });
-        }
-    }
-    let current_state_epoch = state_epoch;
+fn collect_turn_call_window(turn_messages: &[Message]) -> Vec<RecordedCallRef<'_>> {
+    let mut all_calls = Vec::new();
 
-    let mut seen_signatures = std::collections::HashSet::new();
-    let mut count = 0;
-    let mut call_index = 0usize;
     for (idx, msg) in turn_messages
         .iter()
         .enumerate()
@@ -192,51 +275,161 @@ pub(crate) fn count_previous_tool_calls(
             None => continue,
         };
         for tc in tool_calls {
-            let call_epoch = call_epochs.get(call_index).copied().unwrap_or(0);
-            call_index += 1;
             let (name_str, args_val) = match (extract_call_name(tc), extract_call_args(tc)) {
                 (Some(n), Some(a)) => (n, a),
                 _ => continue,
             };
-            match name_str == tool_name {
-                false => continue,
-                true => {
-                    let current_fingerprint = tool_arg_fingerprint(tool_args);
-                    let previous_fingerprint =
-                        tc.get("_openz_arg_fingerprint").and_then(|v| v.as_str());
+            let canonical_name = crate::tools::canonical_tool_name(name_str);
+            let parsed_args = parse_and_canonicalize_args(args_val);
+            let call_hash = canonical_call_fingerprint_hash(&canonical_name, args_val);
+            let mutated_ok = is_state_changing_tool_call(&canonical_name, &parsed_args)
+                && !tool_result_is_error(
+                    &turn_messages[idx + 1..],
+                    tool_call_id(tc),
+                    &canonical_name,
+                );
+            all_calls.push(RecordedCallRef {
+                msg_idx: idx,
+                tc,
+                canonical_name,
+                args_val,
+                call_hash,
+                mutated_ok,
+            });
+        }
+    }
 
-                    let match_args = match (
-                        current_fingerprint.as_deref(),
-                        previous_fingerprint.is_some() && scene_file_arg_path(tool_args).is_some(),
-                    ) {
-                        (Some(current), _) => previous_fingerprint == Some(current),
-                        (None, true) => false,
-                        (None, false) => tool_args_match(tool_name, tool_args, args_val),
-                    };
+    let window_start = all_calls.len().saturating_sub(TRAJECTORY_WINDOW_CALLS);
+    all_calls.into_iter().skip(window_start).collect()
+}
 
-                    match match_args {
-                        false => {}
-                        true => match exact_arg_repeat && call_epoch == current_state_epoch {
-                            true => {
+fn observation_hash_for_cycle(content: &str) -> u64 {
+    match serde_json::from_str::<serde_json::Value>(content) {
+        Ok(mut val) => {
+            let _ = val.as_object_mut().map(|obj| obj.remove("z_guard_diagnostic"));
+            let canonical = canonicalize_json_structure(&val);
+            fnv1a_hash64(canonical.to_string().as_bytes())
+        }
+        Err(_) => fnv1a_hash64(content.as_bytes()),
+    }
+}
+
+/// Generalized suffix-periodicity detector over `(call_hash, obs_hash)` pairs.
+/// Detects multi-step alternating/ping-pong loops of period `p` in `2..=6` (e.g.,
+/// `A -> B -> A -> B -> A` or `A -> B -> C -> A -> B -> C -> A`) when observations
+/// repeat identically across cycles without forward progress.
+pub(crate) fn detect_trajectory_cycle(
+    messages: &[Message],
+    tool_name: &str,
+    tool_args: &serde_json::Value,
+) -> Option<TrajectoryCycle> {
+    let last_user_idx = messages.iter().rposition(|m| m.role == "user").unwrap_or(0);
+    let turn_messages = &messages[last_user_idx..];
+    let window_calls = collect_turn_call_window(turn_messages);
+
+    let atoms: Vec<(u64, u64, String)> = window_calls
+        .iter()
+        .map(|entry| {
+            let obs_h = find_tool_result_message(
+                &turn_messages[entry.msg_idx + 1..],
+                tool_call_id(entry.tc),
+                &entry.canonical_name,
+            )
+            .map(|msg| observation_hash_for_cycle(&msg.content))
+            .unwrap_or(0);
+            (entry.call_hash, obs_h, entry.canonical_name.clone())
+        })
+        .collect();
+
+    let n = atoms.len();
+    let candidate_canonical = crate::tools::canonical_tool_name(tool_name);
+    let candidate_hash = canonical_call_fingerprint_hash(&candidate_canonical, tool_args);
+
+    (2..=MAX_PERIODIC_CYCLE_LEN).find_map(|period| {
+        (n >= MIN_PERIODIC_REPETITIONS * period).then_some(())?;
+        let cycle_slice = &atoms[n - period..n];
+        (cycle_slice[0].0 == candidate_hash).then_some(())?;
+        let has_distinct_step = cycle_slice.iter().any(|(ch, _, _)| *ch != candidate_hash);
+        has_distinct_step.then_some(())?;
+
+        let mut reps = 1usize;
+        while n >= (reps + 1) * period {
+            let prior_slice = &atoms[n - (reps + 1) * period..n - reps * period];
+            let matches_cycle = prior_slice
+                .iter()
+                .zip(cycle_slice.iter())
+                .all(|((c1, o1, _), (c2, o2, _))| c1 == c2 && o1 == o2);
+            match matches_cycle {
+                true => reps += 1,
+                false => break,
+            }
+        }
+
+        (reps >= MIN_PERIODIC_REPETITIONS).then(|| TrajectoryCycle {
+            period,
+            repetitions: reps,
+            cycle_tools: cycle_slice.iter().map(|(_, _, name)| name.clone()).collect(),
+        })
+    })
+}
+
+pub(crate) fn count_previous_tool_calls(
+    messages: &[Message],
+    tool_name: &str,
+    tool_args: &serde_json::Value,
+) -> usize {
+    let last_user_idx = messages.iter().rposition(|m| m.role == "user").unwrap_or(0);
+    let turn_messages = &messages[last_user_idx..];
+    let target_canonical = crate::tools::canonical_tool_name(tool_name);
+    let progress_sensitive_repeat = is_progress_sensitive_repeat(&target_canonical, tool_args);
+    let exact_arg_repeat = exact_arg_repeat_counts_without_result_signature(&target_canonical);
+    let window_calls = collect_turn_call_window(turn_messages);
+
+    let mut seen_signatures = std::collections::HashSet::new();
+    let mut count = 0;
+    for (pos, entry) in window_calls.iter().enumerate() {
+        let intervening_distinct_mutation = window_calls[pos + 1..]
+            .iter()
+            .any(|later| later.mutated_ok && later.call_hash != entry.call_hash);
+
+        match !intervening_distinct_mutation && entry.canonical_name == target_canonical {
+            false => continue,
+            true => {
+                let current_fingerprint = tool_arg_fingerprint(tool_args);
+                let previous_fingerprint =
+                    entry.tc.get("_openz_arg_fingerprint").and_then(|v| v.as_str());
+
+                let match_args = match (
+                    current_fingerprint.as_deref(),
+                    previous_fingerprint.is_some() && scene_file_arg_path(tool_args).is_some(),
+                ) {
+                    (Some(current), _) => previous_fingerprint == Some(current),
+                    (None, true) => false,
+                    (None, false) => tool_args_match(&target_canonical, tool_args, entry.args_val),
+                };
+
+                match match_args {
+                    false => {}
+                    true => match exact_arg_repeat {
+                        true => {
+                            count += 1;
+                        }
+                        false => {
+                            let is_new_progress_sig = progress_sensitive_repeat && {
+                                let signature = tool_result_signature(
+                                    &turn_messages[entry.msg_idx + 1..],
+                                    tool_call_id(entry.tc),
+                                    &entry.canonical_name,
+                                );
+                                signature
+                                    .as_ref()
+                                    .is_some_and(|sig| seen_signatures.insert(sig.clone()))
+                            };
+                            let _ = (!is_new_progress_sig).then(|| {
                                 count += 1;
-                            }
-                            false => {
-                                let is_new_progress_sig = progress_sensitive_repeat && {
-                                    let signature = tool_result_signature(
-                                        &turn_messages[idx + 1..],
-                                        tool_call_id(tc),
-                                        tool_name,
-                                    );
-                                    signature
-                                        .as_ref()
-                                        .is_some_and(|sig| seen_signatures.insert(sig.clone()))
-                                };
-                                let _ = (!is_new_progress_sig).then(|| {
-                                    count += 1;
-                                });
-                            }
-                        },
-                    }
+                            });
+                        }
+                    },
                 }
             }
         }

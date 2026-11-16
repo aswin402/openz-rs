@@ -41,6 +41,12 @@ const READ_ONLY_TOOLS: &[&str] = &[
     "crawl_website",
     "browser",
     "recall_memory",
+    "search_research",
+    "retrieve_original",
+    "search_cache",
+    "scope_context",
+    "tool_catalog",
+    "request_tool_scope",
 ];
 
 #[cfg(test)]

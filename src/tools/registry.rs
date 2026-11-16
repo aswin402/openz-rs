@@ -402,6 +402,14 @@ impl ToolRegistry {
             .unwrap_or_default()
     }
 
+    pub fn explicitly_requested_for_prompt(&self, prompt: &str) -> HashSet<String> {
+        let static_tools = self.read_tools();
+        routing::explicitly_requested_tool_names(prompt, &static_tools)
+            .into_iter()
+            .map(|name| name.to_ascii_lowercase())
+            .collect()
+    }
+
     pub(crate) fn read_tools(&self) -> std::sync::RwLockReadGuard<'_, HashMap<String, Arc<dyn Tool>>> {
         self.static_tools.read().unwrap_or_else(|p| {
             tracing::warn!("static_tools read lock poisoned; recovering");

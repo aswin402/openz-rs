@@ -187,7 +187,7 @@ impl<'a> ToolExecutionPipeline<'a> {
         match self.params.prefetched_output.take() {
             Some(prefetched) => self.render_success(prefetched).await,
             None => {
-                let _process_guard = match self.acquire_process_guard() {
+                let _process_guard = match self.acquire_process_guard().await {
                     Ok(guard) => guard,
                     Err(reason) => return self.render_process_policy_block(&reason).await,
                 };
@@ -221,18 +221,21 @@ impl<'a> ToolExecutionPipeline<'a> {
         }
     }
 
-    fn acquire_process_guard(
+    async fn acquire_process_guard(
         &self,
     ) -> Result<Option<crate::tools::resource_policy::ProcessToolGuard>, String> {
         match self.params.metadata.spawns_process {
             false => Ok(None),
-            true => crate::tools::resource_policy::try_acquire_process_tool(
+            true => crate::tools::resource_policy::acquire_process_tool_async(
                 self.params
                     .config
                     .agents
                     .defaults
                     .max_concurrent_process_tools,
+                std::time::Duration::from_secs(30),
+                self.params.turn_cancel,
             )
+            .await
             .map(Some),
         }
     }
@@ -252,16 +255,19 @@ impl<'a> ToolExecutionPipeline<'a> {
         let normalized = crate::tools::normalize_tool_args(&self.params.call.arguments);
         let skip_gate =
             is_delegating_or_batch_tool(&self.params.call.name, self.params.metadata);
-        let is_read_only = self.params.metadata.is_read_only()
-            && !crate::tools::metadata::is_state_changing_tool(&self.params.call.name);
+        let requires_exclusive_gate = self.params.metadata.writes_disk
+            || crate::tools::metadata::is_state_changing_tool_call(
+                &self.params.call.name,
+                &normalized,
+            );
         let gated_fut = async {
-            match (skip_gate, is_read_only) {
+            match (skip_gate, requires_exclusive_gate) {
                 (true, _) => self.params.tool.call(&normalized).await,
-                (false, true) => {
+                (false, false) => {
                     let _read_guard = leaf_tool_concurrency_gate().read().await;
                     self.params.tool.call(&normalized).await
                 }
-                (false, false) => {
+                (false, true) => {
                     let _write_guard = leaf_tool_concurrency_gate().write().await;
                     self.params.tool.call(&normalized).await
                 }

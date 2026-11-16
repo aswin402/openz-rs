@@ -3,6 +3,11 @@ use crate::tools::ToolMetadata;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 static ACTIVE_PROCESS_TOOLS: AtomicUsize = AtomicUsize::new(0);
+static PROCESS_SLOT_NOTIFY: std::sync::OnceLock<tokio::sync::Notify> = std::sync::OnceLock::new();
+
+fn process_slot_notify() -> &'static tokio::sync::Notify {
+    PROCESS_SLOT_NOTIFY.get_or_init(tokio::sync::Notify::new)
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RuntimeResourceSnapshot {
@@ -42,6 +47,7 @@ pub struct ProcessToolGuard;
 impl Drop for ProcessToolGuard {
     fn drop(&mut self) {
         ACTIVE_PROCESS_TOOLS.fetch_sub(1, Ordering::SeqCst);
+        process_slot_notify().notify_waiters();
     }
 }
 
@@ -67,6 +73,74 @@ pub fn try_acquire_process_tool(max_concurrent: usize) -> Result<ProcessToolGuar
         {
             true => return Ok(ProcessToolGuard),
             false => {}
+        }
+    }
+}
+
+/// Wait with async backpressure for a process-tool slot to free up before evaluating
+/// or acquiring a process-spawning tool, preventing overlapping 24/7 cron jobs,
+/// subagents, and interactive builds from immediately failing with `(3/3)`.
+pub async fn wait_for_process_slot(
+    max_concurrent: usize,
+    wait_timeout: std::time::Duration,
+    cancel: &crate::tools::subagent::CancellationToken,
+) {
+    let deadline = tokio::time::Instant::now() + wait_timeout;
+    loop {
+        let notified = process_slot_notify().notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+
+        match active_process_tools() < max_concurrent || cancel.is_cancelled() {
+            true => return,
+            false => {}
+        }
+        let now = tokio::time::Instant::now();
+        match now >= deadline {
+            true => return,
+            false => {
+                let remaining = deadline.duration_since(now);
+                tokio::select! {
+                    biased;
+                    _ = cancel.wait_for_cancellation() => return,
+                    _ = tokio::time::timeout(remaining, notified) => {}
+                }
+            }
+        }
+    }
+}
+
+/// Acquire a process-tool slot with bounded async backpressure before failing closed.
+pub async fn acquire_process_tool_async(
+    max_concurrent: usize,
+    wait_timeout: std::time::Duration,
+    cancel: &crate::tools::subagent::CancellationToken,
+) -> Result<ProcessToolGuard, String> {
+    let deadline = tokio::time::Instant::now() + wait_timeout;
+    loop {
+        let notified = process_slot_notify().notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+
+        match try_acquire_process_tool(max_concurrent) {
+            Ok(guard) => return Ok(guard),
+            Err(err) => {
+                let now = tokio::time::Instant::now();
+                match cancel.is_cancelled() || now >= deadline {
+                    true => return Err(err),
+                    false => {
+                        let remaining = deadline.duration_since(now);
+                        tokio::select! {
+                            biased;
+                            _ = cancel.wait_for_cancellation() => return Err("Cancelled by user".to_string()),
+                            res = tokio::time::timeout(remaining, notified) => match res.is_err() {
+                                true => return try_acquire_process_tool(max_concurrent),
+                                false => {}
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

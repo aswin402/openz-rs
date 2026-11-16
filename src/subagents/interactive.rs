@@ -212,87 +212,83 @@ async fn create_menu(config: &Config) -> Result<()> {
     ];
     let active_mdl = config.agents.defaults.model.clone();
 
-    loop {
-        let choice_idx = match crate::agent::style::select_menu_custom(
-            "How would you like to create the subagent?",
-            &creation_types,
-            &active_mdl,
-            Some("Create Subagent"),
-            true,
-        ) {
-            Ok(Some(idx)) => idx,
-            _ => break,
-        };
+    let choice_idx = match crate::agent::style::select_menu_custom(
+        "How would you like to create the subagent?",
+        &creation_types,
+        &active_mdl,
+        Some("Create Subagent"),
+        true,
+    ) {
+        Ok(Some(idx)) => idx,
+        _ => return Ok(()),
+    };
 
-        match choice_idx {
-            0 => {
-                let name = Text::new("Enter Subagent Name (snake_case):").prompt()?;
-                match name.trim().is_empty() {
-                    true => return Err(anyhow!("Name cannot be empty.")),
-                    false => {}
-                }
-
-                let description = Text::new("Enter Description:").prompt()?;
-                let system_prompt = Text::new("Enter System Prompt:").prompt()?;
-                let model = prompt_choose_model(
-                    "Choose Primary Model (Enter/Esc for default):",
-                    &config.agents.defaults.model,
-                    config,
-                )
-                .await?;
-
-                let fallbacks = prompt_fallback_models(None, "Choose", config).await?;
-                let fallbacks_opt = match fallbacks.is_empty() {
-                    true => None,
-                    false => Some(fallbacks),
-                };
-
-                let new_profile = SubagentProfile {
-                    name: name.trim().to_string(),
-                    description,
-                    system_prompt,
-                    model,
-                    fallbacks: fallbacks_opt,
-                    extra: serde_json::Map::new(),
-                };
-
-                let mut profiles = load_profiles()?;
-                profiles.push(new_profile);
-                save_profiles(&profiles)?;
-                println!("✅ Subagent manual creation complete.");
-                break;
+    match choice_idx {
+        0 => {
+            let name = Text::new("Enter Subagent Name (snake_case):").prompt()?;
+            match name.trim().is_empty() {
+                true => return Err(anyhow!("Name cannot be empty.")),
+                false => {}
             }
-            1 => {
-                let task_description = Text::new(
-                    "Describe the specific task or role you want this subagent to perform:",
-                )
-                .prompt()?;
-                match task_description.trim().is_empty() {
-                    true => return Err(anyhow!("Description cannot be empty.")),
-                    false => {}
-                }
 
-                println!("🧠 Asking OpenZ to design this subagent for you...");
-                let ai_designed = ask_openz_to_design(config, &task_description).await?;
+            let description = Text::new("Enter Description:").prompt()?;
+            let system_prompt = Text::new("Enter System Prompt:").prompt()?;
+            let model = prompt_choose_model(
+                "Choose Primary Model (Enter/Esc for default):",
+                &config.agents.defaults.model,
+                config,
+            )
+            .await?;
 
-                print_subagent_summary(&ai_designed, config, "AI Designed Subagent Proposed");
+            let fallbacks = prompt_fallback_models(None, "Choose", config).await?;
+            let fallbacks_opt = match fallbacks.is_empty() {
+                true => None,
+                false => Some(fallbacks),
+            };
 
-                let save_choice = Confirm::new("Save this AI-designed subagent?")
-                    .with_default(true)
-                    .prompt()?;
-                match save_choice {
-                    true => {
-                        let mut profiles = load_profiles()?;
-                        profiles.push(ai_designed);
-                        save_profiles(&profiles)?;
-                        println!("✅ AI-designed subagent saved successfully.");
-                    }
-                    false => {}
-                }
-                break;
-            }
-            _ => break,
+            let new_profile = SubagentProfile {
+                name: name.trim().to_string(),
+                description,
+                system_prompt,
+                model,
+                fallbacks: fallbacks_opt,
+                extra: serde_json::Map::new(),
+            };
+
+            let mut profiles = load_profiles()?;
+            profiles.push(new_profile);
+            save_profiles(&profiles)?;
+            println!("✅ Subagent manual creation complete.");
         }
+        1 => {
+            let task_description = Text::new(
+                "Describe the specific task or role you want this subagent to perform:",
+            )
+            .prompt()?;
+            match task_description.trim().is_empty() {
+                true => return Err(anyhow!("Description cannot be empty.")),
+                false => {}
+            }
+
+            println!("🧠 Asking OpenZ to design this subagent for you...");
+            let ai_designed = ask_openz_to_design(config, &task_description).await?;
+
+            print_subagent_summary(&ai_designed, config, "AI Designed Subagent Proposed");
+
+            let save_choice = Confirm::new("Save this AI-designed subagent?")
+                .with_default(true)
+                .prompt()?;
+            match save_choice {
+                true => {
+                    let mut profiles = load_profiles()?;
+                    profiles.push(ai_designed);
+                    save_profiles(&profiles)?;
+                    println!("✅ AI-designed subagent saved successfully.");
+                }
+                false => {}
+            }
+        }
+        _ => {}
     }
 
     Ok(())

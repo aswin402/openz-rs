@@ -426,3 +426,252 @@ fn tool_not_found_error_recommends_tool_catalog_and_batch_execute() {
     assert!(hint.contains("batch_execute"));
 }
 
+#[test]
+fn failed_state_changing_tool_does_not_reset_repeat_counter() {
+    let read_args = json!({ "path": "src/tools/orchestrator.rs" });
+    let messages = vec![
+        Message {
+            role: "user".to_string(),
+            content: "edit then verify file".to_string(),
+            timestamp: None,
+            extra: serde_json::Map::new(),
+        },
+        assistant_named_tool_call("read_file", "call_1", read_args.clone()),
+        tool_result("call_1", "read_file", "before edit"),
+        assistant_named_tool_call(
+            "patch_file",
+            "call_2",
+            json!({ "path": "src/tools/orchestrator.rs", "diff": "bad" }),
+        ),
+        tool_result(
+            "call_2",
+            "patch_file",
+            r#"{"error":"Failed to match hunk"}"#,
+        ),
+    ];
+
+    assert_eq!(
+        count_previous_tool_calls(&messages, "read_file", &read_args),
+        1
+    );
+}
+
+#[test]
+fn exec_command_repeats_reset_after_distinct_successful_edit() {
+    let test_args = json!({ "command": "cargo test --lib" });
+    let messages = vec![
+        Message {
+            role: "user".to_string(),
+            content: "fix failing tests".to_string(),
+            timestamp: None,
+            extra: serde_json::Map::new(),
+        },
+        assistant_named_tool_call("exec_command", "call_1", test_args.clone()),
+        tool_result("call_1", "exec_command", r#"{"exit_code":0,"stdout":"ok"}"#),
+        assistant_named_tool_call(
+            "patch_file",
+            "call_2",
+            json!({ "path": "src/lib.rs", "diff": "@@ ..." }),
+        ),
+        tool_result("call_2", "patch_file", r#"{"status":"success"}"#),
+        assistant_named_tool_call("exec_command", "call_3", test_args.clone()),
+        tool_result("call_3", "exec_command", r#"{"exit_code":0,"stdout":"ok"}"#),
+        assistant_named_tool_call(
+            "patch_file",
+            "call_4",
+            json!({ "path": "src/main.rs", "diff": "@@ ..." }),
+        ),
+        tool_result("call_4", "patch_file", r#"{"status":"success"}"#),
+    ];
+
+    assert_eq!(
+        count_previous_tool_calls(&messages, "exec_command", &test_args),
+        0
+    );
+}
+
+#[test]
+fn browser_navigation_resets_after_distinct_browser_interaction() {
+    let nav_args = json!({ "action": "navigate", "url": "https://example.com/watch" });
+    let messages = vec![
+        Message {
+            role: "user".to_string(),
+            content: "open video and click play".to_string(),
+            timestamp: None,
+            extra: serde_json::Map::new(),
+        },
+        assistant_named_tool_call("browser", "call_1", nav_args.clone()),
+        tool_result("call_1", "browser", r#"{"status":"success"}"#),
+        assistant_named_tool_call(
+            "browser",
+            "call_2",
+            json!({ "action": "click", "index": 0 }),
+        ),
+        tool_result("call_2", "browser", r#"{"status":"success"}"#),
+    ];
+
+    assert_eq!(count_previous_tool_calls(&messages, "browser", &nav_args), 0);
+}
+
+#[test]
+fn periodic_cycle_detector_catches_two_step_ping_pong_loop() {
+    let step_a = json!({ "path": "src/lib.rs", "diff": "same broken diff" });
+    let step_b = json!({ "command": "cargo check" });
+    let messages = vec![
+        Message {
+            role: "user".to_string(),
+            content: "fix build".to_string(),
+            timestamp: None,
+            extra: serde_json::Map::new(),
+        },
+        assistant_named_tool_call("patch_file", "c1", step_a.clone()),
+        tool_result("c1", "patch_file", r#"{"error":"Failed to match hunk"}"#),
+        assistant_named_tool_call("exec_command", "c2", step_b.clone()),
+        tool_result("c2", "exec_command", r#"{"exit_code":101,"stderr":"E0425"}"#),
+        assistant_named_tool_call("patch_file", "c3", step_a.clone()),
+        tool_result("c3", "patch_file", r#"{"error":"Failed to match hunk"}"#),
+        assistant_named_tool_call("exec_command", "c4", step_b.clone()),
+        tool_result("c4", "exec_command", r#"{"exit_code":101,"stderr":"E0425"}"#),
+    ];
+
+    let cycle = detect_trajectory_cycle(&messages, "patch_file", &step_a)
+        .expect("expected 2-step periodic cycle");
+    assert_eq!(cycle.period, 2);
+    assert_eq!(cycle.repetitions, 2);
+    assert_eq!(cycle.cycle_tools, vec!["patch_file", "exec_command"]);
+}
+
+#[test]
+fn sliding_trajectory_window_ages_out_old_reads_on_long_horizon_turns() {
+    let target_args = json!({ "path": "src/main.rs" });
+    let mut messages = vec![
+        Message {
+            role: "user".to_string(),
+            content: "audit entire repository".to_string(),
+            timestamp: None,
+            extra: serde_json::Map::new(),
+        },
+        assistant_named_tool_call("read_file", "call_init", target_args.clone()),
+        tool_result("call_init", "read_file", "fn main() {}"),
+    ];
+
+    for idx in 0..(TRAJECTORY_WINDOW_CALLS + 2) {
+        let id = format!("call_step_{idx}");
+        let other_args = json!({ "path": format!("src/module_{idx}.rs") });
+        messages.push(assistant_named_tool_call("read_file", &id, other_args));
+        messages.push(tool_result(&id, "read_file", "pub struct S;"));
+    }
+
+    assert_eq!(
+        count_previous_tool_calls(&messages, "read_file", &target_args),
+        0
+    );
+}
+
+#[test]
+fn loop_escalation_resets_consecutive_streak_on_forward_progress() {
+    let mut state = super::super::security_approval::LoopEscalationState::default();
+    assert!(!state.record_loop_block());
+    assert!(!state.record_loop_block());
+    assert!(!state.record_loop_block());
+    state.record_forward_progress();
+    assert_eq!(state.consecutive_blocks, 0);
+    assert!(!state.record_loop_block());
+    assert!(!state.record_loop_block());
+    assert!(!state.record_loop_block());
+    assert!(state.record_loop_block());
+}
+
+#[test]
+fn cron_sessions_block_recursive_cron_spawning() {
+    let args = json!({ "name": "child", "schedule": "*/5 * * * *", "prompt": "hi" });
+    assert!(
+        crate::agent::security::SecurityGuard::forbidden_reason_for_session(
+            "cron:heartbeat_audit_5m",
+            "schedule_job",
+            &args
+        )
+        .is_some()
+    );
+    assert!(
+        crate::agent::security::SecurityGuard::forbidden_reason_for_session(
+            "cron:heartbeat_audit_5m",
+            "run_job_now",
+            &json!({ "id": "abc" })
+        )
+        .is_some()
+    );
+    assert!(
+        crate::agent::security::SecurityGuard::forbidden_reason_for_session(
+            "cli:main",
+            "schedule_job",
+            &args
+        )
+        .is_none()
+    );
+}
+
+#[test]
+fn stage1_diagnostic_tag_does_not_break_periodic_cycle_detection() {
+    let patch_args = json!({ "path": "src/main.rs", "patch": "@@ -1 +1 @@\n-old\n+new" });
+    let read_args = json!({ "path": "src/main.rs" });
+    let err1 = json!({ "error": "hunk mismatch" }).to_string();
+    let err2_tagged = json!({
+        "error": "hunk mismatch",
+        "z_guard_diagnostic": {
+            "stage": "diagnostic_tag",
+            "repeat_attempt": 2,
+            "required_action": "inspect_state_and_vary_parameters_before_retry"
+        }
+    })
+    .to_string();
+    let messages = vec![
+        Message {
+            role: "user".to_string(),
+            content: "fix main.rs".to_string(),
+            timestamp: None,
+            extra: serde_json::Map::new(),
+        },
+        assistant_named_tool_call("patch_file", "c1", patch_args.clone()),
+        tool_result("c1", "patch_file", &err1),
+        assistant_named_tool_call("read_file", "c2", read_args.clone()),
+        tool_result("c2", "read_file", "fn main() {}"),
+        assistant_named_tool_call("patch_file", "c3", patch_args.clone()),
+        tool_result("c3", "patch_file", &err2_tagged),
+        assistant_named_tool_call("read_file", "c4", read_args),
+        tool_result("c4", "read_file", "fn main() {}"),
+    ];
+
+    let cycle = detect_trajectory_cycle(&messages, "patch_file", &patch_args)
+        .expect("period-2 ping-pong cycle should still match across Stage 1 diagnostic tags");
+    assert_eq!(cycle.period, 2);
+    assert_eq!(cycle.repetitions, 2);
+}
+
+#[test]
+fn self_owned_tool_output_and_ccr_retrieval_are_autonomous_even_in_high_mode() {
+    let ccr_args = json!({ "ccr_id": "ccr_8f21a9" });
+    assert!(!crate::agent::security::SecurityGuard::is_sensitive_with_mode(
+        "retrieve_original",
+        &ccr_args,
+        "high"
+    ));
+
+    let tool_out = crate::config::loader::runtime_data_dir()
+        .join("tool_outputs")
+        .join("output_web_fetch_test.json");
+    let file_args = json!({ "ccr_id": format!("file://{}", tool_out.display()) });
+    assert!(!crate::agent::security::SecurityGuard::is_sensitive_with_mode(
+        "retrieve_original",
+        &file_args,
+        "high"
+    ));
+
+    let ssh_args = json!({ "ccr_id": "file:///root/.ssh/id_rsa" });
+    assert!(crate::agent::security::SecurityGuard::is_sensitive_with_mode(
+        "retrieve_original",
+        &ssh_args,
+        "low"
+    ));
+}
+

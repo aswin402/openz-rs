@@ -251,6 +251,17 @@ async fn tool_registry_exposes_every_registered_tool() {
         registry.tool_count() > 128,
         "full registry should exceed one OpenAI tool payload"
     );
+
+    let unclassified: Vec<String> = registry
+        .tool_inventory_snapshot()
+        .into_iter()
+        .filter(|(_, _, meta)| meta.domain == "general" || meta.requires_conservative_approval())
+        .map(|(name, _, meta)| format!("{name} (domain={})", meta.domain))
+        .collect();
+    assert!(
+        unclassified.is_empty(),
+        "every registered native tool must have an explicit domain and never hit unclassified conservative approval: {unclassified:?}"
+    );
 }
 
 #[test]

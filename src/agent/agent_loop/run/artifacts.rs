@@ -1,7 +1,7 @@
 //! Tool-call normalization and local artifact follow-up helpers.
 
+use super::research::user_content_requests_fresh_fetch;
 use super::shell_http_rewrite::web_fetch_call_from_shell_http_scrape;
-use super::user_content_requests_fresh_fetch;
 
 pub(super) fn saved_tool_output_ref_from_read_file(
     call: &crate::providers::ToolCallRequest,
@@ -29,11 +29,23 @@ pub(super) fn saved_tool_output_ref_from_read_file(
     })
 }
 
+#[cfg(test)]
 pub(super) fn auto_adjust_tool_call_for_user_intent(
-    mut call: crate::providers::ToolCallRequest,
+    call: crate::providers::ToolCallRequest,
     user_content: &str,
 ) -> crate::providers::ToolCallRequest {
-    match saved_tool_output_ref_from_read_file(&call) {
+    auto_adjust_tool_call_with_availability(call, user_content, true)
+}
+
+pub(super) fn auto_adjust_tool_call_with_availability(
+    mut call: crate::providers::ToolCallRequest,
+    user_content: &str,
+    retrieve_original_available: bool,
+) -> crate::providers::ToolCallRequest {
+    match retrieve_original_available
+        .then(|| saved_tool_output_ref_from_read_file(&call))
+        .flatten()
+    {
         Some(original_ref) => {
             return crate::providers::ToolCallRequest {
                 id: call.id,

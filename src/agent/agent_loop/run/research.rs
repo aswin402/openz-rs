@@ -26,7 +26,8 @@ pub(super) fn direct_research_url(
     tool_name: &str,
     arguments: &serde_json::Value,
 ) -> Option<String> {
-    matches!(tool_name, "web_fetch" | "searchxyz_read_url").then_some(())?;
+    let canonical = crate::tools::canonical_tool_name(tool_name);
+    matches!(canonical.as_str(), "web_fetch" | "searchxyz_read_url").then_some(())?;
 
     let raw_url = arguments
         .get("url")
@@ -40,6 +41,41 @@ pub(super) fn direct_research_url(
     let mut parsed = reqwest::Url::parse(raw_url).ok()?;
     parsed.set_fragment(None);
     Some(parsed.to_string())
+}
+
+/// Parameter-aware deduplication key for direct URL fetches.
+/// Allows re-fetching a previously truncated URL with a larger `max_length`,
+/// pagination `start_index`, different `format`, or explicit `cache_mode = "bypass"`,
+/// while still deduplicating identical redundant fetches across aliases.
+pub(super) fn direct_research_fetch_key(
+    tool_name: &str,
+    arguments: &serde_json::Value,
+) -> Option<String> {
+    let base_url = direct_research_url(tool_name, arguments)?;
+    let max_len = arguments
+        .get("max_length")
+        .or_else(|| arguments.get("maxLength"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let start_idx = arguments
+        .get("start_index")
+        .or_else(|| arguments.get("startIndex"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    let format = arguments
+        .get("format")
+        .and_then(|v| v.as_str())
+        .unwrap_or("default")
+        .trim()
+        .to_ascii_lowercase();
+    let bypass = arguments
+        .get("cache_mode")
+        .or_else(|| arguments.get("cacheMode"))
+        .and_then(|v| v.as_str())
+        .is_some_and(|mode| mode.eq_ignore_ascii_case("bypass"));
+    Some(format!(
+        "{base_url}|len={max_len}|start={start_idx}|fmt={format}|bypass={bypass}"
+    ))
 }
 
 pub(super) fn direct_page_research_only(user_content: &str) -> bool {
@@ -65,6 +101,13 @@ pub(super) fn direct_page_research_only(user_content: &str) -> bool {
                 "asset",
                 "run locally",
                 "local copy",
+                "implement",
+                "build",
+                "fix",
+                "debug",
+                "refactor",
+                "integrate",
+                "autonomous",
             ]
             .iter()
             .any(|term| lower.contains(term));

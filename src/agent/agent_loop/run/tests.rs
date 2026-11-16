@@ -820,3 +820,41 @@ fn shell_curl_preserves_localhost_authenticated_post_and_explicit_curl_requests(
         "exec_command"
     );
 }
+
+#[test]
+fn saved_tool_output_read_file_stays_read_file_when_retrieve_original_unavailable() {
+    let output_path = crate::config::loader::runtime_data_dir()
+        .join("tool_outputs")
+        .join("output_subagent_fetch.json");
+    let file_url = format!("file://{}", output_path.display());
+    let call = crate::providers::ToolCallRequest {
+        id: "call_sub".to_string(),
+        name: "read_file".to_string(),
+        arguments: json!({ "path": file_url }),
+    };
+    let preserved = auto_adjust_tool_call_with_availability(call, "inspect output", false);
+    assert_eq!(preserved.name, "read_file");
+}
+
+#[test]
+fn direct_research_fetch_key_distinguishes_expanded_length_and_offset() {
+    let initial = direct_research_fetch_key(
+        "web_fetch",
+        &json!({ "url": "https://openbot.run/#intro" }),
+    );
+    let same_default = direct_research_fetch_key(
+        "searchxyz_read_url",
+        &json!({ "url": "https://openbot.run/" }),
+    );
+    let expanded = direct_research_fetch_key(
+        "web_fetch",
+        &json!({ "url": "https://openbot.run/", "max_length": 9000 }),
+    );
+    let paginated = direct_research_fetch_key(
+        "web_fetch",
+        &json!({ "url": "https://openbot.run/", "start_index": 4000 }),
+    );
+    assert_eq!(initial, same_default);
+    assert_ne!(initial, expanded);
+    assert_ne!(initial, paginated);
+}

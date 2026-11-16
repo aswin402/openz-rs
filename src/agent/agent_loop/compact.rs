@@ -52,6 +52,8 @@ fn extract_archive_references(text: &str) -> Vec<String> {
 pub(crate) fn extract_working_state_ledger(messages: &[Message]) -> String {
     let mut touched_files = BTreeSet::new();
     let mut mutating_tools = BTreeSet::new();
+    let mut executed_commands = BTreeSet::new();
+    let mut fetched_urls = BTreeSet::new();
     let mut archived_outputs = BTreeSet::new();
 
     for msg in messages {
@@ -64,20 +66,58 @@ pub(crate) fn extract_working_state_ledger(messages: &[Message]) -> String {
                     .cloned()
                     .unwrap_or_default();
                 for tc in calls {
+                    let call_args = extract_tool_call_args_object(&tc);
                     let _ = extract_tool_call_name(&tc).map(|name| {
-                        let _ = (crate::tools::metadata::is_state_changing_tool(name)
-                            && mutating_tools.len() < 12)
+                        let args_val = call_args
+                            .as_ref()
+                            .map(|m| Value::Object(m.clone()))
+                            .unwrap_or(Value::Null);
+                        let _ = (crate::tools::metadata::is_state_changing_tool_call(
+                            name, &args_val,
+                        ) && mutating_tools.len() < 12)
                             .then(|| mutating_tools.insert(name.to_string()));
                     });
-                    let _ = extract_tool_call_args_object(&tc).map(|args_map| {
+                    let _ = call_args.map(|args_map| {
                         let path_opt = PATH_KEYS
                             .iter()
                             .find_map(|k| args_map.get(*k).and_then(Value::as_str))
                             .map(str::trim)
                             .filter(|p| !p.is_empty());
                         let _ = path_opt.map(|path| {
-                            let _ = (touched_files.len() < 16)
-                                .then(|| touched_files.insert(path.to_string()));
+                            let start = args_map
+                                .get("start_line")
+                                .or_else(|| args_map.get("startLine"))
+                                .and_then(Value::as_u64);
+                            let end = args_map
+                                .get("end_line")
+                                .or_else(|| args_map.get("endLine"))
+                                .and_then(Value::as_u64);
+                            let entry = match (start, end) {
+                                (Some(s), Some(e)) => format!("{path}[{s}..{e}]"),
+                                (Some(s), None) => format!("{path}[{s}..]"),
+                                _ => path.to_string(),
+                            };
+                            let _ =
+                                (touched_files.len() < 20).then(|| touched_files.insert(entry));
+                        });
+                        let cmd_opt = ["command", "cmd", "subcommand"]
+                            .iter()
+                            .find_map(|k| args_map.get(*k).and_then(Value::as_str))
+                            .map(str::trim)
+                            .filter(|c| !c.is_empty());
+                        let _ = cmd_opt.map(|cmd| {
+                            let short: String = cmd.chars().take(72).collect();
+                            let _ = (executed_commands.len() < 10)
+                                .then(|| executed_commands.insert(short));
+                        });
+                        let url_opt = args_map
+                            .get("url")
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|u| !u.is_empty());
+                        let _ = url_opt.map(|url| {
+                            let _ = (fetched_urls.len() < 12)
+                                .then(|| fetched_urls.insert(url.to_string()));
                         });
                     });
                 }
@@ -94,6 +134,8 @@ pub(crate) fn extract_working_state_ledger(messages: &[Message]) -> String {
 
     let has_entries = (!touched_files.is_empty())
         || (!mutating_tools.is_empty())
+        || (!executed_commands.is_empty())
+        || (!fetched_urls.is_empty())
         || (!archived_outputs.is_empty());
     match has_entries {
         false => String::new(),
@@ -106,6 +148,14 @@ pub(crate) fn extract_working_state_ledger(messages: &[Message]) -> String {
             let _ = (!mutating_tools.is_empty()).then(|| {
                 let list: Vec<String> = mutating_tools.into_iter().collect();
                 lines.push(format!("- Executed state-changing tools: {}", list.join(", ")));
+            });
+            let _ = (!executed_commands.is_empty()).then(|| {
+                let list: Vec<String> = executed_commands.into_iter().collect();
+                lines.push(format!("- Executed commands: {}", list.join(" | ")));
+            });
+            let _ = (!fetched_urls.is_empty()).then(|| {
+                let list: Vec<String> = fetched_urls.into_iter().collect();
+                lines.push(format!("- Fetched URLs: {}", list.join(", ")));
             });
             let _ = (!archived_outputs.is_empty()).then(|| {
                 let list: Vec<String> = archived_outputs.into_iter().collect();
