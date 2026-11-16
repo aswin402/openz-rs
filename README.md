@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.329-orange.svg" alt="Version 0.0.329"/></a>
+  <a href="https://github.com/aswin402/openz-rs"><img src="https://img.shields.io/badge/version-0.0.330-orange.svg" alt="Version 0.0.330"/></a>
   <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/rust-1.82%2B-blue.svg" alt="Rust 1.82+"/></a>
   <a href="https://tokio.rs/"><img src="https://img.shields.io/badge/runtime-tokio-purple.svg" alt="Tokio Async"/></a>
   <a href="https://github.com/aswin402/openz-rs/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT%2FApache--2.0-green.svg" alt="License"/></a>
@@ -57,6 +57,11 @@ Most agent frameworks require users to manually select tools, switch providers, 
 ---
 
 ## 🆕 Latest Highlights
+
+### 🌐 Minimal ASCII Browser Chrome, Full-Color GUI Media & Wayland Headless Reliability (`v0.0.330`)
+- **Minimal Pure-ASCII GTK3 Top Bar (`32px`)**: Redesigned OpenZ's native GUI browser header bar (`gtk_header_bar_set_show_close_button(hb, 0)`) with borderless ghost ASCII navigation (`<`, `>`, `r`/`*`), a compact omnibox pill (`://` idle, `[*]` loading, `[~]` live audio + borderless URL input + subtle session tag), and right-edge ASCII controls (`[#]` Set-of-Mark toggle, `[D]`/`[M]` Desktop↔Mobile viewport toggle, `|`, `-`, `[]`/`<>`, `x`), plus `include_chrome: true` screenshot compositing.
+- **Full-Color HTML5/YouTube Video + Audio & CSP-Safe Native `eval_js`**: Enabled JavaScriptCore FTL/OMG JIT, WebGL, MediaSource, and WebAudio (`1024 MB` non-fatal GC pressure limit), bypassed AMD/GTK3 GStreamer VA-API tiled DMABuf black-frame sinks (`WEBKIT_GST_DMABUF_SINK_DISABLED=1`), and moved `eval_js` directly onto `webkit_web_view_run_javascript` so strict Trusted-Types CSP sites (YouTube, Google, GitHub) execute scripts cleanly without `eval()`.
+- **Wayland Headless Software Guard, Post-Click Navigation Sync & Orchestrator Routing**: Isolated `GtkOffscreenWindow` headless workers with `GDK_GL=disable` so Wayland hosts never abort on GL context creation; synchronized `click`/`type(submit=true)` across full-page link loads (`navigated: true` + post-load `ui_tree`); and granted native `browser` access across `orchestrate_workflow` and `coding_agent`/`debugger`/`test_engineer`/`vision_agent` subagents.
 
 ### 🌐 Native Rust GTK3 + WebKit2GTK Headless & GUI Browser Engine (`v0.0.329`)
 - **Zero-External-Browser Native Engine (`~66 MB` Active Private Heap, `0 MB` Idle RAM)**: Replaced Chrome CDP `:9222`, Obscura, Playwright/`gsd-browser`, Firefox/`geckodriver`/`thirtyfour`, and `chromiumoxide` with OpenZ's own pure-Rust `libc::dlopen` GTK3 + WebKit2GTK + Cairo engine (`src/tools/browser/`). Supports zero-popup `GtkOffscreenWindow` headless execution (including automatic pure-Unix-socket GDK Broadway fallback on displayless servers/sandboxes), a sleek dark-themed GTK3 GUI browser (`openz browser [url] --gui`), and live `show`/`hide` window reparenting without dropping DOM state.

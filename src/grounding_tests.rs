@@ -167,3 +167,20 @@ fn evolution_suppressed_for_smoke_test_outputs() {
         "When adding tool schemas, keep required fields explicit and add focused regression tests before implementation."
     ));
 }
+
+#[test]
+fn browser_operator_and_localhost_steps_preserve_browser_capability() {
+    let operator_policy = step_execution_policy(
+        "Verify UI login flow",
+        "Click Sign In and capture ui_tree",
+        "browser_operator",
+    );
+    assert!(operator_policy.allow_web);
+
+    let dev_server_policy = step_execution_policy(
+        "Run E2E frontend verification",
+        "Open localhost:5173 in browser and take a screenshot",
+        "test_engineer",
+    );
+    assert!(dev_server_policy.allow_web);
+}

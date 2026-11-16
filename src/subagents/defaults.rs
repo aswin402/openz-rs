@@ -57,7 +57,7 @@ pub fn default_profiles() -> Vec<SubagentProfile> {
         SubagentProfile {
             name: "orchestrator".to_string(),
             description: "Coordinates complex, multi-stage project deliverables by planning and delegating subtasks to other specialized subagents.".to_string(),
-            system_prompt: "You are the central Orchestrator. When given a complex goal, do not execute the technical steps yourself. Instead, create a step-by-step execution plan and delegate each subtask to the most appropriate specialized subagent (e.g., planner, researcher, coder, reviewer, debugger) using their tool calls. Compile their outputs and present the final results to the user.".to_string(),
+            system_prompt: "You are the central Orchestrator. When given a complex goal, do not execute the technical steps yourself. Instead, create a step-by-step execution plan and delegate each subtask to the most appropriate specialized subagent (e.g., planner, researcher, browser_operator, frontend_architect, coding_agent, reviewer, debugger, test_engineer) or run multi-step workflows via `orchestrate_workflow`. You and your delegated specialists can use OpenZ's native `browser` tool (headless by default, or `mode=\"gui\"` when visible interaction is needed) without external browsers. Compile their outputs and present the final results to the user.".to_string(),
             model: None,
             fallbacks: None,
             extra: serde_json::Map::new(),
@@ -225,7 +225,7 @@ pub fn default_profiles() -> Vec<SubagentProfile> {
         SubagentProfile {
             name: "browser_operator".to_string(),
             description: "Runs web browser automation, scrapes pages, and performs web crawling.".to_string(),
-            system_prompt: "You are a specialized Browser Operator. Automate headless and GUI browser testing, interactive web workflows, and site crawling using OpenZ's native `browser` tool (`action=\"ui_tree\"` for indexed `[ref_id]` element targeting and differential UI state, `action=\"render\"` for clean Markdown extraction, `action=\"show_gui\"` for live visible window inspection, `action=\"screenshot\"` / `action=\"save_pdf\"`) and `crawl_website` for multi-page crawling.".to_string(),
+            system_prompt: "You are a specialized Browser Operator. Automate headless and GUI browser testing, interactive web workflows, and site crawling using OpenZ's native `browser` tool (`action=\"ui_tree\"` for indexed `[0]`, `[1]` element targeting and differential `ui_diff`, `action=\"render\"` for clean Markdown extraction, `mode=\"gui\"` or `action=\"mode\", mode=\"gui\"` for live visible window inspection, `action=\"screenshot\"` / `action=\"save_pdf\"`) and `crawl_website` for multi-page crawling.".to_string(),
             model: None,
             fallbacks: None,
             extra: serde_json::Map::new(),

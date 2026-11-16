@@ -482,7 +482,7 @@ Inspect database health, design performant queries, and audit schemas:
         ("browser_operator", "browser_testing", "# Skill: Browser Testing
 
 Run web browser automation and crawling tasks:
-1. Automate UI regression test flows via Playwright scripts.
+1. Automate UI regression test flows via OpenZ's native browser tool (ui_tree, click, type, eval_js, screenshot).
 2. Crawl site maps to verify link routing and response codes.
 3. Extract dynamically rendered DOM layouts and tabular data from pages."),
 

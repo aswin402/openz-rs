@@ -15,6 +15,7 @@ use tokio::time::sleep;
 pub struct SessionLaunchSpec {
     pub session: String,
     pub gui: bool,
+    pub explicit_mode: Option<bool>,
     pub profile: Option<String>,
     pub width: i32,
     pub height: i32,
@@ -27,6 +28,7 @@ impl Default for SessionLaunchSpec {
         Self {
             session: "default".to_string(),
             gui: cfg.browser.default_mode.eq_ignore_ascii_case("gui"),
+            explicit_mode: None,
             profile: None,
             width: cfg.browser.default_width,
             height: cfg.browser.default_height,
@@ -77,27 +79,32 @@ impl BrowserSessionClient {
                     .get("mode")
                     .and_then(|v| v.as_str())
                     .unwrap_or("headless");
-                let want_mode = match spec.gui {
-                    true => "gui",
-                    false => "headless",
-                };
-                match spec.gui && current_mode != want_mode {
-                    true => {
-                        let _ = client
-                            .request(
-                                json!({ "op": "mode", "mode": "gui" }),
-                                Duration::from_secs(5),
-                            )
-                            .await;
+                match spec.explicit_mode {
+                    Some(want_gui) => {
+                        let want_mode = match want_gui {
+                            true => "gui",
+                            false => "headless",
+                        };
+                        match current_mode != want_mode {
+                            true => {
+                                let _ = client
+                                    .request(
+                                        json!({ "op": "mode", "mode": want_mode }),
+                                        Duration::from_secs(8),
+                                    )
+                                    .await;
+                            }
+                            false => {}
+                        }
                     }
-                    false => {}
+                    None => {}
                 }
                 return Ok(client);
             }
             Err(_) => {}
         }
 
-        spawn_worker_process(&socket_path, &safe_session, spec, false)?;
+        spawn_worker_process(&socket_path, &safe_session, spec, false, false)?;
         wait_for_worker_ready(&client, Duration::from_secs(8)).await?;
         Ok(client)
     }
@@ -112,12 +119,13 @@ impl BrowserSessionClient {
         let spec = SessionLaunchSpec {
             session: session_name.clone(),
             gui: false,
+            explicit_mode: Some(false),
             profile: None,
             width,
             height,
             memory_limit_mb: Some(cfg.browser.memory_limit_mb),
         };
-        spawn_worker_process(&socket_path, &session_name, &spec, true)?;
+        spawn_worker_process(&socket_path, &session_name, &spec, true, true)?;
         let client = Self {
             socket_path,
             session_name,
@@ -255,15 +263,17 @@ impl BrowserSessionClient {
 
     pub async fn eval_js(&self, script: &str, timeout: Duration) -> Result<Value> {
         let timeout_ms = timeout.as_millis().min(38_000) as u64;
-        self.web_agent(
-            json!({
-                "action": "eval_js",
-                "script": script,
-                "timeout_ms": timeout_ms,
-            }),
-            timeout + Duration::from_secs(2),
-        )
-        .await
+        let res = self
+            .request(
+                json!({
+                    "op": "eval_js",
+                    "script": script,
+                    "timeout_ms": timeout_ms,
+                }),
+                timeout + Duration::from_secs(3),
+            )
+            .await?;
+        Ok(res.get("data").cloned().unwrap_or(Value::Null))
     }
 
     pub async fn screenshot(&self, req: &ScreenshotRequest) -> Result<Value> {
@@ -377,6 +387,7 @@ fn spawn_worker_process(
     session_name: &str,
     spec: &SessionLaunchSpec,
     parent_death_sigterm: bool,
+    ephemeral: bool,
 ) -> Result<()> {
     let probe = probe_webkit_runtime();
     match probe.available {
@@ -458,9 +469,10 @@ fn spawn_worker_process(
         )
     })?;
 
-    let kind = match spec.gui {
-        true => "browser_gui",
-        false => "browser",
+    let kind = match (ephemeral, spec.gui) {
+        (true, _) => "browser_ephemeral",
+        (false, true) => "browser_gui",
+        (false, false) => "browser_session",
     };
     crate::shutdown::register_child_group_with_metadata(
         child,

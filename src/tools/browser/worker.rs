@@ -14,37 +14,93 @@ use std::path::{Path, PathBuf};
 pub const PAGE_CONTROLLER_JS: &str = include_str!("page_controller.js");
 
 const OPENZ_GTK_CSS: &str = r#"
-window, headerbar {
-  background-color: #0b0f19;
-  color: #f8fafc;
+window {
+  background-color: #080b12;
+  color: #e2e8f0;
 }
 headerbar {
-  border-bottom: 1px solid #1e293b;
-  padding: 4px 8px;
-}
-button {
   background-image: none;
-  background-color: #161e2e;
-  color: #e2e8f0;
-  border: 1px solid #334155;
-  border-radius: 6px;
-  padding: 4px 10px;
+  background-color: #080b12;
+  color: #cbd5e1;
+  border: none;
+  border-bottom: 1px solid #151d2b;
+  box-shadow: none;
+  min-height: 32px;
+  padding: 3px 8px;
 }
-button:hover {
-  border-color: #ff4500;
-  color: #ffffff;
-}
-entry {
+.ghost-btn {
   background-image: none;
-  background-color: #0f172a;
+  background-color: transparent;
+  color: #94a3b8;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  box-shadow: none;
+  text-shadow: none;
+  min-height: 22px;
+  min-width: 24px;
+  padding: 1px 6px;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.ghost-btn:hover {
+  background-color: #141c2b;
   color: #f8fafc;
-  border: 1px solid #334155;
-  border-radius: 6px;
-  padding: 4px 10px;
-  caret-color: #ff4500;
+  border-color: #233047;
 }
-entry:focus {
-  border-color: #ff4500;
+.ghost-btn.is-active {
+  background-color: rgba(255, 69, 0, 0.16);
+  color: #ff6a33;
+  border-color: rgba(255, 69, 0, 0.42);
+}
+.ghost-btn.win-close:hover {
+  background-color: rgba(239, 68, 68, 0.20);
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.42);
+}
+.url-pill {
+  background-color: #0e1420;
+  border: 1px solid #1b2537;
+  border-radius: 6px;
+  padding: 1px 8px;
+  min-height: 24px;
+}
+.url-input {
+  background-image: none;
+  background-color: transparent;
+  color: #e2e8f0;
+  border: none;
+  box-shadow: none;
+  min-height: 20px;
+  padding: 1px 4px;
+  caret-color: #ff4500;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 12px;
+}
+.url-prefix {
+  color: #64748b;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 0 2px;
+}
+.url-prefix.is-loading {
+  color: #ff6a33;
+}
+.url-prefix.is-audio {
+  color: #10b981;
+}
+.session-tag {
+  color: #475569;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-size: 10.5px;
+  padding-left: 6px;
+}
+.bar-sep {
+  color: #1e293b;
+  font-family: monospace;
+  font-size: 11px;
+  padding: 0 3px;
 }
 "#;
 
@@ -123,19 +179,27 @@ pub fn read_process_rss_kb() -> Option<u64> {
     }
 }
 
-/// Apply single-threaded allocator, JavaScriptCore, and display environment settings
-/// BEFORE GTK/WebKit or any worker threads spawn.
-pub fn tune_browser_process_env(memory_limit_mb: u32) {
-    let clamped_mb = memory_limit_mb.clamp(48, 2048);
-    let jsc_bytes = (clamped_mb as u64) * 1024 * 1024;
+/// Apply allocator, GStreamer, and rendering environment defaults before GTK/WebKit initializes.
+/// In GUI mode (`is_gui == true`), keeps native Wayland/X11 GL compositing enabled for full-rate
+/// video/WebGL. In headless mode (`is_gui == false`), forces Cairo software rendering (`GDK_GL=disable`)
+/// because GTK3's `GtkOffscreenWindow` on Wayland/X11 cannot create an OpenGL context and aborts if GL is requested.
+pub fn tune_browser_process_env(_memory_limit_mb: u32, is_gui: bool) {
     set_env_default("MALLOC_ARENA_MAX", "2");
-    set_env_default("JavaScriptCoreUseBMalloc", "0");
-    set_env_default("JSC_forceRAMSize", &jsc_bytes.to_string());
-    set_env_default("JSC_useFTLJIT", "0");
-    set_env_default("JSC_useOMGJIT", "0");
-    set_env_default("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-    set_env_default("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
     set_env_default("NO_AT_BRIDGE", "1");
+    // Bypass GStreamer VA-API tiled DMABuf sink modifiers that render black video frames on GTK3/AMD GPUs
+    set_env_default("WEBKIT_GST_DMABUF_SINK_DISABLED", "1");
+    set_env_default(
+        "GST_PLUGIN_FEATURE_RANK",
+        "vah264dec:NONE,vavp9dec:NONE,vaav1dec:NONE,vah265dec:NONE,vaapih264dec:NONE,vaapivp9dec:NONE,vaapiav1dec:NONE",
+    );
+    match is_gui {
+        true => {}
+        false => {
+            set_env_default("GDK_GL", "disable");
+            set_env_default("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+            set_env_default("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+        }
+    }
 }
 
 fn set_env_default(key: &str, value: &str) {
@@ -384,6 +448,8 @@ mod imp {
 
     struct PendingJsCall {
         tolerate_navigation: bool,
+        wait_post_nav: bool,
+        partial_data: Option<Value>,
         reply: SyncSender<Value>,
     }
 
@@ -391,6 +457,7 @@ mod imp {
         state_ptr: *mut WorkerState,
         path: PathBuf,
         crop_rect: Option<(f64, f64, f64, f64)>,
+        include_chrome: bool,
         reply: SyncSender<Value>,
     }
 
@@ -411,7 +478,13 @@ mod imp {
         gui_vbox: *mut c_void,
         url_entry: *mut c_void,
         header_bar: *mut c_void,
+        status_glyph_lbl: *mut c_void,
+        btn_reload: *mut c_void,
+        btn_marks: *mut c_void,
+        btn_viewport: *mut c_void,
+        btn_maximize: *mut c_void,
         is_gui: bool,
+        mobile_viewport: bool,
         suppress_destroy_quit: bool,
         som_active: bool,
         width: i32,
@@ -461,6 +534,8 @@ mod imp {
         std::env::set_var("XDG_RUNTIME_DIR", &runtime_dir);
         std::env::set_var("GDK_BACKEND", "broadway");
         std::env::set_var("BROADWAY_DISPLAY", ":5");
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
 
         let mut cmd = std::process::Command::new(bin);
         cmd.arg("-u")
@@ -497,7 +572,7 @@ mod imp {
             false => {}
         }
 
-        tune_browser_process_env(opts.memory_limit_mb);
+        tune_browser_process_env(opts.memory_limit_mb, opts.gui);
 
         let caller_forced_broadway = std::env::var("GDK_BACKEND")
             .ok()
@@ -556,8 +631,9 @@ mod imp {
             );
         }
 
+        let software_rendering = !opts.gui || caller_forced_broadway || _broadway_guard.is_some();
         let webview = create_webview_instance(api, web_ctx, ucm)?;
-        configure_webview_settings(api, webview, opts.gui);
+        configure_webview_settings(api, webview, opts.gui, software_rendering);
 
         let offscreen_win = unsafe { (api.gtk_offscreen_window_new)() };
         unsafe {
@@ -578,7 +654,13 @@ mod imp {
             gui_vbox: std::ptr::null_mut(),
             url_entry: std::ptr::null_mut(),
             header_bar: std::ptr::null_mut(),
+            status_glyph_lbl: std::ptr::null_mut(),
+            btn_reload: std::ptr::null_mut(),
+            btn_marks: std::ptr::null_mut(),
+            btn_viewport: std::ptr::null_mut(),
+            btn_maximize: std::ptr::null_mut(),
             is_gui: false,
+            mobile_viewport: opts.width <= 520,
             suppress_destroy_quit: false,
             som_active: false,
             width: opts.width,
@@ -664,6 +746,16 @@ mod imp {
         }
 
         unsafe {
+            (api.g_timeout_add_full)(
+                G_PRIORITY_DEFAULT_IDLE,
+                1_200,
+                on_gui_chrome_tick,
+                state_ptr as *mut c_void,
+                None,
+            );
+        }
+
+        unsafe {
             (api.gtk_main)();
         }
 
@@ -675,7 +767,24 @@ mod imp {
         }
 
         unsafe {
-            let _ = Box::from_raw(state_ptr);
+            let mut st = Box::from_raw(state_ptr);
+            st.suppress_destroy_quit = true;
+            match !st.gui_win.is_null() {
+                true => (api.gtk_widget_destroy)(st.gui_win),
+                false => {}
+            }
+            match !st.offscreen_win.is_null() {
+                true => (api.gtk_widget_destroy)(st.offscreen_win),
+                false => {}
+            }
+            match !st.webview.is_null() {
+                true => {
+                    (api.gtk_widget_destroy)(st.webview);
+                    (api.g_object_unref)(st.webview);
+                }
+                false => {}
+            }
+            (api.g_object_unref)(web_ctx);
         }
         Ok(())
     }
@@ -948,13 +1057,14 @@ mod imp {
                 false => {
                     (api.webkit_memory_pressure_settings_set_memory_limit)(
                         settings,
-                        memory_limit_mb.clamp(48, 2048),
+                        memory_limit_mb.clamp(256, 4096),
                     );
+                    (api.webkit_memory_pressure_settings_set_strict_threshold)(settings, 0.80);
                     (api.webkit_memory_pressure_settings_set_conservative_threshold)(
-                        settings, 0.35,
+                        settings, 0.55,
                     );
-                    (api.webkit_memory_pressure_settings_set_strict_threshold)(settings, 0.60);
-                    (api.webkit_memory_pressure_settings_set_kill_threshold)(settings, 0.90);
+                    // 0.0 disables fatal WebProcess SIGKILL so heavy SPAs/media GC cleanly without resetting to about:blank
+                    (api.webkit_memory_pressure_settings_set_kill_threshold)(settings, 0.0);
                     (api.webkit_website_data_manager_set_memory_pressure_settings)(settings);
                     (api.webkit_memory_pressure_settings_free)(settings);
                 }
@@ -1064,15 +1174,32 @@ mod imp {
         }
     }
 
-    fn configure_webview_settings(api: &'static WebKitApi, webview: *mut c_void, is_gui: bool) {
+    fn configure_webview_settings(
+        api: &'static WebKitApi,
+        webview: *mut c_void,
+        is_gui: bool,
+        software_broadway: bool,
+    ) {
         unsafe {
             let settings = (api.webkit_settings_new)();
             match settings.is_null() {
                 true => {}
                 false => {
                     (api.webkit_settings_set_enable_javascript)(settings, 1);
-                    (api.webkit_settings_set_enable_webgl)(settings, 0);
+                    (api.webkit_settings_set_enable_webgl)(
+                        settings,
+                        match software_broadway {
+                            true => 0,
+                            false => 1,
+                        },
+                    );
+                    (api.webkit_settings_set_enable_media)(settings, 1);
+                    (api.webkit_settings_set_enable_mediasource)(settings, 1);
+                    (api.webkit_settings_set_enable_webaudio)(settings, 1);
                     (api.webkit_settings_set_enable_media_stream)(settings, 0);
+                    (api.webkit_settings_set_media_playback_requires_user_gesture)(settings, 0);
+                    (api.webkit_settings_set_media_playback_allows_inline)(settings, 1);
+                    (api.webkit_settings_set_enable_smooth_scrolling)(settings, 1);
                     (api.webkit_settings_set_enable_developer_extras)(
                         settings,
                         match is_gui {
@@ -1080,17 +1207,15 @@ mod imp {
                             false => 0,
                         },
                     );
-                    (api.webkit_settings_set_hardware_acceleration_policy)(
-                        settings,
-                        WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER,
-                    );
-                    let ua_str = crate::config::loader::load_config()
-                        .map(|c| c.web.user_agent)
-                        .ok()
-                        .filter(|s| !s.trim().is_empty())
-                        .unwrap_or_else(|| {
-                            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) OpenZBrowser/1.0 Safari/605.1.15".to_string()
-                        });
+                    match software_broadway {
+                        true => (api.webkit_settings_set_hardware_acceleration_policy)(
+                            settings,
+                            WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER,
+                        ),
+                        false => {}
+                    }
+                    let ua_str =
+                        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15";
                     match CString::new(ua_str) {
                         Ok(c_ua) => (api.webkit_settings_set_user_agent)(settings, c_ua.as_ptr()),
                         Err(_) => {}
@@ -1099,6 +1224,7 @@ mod imp {
                     (api.g_object_unref)(settings);
                 }
             }
+            (api.webkit_web_view_set_is_muted)(webview, 0);
         }
     }
 
@@ -1166,34 +1292,91 @@ mod imp {
         );
     }
 
+    unsafe fn add_css_class(api: &'static WebKitApi, widget: *mut c_void, class_name: &str) {
+        match widget.is_null() {
+            true => {}
+            false => {
+                let ctx = (api.gtk_widget_get_style_context)(widget);
+                match (ctx.is_null(), CString::new(class_name)) {
+                    (false, Ok(c_cls)) => (api.gtk_style_context_add_class)(ctx, c_cls.as_ptr()),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    unsafe fn remove_css_class(api: &'static WebKitApi, widget: *mut c_void, class_name: &str) {
+        match widget.is_null() {
+            true => {}
+            false => {
+                let ctx = (api.gtk_widget_get_style_context)(widget);
+                match (ctx.is_null(), CString::new(class_name)) {
+                    (false, Ok(c_cls)) => (api.gtk_style_context_remove_class)(ctx, c_cls.as_ptr()),
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    unsafe fn set_tooltip(api: &'static WebKitApi, widget: *mut c_void, text: &str) {
+        match (widget.is_null(), CString::new(text)) {
+            (false, Ok(c_tip)) => (api.gtk_widget_set_tooltip_text)(widget, c_tip.as_ptr()),
+            _ => {}
+        }
+    }
+
+    unsafe fn set_button_ascii_label(api: &'static WebKitApi, btn: *mut c_void, label: &str) {
+        match (btn.is_null(), CString::new(label)) {
+            (false, Ok(c_lbl)) => (api.gtk_button_set_label)(btn, c_lbl.as_ptr()),
+            _ => {}
+        }
+    }
+
+    unsafe fn set_label_ascii_text(api: &'static WebKitApi, lbl: *mut c_void, text: &str) {
+        match (lbl.is_null(), CString::new(text)) {
+            (false, Ok(c_txt)) => (api.gtk_label_set_text)(lbl, c_txt.as_ptr()),
+            _ => {}
+        }
+    }
+
     unsafe fn build_gui_shell(st: &mut WorkerState) {
         let api = st.api;
         let state_ptr = st as *mut WorkerState as *mut c_void;
 
         let win = (api.gtk_window_new)(GTK_WINDOW_TOPLEVEL);
-        let title_c = CString::new(format!("OpenZ Browser — {}", st.opts.session_name)).unwrap_or_default();
+        let title_c =
+            CString::new(format!("OpenZ Browser [{}]", st.opts.session_name)).unwrap_or_default();
         (api.gtk_window_set_title)(win, title_c.as_ptr());
-        (api.gtk_window_set_default_size)(win, st.width, st.height + 48);
+        (api.gtk_window_set_default_size)(win, st.width, st.height + 36);
 
         let hb = (api.gtk_header_bar_new)();
-        (api.gtk_header_bar_set_show_close_button)(hb, 1);
-        let hb_title = CString::new("OpenZ Browser").unwrap_or_default();
-        let hb_sub = CString::new(format!("session: {}", st.opts.session_name)).unwrap_or_default();
-        (api.gtk_header_bar_set_title)(hb, hb_title.as_ptr());
-        (api.gtk_header_bar_set_subtitle)(hb, hb_sub.as_ptr());
+        // Disable default desktop window buttons so our minimal pure-ASCII controls own the right edge cleanly
+        (api.gtk_header_bar_set_show_close_button)(hb, 0);
 
-        let nav_box = (api.gtk_box_new)(GTK_ORIENTATION_HORIZONTAL, 4);
-        let btn_back = make_button(api, "◀", on_btn_back, state_ptr);
-        let btn_fwd = make_button(api, "▶", on_btn_forward, state_ptr);
-        let btn_reload = make_button(api, "↻", on_btn_reload, state_ptr);
+        // Left navigation cluster: pure-ASCII ghost buttons (`<` Back, `>` Forward, `r` Reload)
+        let nav_box = (api.gtk_box_new)(GTK_ORIENTATION_HORIZONTAL, 2);
+        let btn_back = make_ghost_button(api, "<", "Back", on_btn_back, state_ptr);
+        let btn_fwd = make_ghost_button(api, ">", "Forward", on_btn_forward, state_ptr);
+        let btn_reload = make_ghost_button(api, "r", "Reload page", on_btn_reload, state_ptr);
         (api.gtk_box_pack_start)(nav_box, btn_back, 0, 0, 0);
         (api.gtk_box_pack_start)(nav_box, btn_fwd, 0, 0, 0);
         (api.gtk_box_pack_start)(nav_box, btn_reload, 0, 0, 0);
         (api.gtk_header_bar_pack_start)(hb, nav_box);
 
+        // Center minimal omnibox pill (`:` / `[*]` / `[~]` + clean URL entry + subtle session tag)
+        let pill_box = (api.gtk_box_new)(GTK_ORIENTATION_HORIZONTAL, 4);
+        add_css_class(api, pill_box, "url-pill");
+        (api.gtk_widget_set_size_request)(pill_box, 520, 24);
+
+        let c_colon = CString::new("://").unwrap_or_default();
+        let status_glyph_lbl = (api.gtk_label_new)(c_colon.as_ptr());
+        add_css_class(api, status_glyph_lbl, "url-prefix");
+        (api.gtk_box_pack_start)(pill_box, status_glyph_lbl, 0, 0, 0);
+
         let url_entry = (api.gtk_entry_new)();
-        (api.gtk_widget_set_size_request)(url_entry, 420, -1);
-        let ph = CString::new("Enter URL (https://...) and press Enter").unwrap_or_default();
+        add_css_class(api, url_entry, "url-input");
+        (api.gtk_widget_set_hexpand)(url_entry, 1);
+        let ph = CString::new("enter url...").unwrap_or_default();
         (api.gtk_entry_set_placeholder_text)(url_entry, ph.as_ptr());
         connect_signal(
             api,
@@ -1204,16 +1387,58 @@ mod imp {
             ),
             state_ptr,
         );
-        (api.gtk_header_bar_pack_start)(hb, url_entry);
+        (api.gtk_box_pack_start)(pill_box, url_entry, 1, 1, 0);
 
-        let tools_box = (api.gtk_box_new)(GTK_ORIENTATION_HORIZONTAL, 4);
-        let btn_marks = make_button(api, "[0] Marks", on_btn_toggle_marks, state_ptr);
-        let btn_desktop = make_button(api, "Desktop", on_btn_size_desktop, state_ptr);
-        let btn_mobile = make_button(api, "Mobile", on_btn_size_mobile, state_ptr);
-        (api.gtk_box_pack_start)(tools_box, btn_marks, 0, 0, 0);
-        (api.gtk_box_pack_start)(tools_box, btn_desktop, 0, 0, 0);
-        (api.gtk_box_pack_start)(tools_box, btn_mobile, 0, 0, 0);
-        (api.gtk_header_bar_pack_end)(hb, tools_box);
+        let c_sess = CString::new(st.opts.session_name.as_str()).unwrap_or_default();
+        let sess_lbl = (api.gtk_label_new)(c_sess.as_ptr());
+        add_css_class(api, sess_lbl, "session-tag");
+        (api.gtk_box_pack_start)(pill_box, sess_lbl, 0, 0, 0);
+
+        (api.gtk_header_bar_set_custom_title)(hb, pill_box);
+
+        // Right cluster: agent inspect marks `[#]`, viewport `[D]`/`[M]`, `|`, and ASCII window controls `-`, `[]`, `x`
+        let right_box = (api.gtk_box_new)(GTK_ORIENTATION_HORIZONTAL, 2);
+        let btn_marks = make_ghost_button(
+            api,
+            "[#]",
+            "Toggle [0] Agent Element Marks",
+            on_btn_toggle_marks,
+            state_ptr,
+        );
+        let vp_label = match st.mobile_viewport {
+            true => "[M]",
+            false => "[D]",
+        };
+        let btn_viewport = make_ghost_button(
+            api,
+            vp_label,
+            "Toggle Desktop (1280x800) / Mobile (412x915) Viewport",
+            on_btn_toggle_viewport,
+            state_ptr,
+        );
+
+        let c_sep = CString::new("|").unwrap_or_default();
+        let sep_lbl = (api.gtk_label_new)(c_sep.as_ptr());
+        add_css_class(api, sep_lbl, "bar-sep");
+
+        let btn_min = make_ghost_button(api, "-", "Minimize", on_btn_win_minimize, state_ptr);
+        let btn_max = make_ghost_button(
+            api,
+            "[]",
+            "Maximize / Restore",
+            on_btn_win_maximize,
+            state_ptr,
+        );
+        let btn_close = make_ghost_button(api, "x", "Close Window", on_btn_win_close, state_ptr);
+        add_css_class(api, btn_close, "win-close");
+
+        (api.gtk_box_pack_start)(right_box, btn_marks, 0, 0, 0);
+        (api.gtk_box_pack_start)(right_box, btn_viewport, 0, 0, 0);
+        (api.gtk_box_pack_start)(right_box, sep_lbl, 0, 0, 0);
+        (api.gtk_box_pack_start)(right_box, btn_min, 0, 0, 0);
+        (api.gtk_box_pack_start)(right_box, btn_max, 0, 0, 0);
+        (api.gtk_box_pack_start)(right_box, btn_close, 0, 0, 0);
+        (api.gtk_header_bar_pack_end)(hb, right_box);
 
         (api.gtk_window_set_titlebar)(win, hb);
 
@@ -1235,16 +1460,28 @@ mod imp {
         st.gui_vbox = root_vbox;
         st.url_entry = url_entry;
         st.header_bar = hb;
+        st.status_glyph_lbl = status_glyph_lbl;
+        st.btn_reload = btn_reload;
+        st.btn_marks = btn_marks;
+        st.btn_viewport = btn_viewport;
+        st.btn_maximize = btn_maximize_or(btn_max);
     }
 
-    unsafe fn make_button(
+    fn btn_maximize_or(ptr: *mut c_void) -> *mut c_void {
+        ptr
+    }
+
+    unsafe fn make_ghost_button(
         api: &'static WebKitApi,
         label: &str,
+        tooltip: &str,
         handler: unsafe extern "C" fn(*mut c_void, *mut c_void),
         user_data: *mut c_void,
     ) -> *mut c_void {
         let c_lbl = CString::new(label).unwrap_or_default();
         let btn = (api.gtk_button_new_with_label)(c_lbl.as_ptr());
+        add_css_class(api, btn, "ghost-btn");
+        set_tooltip(api, btn, tooltip);
         connect_signal(
             api,
             btn,
@@ -1300,6 +1537,10 @@ mod imp {
     unsafe extern "C" fn on_btn_toggle_marks(_btn: *mut c_void, user_data: *mut c_void) {
         let st = &mut *(user_data as *mut WorkerState);
         st.som_active = !st.som_active;
+        match st.som_active {
+            true => add_css_class(st.api, st.btn_marks, "is-active"),
+            false => remove_css_class(st.api, st.btn_marks, "is-active"),
+        }
         let flag = match st.som_active {
             true => "true",
             false => "false",
@@ -1312,14 +1553,57 @@ mod imp {
         );
     }
 
-    unsafe extern "C" fn on_btn_size_desktop(_btn: *mut c_void, user_data: *mut c_void) {
+    unsafe extern "C" fn on_btn_toggle_viewport(_btn: *mut c_void, user_data: *mut c_void) {
         let st = &mut *(user_data as *mut WorkerState);
-        apply_viewport_size(st, 1280, 800, 1.0);
+        st.mobile_viewport = !st.mobile_viewport;
+        match st.mobile_viewport {
+            true => {
+                set_button_ascii_label(st.api, st.btn_viewport, "[M]");
+                add_css_class(st.api, st.btn_viewport, "is-active");
+                apply_viewport_size(st, 412, 915, 1.0);
+            }
+            false => {
+                set_button_ascii_label(st.api, st.btn_viewport, "[D]");
+                remove_css_class(st.api, st.btn_viewport, "is-active");
+                apply_viewport_size(st, 1280, 800, 1.0);
+            }
+        }
     }
 
-    unsafe extern "C" fn on_btn_size_mobile(_btn: *mut c_void, user_data: *mut c_void) {
+    unsafe extern "C" fn on_btn_win_minimize(_btn: *mut c_void, user_data: *mut c_void) {
         let st = &mut *(user_data as *mut WorkerState);
-        apply_viewport_size(st, 412, 915, 1.0);
+        match st.gui_win.is_null() {
+            true => {}
+            false => (st.api.gtk_window_iconify)(st.gui_win),
+        }
+    }
+
+    unsafe extern "C" fn on_btn_win_maximize(_btn: *mut c_void, user_data: *mut c_void) {
+        let st = &mut *(user_data as *mut WorkerState);
+        match st.gui_win.is_null() {
+            true => {}
+            false => {
+                let is_max = (st.api.gtk_window_is_maximized)(st.gui_win) != 0;
+                match is_max {
+                    true => {
+                        (st.api.gtk_window_unmaximize)(st.gui_win);
+                        set_button_ascii_label(st.api, st.btn_maximize, "[]");
+                    }
+                    false => {
+                        (st.api.gtk_window_maximize)(st.gui_win);
+                        set_button_ascii_label(st.api, st.btn_maximize, "<>");
+                    }
+                }
+            }
+        }
+    }
+
+    unsafe extern "C" fn on_btn_win_close(_btn: *mut c_void, user_data: *mut c_void) {
+        let st = &mut *(user_data as *mut WorkerState);
+        match st.gui_win.is_null() {
+            true => {}
+            false => (st.api.gtk_window_close)(st.gui_win),
+        }
     }
 
     unsafe extern "C" fn on_gui_window_destroy(_win: *mut c_void, user_data: *mut c_void) {
@@ -1328,6 +1612,11 @@ mod imp {
         st.gui_vbox = std::ptr::null_mut();
         st.url_entry = std::ptr::null_mut();
         st.header_bar = std::ptr::null_mut();
+        st.status_glyph_lbl = std::ptr::null_mut();
+        st.btn_reload = std::ptr::null_mut();
+        st.btn_marks = std::ptr::null_mut();
+        st.btn_viewport = std::ptr::null_mut();
+        st.btn_maximize = std::ptr::null_mut();
         match st.suppress_destroy_quit {
             true => {}
             false => {
@@ -1335,6 +1624,19 @@ mod imp {
                 (st.api.gtk_main_quit)();
             }
         }
+    }
+
+    unsafe extern "C" fn on_gui_chrome_tick(user_data: *mut c_void) -> c_int {
+        let st = &mut *(user_data as *mut WorkerState);
+        match st.shutting_down {
+            true => return 0,
+            false => {}
+        }
+        match st.is_gui && !st.gui_win.is_null() {
+            true => sync_gui_status_badges(st),
+            false => {}
+        }
+        1
     }
 
     unsafe extern "C" fn on_idle_watchdog_tick(user_data: *mut c_void) -> c_int {
@@ -1378,6 +1680,52 @@ mod imp {
         (uri, title, loading)
     }
 
+    unsafe fn sync_gui_status_badges(st: &mut WorkerState) {
+        let loading = (st.api.webkit_web_view_is_loading)(st.webview) != 0;
+        let playing_audio = (st.api.webkit_web_view_is_playing_audio)(st.webview) != 0;
+
+        match loading {
+            true => {
+                set_button_ascii_label(st.api, st.btn_reload, "*");
+                add_css_class(st.api, st.btn_reload, "is-active");
+            }
+            false => {
+                set_button_ascii_label(st.api, st.btn_reload, "r");
+                remove_css_class(st.api, st.btn_reload, "is-active");
+            }
+        }
+
+        match (loading, playing_audio) {
+            (true, _) => {
+                set_label_ascii_text(st.api, st.status_glyph_lbl, "[*]");
+                add_css_class(st.api, st.status_glyph_lbl, "is-loading");
+                remove_css_class(st.api, st.status_glyph_lbl, "is-audio");
+            }
+            (false, true) => {
+                set_label_ascii_text(st.api, st.status_glyph_lbl, "[~]");
+                remove_css_class(st.api, st.status_glyph_lbl, "is-loading");
+                add_css_class(st.api, st.status_glyph_lbl, "is-audio");
+            }
+            (false, false) => {
+                set_label_ascii_text(st.api, st.status_glyph_lbl, "://");
+                remove_css_class(st.api, st.status_glyph_lbl, "is-loading");
+                remove_css_class(st.api, st.status_glyph_lbl, "is-audio");
+            }
+        }
+
+        match st.gui_win.is_null() {
+            true => {}
+            false => {
+                let is_max = (st.api.gtk_window_is_maximized)(st.gui_win) != 0;
+                let max_lbl = match is_max {
+                    true => "<>",
+                    false => "[]",
+                };
+                set_button_ascii_label(st.api, st.btn_maximize, max_lbl);
+            }
+        }
+    }
+
     unsafe fn sync_gui_chrome(st: &mut WorkerState) {
         match st.is_gui {
             false => return,
@@ -1391,13 +1739,17 @@ mod imp {
             },
             _ => {}
         }
-        match (!st.header_bar.is_null(), !title.is_empty()) {
-            (true, true) => match CString::new(title.as_bytes()) {
-                Ok(c_title) => (st.api.gtk_header_bar_set_title)(st.header_bar, c_title.as_ptr()),
-                Err(_) => {}
-            },
+        match (!st.gui_win.is_null(), !title.is_empty()) {
+            (true, true) => {
+                let win_title = format!("{title} — OpenZ [{}]", st.opts.session_name);
+                match CString::new(win_title.as_bytes()) {
+                    Ok(c_title) => (st.api.gtk_window_set_title)(st.gui_win, c_title.as_ptr()),
+                    Err(_) => {}
+                }
+            }
             _ => {}
         }
+        sync_gui_status_badges(st);
     }
 
     unsafe extern "C" fn on_load_changed(
@@ -1421,32 +1773,24 @@ mod imp {
             false => {}
         }
 
-        // Complete any navigation-tolerant JS calls whose old JS context navigated away
-        let (uri, title, loading) = current_uri_and_title(st);
-        let nav_ids: Vec<u64> = st
-            .pending_js
-            .iter()
-            .filter_map(|(&id, call)| call.tolerate_navigation.then_some(id))
-            .collect();
-        for id in nav_ids {
-            match st.pending_js.remove(&id) {
-                Some(call) => {
-                    let _ = call.reply.send(json!({
-                        "ok": true,
-                        "data": {
-                            "navigated": true,
-                            "url": uri,
-                            "title": title,
-                            "ui_diff": format!("Navigated to {uri}")
-                        }
-                    }));
-                }
-                None => {}
+        // Settle and complete any navigation-tolerant JS calls whose click/submit triggered a page load
+        let has_nav_js = st.pending_js.values().any(|call| call.tolerate_navigation);
+        let state_ptr = st as *mut WorkerState;
+        match has_nav_js {
+            true => {
+                (st.api.g_timeout_add_full)(
+                    G_PRIORITY_DEFAULT_IDLE,
+                    160,
+                    on_nav_js_settle_complete,
+                    state_ptr as *mut c_void,
+                    None,
+                );
             }
+            false => {}
         }
 
+        let (uri, title, loading) = current_uri_and_title(st);
         let waiters: Vec<PendingLoadWaiter> = st.load_waiters.drain(..).collect();
-        let state_ptr = st as *mut WorkerState;
         for waiter in waiters {
             match waiter.settle_ms == 0 {
                 true => {
@@ -1471,16 +1815,61 @@ mod imp {
         }
     }
 
+    unsafe extern "C" fn on_nav_js_settle_complete(user_data: *mut c_void) -> c_int {
+        let st = &mut *(user_data as *mut WorkerState);
+        let (uri, title, loading) = current_uri_and_title(st);
+        match loading {
+            true => return 0,
+            false => {}
+        }
+        let nav_ids: Vec<u64> = st
+            .pending_js
+            .iter()
+            .filter_map(|(&id, call)| call.tolerate_navigation.then_some(id))
+            .collect();
+        for id in nav_ids {
+            match st.pending_js.remove(&id) {
+                Some(call) => {
+                    let mut merged = match call.partial_data {
+                        Some(Value::Object(map)) => Value::Object(map),
+                        _ => json!({}),
+                    };
+                    merged["navigated"] = json!(true);
+                    merged["url"] = json!(uri);
+                    merged["title"] = json!(title);
+                    merged["ui_diff"] = json!(format!("Navigated to {uri}"));
+                    let _ = call.reply.send(json!({
+                        "ok": true,
+                        "data": merged
+                    }));
+                }
+                None => {}
+            }
+        }
+        0
+    }
+
     unsafe extern "C" fn on_load_settle_complete(user_data: *mut c_void) -> c_int {
         let pair = Box::from_raw(user_data as *mut (*mut WorkerState, SyncSender<Value>));
-        let st = &*pair.0;
+        let st = &mut *pair.0;
         let (uri, title, loading) = current_uri_and_title(st);
-        let _ = pair.1.send(json!({
-            "ok": true,
-            "url": uri,
-            "title": title,
-            "loading": loading
-        }));
+        match loading {
+            true => {
+                // Client-side or HTTP redirect started during settle window (e.g. YouTube &themeRefresh=1); wait for new load
+                st.load_waiters.push(PendingLoadWaiter {
+                    settle_ms: 200,
+                    reply: pair.1,
+                });
+            }
+            false => {
+                let _ = pair.1.send(json!({
+                    "ok": true,
+                    "url": uri,
+                    "title": title,
+                    "loading": false
+                }));
+            }
+        }
         0
     }
 
@@ -1516,19 +1905,30 @@ mod imp {
             None => return,
         };
         match st.pending_js.remove(&req_id) {
-            Some(call) => {
+            Some(mut call) => {
                 let ok = parsed.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
-                let reply_payload = match ok {
-                    true => json!({
-                        "ok": true,
-                        "data": parsed.get("data").cloned().unwrap_or(Value::Null)
-                    }),
-                    false => json!({
-                        "ok": false,
-                        "error": parsed.get("error").and_then(|v| v.as_str()).unwrap_or("JS execution failed")
-                    }),
-                };
-                let _ = call.reply.send(reply_payload);
+                let nav_in_flight = ok
+                    && call.wait_post_nav
+                    && (st.api.webkit_web_view_is_loading)(st.webview) != 0;
+                match nav_in_flight {
+                    true => {
+                        call.partial_data = parsed.get("data").cloned();
+                        st.pending_js.insert(req_id, call);
+                    }
+                    false => {
+                        let reply_payload = match ok {
+                            true => json!({
+                                "ok": true,
+                                "data": parsed.get("data").cloned().unwrap_or(Value::Null)
+                            }),
+                            false => json!({
+                                "ok": false,
+                                "error": parsed.get("error").and_then(|v| v.as_str()).unwrap_or("JS execution failed")
+                            }),
+                        };
+                        let _ = call.reply.send(reply_payload);
+                    }
+                }
             }
             None => {}
         }
@@ -1584,7 +1984,7 @@ mod imp {
         (st.api.webkit_web_view_set_zoom_level)(st.webview, clamped_scale);
         (st.api.gtk_widget_set_size_request)(st.webview, phys_w, phys_h);
         match st.is_gui && !st.gui_win.is_null() {
-            true => (st.api.gtk_window_resize)(st.gui_win, phys_w, phys_h + 48),
+            true => (st.api.gtk_window_resize)(st.gui_win, phys_w, phys_h + 36),
             false => (st.api.gtk_window_resize)(st.offscreen_win, phys_w, phys_h),
         }
     }
@@ -1612,6 +2012,8 @@ mod imp {
             "status" | "ping" => {
                 let (uri, title, loading) = current_uri_and_title(st);
                 let progress = (st.api.webkit_web_view_get_estimated_load_progress)(st.webview);
+                let playing_audio = (st.api.webkit_web_view_is_playing_audio)(st.webview) != 0;
+                let muted = (st.api.webkit_web_view_get_is_muted)(st.webview) != 0;
                 let _ = reply.send(json!({
                     "ok": true,
                     "session": st.opts.session_name,
@@ -1623,6 +2025,8 @@ mod imp {
                     "title": title,
                     "loading": loading,
                     "load_progress": progress,
+                    "playing_audio": playing_audio,
+                    "muted": muted,
                     "viewport": {
                         "width": st.width,
                         "height": st.height,
@@ -1717,40 +2121,169 @@ mod imp {
                 let target_mode = cmd.get("mode").and_then(|v| v.as_str()).unwrap_or("headless");
                 let want_gui = matches!(target_mode, "gui" | "visible" | "headed");
                 match (want_gui, st.is_gui) {
-                    (true, false) => {
-                        (st.api.gtk_container_remove)(st.offscreen_win, st.webview);
-                        build_gui_shell(st);
-                        st.is_gui = true;
-                        (st.api.gtk_widget_show_all)(st.gui_win);
-                        sync_gui_chrome(st);
-                    }
-                    (false, true) => {
-                        match !st.gui_vbox.is_null() {
-                            true => (st.api.gtk_container_remove)(st.gui_vbox, st.webview),
-                            false => {}
+                    (true, false) => match st.gui_win.is_null() {
+                        false => {
+                            st.is_gui = true;
+                            (st.api.gtk_widget_show_all)(st.gui_win);
+                            (st.api.gtk_widget_queue_resize)(st.webview);
+                            (st.api.gtk_widget_queue_draw)(st.webview);
+                            sync_gui_chrome(st);
                         }
-                        match !st.gui_win.is_null() {
-                            true => {
-                                st.suppress_destroy_quit = true;
-                                (st.api.gtk_widget_destroy)(st.gui_win);
-                                st.suppress_destroy_quit = false;
-                                st.gui_win = std::ptr::null_mut();
-                                st.gui_vbox = std::ptr::null_mut();
-                                st.url_entry = std::ptr::null_mut();
-                                st.header_bar = std::ptr::null_mut();
+                        true => {
+                            let (prev_uri, _, _) = current_uri_and_title(st);
+                            (st.api.gtk_container_remove)(st.offscreen_win, st.webview);
+                            build_gui_shell(st);
+                            st.is_gui = true;
+                            (st.api.gtk_widget_show_all)(st.gui_win);
+                            (st.api.gtk_widget_queue_resize)(st.webview);
+                            (st.api.gtk_widget_queue_draw)(st.webview);
+                            sync_gui_chrome(st);
+                            let has_real_uri = !prev_uri.is_empty() && prev_uri != "about:blank";
+                            match has_real_uri {
+                                true => {
+                                    // Refresh the newly realized Wayland/X11 GdkWindow backing store cleanly
+                                    (st.api.webkit_web_view_reload)(st.webview);
+                                    st.load_waiters.push(PendingLoadWaiter {
+                                        settle_ms: 200,
+                                        reply: reply.clone(),
+                                    });
+                                    let state_ptr = st as *mut WorkerState;
+                                    let timeout_box = Box::new((state_ptr, reply));
+                                    (st.api.g_timeout_add_full)(
+                                        G_PRIORITY_DEFAULT_IDLE,
+                                        8_000,
+                                        on_navigate_deadline,
+                                        Box::into_raw(timeout_box) as *mut c_void,
+                                        None,
+                                    );
+                                    return;
+                                }
+                                false => {}
                             }
-                            false => {}
                         }
-                        (st.api.gtk_container_add)(st.offscreen_win, st.webview);
-                        (st.api.gtk_widget_show_all)(st.offscreen_win);
-                        st.is_gui = false;
-                    }
+                    },
+                    (false, true) => match st.opts.gui {
+                        true => {
+                            // Worker started in GL-enabled GUI mode: hide GtkWindow instead of moving to GtkOffscreenWindow
+                            match !st.gui_win.is_null() {
+                                true => (st.api.gtk_widget_hide)(st.gui_win),
+                                false => {}
+                            }
+                            st.is_gui = false;
+                        }
+                        false => {
+                            match !st.gui_vbox.is_null() {
+                                true => (st.api.gtk_container_remove)(st.gui_vbox, st.webview),
+                                false => {}
+                            }
+                            match !st.gui_win.is_null() {
+                                true => {
+                                    st.suppress_destroy_quit = true;
+                                    (st.api.gtk_widget_destroy)(st.gui_win);
+                                    st.suppress_destroy_quit = false;
+                                    st.gui_win = std::ptr::null_mut();
+                                    st.gui_vbox = std::ptr::null_mut();
+                                    st.url_entry = std::ptr::null_mut();
+                                    st.header_bar = std::ptr::null_mut();
+                                    st.status_glyph_lbl = std::ptr::null_mut();
+                                    st.btn_reload = std::ptr::null_mut();
+                                    st.btn_marks = std::ptr::null_mut();
+                                    st.btn_viewport = std::ptr::null_mut();
+                                    st.btn_maximize = std::ptr::null_mut();
+                                }
+                                false => {}
+                            }
+                            (st.api.gtk_container_add)(st.offscreen_win, st.webview);
+                            (st.api.gtk_widget_show_all)(st.offscreen_win);
+                            (st.api.gtk_widget_queue_resize)(st.webview);
+                            (st.api.gtk_widget_queue_draw)(st.webview);
+                            st.is_gui = false;
+                        }
+                    },
                     _ => {}
                 }
                 let _ = reply.send(json!({
                     "ok": true,
                     "mode": match st.is_gui { true => "gui", false => "headless" }
                 }));
+            }
+            "eval_js" => {
+                let raw_script = cmd.get("script").and_then(|v| v.as_str()).unwrap_or("");
+                let timeout_ms = cmd
+                    .get("timeout_ms")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(15_000)
+                    .clamp(300, 40_000);
+
+                let req_id = st.next_req_id;
+                st.next_req_id += 1;
+                st.pending_js.insert(
+                    req_id,
+                    PendingJsCall {
+                        tolerate_navigation: true,
+                        wait_post_nav: false,
+                        partial_data: None,
+                        reply,
+                    },
+                );
+
+                // Execute directly at the native JavaScriptCore C API level without eval() or new Function()
+                // so sites enforcing CSP 'require-trusted-types-for script' (YouTube, Google, GitHub) work seamlessly.
+                let trimmed = raw_script.trim();
+                let is_stmt_block = trimmed.contains(';')
+                    || trimmed.starts_with("const ")
+                    || trimmed.starts_with("let ")
+                    || trimmed.starts_with("var ")
+                    || trimmed.starts_with("return ")
+                    || trimmed.starts_with("if ")
+                    || trimmed.starts_with("if(")
+                    || trimmed.starts_with("for ")
+                    || trimmed.starts_with("for(")
+                    || trimmed.starts_with("while ")
+                    || trimmed.starts_with("while(")
+                    || trimmed.starts_with("try ")
+                    || trimmed.starts_with("try{")
+                    || trimmed.starts_with("switch ");
+                let body_expr = match is_stmt_block {
+                    true => format!("(async () => {{\n{trimmed}\n}})()"),
+                    false => format!("(async () => (\n{trimmed}\n))()"),
+                };
+                let wrapper_js = format!(
+                    r#"(async () => {{
+                        const __post = (msg) => {{
+                            try {{ window.webkit.messageHandlers.openz.postMessage(JSON.stringify(msg)); }} catch (_) {{}}
+                        }};
+                        try {{
+                            const __val = await {body_expr};
+                            const __out = typeof __val === 'string'
+                                ? __val
+                                : (__val === undefined ? 'undefined' : JSON.stringify(__val));
+                            __post({{
+                                req_id: {req_id},
+                                ok: true,
+                                data: {{
+                                    url: String(location.href || ''),
+                                    title: String(document.title || ''),
+                                    output: __out,
+                                    value: __val === undefined ? null : __val
+                                }}
+                            }});
+                        }} catch (err) {{
+                            __post({{ req_id: {req_id}, ok: false, error: String(err && err.message ? err.message : err) }});
+                        }}
+                    }})();"#
+                );
+                eval_fire_and_forget(st, &wrapper_js);
+
+                let state_ptr = st as *mut WorkerState;
+                let timer_box = Box::new((state_ptr, req_id));
+                (st.api.g_timeout_add_full)(
+                    G_PRIORITY_DEFAULT_IDLE,
+                    (timeout_ms + 2_500) as c_uint,
+                    on_js_call_timeout,
+                    Box::into_raw(timer_box) as *mut c_void,
+                    None,
+                );
             }
             "web_agent" => {
                 let payload = cmd.get("payload").cloned().unwrap_or_else(|| json!({}));
@@ -1772,14 +2305,14 @@ mod imp {
                     req_id,
                     PendingJsCall {
                         tolerate_navigation,
+                        wait_post_nav: tolerate_navigation,
+                        partial_data: None,
                         reply,
                     },
                 );
 
                 let payload_json =
                     serde_json::to_string(&payload).unwrap_or_else(|_| "{}".to_string());
-                let bootstrap_json =
-                    serde_json::to_string(PAGE_CONTROLLER_JS).unwrap_or_else(|_| "\"\"".to_string());
                 let wrapper_js = format!(
                     r#"(async () => {{
                         const __post = (msg) => {{
@@ -1787,7 +2320,7 @@ mod imp {
                         }};
                         try {{
                             if (!window.__openzBrowser) {{
-                                (0, eval)({bootstrap_json});
+                                {PAGE_CONTROLLER_JS}
                             }}
                             const res = await window.__openzBrowser.dispatch({payload_json});
                             __post({{ req_id: {req_id}, ok: true, data: res }});
@@ -1802,7 +2335,7 @@ mod imp {
                 let timer_box = Box::new((state_ptr, req_id));
                 (st.api.g_timeout_add_full)(
                     G_PRIORITY_DEFAULT_IDLE,
-                    timeout_ms as c_uint,
+                    (timeout_ms + 2_500) as c_uint,
                     on_js_call_timeout,
                     Box::into_raw(timer_box) as *mut c_void,
                     None,
@@ -1845,10 +2378,15 @@ mod imp {
                     false => WEBKIT_SNAPSHOT_OPTIONS_NONE,
                 };
 
+                let include_chrome = cmd
+                    .get("include_chrome")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
                 let job = Box::new(SnapshotJob {
                     state_ptr: st as *mut WorkerState,
                     path: PathBuf::from(path_str),
                     crop_rect,
+                    include_chrome,
                     reply,
                 });
                 (st.api.webkit_web_view_get_snapshot)(
@@ -1930,10 +2468,31 @@ mod imp {
         let st = &mut *pair.0;
         match st.pending_js.remove(&pair.1) {
             Some(call) => {
-                let _ = call.reply.send(json!({
-                    "ok": false,
-                    "error": "Timed out waiting for page JavaScript execution"
-                }));
+                let (uri, title, _) = current_uri_and_title(st);
+                let can_resolve_nav =
+                    call.tolerate_navigation && !uri.is_empty() && uri != "about:blank";
+                match can_resolve_nav {
+                    true => {
+                        let mut merged = match call.partial_data {
+                            Some(Value::Object(map)) => Value::Object(map),
+                            _ => json!({}),
+                        };
+                        merged["navigated"] = json!(true);
+                        merged["timed_out"] = json!(true);
+                        merged["url"] = json!(uri);
+                        merged["title"] = json!(title);
+                        let _ = call.reply.send(json!({
+                            "ok": true,
+                            "data": merged
+                        }));
+                    }
+                    false => {
+                        let _ = call.reply.send(json!({
+                            "ok": false,
+                            "error": "Timed out waiting for page JavaScript execution"
+                        }));
+                    }
+                }
             }
             None => {}
         }
@@ -1988,7 +2547,7 @@ mod imp {
             false => {}
         }
 
-        let target_surface = match job.crop_rect {
+        let cropped_surface = match job.crop_rect {
             None => surface,
             Some((cx, cy, cw, ch)) => {
                 let out_w = cw.round().max(1.0) as c_int;
@@ -2001,6 +2560,27 @@ mod imp {
                 (api.cairo_surface_flush)(cropped);
                 (api.cairo_surface_destroy)(surface);
                 cropped
+            }
+        };
+
+        let target_surface = match job.include_chrome && st.is_gui && !st.header_bar.is_null() {
+            false => cropped_surface,
+            true => {
+                let body_w = (api.cairo_image_surface_get_width)(cropped_surface).max(1);
+                let body_h = (api.cairo_image_surface_get_height)(cropped_surface).max(1);
+                let hb_h = (api.gtk_widget_get_allocated_height)(st.header_bar).max(32);
+                let combined =
+                    (api.cairo_image_surface_create)(CAIRO_FORMAT_ARGB32, body_w, body_h + hb_h);
+                let cr = (api.cairo_create)(combined);
+                (api.cairo_set_source_rgb)(cr, 0.031, 0.043, 0.071);
+                (api.cairo_paint)(cr);
+                (api.gtk_widget_draw)(st.header_bar, cr);
+                (api.cairo_set_source_surface)(cr, cropped_surface, 0.0, hb_h as f64);
+                (api.cairo_paint)(cr);
+                (api.cairo_destroy)(cr);
+                (api.cairo_surface_flush)(combined);
+                (api.cairo_surface_destroy)(cropped_surface);
+                combined
             }
         };
 

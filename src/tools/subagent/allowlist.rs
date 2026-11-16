@@ -253,6 +253,7 @@ pub fn static_allowlist_for_subagent(subagent_name: &str) -> Option<&'static [&'
             "cargo_manager",
             "patch_file",
             "replace_lines",
+            "browser",
             "tool_catalog",
         ]),
         "reviewer" | "code_auditor" => Some(&[
@@ -275,6 +276,7 @@ pub fn static_allowlist_for_subagent(subagent_name: &str) -> Option<&'static [&'
             "cargo_manager",
             "patch_file",
             "replace_lines",
+            "browser",
             "tool_catalog",
         ]),
         "test_engineer" => Some(&[
@@ -285,6 +287,7 @@ pub fn static_allowlist_for_subagent(subagent_name: &str) -> Option<&'static [&'
             "cargo_manager",
             "find_files",
             "code_outline",
+            "browser",
             "tool_catalog",
         ]),
         "devops_agent" => Some(&[
@@ -392,6 +395,7 @@ pub fn static_allowlist_for_subagent(subagent_name: &str) -> Option<&'static [&'
             "read_file",
             "list_dir",
             "find_files",
+            "browser",
             "generate_image",
             "read_doc",
             "openmedia_rasterize_svg",

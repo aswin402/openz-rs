@@ -198,17 +198,35 @@ impl StepExecutor for SubagentStepExecutor {
         }
 
         let mut profile = find_step_profile(step)?;
-        match spec
-            .agents
-            .iter()
-            .find(|agent| agent.name == step.agent)
-            .and_then(|agent| agent.model.as_deref())
-            .map(str::trim)
-            .filter(|model| !model.is_empty())
-        {
-            Some(model) => {
-                profile.model = Some(model.to_string());
-                profile.fallbacks = None;
+        match spec.agents.iter().find(|agent| agent.name == step.agent) {
+            Some(agent_decl) => {
+                match agent_decl
+                    .model
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|model| !model.is_empty())
+                {
+                    Some(model) => {
+                        profile.model = Some(model.to_string());
+                        profile.fallbacks = None;
+                    }
+                    None => {}
+                }
+                match agent_decl.tools.is_empty() {
+                    true => {}
+                    false => {
+                        profile.extra.insert(
+                            "tools".to_string(),
+                            Value::Array(
+                                agent_decl
+                                    .tools
+                                    .iter()
+                                    .map(|t| Value::String(t.clone()))
+                                    .collect(),
+                            ),
+                        );
+                    }
+                }
             }
             None => {}
         }

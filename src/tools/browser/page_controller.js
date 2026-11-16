@@ -10,6 +10,7 @@
 
   const state = {
     elements: new Map(),
+    elementMeta: new Map(),
     scrollables: new Map(),
     prevSnapshotMap: new Map(),
     logs: [],
@@ -255,9 +256,15 @@
       return true;
     }
     if (style && style.cursor === 'pointer' && el.children.length <= 4) {
-      const txt = cleanText(el.innerText || el.textContent || '', 80);
-      if (txt.length > 0 && txt.length <= 80) {
-        return true;
+      const parentEl = el.parentElement;
+      const win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
+      const parentPointer =
+        parentEl && win.getComputedStyle(parentEl).cursor === 'pointer';
+      if (!parentPointer) {
+        const txt = cleanText(el.innerText || el.textContent || '', 80);
+        if (txt.length > 0 && txt.length <= 80) {
+          return true;
+        }
       }
     }
     return false;
@@ -420,12 +427,21 @@
     }
 
     const href = tag === 'a' && el.href ? safeString(el.href, 200) : null;
+    const rawHrefAttr = tag === 'a' ? cleanText(el.getAttribute('href') || '', 64) : '';
     const inputType = tag === 'input' ? String(el.getAttribute('type') || 'text').toLowerCase() : null;
 
     const parts = [`[${index}] <${tag}>`];
     if (role && role !== tag) parts.push(`role=${role}`);
     if (inputType) parts.push(`type=${inputType}`);
     if (label) parts.push(`"${label}"`);
+    if (
+      rawHrefAttr &&
+      !rawHrefAttr.startsWith('#') &&
+      !rawHrefAttr.toLowerCase().startsWith('javascript:') &&
+      rawHrefAttr !== label
+    ) {
+      parts.push(`href="${rawHrefAttr}"`);
+    }
     if (value !== null && value !== '' && value !== label) parts.push(`val="${value}"`);
     if (checked !== null) parts.push(checked ? '[checked]' : '[unchecked]');
     if (disabled) parts.push('[disabled]');
@@ -470,6 +486,7 @@
     collectSceneNodes(document, 0, 0, rawInteractive, rawScrollables, overflows);
 
     state.elements.clear();
+    state.elementMeta.clear();
     state.scrollables.clear();
 
     const scrollSummary = rawScrollables.slice(0, 15).map((sc, i) => {
@@ -499,20 +516,27 @@
           raw.absY < raw.vh;
         if (!inVp) continue;
       }
-      const idx = items.length;
-      state.elements.set(idx, raw.el);
-      const rec = buildElementRecord(idx, raw);
+      const probe = buildElementRecord(items.length, raw);
 
-      if (roleFilter && rec.role !== roleFilter && rec.tag !== roleFilter) {
+      if (roleFilter && probe.role !== roleFilter && probe.tag !== roleFilter) {
         continue;
       }
       if (query) {
-        const hay = `${rec.tag} ${rec.role} ${rec.label} ${rec.value || ''} ${rec.href || ''}`.toLowerCase();
+        const hay = `${probe.tag} ${probe.role} ${probe.label} ${probe.value || ''} ${probe.href || ''}`.toLowerCase();
         if (!hay.includes(query)) continue;
       }
 
-      nextMap.set(idx, rec.line);
-      items.push(rec);
+      const idx = items.length;
+      state.elements.set(idx, raw.el);
+      state.elementMeta.set(idx, {
+        tag: probe.tag,
+        role: probe.role,
+        label: probe.label,
+        query,
+        roleFilter,
+      });
+      nextMap.set(idx, probe.line);
+      items.push(probe);
       if (items.length >= maxElements) break;
     }
 
@@ -552,6 +576,18 @@
     const totalH = (docEl && docEl.scrollHeight) || viewportH;
     const pxBelow = Math.max(0, Math.round(totalH - viewportH - scrollY));
 
+    const mediaSummary = Array.from(document.querySelectorAll('video, audio'))
+      .slice(0, 4)
+      .map((m) => ({
+        tag: m.tagName.toLowerCase(),
+        paused: !!m.paused,
+        muted: !!m.muted,
+        ended: !!m.ended,
+        current_time: Number.isFinite(m.currentTime) ? Math.round(m.currentTime * 10) / 10 : 0,
+        duration: Number.isFinite(m.duration) ? Math.round(m.duration * 10) / 10 : null,
+        ready_state: m.readyState || 0,
+      }));
+
     if (state.overlayEnabled) {
       renderInspectOverlay(items);
     }
@@ -571,6 +607,7 @@
       ui_diff: diffLines.length ? diffLines.join('\n') : '(no interactive DOM changes)',
       elements: opts.include_records ? items : undefined,
       scrollable_containers: scrollSummary,
+      media: mediaSummary.length ? mediaSummary : undefined,
       overflow_warnings: overflows,
     };
   }
@@ -759,7 +796,26 @@
     if (idx !== null && state.elements.has(idx)) {
       const candidate = state.elements.get(idx);
       if (candidate && candidate.isConnected) return candidate;
-      computeSnapshot({});
+      const prevMeta = state.elementMeta.get(idx);
+      computeSnapshot({
+        query: prevMeta ? prevMeta.query : '',
+        role: prevMeta ? prevMeta.roleFilter : '',
+      });
+      if (prevMeta && prevMeta.label) {
+        for (const [, el] of state.elements) {
+          if (!el || !el.isConnected) continue;
+          if (
+            el.tagName.toLowerCase() === prevMeta.tag &&
+            elementLabel(el) === prevMeta.label
+          ) {
+            return el;
+          }
+        }
+        for (const [, el] of state.elements) {
+          if (!el || !el.isConnected) continue;
+          if (elementLabel(el) === prevMeta.label) return el;
+        }
+      }
       if (state.elements.has(idx)) return state.elements.get(idx);
     }
 
@@ -773,10 +829,36 @@
 
     const needle = String(cmd.label || cmd.target_text || cmd.text_match || (cmd.action === 'click' ? cmd.text || '' : '')).trim().toLowerCase();
     if (needle) {
+      let allConnected = true;
+      for (const [, el] of state.elements) {
+        if (!el || !el.isConnected) {
+          allConnected = false;
+          break;
+        }
+      }
+      if (!allConnected) computeSnapshot({});
       for (const [, el] of state.elements) {
         if (!el || !el.isConnected) continue;
-        const lbl = elementLabel(el).toLowerCase();
-        if (lbl === needle || lbl.includes(needle)) return el;
+        if (elementLabel(el).toLowerCase() === needle) return el;
+      }
+      for (const [, el] of state.elements) {
+        if (!el || !el.isConnected) continue;
+        if (elementLabel(el).toLowerCase().includes(needle)) return el;
+      }
+      for (const [, el] of state.elements) {
+        if (!el || !el.isConnected) continue;
+        const anchor =
+          el.tagName && el.tagName.toLowerCase() === 'a'
+            ? el
+            : el.closest
+              ? el.closest('a[href]')
+              : null;
+        if (!anchor) continue;
+        const rawHref = String(anchor.getAttribute('href') || '').trim().toLowerCase();
+        const cleanHref = rawHref.startsWith('/') ? rawHref.slice(1) : rawHref;
+        if (rawHref === needle || cleanHref === needle || rawHref.endsWith('/' + needle)) {
+          return anchor;
+        }
       }
     }
     return null;
@@ -1040,6 +1122,19 @@
       cy = r.top + r.height / 2;
       showActionPulse(cx, cy, `click ${elementLabel(el)}`);
 
+      const clickedLabel = elementLabel(el) || el.tagName.toLowerCase();
+      const anchor = el.closest ? el.closest('a[href]') : null;
+      const rawHref = anchor ? String(anchor.getAttribute('href') || '').trim() : '';
+      const mayNavigate =
+        (rawHref !== '' &&
+          !rawHref.startsWith('#') &&
+          !rawHref.toLowerCase().startsWith('javascript:') &&
+          String(anchor.getAttribute('target') || '').toLowerCase() !== '_blank') ||
+        Boolean(
+          (el.tagName && el.type === 'submit') ||
+            (el.closest && el.closest('button[type="submit"], input[type="submit"]'))
+        );
+
       const win = (el.ownerDocument && el.ownerDocument.defaultView) || window;
       ['pointerdown', 'mousedown', 'pointerup', 'mouseup'].forEach((evName) => {
         el.dispatchEvent(
@@ -1057,11 +1152,12 @@
       } else {
         el.dispatchEvent(new win.MouseEvent('click', { bubbles: true, cancelable: true, clientX: cx, clientY: cy }));
       }
-      await settleFrames(90);
+      await settleFrames(mayNavigate ? 160 : 90);
       const snap = computeSnapshot({});
       return {
-        clicked: elementLabel(el) || el.tagName.toLowerCase(),
+        clicked: clickedLabel,
         coords: { x: Math.round(cx), y: Math.round(cy) },
+        may_navigate: mayNavigate,
         url: snap.url,
         title: snap.title,
         ui_diff: snap.ui_diff,
@@ -1092,7 +1188,7 @@
           el.form.submit();
         }
       }
-      await settleFrames(80);
+      await settleFrames(cmd.submit ? 160 : 80);
       const snap = computeSnapshot({});
       return {
         typed_into: elementLabel(el) || el.tagName.toLowerCase(),
@@ -1128,7 +1224,7 @@
           else lastEl.form.submit();
         }
       }
-      await settleFrames(90);
+      await settleFrames(cmd.submit ? 160 : 90);
       const snap = computeSnapshot({});
       return {
         updated_fields: updated,
@@ -1237,9 +1333,10 @@
       const selector = cmd.selector ? String(cmd.selector) : null;
       const textNeedle = cmd.text ? String(cmd.text).toLowerCase() : null;
       if (!selector && !textNeedle) {
-        await new Promise((r) => setTimeout(r, Math.min(timeoutMs, 1500)));
+        const sleepMs = Math.min(Number(cmd.timeout_ms || 3000), 15000);
+        await new Promise((r) => setTimeout(r, sleepMs));
         const snap = computeSnapshot({});
-        return { matched: true, url: snap.url, ui_diff: snap.ui_diff };
+        return { matched: true, slept_ms: sleepMs, url: snap.url, media: snap.media, ui_diff: snap.ui_diff };
       }
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
@@ -1249,7 +1346,8 @@
             present = !!document.querySelector(selector);
           } catch (_) {}
         } else if (textNeedle) {
-          const bodyTxt = String((document.body && document.body.innerText) || '').toLowerCase();
+          const bodyEl = document.body || document.documentElement;
+          const bodyTxt = String((bodyEl && (bodyEl.innerText || '') + ' ' + (bodyEl.textContent || '')) || '').toLowerCase();
           present = bodyTxt.includes(textNeedle);
         }
         if ((present && !gone) || (!present && gone)) {

@@ -34,7 +34,20 @@ fn looks_like_url_or_path(text: &str) -> bool {
     contains_any(
         text,
         &[
-            "http://", "https://", "www.", ".pdf", ".docx", ".xlsx", "/tmp/", "~/", "./", "../",
+            "http://",
+            "https://",
+            "file://",
+            "localhost",
+            "127.0.0.1",
+            "www.",
+            ".html",
+            ".pdf",
+            ".docx",
+            ".xlsx",
+            "/tmp/",
+            "~/",
+            "./",
+            "../",
         ],
     )
 }
@@ -204,7 +217,21 @@ pub fn step_execution_policy(
     let step_norm = normalized(step_goal);
     let agent_norm = normalized(agent);
     let explicitly_complex = asks_for_delegation_or_complex_work(&step_norm);
-    let researcher_agent = contains_any(&agent_norm, &["researcher", "research"]);
+    let web_or_browser_agent = contains_any(
+        &agent_norm,
+        &[
+            "researcher",
+            "research",
+            "browser",
+            "automation",
+            "frontend",
+            "docs_lookup",
+            "api_integrator",
+            "openz",
+            "orchestrator",
+            "coordinator",
+        ],
+    );
 
     let require_sources = matches!(
         class,
@@ -214,8 +241,26 @@ pub fn step_execution_policy(
             | GroundingClass::Uncertain
     );
     let allow_web = require_sources
-        || researcher_agent
-        || contains_any(&step_norm, &["web", "internet", "search", "docs"]);
+        || web_or_browser_agent
+        || contains_any(
+            &step_norm,
+            &[
+                "web",
+                "internet",
+                "search",
+                "docs",
+                "browser",
+                "url",
+                "page",
+                "site",
+                "scrape",
+                "crawl",
+                "screenshot",
+                "ui_tree",
+                "localhost",
+                "127.0.0.1",
+            ],
+        );
     let allow_nested_delegation = explicitly_complex;
     let suppress_evolution = matches!(class, GroundingClass::Trivial)
         || contains_any(&combined_norm, &["smoke test", "demo", "hello"]);

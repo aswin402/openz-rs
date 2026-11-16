@@ -231,7 +231,7 @@ impl Default for BrowserConfig {
             default_mode: "headless".to_string(),
             default_width: 1280,
             default_height: 800,
-            memory_limit_mb: 128,
+            memory_limit_mb: 1024,
             idle_timeout_secs: 180,
             firefox_webdriver_port: 4444,
             firefox_attach_port: 4445,

@@ -89,7 +89,9 @@ pub fn normalize_action_name(raw: &str) -> String {
         "forward" | "go_forward" => "forward".to_string(),
         "reload" | "refresh" => "reload".to_string(),
         "resize" | "viewport" | "set_viewport" => "resize".to_string(),
-        "mode" | "set_mode" | "show" | "hide" => "mode".to_string(),
+        "mode" | "set_mode" | "show" | "show_gui" | "open_gui" | "hide" | "hide_gui" => {
+            "mode".to_string()
+        }
         "logs" | "console" | "errors" => "logs".to_string(),
         "network" | "requests" => "network".to_string(),
         "inspect_overlay" | "marks" | "som" | "annotate" => "inspect_overlay".to_string(),
@@ -209,17 +211,40 @@ fn extract_session_spec(arguments: &Value, action: &str) -> SessionLaunchSpec {
     }
     match arguments.get("mode").and_then(|v| v.as_str()) {
         Some(m) => {
-            spec.gui = matches!(m.trim().to_ascii_lowercase().as_str(), "gui" | "visible" | "headed");
+            let want_gui = matches!(
+                m.trim().to_ascii_lowercase().as_str(),
+                "gui" | "visible" | "headed"
+            );
+            spec.gui = want_gui;
+            spec.explicit_mode = Some(want_gui);
         }
         None => match arguments.get("gui").and_then(|v| v.as_bool()) {
-            Some(flag) => spec.gui = flag,
+            Some(flag) => {
+                spec.gui = flag;
+                spec.explicit_mode = Some(flag);
+            }
             None => match arguments.get("headless").and_then(|v| v.as_bool()) {
-                Some(hl) => spec.gui = !hl,
+                Some(hl) => {
+                    spec.gui = !hl;
+                    spec.explicit_mode = Some(!hl);
+                }
                 None => {
-                    let is_show = action == "show";
-                    match is_show {
-                        true => spec.gui = true,
-                        false => {}
+                    let raw_act = extract_trimmed_non_empty_str(arguments, ACTION_ALIASES)
+                        .unwrap_or("")
+                        .to_ascii_lowercase();
+                    let is_show = action == "show"
+                        || matches!(raw_act.as_str(), "show" | "show_gui" | "open_gui");
+                    let is_hide = matches!(raw_act.as_str(), "hide" | "hide_gui");
+                    match (is_show, is_hide) {
+                        (true, _) => {
+                            spec.gui = true;
+                            spec.explicit_mode = Some(true);
+                        }
+                        (false, true) => {
+                            spec.gui = false;
+                            spec.explicit_mode = Some(false);
+                        }
+                        (false, false) => {}
                     }
                 }
             },
@@ -277,6 +302,47 @@ fn parse_numeric_ref(raw: &str) -> Option<i64> {
     (!trimmed.is_empty() && trimmed.bytes().all(|b| b.is_ascii_digit()))
         .then(|| trimmed.parse::<i64>().ok())
         .flatten()
+}
+
+async fn enrich_post_navigation_result(
+    client: &BrowserSessionClient,
+    mut data: Value,
+    timeout_secs: u64,
+) -> Value {
+    let navigated = data
+        .get("navigated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    match navigated {
+        false => data,
+        true => {
+            match client
+                .web_agent(
+                    json!({ "action": "ui_tree", "max_elements": 100 }),
+                    Duration::from_secs(timeout_secs.min(10)),
+                )
+                .await
+            {
+                Ok(snap) => {
+                    data["url"] = snap
+                        .get("url")
+                        .cloned()
+                        .or_else(|| data.get("url").cloned())
+                        .unwrap_or(Value::Null);
+                    data["title"] = snap
+                        .get("title")
+                        .cloned()
+                        .or_else(|| data.get("title").cloned())
+                        .unwrap_or(Value::Null);
+                    data["element_count"] =
+                        snap.get("element_count").cloned().unwrap_or(Value::Null);
+                    data["ui_tree"] = snap.get("tree_text").cloned().unwrap_or(Value::Null);
+                    data
+                }
+                Err(_) => data,
+            }
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -524,17 +590,47 @@ impl Tool for NativeBrowserTool {
                         }))
                     }
                     false => {
-                        let snap = client
+                        let query_val = arguments.get("query").cloned();
+                        let role_val = arguments.get("role").cloned();
+                        let max_el = arguments
+                            .get("max_elements")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(150);
+                        let mut snap = client
                             .web_agent(
                                 json!({
                                     "action": "ui_tree",
-                                    "query": arguments.get("query"),
-                                    "role": arguments.get("role"),
-                                    "max_elements": arguments.get("max_elements").and_then(|v| v.as_u64()).unwrap_or(150),
+                                    "query": query_val,
+                                    "role": role_val,
+                                    "max_elements": max_el,
                                 }),
                                 Duration::from_secs(timeout_secs),
                             )
                             .await?;
+                        // Allow modern client-side SPAs (YouTube, React, Next.js) up to 2s to hydrate DOM after initial shell load
+                        let mut hydrate_tries = 0u8;
+                        while url_opt.is_some()
+                            && hydrate_tries < 8
+                            && snap.get("element_count").and_then(|v| v.as_u64()).unwrap_or(0) == 0
+                        {
+                            tokio::time::sleep(Duration::from_millis(250)).await;
+                            hydrate_tries += 1;
+                            match client
+                                .web_agent(
+                                    json!({
+                                        "action": "ui_tree",
+                                        "query": query_val,
+                                        "role": role_val,
+                                        "max_elements": max_el,
+                                    }),
+                                    Duration::from_secs(timeout_secs),
+                                )
+                                .await
+                            {
+                                Ok(next_snap) => snap = next_snap,
+                                Err(_) => break,
+                            }
+                        }
                         Ok(json!({
                             "status": "success",
                             "engine": "openz_webkit2gtk",
@@ -545,6 +641,8 @@ impl Tool for NativeBrowserTool {
                             "viewport": snap.get("viewport").cloned().unwrap_or(Value::Null),
                             "element_count": snap.get("element_count").cloned().unwrap_or(Value::Null),
                             "ui_tree": snap.get("tree_text").cloned().unwrap_or(Value::Null),
+                            "output": snap.get("tree_text").cloned().unwrap_or(Value::Null),
+                            "media": snap.get("media").cloned().unwrap_or(Value::Null),
                             "scrollable_containers": snap.get("scrollable_containers").cloned().unwrap_or(Value::Null),
                         }))
                     }
@@ -559,12 +657,34 @@ impl Tool for NativeBrowserTool {
                         .and_then(|v| v.as_str())
                         .unwrap_or("markdown"),
                 };
-                let data = client
+                let mut data = client
                     .web_agent(
                         json!({ "action": "render", "format": fmt }),
                         Duration::from_secs(timeout_secs),
                     )
                     .await?;
+                let mut hydrate_tries = 0u8;
+                while url_opt.is_some()
+                    && hydrate_tries < 6
+                    && data
+                        .get("output")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.trim().len() < 40)
+                        .unwrap_or(true)
+                {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    hydrate_tries += 1;
+                    match client
+                        .web_agent(
+                            json!({ "action": "render", "format": fmt }),
+                            Duration::from_secs(timeout_secs),
+                        )
+                        .await
+                    {
+                        Ok(next_data) => data = next_data,
+                        Err(_) => break,
+                    }
+                }
                 Ok(json!({
                     "status": "success",
                     "engine": "openz_webkit2gtk",
@@ -611,6 +731,7 @@ impl Tool for NativeBrowserTool {
                 let data = client
                     .web_agent(payload, Duration::from_secs(timeout_secs))
                     .await?;
+                let data = enrich_post_navigation_result(&client, data, timeout_secs).await;
                 Ok(json!({ "status": "success", "action": "click", "result": data }))
             }
             "type" => {
@@ -625,6 +746,7 @@ impl Tool for NativeBrowserTool {
                 let data = client
                     .web_agent(payload, Duration::from_secs(timeout_secs))
                     .await?;
+                let data = enrich_post_navigation_result(&client, data, timeout_secs).await;
                 Ok(json!({ "status": "success", "action": "type", "result": data }))
             }
             "fill_form" => {
@@ -636,6 +758,7 @@ impl Tool for NativeBrowserTool {
                 let data = client
                     .web_agent(payload, Duration::from_secs(timeout_secs))
                     .await?;
+                let data = enrich_post_navigation_result(&client, data, timeout_secs).await;
                 Ok(json!({ "status": "success", "action": "fill_form", "result": data }))
             }
             "select_option" => {
@@ -722,27 +845,51 @@ impl Tool for NativeBrowserTool {
                 let raw_out = extract_trimmed_non_empty_str(arguments, PATH_ALIASES)
                     .unwrap_or("browser_screenshot.png");
                 let out_path = resolve_path(raw_out);
-                let snap = client
-                    .screenshot(&ScreenshotRequest {
-                        path: out_path.clone(),
-                        full_page: arguments
-                            .get("full_page")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false),
-                        transparent: arguments
-                            .get("transparent")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false),
-                        annotated: arguments
-                            .get("annotated")
-                            .and_then(|v| v.as_bool())
-                            .unwrap_or(false),
-                        selector: arguments
-                            .get("selector")
-                            .and_then(|v| v.as_str())
-                            .map(ToString::to_string),
-                    })
-                    .await?;
+                let include_chrome = arguments
+                    .get("include_chrome")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let full_page = arguments
+                    .get("full_page")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let transparent = arguments
+                    .get("transparent")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let snap = match include_chrome {
+                    true => {
+                        client
+                            .request(
+                                json!({
+                                    "op": "screenshot",
+                                    "path": out_path.to_string_lossy(),
+                                    "full_page": full_page,
+                                    "transparent": transparent,
+                                    "include_chrome": true,
+                                }),
+                                Duration::from_secs(20),
+                            )
+                            .await?
+                    }
+                    false => {
+                        client
+                            .screenshot(&ScreenshotRequest {
+                                path: out_path.clone(),
+                                full_page,
+                                transparent,
+                                annotated: arguments
+                                    .get("annotated")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false),
+                                selector: arguments
+                                    .get("selector")
+                                    .and_then(|v| v.as_str())
+                                    .map(ToString::to_string),
+                            })
+                            .await?
+                    }
+                };
                 Ok(json!({
                     "status": "success",
                     "action": "screenshot",

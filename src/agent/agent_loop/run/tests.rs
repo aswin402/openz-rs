@@ -161,6 +161,31 @@ fn generated_artifact_without_show_intent_does_not_auto_open() {
 }
 
 #[test]
+fn browser_screenshot_does_not_auto_open_on_url_open_or_play_prompt() {
+    let call = crate::providers::ToolCallRequest {
+        id: "call_browser_snap".to_string(),
+        name: "browser".to_string(),
+        arguments: json!({ "action": "screenshot", "path": "/tmp/hn.png" }),
+    };
+    let result = json!({ "status": "success", "output_path": "/tmp/hn.png" });
+    let mut opened = std::collections::HashSet::new();
+    assert!(auto_open_artifact_call_after_tool(
+        "open https://news.ycombinator.com, play video, and save screenshot to /tmp/hn.png",
+        &call,
+        &result,
+        &mut opened
+    )
+    .is_none());
+    assert!(auto_open_artifact_call_after_tool(
+        "capture a screenshot and show screenshot",
+        &call,
+        &result,
+        &mut opened
+    )
+    .is_some());
+}
+
+#[test]
 fn auto_open_dedupes_same_artifact_path() {
     let call = crate::providers::ToolCallRequest {
         id: "call_video".to_string(),

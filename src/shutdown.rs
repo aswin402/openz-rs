@@ -103,15 +103,15 @@ fn register_child_inner(
 
     let task_kind = match kind.as_str() {
         "dev_server" | "server" => crate::tools::task_manager::TaskKind::Server,
-        "browser" | "browser_daemon" | "geckodriver" => {
+        "browser" | "browser_ephemeral" | "browser_daemon" | "geckodriver" => {
             crate::tools::task_manager::TaskKind::Browser
         }
         "mcp" | "mcp_bridge" => crate::tools::task_manager::TaskKind::Mcp,
         "watcher" => crate::tools::task_manager::TaskKind::Watcher,
         _ => crate::tools::task_manager::TaskKind::BackgroundJob,
     };
-    let cleanup_policy = match task_kind {
-        crate::tools::task_manager::TaskKind::Browser => {
+    let cleanup_policy = match kind.as_str() {
+        "browser_ephemeral" | "browser_daemon" | "geckodriver" => {
             crate::tools::task_manager::CleanupPolicy::OnTurnEnd
         }
         _ => crate::tools::task_manager::CleanupPolicy::Manual,

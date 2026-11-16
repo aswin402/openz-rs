@@ -168,6 +168,25 @@ pub(super) fn user_content_requests_artifact_open(user_content: &str) -> bool {
     .any(|needle| lower.contains(needle))
 }
 
+fn user_content_requests_browser_capture_open(user_content: &str) -> bool {
+    let lower = user_content.to_lowercase();
+    [
+        "show screenshot",
+        "show the screenshot",
+        "open screenshot",
+        "open the screenshot",
+        "view screenshot",
+        "view the screenshot",
+        "display screenshot",
+        "preview screenshot",
+        "show pdf",
+        "open pdf",
+        "view pdf",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
 pub(super) fn is_local_artifact_path(path: &str) -> bool {
     let clean = path.trim().trim_start_matches("file://");
     match clean.starts_with("http://") || clean.starts_with("https://") {
@@ -234,8 +253,12 @@ pub(super) fn auto_open_artifact_call_after_tool(
     result: &serde_json::Value,
     opened_artifact_paths: &mut std::collections::HashSet<String>,
 ) -> Option<crate::providers::ToolCallRequest> {
-    (call.name != "open_path" && user_content_requests_artifact_open(user_content))
-        .then_some(())?;
+    let is_browser = crate::tools::canonical_tool_name(&call.name) == "browser";
+    let wants_open = match is_browser {
+        true => user_content_requests_browser_capture_open(user_content),
+        false => user_content_requests_artifact_open(user_content),
+    };
+    (call.name != "open_path" && wants_open).then_some(())?;
 
     let target = artifact_path_from_tool_result(call, result)?;
     opened_artifact_paths.insert(target.clone()).then_some(())?;
