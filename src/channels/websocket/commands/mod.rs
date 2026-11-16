@@ -101,6 +101,10 @@ pub(super) async fn handle_post_message_command(
                 false => {}
             }
             let effective_config = disk_config.with_ui_surface("webui");
+            crate::providers::DynamicContextRegistry::ensure_active_model_synced(
+                &effective_config,
+            )
+            .await;
             match state.live_config.write() {
                 Ok(mut live) => *live = effective_config.clone(),
                 Err(_) => {}

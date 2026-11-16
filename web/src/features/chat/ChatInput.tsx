@@ -92,8 +92,13 @@ export const ChatInput: React.FC = () => {
   );
 
   const maxContextTokens = useMemo(
-    () => resolveModelContextWindow(activeModel, settings?.max_tokens),
-    [activeModel, settings?.max_tokens],
+    () =>
+      resolveModelContextWindow(
+        activeModel,
+        settings?.max_tokens,
+        settings?.context_limit ?? settings?.resolved_context_window,
+      ),
+    [activeModel, settings?.max_tokens, settings?.context_limit, settings?.resolved_context_window],
   );
 
   const acceptMimeAttr = useMemo(

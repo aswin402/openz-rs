@@ -54,4 +54,18 @@ fn compact_tool_budget_classifier_distinguishes_compact_and_frontier_models() {
     assert!(!is_compact_tool_budget_model("anthropic/claude-3-5-sonnet"));
     assert!(!is_compact_tool_budget_model("gpt-4o"));
     assert!(!is_compact_tool_budget_model("deepseek-v4-flash-free"));
+    assert!(!is_compact_tool_budget_model("MiniMax-M3.1-Flash"));
+}
+
+#[test]
+fn minimax_does_not_false_positive_on_mini_substring() {
+    let risk = classify_model_risk("minimax", "MiniMax-M3.1-Flash");
+    assert!(
+        !risk
+            .reasons
+            .iter()
+            .any(|r| r.contains("small/weak")),
+        "MiniMax must never match 'mini' small-model token: {:?}",
+        risk.reasons
+    );
 }

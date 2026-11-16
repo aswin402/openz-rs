@@ -95,7 +95,7 @@ pub(crate) async fn append_tool_results(
         let is_retrieve = tool_result.name == "retrieve_original"
             || tool_result.name == "headroom/retrieve_original";
         let mut tool_output_metadata = None;
-        let content = match content_str.len() > limit && !is_retrieve {
+        let content = match content_str.chars().count() > limit && !is_retrieve {
             true => {
                 let total_lines = content_str.lines().count();
                 let total_chars = content_str.chars().count();

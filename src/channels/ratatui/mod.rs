@@ -538,6 +538,7 @@ pub async fn handle_ratatui_tui() -> Result<()> {
         Err(_) => {}
     }
 
+    crate::providers::DynamicContextRegistry::ensure_active_model_synced(&session_config).await;
     let mut app = RatatuiApp::new(model, provider, active_key.clone());
     app.set_theme(&session_config.ui_theme("tui"));
     app.refresh_caveman_status(&session_config);
@@ -989,6 +990,15 @@ pub async fn handle_ratatui_tui() -> Result<()> {
                                                         Ok(()) => {
                                                             app.model = chosen_model.clone();
                                                             app.provider = prov.clone();
+                                                            let mut switched_cfg =
+                                                                crate::config::loader::load_config()
+                                                                    .unwrap_or_else(|_| config.clone());
+                                                            switched_cfg.agents.defaults.model =
+                                                                chosen_model.clone();
+                                                            switched_cfg.agents.defaults.provider =
+                                                                prov.clone();
+                                                            crate::providers::DynamicContextRegistry::ensure_active_model_synced(&switched_cfg).await;
+                                                            app.refresh_context_limit(&switched_cfg);
                                                             app.messages.push(ChatMessage::notice(
                                                                 format!(
                                                                     "✓ Switched this session to: {} ({})",

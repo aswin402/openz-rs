@@ -189,7 +189,7 @@ async fn build_anthropic_message_content(msg: &Message, model: &str) -> serde_js
 }
 
 fn convert_anthropic_tools(tools: &[serde_json::Value]) -> Vec<serde_json::Value> {
-    tools
+    let mut converted: Vec<serde_json::Value> = tools
         .iter()
         .filter_map(|tool| {
             let f = tool.as_object()?.get("function")?.as_object()?;
@@ -208,7 +208,17 @@ fn convert_anthropic_tools(tools: &[serde_json::Value]) -> Vec<serde_json::Value
                 "input_schema": schema
             }))
         })
-        .collect()
+        .collect();
+    match converted.last_mut().and_then(|v| v.as_object_mut()) {
+        Some(last_tool) => {
+            last_tool.insert(
+                "cache_control".to_string(),
+                serde_json::json!({ "type": "ephemeral" }),
+            );
+        }
+        None => {}
+    }
+    converted
 }
 
 impl AnthropicProvider {

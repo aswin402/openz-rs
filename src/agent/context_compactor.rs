@@ -7,6 +7,79 @@ pub fn compress_json(raw_json: &str) -> anyhow::Result<String> {
     compress_json_with_limit(raw_json, DEFAULT_JSON_COMPACT_CHARS)
 }
 
+fn prune_json_value(val: &Value, depth: usize, max_depth: usize, max_str_chars: usize) -> Value {
+    match val {
+        Value::String(s) => {
+            let count = s.chars().count();
+            match count > max_str_chars {
+                false => Value::String(s.clone()),
+                true => {
+                    let head: String = s.chars().take(max_str_chars).collect();
+                    Value::String(format!("{head}... (+{} chars)", count - max_str_chars))
+                }
+            }
+        }
+        Value::Array(arr) => match (depth >= max_depth, arr.len() <= 3) {
+            (true, false) => Value::String(format!("[Array({} items)]", arr.len())),
+            (_, true) => Value::Array(
+                arr.iter()
+                    .map(|item| prune_json_value(item, depth + 1, max_depth, max_str_chars))
+                    .collect(),
+            ),
+            (false, false) => {
+                let mut kept: Vec<Value> = arr
+                    .iter()
+                    .take(2)
+                    .map(|item| prune_json_value(item, depth + 1, max_depth, max_str_chars))
+                    .collect();
+                kept.push(Value::String(format!(
+                    "... ({} intermediate items omitted)",
+                    arr.len().saturating_sub(3)
+                )));
+                match arr.last() {
+                    Some(last) => {
+                        kept.push(prune_json_value(last, depth + 1, max_depth, max_str_chars));
+                    }
+                    None => {}
+                }
+                Value::Array(kept)
+            }
+        },
+        Value::Object(map) => match depth >= max_depth && map.len() > 4 {
+            true => {
+                let preview_keys: Vec<String> = map.keys().take(6).cloned().collect();
+                Value::String(format!(
+                    "{{Object({} keys: {})}}",
+                    map.len(),
+                    preview_keys.join(", ")
+                ))
+            }
+            false => {
+                let mut out = serde_json::Map::new();
+                for (idx, (k, v)) in map.iter().enumerate() {
+                    match idx < 24 {
+                        true => {
+                            out.insert(
+                                k.clone(),
+                                prune_json_value(v, depth + 1, max_depth, max_str_chars),
+                            );
+                        }
+                        false => {
+                            out.insert(
+                                "_omitted_keys".to_string(),
+                                Value::Number(serde_json::Number::from(map.len() - 24)),
+                            );
+                            break;
+                        }
+                    }
+                }
+                Value::Object(out)
+            }
+        },
+        primitive => primitive.clone(),
+    }
+}
+
 pub fn compress_json_with_limit(raw_json: &str, max_chars: usize) -> anyhow::Result<String> {
     let effective_max = max_chars.max(DEFAULT_LOG_COMPACT_CHARS);
     let half_max = (effective_max / 2).max(1);
@@ -45,15 +118,31 @@ pub fn compress_json_with_limit(raw_json: &str, max_chars: usize) -> anyhow::Res
             match char_count > effective_max {
                 false => Ok(pretty),
                 true => {
-                    let first_part: String = pretty.chars().take(half_max).collect();
-                    let last_part: String = pretty
-                        .chars()
-                        .skip(char_count.saturating_sub(half_max))
-                        .collect();
-                    Ok(format!(
-                        "{}\n\n... [TRUNCATED INTERMEDIATE JSON OBJECT; full payload saved to disk] ...\n\n{}",
-                        first_part, last_part
-                    ))
+                    // Schema-preserving recursive JSON tree pruning (depth 3 -> 2 -> 1)
+                    for (depth_cap, str_cap) in [(3usize, 240usize), (2, 120), (1, 64)] {
+                        let pruned = prune_json_value(&other, 0, depth_cap, str_cap);
+                        let encoded = serde_json::to_string_pretty(&pruned)?;
+                        match encoded.chars().count() <= effective_max {
+                            true => return Ok(encoded),
+                            false => {}
+                        }
+                    }
+                    let minimal = prune_json_value(&other, 0, 1, 48);
+                    let encoded = serde_json::to_string(&minimal)?;
+                    match encoded.chars().count() <= effective_max {
+                        true => Ok(encoded),
+                        false => {
+                            let first_part: String = encoded.chars().take(half_max).collect();
+                            let last_part: String = encoded
+                                .chars()
+                                .skip(encoded.chars().count().saturating_sub(half_max))
+                                .collect();
+                            Ok(format!(
+                                "{}\n\n... [TRUNCATED INTERMEDIATE JSON OBJECT; full payload saved to disk] ...\n\n{}",
+                                first_part, last_part
+                            ))
+                        }
+                    }
                 }
             }
         }

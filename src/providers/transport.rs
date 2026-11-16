@@ -3,7 +3,7 @@
 //! Request and response schemas remain in each provider module. This module
 //! owns only the common client, endpoint, authentication, and retry behavior.
 
-use crate::providers::circuit_breaker::{retry_with_backoff, CircuitBreaker};
+use crate::providers::circuit_breaker::{retry_with_backoff_hint, CircuitBreaker};
 use anyhow::Result;
 use reqwest::{Client, Response};
 use serde_json::Value;
@@ -57,10 +57,26 @@ pub(crate) fn anthropic_messages_endpoint(api_base: &str) -> String {
     format!("{clean_base}/v1/messages")
 }
 
+fn parse_retry_after_header(headers: &reqwest::header::HeaderMap) -> Option<Duration> {
+    let ms = headers
+        .get("retry-after-ms")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.trim().parse::<u64>().ok())
+        .map(Duration::from_millis);
+    ms.or_else(|| {
+        headers
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.trim().parse::<f64>().ok())
+            .filter(|&secs| secs > 0.0 && secs <= 300.0)
+            .map(Duration::from_secs_f64)
+    })
+}
+
 pub(crate) async fn post_json_with_retry(
     client: &Client,
     breaker: &CircuitBreaker,
-    provider_name: &'static str,
+    provider_name: &str,
     url: &str,
     api_key: &str,
     body: Value,
@@ -70,7 +86,7 @@ pub(crate) async fn post_json_with_retry(
     let url = url.to_string();
     let api_key = api_key.to_string();
 
-    retry_with_backoff(
+    retry_with_backoff_hint(
         breaker,
         3,
         Duration::from_secs(1),
@@ -96,13 +112,14 @@ pub(crate) async fn post_json_with_retry(
                     .json(&body)
                     .send()
                     .await
-                    .map_err(|error| (0u16, format!("Network error: {error}")))?;
+                    .map_err(|error| (0u16, format!("Network error: {error}"), None))?;
                 match response.status().is_success() {
                     true => Ok(response),
                     false => {
                         let status = response.status().as_u16();
+                        let retry_after = parse_retry_after_header(response.headers());
                         let error_text = response.text().await.unwrap_or_default();
-                        Err((status, error_text))
+                        Err((status, error_text, retry_after))
                     }
                 }
             }

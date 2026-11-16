@@ -873,6 +873,10 @@ impl RatatuiApp {
             None => cwd_str,
         };
 
+        let initial_limit =
+            crate::providers::DynamicContextRegistry::resolve_model_spec(&model, None)
+                .context_window;
+
         Self {
             model,
             provider,
@@ -886,7 +890,7 @@ impl RatatuiApp {
             auto_scroll: true,
             selected_index: None,
             approx_tokens: 0,
-            limit_tokens: 1_000_000,
+            limit_tokens: initial_limit,
             cwd_display,
             prompt_history: Vec::new(),
             history_idx: None,
@@ -910,7 +914,13 @@ impl RatatuiApp {
         }
     }
 
+    pub fn refresh_context_limit(&mut self, cfg: &crate::config::schema::Config) {
+        self.limit_tokens =
+            crate::providers::DynamicContextRegistry::resolve_context_window(&self.model, cfg);
+    }
+
     pub fn refresh_caveman_status(&mut self, cfg: &crate::config::schema::Config) {
+        self.refresh_context_limit(cfg);
         self.caveman_mode = cfg.agents.defaults.caveman_mode;
         self.caveman_level =
             opencaveman::normalize_level_slug(&cfg.agents.defaults.caveman_level).to_string();

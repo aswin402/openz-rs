@@ -172,6 +172,14 @@ pub async fn handle_slash_command(
                 Ok(()) => {
                     app.model = mdl.to_string();
                     app.provider = prov.to_string();
+                    let mut switched_cfg = config.clone();
+                    switched_cfg.agents.defaults.model = mdl.to_string();
+                    switched_cfg.agents.defaults.provider = prov.to_string();
+                    crate::providers::DynamicContextRegistry::ensure_active_model_synced(
+                        &switched_cfg,
+                    )
+                    .await;
+                    app.refresh_context_limit(&switched_cfg);
                     assistant_msg(format!(
                         "✓ Active session model switched to `{}` (provider: `{}`).",
                         mdl, prov

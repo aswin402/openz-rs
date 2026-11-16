@@ -88,55 +88,84 @@ function stripProviderPrefix(model: string): string {
   return slash >= 0 ? afterColon.slice(slash + 1) : afterColon;
 }
 
+function tokenizeModelSlug(raw: string): string[] {
+  const bare = stripProviderPrefix(raw);
+  const colonIdx = bare.lastIndexOf(':');
+  const withoutVariant = colonIdx > 0 ? bare.slice(0, colonIdx) : bare;
+  const out: string[] = [];
+  let cur = '';
+  for (let i = 0; i < withoutVariant.length; i += 1) {
+    const code = withoutVariant.charCodeAt(i);
+    const isAlnum =
+      (code >= 48 && code <= 57) ||
+      (code >= 97 && code <= 122);
+    if (isAlnum) {
+      cur += withoutVariant[i];
+    } else if (cur.length > 0) {
+      out.push(cur);
+      cur = '';
+    }
+  }
+  if (cur.length > 0) {
+    out.push(cur);
+  }
+  return out;
+}
+
+function parseExplicitContextToken(tok: string): number | null {
+  if (tok.length < 2) return null;
+  const unit = tok[tok.length - 1];
+  const numPart = Number(tok.slice(0, -1));
+  if (!Number.isInteger(numPart) || numPart <= 0) return null;
+  if (unit === 'm' && numPart <= 10) {
+    return numPart * 1_000_000;
+  }
+  if (unit === 'k') {
+    if (numPart === 100 || numPart === 200 || numPart === 500 || numPart === 1000) {
+      return numPart * 1_000;
+    }
+    if (
+      numPart === 4 ||
+      numPart === 8 ||
+      numPart === 16 ||
+      numPart === 32 ||
+      numPart === 64 ||
+      numPart === 128 ||
+      numPart === 256 ||
+      numPart === 512
+    ) {
+      return numPart * 1_024;
+    }
+  }
+  return null;
+}
+
 /**
- * Resolves the effective context window (in tokens) from the active model identifier
- * and configured `max_tokens` ceiling.
+ * Resolves the effective context window (in tokens).
+ * Prefers the backend's dynamically discovered `backendResolvedWindow` (from `models.dev`,
+ * `OpenRouter`, `Ollama /api/show`, `~/.openz/models.json`, or reactive overflow learning),
+ * falling back to zero-regex structural slug token parsing when offline.
  */
 export function resolveModelContextWindow(
   modelName: string | undefined,
   configuredMaxOutputTokens?: number,
+  backendResolvedWindow?: number | null,
 ): number {
-  const m = stripProviderPrefix(modelName ?? '');
+  if (typeof backendResolvedWindow === 'number' && Number.isFinite(backendResolvedWindow) && backendResolvedWindow >= 512) {
+    return Math.round(backendResolvedWindow);
+  }
+
+  const tokens = tokenizeModelSlug(modelName ?? '');
   const outputFloor = Math.max(4096, configuredMaxOutputTokens ?? 4096);
 
-  if (m.includes('gemini-1.5') || m.includes('gemini-2') || m.includes('gemini-3')) {
-    return Math.max(1_048_576, outputFloor * 4);
-  }
-  if (m.includes('gpt-4.1') || m.includes('1m')) {
-    return Math.max(1_000_000, outputFloor * 4);
-  }
-  if (m.includes('minimax') || m.includes('m3.1') || m.includes('m2.5')) {
-    return Math.max(245_760, outputFloor * 4);
-  }
-  if (
-    m.includes('claude') ||
-    m.startsWith('o1') ||
-    m.startsWith('o3') ||
-    m.startsWith('o4') ||
-    m.includes('codex') ||
-    m.includes('grok-4')
-  ) {
-    return Math.max(200_000, outputFloor * 4);
-  }
-  if (
-    m.includes('gpt-4') ||
-    m.includes('gpt-5') ||
-    m.includes('deepseek') ||
-    m.includes('qwen') ||
-    m.includes('llama-3.1') ||
-    m.includes('llama-3.3') ||
-    m.includes('llama-4') ||
-    m.includes('mistral') ||
-    m.includes('kimi') ||
-    m.includes('glm')
-  ) {
-    return Math.max(128_000, outputFloor * 4);
-  }
-  if (m.includes('gemma-2') || m.includes('phi-3')) {
-    return Math.max(32_768, outputFloor * 2);
+  for (const tok of tokens) {
+    const explicit = parseExplicitContextToken(tok);
+    if (explicit !== null) {
+      return Math.max(explicit, outputFloor * 2);
+    }
   }
 
-  return Math.max(128_000, outputFloor * 16);
+  return Math.max(128_000, outputFloor * 4);
 }
 
 const MIME_EXTENSION_SUPPLEMENTS: Record<string, readonly string[]> = {

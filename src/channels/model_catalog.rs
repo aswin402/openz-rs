@@ -96,6 +96,7 @@ pub static PROVIDER_REGISTRY: &[ProviderModels] = &[
         name: "minimax",
         display: "minimax.io",
         models: &[
+            "MiniMax-M3.1-Flash",
             "MiniMax-M3",
             "MiniMax-M2.7",
             "MiniMax-M2.5",
@@ -412,6 +413,10 @@ pub async fn fetch_provider_models(
     }
 
     let json: serde_json::Value = response.json().await.ok()?;
+    let _ = crate::providers::DynamicContextRegistry::ingest_provider_models_json(
+        provider_name,
+        &json,
+    );
     let mut models = match (
         json.get("data").and_then(|value| value.as_array()),
         json.get("models").and_then(|value| value.as_array()),

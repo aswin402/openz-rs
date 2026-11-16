@@ -277,7 +277,8 @@ pub fn resolve_provider_full(config: &Config, model: &str) -> Result<ResolvedPro
             final_api_base.clone(),
             clean_model_str.clone(),
         )),
-        _ => Arc::new(OpenAIProvider::new(
+        _ => Arc::new(OpenAIProvider::new_with_provider(
+            final_provider_name.clone(),
             final_api_key.clone(),
             final_api_base.clone(),
             clean_model_str.clone(),

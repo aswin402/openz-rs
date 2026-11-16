@@ -271,8 +271,11 @@ describe('useUiCustomizationStore (@beui + shadcn/ui v5)', () => {
     expect(new Set(series).size).toBe(10);
 
     expect(estimateTextTokens('fn main() { println!("openz"); }')).toBeGreaterThan(5);
-    expect(resolveModelContextWindow('gemini-2.5-pro')).toBe(1_048_576);
-    expect(resolveModelContextWindow('claude-sonnet-4-5')).toBe(200_000);
+    expect(resolveModelContextWindow('MiniMax-M3.1-Flash', 4096, 1_000_000)).toBe(1_000_000);
+    expect(resolveModelContextWindow('MiniMax-M2.7', 4096, 204_800)).toBe(204_800);
+    expect(resolveModelContextWindow('custom-coder-1m')).toBe(1_000_000);
+    expect(resolveModelContextWindow('custom-reasoner-200k')).toBe(200_000);
+    expect(resolveModelContextWindow('unknown-local-model')).toBe(128_000);
     expect(mimePolicyToAcceptAttr(['image/png', 'application/pdf'])).toBe(
       'image/png,application/pdf,.pdf',
     );

@@ -84,6 +84,26 @@ const PYTHON_INSTALL_PREFIXES: &[&str] = &[
     "Requirement already satisfied:",
 ];
 
+fn looks_like_delimited_tabular(lines: &[&str]) -> bool {
+    let sample: Vec<&str> = lines
+        .iter()
+        .copied()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .take(5)
+        .collect();
+    match sample.len() >= 3 && !CODE_KEYWORDS.iter().any(|kw| sample[0].contains(kw)) {
+        false => false,
+        true => [',', '\t'].into_iter().any(|delim| {
+            let header_cols = sample[0].matches(delim).count();
+            header_cols >= 2
+                && sample[1..]
+                    .iter()
+                    .all(|row| row.matches(delim).count() == header_cols)
+        }),
+    }
+}
+
 pub fn auto_detect_type(text: &str) -> &'static str {
     let trimmed = text.trim();
     match trimmed.starts_with('{') || trimmed.starts_with('[') {
@@ -93,8 +113,7 @@ pub fn auto_detect_type(text: &str) -> &'static str {
     let lines: Vec<&str> = trimmed.lines().collect();
     match lines.len() > 1 {
         true => {
-            let first_line = lines[0].trim();
-            match first_line.len() <= 3 && lines.len() > 3 {
+            match looks_like_delimited_tabular(&lines) {
                 true => return "csv",
                 false => {}
             }

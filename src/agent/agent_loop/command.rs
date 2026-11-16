@@ -206,10 +206,17 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     Ok(TurnState::Done)
                 }
                 Some("/status") => {
+                    let spec = crate::providers::DynamicContextRegistry::resolve_model_spec(
+                        &ctx.config.agents.defaults.model,
+                        Some(&ctx.config),
+                    );
                     ctx.final_content = format!(
-                        "OpenZ Agent Status:\nModel: {}\nProvider: {}\nWorkspace: {}\nTotal Messages: {}",
+                        "OpenZ Agent Status:\nModel: {}\nProvider: {}\nContext Window: {} tokens ({})\nMax Output Tokens: {}\nWorkspace: {}\nTotal Messages: {}",
                         ctx.config.agents.defaults.model,
                         ctx.config.agents.defaults.provider,
+                        spec.context_window,
+                        spec.source,
+                        spec.max_output_tokens,
                         ctx.config.agents.defaults.workspace,
                         ctx.session.messages.len()
                     );

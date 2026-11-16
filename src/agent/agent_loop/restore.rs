@@ -73,5 +73,5 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         }
     }
 
-    Ok(TurnState::Compact)
+    Ok(TurnState::Command)
 }

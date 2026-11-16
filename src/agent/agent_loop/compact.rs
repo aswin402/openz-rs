@@ -142,8 +142,58 @@ pub(crate) fn resolve_compaction_split_index(messages: &[Message], keep_msgs: us
     }
 }
 
-pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
-    let config = &ctx.config;
+fn format_message_for_compaction(msg: &Message) -> String {
+    let calls_summary = msg
+        .extra
+        .get("tool_calls")
+        .and_then(Value::as_array)
+        .filter(|arr| !arr.is_empty())
+        .map(|arr| {
+            let names: Vec<String> = arr
+                .iter()
+                .filter_map(|tc| {
+                    let name = extract_tool_call_name(tc)?;
+                    let path_hint = extract_tool_call_args_object(tc).and_then(|args| {
+                        PATH_KEYS
+                            .iter()
+                            .find_map(|k| args.get(*k).and_then(Value::as_str))
+                            .map(str::to_string)
+                    });
+                    Some(match path_hint {
+                        Some(p) => format!("{name}({p})"),
+                        None => name.to_string(),
+                    })
+                })
+                .collect();
+            format!(" [tool_calls: {}]", names.join(", "))
+        })
+        .unwrap_or_default();
+
+    let body: String = msg.content.chars().take(1_600).collect();
+    format!("[{}]{}: {}\n", msg.role, calls_summary, body)
+}
+
+fn format_compaction_transcript(messages: &[Message], max_total_chars: usize) -> String {
+    let mut out = String::new();
+    for msg in messages {
+        let line = format_message_for_compaction(msg);
+        match out.chars().count() + line.chars().count() > max_total_chars {
+            true => {
+                out.push_str("... [earlier pre-compaction messages omitted for token safety] ...\n");
+                break;
+            }
+            false => out.push_str(&line),
+        }
+    }
+    out
+}
+
+pub(crate) async fn compact_session_history(
+    loop_ref: &AgentLoop,
+    ctx: &mut TurnContext<'_>,
+    force: bool,
+) -> Result<bool> {
+    let config = ctx.config.clone();
     let max_msgs = config.agents.defaults.max_messages;
     let len = ctx.session.messages.len();
 
@@ -154,26 +204,48 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     let should_compact_tokens = crate::providers::DynamicContextRegistry::should_compact_context(
         &config.agents.defaults.model,
         estimated_tokens,
-        config,
+        &config,
     );
-    let should_compact = (should_compact_tokens || len > max_msgs) && len > 5;
+    let should_compact = (force || should_compact_tokens || len > max_msgs) && len > 4;
 
     match should_compact {
-        false => Ok(TurnState::Command),
+        false => Ok(false),
         true => {
+            let k_by_tokens =
+                crate::providers::DynamicContextRegistry::resolve_compaction_split_by_tokens(
+                    &ctx.session.messages,
+                    &config.agents.defaults.model,
+                    &config,
+                );
             let keep_msgs =
-                crate::providers::DynamicContextRegistry::resolve_keep_recent_count(len, config);
-            let k = resolve_compaction_split_index(&ctx.session.messages, keep_msgs);
+                crate::providers::DynamicContextRegistry::resolve_keep_recent_count(len, &config);
+            let k_by_count = resolve_compaction_split_index(&ctx.session.messages, keep_msgs);
+            let k = match force {
+                true => k_by_tokens.max(k_by_count).max(1).min(len.saturating_sub(1)),
+                false => k_by_tokens.max(k_by_count),
+            };
 
             match k > 0 && k < len {
                 false => {
                     ctx.session.messages = ctx.session.messages[k.min(len)..].to_vec();
-                    Ok(TurnState::Command)
+                    ctx.messages = ctx.session.messages.clone();
+                    Ok(true)
                 }
                 true => {
                     let messages_to_summarize = ctx.session.messages[0..k].to_vec();
                     let working_state_ledger =
                         extract_working_state_ledger(&messages_to_summarize);
+
+                    let window_tokens =
+                        crate::providers::DynamicContextRegistry::resolve_context_window(
+                            &config.agents.defaults.model,
+                            &config,
+                        );
+                    let max_summary_input_chars = (window_tokens * 2).clamp(16_000, 240_000);
+                    let formatted_history = format_compaction_transcript(
+                        &messages_to_summarize,
+                        max_summary_input_chars,
+                    );
 
                     let existing_memory = ctx
                         .session
@@ -192,9 +264,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     mem_prompt_content.push_str(
                         "Pre-compression conversation history to preserve facts/decisions from:\n",
                     );
-                    for msg in &messages_to_summarize {
-                        mem_prompt_content.push_str(&format!("[{}]: {}\n", msg.role, msg.content));
-                    }
+                    mem_prompt_content.push_str(&formatted_history);
 
                     let settings = GenerationSettings {
                         temperature: 0.1,
@@ -265,9 +335,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             .push_str(&format!("Previous summary:\n{existing_summary}\n\n"));
                     });
                     prompt_content.push_str("New conversation history to summarize:\n");
-                    for msg in &messages_to_summarize {
-                        prompt_content.push_str(&format!("[{}]: {}\n", msg.role, msg.content));
-                    }
+                    prompt_content.push_str(&formatted_history);
 
                     let summary_msgs = vec![Message {
                         role: "user".to_string(),
@@ -335,11 +403,17 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     }
 
                     ctx.session.messages = ctx.session.messages[k..].to_vec();
-                    Ok(TurnState::Command)
+                    let _ = super::build::handle(loop_ref, ctx).await?;
+                    Ok(true)
                 }
             }
         }
     }
+}
+
+pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
+    let _ = compact_session_history(loop_ref, ctx, false).await?;
+    Ok(TurnState::Run)
 }
 
 #[cfg(test)]

@@ -338,7 +338,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     ctx.system_prompt =
         assemble_kv_cached_system_prompt(&static_prefix, &dynamic_suffix, budget_limit);
     ctx.messages = ctx.session.messages.clone();
-    Ok(TurnState::Run)
+    Ok(TurnState::Compact)
 }
 
 #[derive(Debug, Clone)]
@@ -403,17 +403,64 @@ pub(crate) fn safe_truncate(s: &str, max_chars: usize) -> String {
     }
 }
 
-pub(crate) fn allocate_dynamic_budgets(
-    budget: usize,
-    skills_len: usize,
-    cross_len: usize,
-) -> (usize, usize) {
-    let half_budget = budget / 2;
-    match (skills_len <= half_budget, cross_len <= half_budget) {
-        (true, _) => (skills_len, budget.saturating_sub(skills_len)),
-        (false, true) => (budget.saturating_sub(cross_len), cross_len),
-        (false, false) => (half_budget, budget.saturating_sub(half_budget)),
+/// Water-filling proportional budget allocator across N dynamic sections.
+/// Sections smaller than their equal share keep 100% of their size and donate surplus capacity
+/// to larger sections proportionally by weight.
+pub(crate) fn allocate_waterfill_budgets(
+    total_budget: usize,
+    lengths: &[usize],
+    weights: &[usize],
+) -> Vec<usize> {
+    let n = lengths.len();
+    let total_requested: usize = lengths.iter().sum();
+    match n == 0 || total_requested <= total_budget {
+        true => return lengths.to_vec(),
+        false => {}
     }
+
+    let mut caps = lengths.to_vec();
+    let mut locked = vec![false; n];
+    let mut remaining = total_budget;
+
+    for _ in 0..n {
+        let unlocked_weight: usize = weights
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !locked[*i] && lengths[*i] > 0)
+            .map(|(_, w)| (*w).max(1))
+            .sum();
+        match unlocked_weight == 0 {
+            true => break,
+            false => {}
+        }
+
+        let mut any_newly_locked = false;
+        for i in 0..n {
+            match !locked[i] && lengths[i] > 0 {
+                true => {
+                    let share = (remaining.saturating_mul(weights[i].max(1))) / unlocked_weight;
+                    match lengths[i] <= share {
+                        true => {
+                            caps[i] = lengths[i];
+                            remaining = remaining.saturating_sub(lengths[i]);
+                            locked[i] = true;
+                            any_newly_locked = true;
+                        }
+                        false => {
+                            caps[i] = share;
+                        }
+                    }
+                }
+                false => {}
+            }
+        }
+        match any_newly_locked {
+            false => break,
+            true => {}
+        }
+    }
+
+    caps
 }
 
 pub(crate) fn assemble_kv_cached_system_prompt(
@@ -426,51 +473,49 @@ pub(crate) fn assemble_kv_cached_system_prompt(
         "\n\n[Current Turn Timestamp]\nCurrent date and time: {}",
         suffix.utc_timestamp_rfc3339
     );
-    let fixed_dynamic_len = suffix.persona_priority_part.chars().count()
-        + suffix.caveman_auto_clarity.chars().count()
-        + suffix.summary_part.chars().count()
-        + suffix.memory_part.chars().count()
-        + suffix.workflow_context.chars().count()
-        + suffix.brief_context.chars().count()
-        + suffix.source_context.chars().count()
-        + suffix.recent_session_part.chars().count()
-        + suffix.activity_part.chars().count()
-        + temporal_tail.chars().count();
-    let base_len = static_prefix.chars().count() + fixed_dynamic_len;
-    let skills_len = suffix.skills_part.chars().count();
-    let cross_len = suffix.cross_session_memory.chars().count();
-    let total_len = base_len + skills_len + cross_len;
 
-    let (fitted_skills, fitted_cross) = match total_len > budget_limit {
-        false => (
-            suffix.skills_part.to_string(),
-            suffix.cross_session_memory.to_string(),
-        ),
-        true => {
-            let remaining_budget = budget_limit.saturating_sub(base_len);
-            let (skills_budget, cross_budget) =
-                allocate_dynamic_budgets(remaining_budget, skills_len, cross_len);
-            (
-                safe_truncate(suffix.skills_part, skills_budget),
-                safe_truncate(suffix.cross_session_memory, cross_budget),
-            )
-        }
-    };
+    let pinned_dynamic_len = static_prefix.chars().count()
+        + suffix.persona_priority_part.chars().count()
+        + suffix.caveman_auto_clarity.chars().count()
+        + temporal_tail.chars().count();
+
+    let sections: [&str; 9] = [
+        suffix.summary_part,
+        suffix.memory_part,
+        suffix.cross_session_memory,
+        suffix.skills_part,
+        suffix.workflow_context,
+        suffix.brief_context,
+        suffix.source_context,
+        suffix.recent_session_part,
+        suffix.activity_part,
+    ];
+    // Priority weights: session summary & memory carry highest retention weight, followed by skills/cross/brief
+    let weights: [usize; 9] = [4, 4, 2, 2, 2, 2, 1, 2, 1];
+    let lengths: Vec<usize> = sections.iter().map(|s| s.chars().count()).collect();
+    let available = budget_limit.saturating_sub(pinned_dynamic_len);
+    let caps = allocate_waterfill_budgets(available, &lengths, &weights);
+
+    let fitted: Vec<String> = sections
+        .iter()
+        .zip(caps.iter())
+        .map(|(sec, &cap)| safe_truncate(sec, cap))
+        .collect();
 
     format!(
         "{}{}{}{}{}{}{}{}{}{}{}{}{}",
         static_prefix,
         suffix.persona_priority_part,
         suffix.caveman_auto_clarity,
-        suffix.summary_part,
-        suffix.memory_part,
-        fitted_cross,
-        fitted_skills,
-        suffix.workflow_context,
-        suffix.brief_context,
-        suffix.source_context,
-        suffix.recent_session_part,
-        suffix.activity_part,
+        fitted[0],
+        fitted[1],
+        fitted[2],
+        fitted[3],
+        fitted[4],
+        fitted[5],
+        fitted[6],
+        fitted[7],
+        fitted[8],
         temporal_tail,
     )
 }

@@ -542,10 +542,7 @@ fn render_status_bar(f: &mut Frame, app: &RatatuiApp, area: Rect) {
     }
 
     // Token context & Dynamic Context Window (Right Side)
-    let limit_tokens = crate::providers::DynamicContextRegistry::resolve_context_window(
-        &app.model,
-        &crate::config::schema::Config::default(),
-    );
+    let limit_tokens = app.limit_tokens.max(1);
     let limit_str = match limit_tokens >= 1_000_000 {
         true => format!("{}M", limit_tokens / 1_000_000),
         false => format!("{}K", limit_tokens / 1000),

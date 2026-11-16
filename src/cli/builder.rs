@@ -7,6 +7,7 @@ use anyhow::Result;
 
 pub async fn build_agent_loop(config: Config) -> Result<AgentLoop> {
     let _ = crate::core::vault::ensure_vault_initialized(&config);
+    crate::providers::DynamicContextRegistry::ensure_active_model_synced(&config).await;
     let resolved =
         crate::providers::resolver::resolve_provider_full(&config, &config.agents.defaults.model)?;
     let provider = resolved.instance;

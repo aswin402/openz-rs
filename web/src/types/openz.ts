@@ -384,6 +384,8 @@ export interface AgentDefaultsConfig {
   tool_timeout_secs: number;
   enable_sandbox: boolean;
   context_limit?: number | null;
+  resolved_context_window?: number | null;
+  resolved_max_output_tokens?: number | null;
   tool_output_limit?: number | null;
   show_auto_capture_notices?: boolean;
   tui_thought_display?: string;

@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 pub struct OpenAIProvider {
+    pub provider_name: String,
     pub client: Client,
     pub api_key: String,
     pub api_base: String,
@@ -29,6 +30,8 @@ struct OpenAIRequest {
     max_tokens: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_completion_tokens: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -105,7 +108,17 @@ fn provider_auth_for_base(api_base: &str) -> ProviderAuth {
 
 impl OpenAIProvider {
     pub fn new(api_key: String, api_base: String, model: String) -> Self {
+        Self::new_with_provider("openai", api_key, api_base, model)
+    }
+
+    pub fn new_with_provider(
+        provider_name: impl Into<String>,
+        api_key: String,
+        api_base: String,
+        model: String,
+    ) -> Self {
         OpenAIProvider {
+            provider_name: provider_name.into(),
             client: build_provider_client(),
             api_key,
             api_base,
@@ -131,6 +144,10 @@ impl OpenAIProvider {
             temperature: (!is_reasoning).then_some(settings.temperature),
             max_tokens: (!is_reasoning).then_some(settings.max_tokens),
             max_completion_tokens: is_reasoning.then_some(settings.max_tokens),
+            reasoning_effort: is_reasoning
+                .then(|| settings.reasoning_effort.clone())
+                .flatten()
+                .filter(|s| !s.trim().is_empty()),
             tools: tools.to_vec(),
             stream,
         };
@@ -141,7 +158,7 @@ impl OpenAIProvider {
         post_json_with_retry(
             &self.client,
             &self.breaker,
-            "openai",
+            &self.provider_name,
             &url,
             &self.api_key,
             body_for_retry,
@@ -1280,11 +1297,14 @@ fn extract_tool_call(val: &serde_json::Value) -> Option<ToolCallRequest> {
 mod tests;
 
 fn is_reasoning_model(model: &str) -> bool {
-    let m = model.to_lowercase();
-    REASONING_MODEL_INCLUSIONS
+    let m = model.to_ascii_lowercase();
+    let excluded = REASONING_MODEL_EXCLUSIONS
         .iter()
-        .any(|needle| m.contains(needle))
-        && !REASONING_MODEL_EXCLUSIONS
-            .iter()
-            .any(|needle| m.contains(needle))
+        .any(|needle| m.contains(needle));
+    let tokens = crate::providers::context_registry::tokenize_model_slug(model);
+    let o_series = tokens.first().is_some_and(|first| {
+        REASONING_MODEL_INCLUSIONS.contains(&first.as_str())
+            || (first.starts_with('o') && first[1..].parse::<u32>().is_ok_and(|v| (1..=9).contains(&v)))
+    });
+    !excluded && o_series
 }

@@ -280,36 +280,8 @@ pub fn sanitize_tool_messages(messages: &[Message]) -> Vec<Message> {
         })
 }
 
-const VISION_EXACT_MODELS: &[&str] = &["mivi"];
-const VISION_PREFIX_MODELS: &[&str] = &["mivi/", "o3"];
-const VISION_SUBSTRING_MODELS: &[&str] = &[
-    "gpt-4o",
-    "gpt-4-turbo",
-    "gpt-4-vision-preview",
-    "claude-3",
-    "claude-4",
-    "gemini",
-    "paligemma",
-    "gemma-4",
-    "omni",
-    "pixtral",
-    "qvq",
-    "qwen-vl",
-    "deepseek-vl",
-];
-const VISION_TOKEN_KEYWORDS: &[&str] = &["vision", "vl", "vlm", "multimodal"];
-
 pub fn model_supports_vision(model: &str) -> bool {
-    let m = model.to_lowercase();
-    let exact_match = VISION_EXACT_MODELS.contains(&m.as_str());
-    let prefix_match = VISION_PREFIX_MODELS.iter().any(|p| m.starts_with(p));
-    let o1_full_match = m.starts_with("o1") && !m.contains("mini") && !m.contains("preview");
-    let substring_match = VISION_SUBSTRING_MODELS.iter().any(|s| m.contains(s));
-    let token_match = m
-        .split(['/', '-', '_', ':'])
-        .any(|word| VISION_TOKEN_KEYWORDS.contains(&word));
-
-    exact_match || prefix_match || o1_full_match || substring_match || token_match
+    DynamicContextRegistry::resolve_model_spec(model, None).supports_vision
 }
 
 

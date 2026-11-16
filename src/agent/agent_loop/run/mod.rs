@@ -844,6 +844,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 
     let turn_cancel = run.turn_cancel.clone();
     let turn_cancel_clone = turn_cancel.clone();
+    let mut overflow_retries_used: usize = 0;
 
     loop {
         match run.turn_cancel.is_cancelled() {
@@ -913,6 +914,32 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             crate::tui_println!("{}◎ {}{}", AURA_PURPLE, summary, COLOR_RESET);
         });
 
+        // Mid-turn proactive context pressure compaction across long multi-tool loops
+        match run.iterations > 0 && ctx.messages.len() > 6 {
+            true => {
+                let req_tokens =
+                    crate::providers::DynamicContextRegistry::estimate_request_tokens(
+                        &ctx.messages,
+                        &ctx.system_prompt,
+                        &tools_openai,
+                    );
+                let pressured =
+                    crate::providers::DynamicContextRegistry::should_compact_context(
+                        &config.agents.defaults.model,
+                        req_tokens,
+                        &config,
+                    );
+                match pressured {
+                    true => {
+                        ctx.session.messages = ctx.messages.clone();
+                        let _ = super::compact::compact_session_history(loop_ref, ctx, false).await;
+                    }
+                    false => {}
+                }
+            }
+            false => {}
+        }
+
         let activity_msg = format!("{}▶ Thinking{}", RED_ORANGE, COLOR_RESET);
         let start_time = std::time::Instant::now();
         let mut content_streaming_started = false;
@@ -922,7 +949,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 crate::agent::style::spinner::is_silent(),
             );
 
-        let mut resp = match config.agents.defaults.streaming {
+        let llm_outcome = match config.agents.defaults.streaming {
             true => {
                 stream_provider_response(
                     loop_ref,
@@ -937,7 +964,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     &mut reasoning_printed,
                     &mut markdown_streamer,
                 )
-                .await?
+                .await
             }
             false => {
                 let ns_cancel_tx = crate::shutdown::cli_cancel_tx();
@@ -969,7 +996,38 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                         ctx.final_content = msg;
                         return Ok(TurnState::Save);
                     }
-                    res = chat_fut => res?,
+                    res = chat_fut => res,
+                }
+            }
+        };
+
+        let mut resp = match llm_outcome {
+            Ok(r) => r,
+            Err(err) => {
+                let err_str = err.to_string();
+                let can_recover = overflow_retries_used == 0
+                    && ctx.messages.len() > 4
+                    && crate::providers::DynamicContextRegistry::is_context_overflow_error(
+                        &err_str,
+                    );
+                match can_recover {
+                    false => return Err(err),
+                    true => {
+                        overflow_retries_used += 1;
+                        let learned = crate::providers::DynamicContextRegistry::learn_context_limit_from_error(
+                            &config.agents.defaults.model,
+                            &err_str,
+                        );
+                        tracing::warn!(
+                            session = %ctx.session_key,
+                            model = %config.agents.defaults.model,
+                            learned_limit = ?learned,
+                            "Provider reported context overflow; self-healing via emergency compaction"
+                        );
+                        ctx.session.messages = ctx.messages.clone();
+                        let _ = super::compact::compact_session_history(loop_ref, ctx, true).await;
+                        continue;
+                    }
                 }
             }
         };

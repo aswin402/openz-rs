@@ -473,8 +473,13 @@ export const UiStudioModal: React.FC = () => {
   const nativeToolCount = runtimeInventory?.counts.tools ?? 260;
   const gatewayEndpoint = useMemo(() => extractGatewayEndpointLabel(wsUrl), [wsUrl]);
   const previewMaxTokens = useMemo(
-    () => resolveModelContextWindow(activeModel, settings?.max_tokens),
-    [activeModel, settings?.max_tokens],
+    () =>
+      resolveModelContextWindow(
+        activeModel,
+        settings?.max_tokens,
+        settings?.context_limit ?? settings?.resolved_context_window,
+      ),
+    [activeModel, settings?.max_tokens, settings?.context_limit, settings?.resolved_context_window],
   );
   const previewUsedTokens = Math.round(previewMaxTokens * 0.14);
   const previewModelLabel = activeModel || settings?.model || 'openz-default';

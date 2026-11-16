@@ -113,9 +113,14 @@ pub(crate) fn config_update_requires_gateway_token(envelope: &Value) -> bool {
 
 pub(crate) async fn config_data_event(config: &crate::config::schema::Config) -> Value {
     let effective = config.with_ui_surface("webui");
+    crate::providers::DynamicContextRegistry::ensure_active_model_synced(&effective).await;
     let skills = crate::agent::skills::load_skill_views().unwrap_or_default();
     let defaults = {
         let d = &effective.agents.defaults;
+        let model_spec = crate::providers::DynamicContextRegistry::resolve_model_spec(
+            &d.model,
+            Some(&effective),
+        );
         let caveman_stats = opencaveman::load_stats_ledger(&crate::config::runtime_data_dir());
         serde_json::json!({
             "ui_surface": "webui",
@@ -140,6 +145,9 @@ pub(crate) async fn config_data_event(config: &crate::config::schema::Config) ->
             "tool_timeout_secs": d.tool_timeout_secs,
             "enable_sandbox": d.enable_sandbox,
             "context_limit": d.context_limit,
+            "resolved_context_window": model_spec.context_window,
+            "resolved_max_output_tokens": model_spec.max_output_tokens,
+            "model_spec": model_spec,
             "tool_output_limit": d.tool_output_limit,
             "show_auto_capture_notices": d.show_auto_capture_notices,
             "tui_thought_display": d.tui_thought_display,
@@ -621,6 +629,10 @@ pub(crate) fn apply_webui_disk_config_update(
 pub(crate) fn config_updated_event(config: &crate::config::schema::Config) -> Value {
     let effective = config.with_ui_surface("webui");
     let defaults = &effective.agents.defaults;
+    let model_spec = crate::providers::DynamicContextRegistry::resolve_model_spec(
+        &defaults.model,
+        Some(&effective),
+    );
     let caveman_stats = opencaveman::load_stats_ledger(&crate::config::runtime_data_dir());
     super::super::protocol::config_updated(
         serde_json::json!({
@@ -646,6 +658,9 @@ pub(crate) fn config_updated_event(config: &crate::config::schema::Config) -> Va
             "tool_timeout_secs": defaults.tool_timeout_secs,
             "enable_sandbox": defaults.enable_sandbox,
             "context_limit": defaults.context_limit,
+            "resolved_context_window": model_spec.context_window,
+            "resolved_max_output_tokens": model_spec.max_output_tokens,
+            "model_spec": model_spec,
             "tool_output_limit": defaults.tool_output_limit,
             "show_auto_capture_notices": defaults.show_auto_capture_notices,
             "tui_thought_display": defaults.tui_thought_display,

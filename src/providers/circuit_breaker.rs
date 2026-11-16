@@ -143,8 +143,29 @@ pub fn backoff_duration(attempt: usize, base: Duration, max_delay: Duration) -> 
     delay.min(max_delay)
 }
 
-/// Retry loop that respects a circuit breaker.
-pub async fn retry_with_backoff<F, T, Fut>(
+/// Equal-jitter exponential backoff (`[cap / 2, cap]`) to prevent synchronized retry storms.
+pub fn backoff_duration_with_jitter(
+    attempt: usize,
+    base: Duration,
+    max_delay: Duration,
+) -> Duration {
+    let cap_ms = backoff_duration(attempt, base, max_delay).as_millis() as u64;
+    match cap_ms <= 1 {
+        true => Duration::from_millis(cap_ms),
+        false => {
+            let half = cap_ms / 2;
+            let span = (cap_ms - half).max(1);
+            let entropy = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos() as u64)
+                .unwrap_or(0);
+            Duration::from_millis(half + (entropy % span))
+        }
+    }
+}
+
+/// Retry loop that respects a circuit breaker and optional `Retry-After` hints.
+pub async fn retry_with_backoff_hint<F, T, Fut>(
     breaker: &CircuitBreaker,
     max_retries: usize,
     base_delay: Duration,
@@ -154,7 +175,7 @@ pub async fn retry_with_backoff<F, T, Fut>(
 ) -> anyhow::Result<T>
 where
     F: Fn() -> Fut,
-    Fut: std::future::Future<Output = Result<T, (u16, String)>>,
+    Fut: std::future::Future<Output = Result<T, (u16, String, Option<Duration>)>>,
 {
     match breaker.check() {
         Ok(()) => {}
@@ -167,12 +188,16 @@ where
         }
     }
 
-    let mut last_err = None;
+    let mut last_err: Option<(u16, String)> = None;
+    let mut pending_server_delay: Option<Duration> = None;
 
     for attempt in 0..=max_retries {
         match attempt > 0 {
             true => {
-                let delay = backoff_duration(attempt, base_delay, max_delay);
+                let delay = pending_server_delay
+                    .take()
+                    .map(|d| d.min(max_delay))
+                    .unwrap_or_else(|| backoff_duration_with_jitter(attempt, base_delay, max_delay));
                 tokio::time::sleep(delay).await;
             }
             false => {}
@@ -183,8 +208,9 @@ where
                 breaker.record_success();
                 return Ok(result);
             }
-            Err((status, error_text)) => {
+            Err((status, error_text, retry_after)) => {
                 last_err = Some((status, error_text.clone()));
+                pending_server_delay = retry_after;
 
                 match is_retryable_status(status) {
                     true => {
@@ -223,6 +249,34 @@ where
         status,
         error_text
     ))
+}
+
+/// Retry loop that respects a circuit breaker.
+pub async fn retry_with_backoff<F, T, Fut>(
+    breaker: &CircuitBreaker,
+    max_retries: usize,
+    base_delay: Duration,
+    max_delay: Duration,
+    provider_name: &str,
+    operation: F,
+) -> anyhow::Result<T>
+where
+    F: Fn() -> Fut,
+    Fut: std::future::Future<Output = Result<T, (u16, String)>>,
+{
+    retry_with_backoff_hint(
+        breaker,
+        max_retries,
+        base_delay,
+        max_delay,
+        provider_name,
+        || async {
+            operation()
+                .await
+                .map_err(|(status, text)| (status, text, None))
+        },
+    )
+    .await
 }
 
 #[cfg(test)]
