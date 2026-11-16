@@ -430,10 +430,15 @@ export const AgentSettingsTab: React.FC<AgentSettingsTabProps> = ({
                 onChange={(value) => onFieldChange('tool_timeout_secs', value)}
               />
               <NumberInput
-                label="Context Limit (chars)"
+                label="Context Limit (tokens)"
                 min={1}
                 step={1000}
-                value={Number(form.context_limit || settings.context_limit || 1)}
+                value={Number(
+                  form.context_limit ||
+                    settings.context_limit ||
+                    settings.resolved_context_window ||
+                    128000,
+                )}
                 onChange={(value) => onFieldChange('context_limit', value)}
               />
               <NumberInput

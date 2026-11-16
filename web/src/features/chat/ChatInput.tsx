@@ -91,15 +91,23 @@ export const ChatInput: React.FC = () => {
     [activeMessages, input],
   );
 
-  const maxContextTokens = useMemo(
-    () =>
-      resolveModelContextWindow(
-        activeModel,
-        settings?.max_tokens,
-        settings?.context_limit ?? settings?.resolved_context_window,
-      ),
-    [activeModel, settings?.max_tokens, settings?.context_limit, settings?.resolved_context_window],
-  );
+  const maxContextTokens = useMemo(() => {
+    const backendWindow =
+      !settings?.model || settings.model === activeModel
+        ? settings?.resolved_context_window
+        : null;
+    return resolveModelContextWindow(
+      activeModel,
+      settings?.max_tokens,
+      settings?.context_limit ?? backendWindow,
+    );
+  }, [
+    activeModel,
+    settings?.model,
+    settings?.max_tokens,
+    settings?.context_limit,
+    settings?.resolved_context_window,
+  ]);
 
   const acceptMimeAttr = useMemo(
     () => mimePolicyToAcceptAttr(attachmentPolicy.allowedMimeTypes),

@@ -144,9 +144,19 @@ export const createConfigSlice: StateCreator<
 
   setActiveModel: (model, provider) => {
     const finalProvider = provider || inferProviderFromModel(model, get().capabilities);
+    const prevSettings = get().settings;
     set({
       activeModel: model,
       activeProvider: finalProvider,
+      settings: prevSettings
+        ? {
+            ...prevSettings,
+            model,
+            provider: finalProvider,
+            resolved_context_window:
+              prevSettings.model === model ? prevSettings.resolved_context_window : null,
+          }
+        : null,
       recentModels: withRecentModel(get().recentModels, finalProvider, model),
     });
     wsService.updateConfig({ model, provider: finalProvider });

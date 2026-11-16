@@ -275,13 +275,17 @@ impl WsGateway {
                 let index_file = dist_path.join("index.html");
                 let serve_dir = ServeDir::new(&dist_path)
                     .fallback(tower_http::services::ServeFile::new(index_file));
-                app = app.fallback_service(serve_dir);
+                app = app
+                    .fallback_service(serve_dir)
+                    .layer(axum::middleware::from_fn(webui_cache_control_middleware));
             }
             (Some(dist_path), true) => {
                 let index_file = dist_path.join("index.html");
                 let serve_dir = ServeDir::new(&dist_path)
                     .fallback(tower_http::services::ServeFile::new(index_file));
-                app = app.fallback_service(serve_dir);
+                app = app
+                    .fallback_service(serve_dir)
+                    .layer(axum::middleware::from_fn(webui_cache_control_middleware));
             }
             (None, false) => {
                 println!(
@@ -417,11 +421,35 @@ fn copy_dir_all(src: &Path, dst: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+async fn webui_cache_control_middleware(
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let path = req.uri().path().to_string();
+    let is_ws_upgrade = req.headers().contains_key(axum::http::header::UPGRADE);
+    let mut resp = next.run(req).await;
+    match is_ws_upgrade || path.starts_with("/ws") || path.starts_with("/v1/") || path.starts_with("/webhook/") {
+        true => {}
+        false => {
+            let value = match path.starts_with("/assets/") {
+                true => "public, max-age=31536000, immutable",
+                false => "no-cache, no-store, must-revalidate",
+            };
+            let _ = axum::http::HeaderValue::from_str(value).map(|hv| {
+                resp.headers_mut()
+                    .insert(axum::http::header::CACHE_CONTROL, hv);
+            });
+        }
+    }
+    resp
+}
+
 fn find_web_dist() -> Option<std::path::PathBuf> {
     let local = Path::new("./web/dist");
     match local.exists() && local.is_dir() && local.join("index.html").exists() {
         true => {
             let global = crate::config::loader::config_dir().join("web/dist");
+            let _ = std::fs::remove_dir_all(global.join("assets"));
             let _ = copy_dir_all(local, &global);
             return Some(local.to_path_buf());
         }

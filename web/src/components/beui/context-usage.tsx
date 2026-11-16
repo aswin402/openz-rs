@@ -19,7 +19,14 @@ export interface BeuiContextUsageProps {
 }
 
 function formatCompactTokens(n: number): string {
-  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000
+    return Number.isInteger(m) ? `${m}M` : `${m.toFixed(1)}M`
+  }
+  if (n >= 1000) {
+    const k = n / 1000
+    return n >= 10_000 ? `${Math.round(k)}k` : `${k.toFixed(1)}k`
+  }
   return String(n)
 }
 
@@ -107,7 +114,9 @@ export const BeuiContextUsage: React.FC<BeuiContextUsageProps> = ({
               className={toneCls}
             />
           </svg>
-          <span>{formatCompactTokens(usedTokens)}</span>
+          <span>
+            {formatCompactTokens(usedTokens)} / {formatCompactTokens(maxTokens)}
+          </span>
         </div>
       </TooltipTrigger>
       <TooltipContent side="top" className="text-[11px]">
