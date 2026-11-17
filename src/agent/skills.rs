@@ -179,82 +179,15 @@ pub fn extract_frontmatter_list(content: &str, field: &str) -> Vec<String> {
 }
 
 pub fn get_user_profile_path() -> PathBuf {
-    crate::config::runtime_data_dir().join("USER.md")
+    crate::agent::core_memory::get_user_profile_path()
 }
 
 pub fn load_user_profile() -> String {
-    let path = get_user_profile_path();
-    match path.is_file() {
-        true => fs::read_to_string(path).unwrap_or_default(),
-        false => String::new(),
-    }
-}
-
-fn clean_bullet_line(line: &str) -> Option<&str> {
-    let l = line.trim();
-    match l.starts_with('-') || l.starts_with('*') {
-        true => Some(
-            l[1..]
-                .trim()
-                .trim_start_matches("**")
-                .trim_end_matches("**")
-                .trim(),
-        ),
-        false => None,
-    }
+    crate::agent::core_memory::load_user_profile()
 }
 
 pub fn update_user_profile(new_preferences: &str) -> Result<()> {
-    let trimmed_input = new_preferences.trim();
-    match trimmed_input.is_empty() {
-        true => return Ok(()),
-        false => {}
-    }
-
-    let path = get_user_profile_path();
-    match path.parent() {
-        Some(parent) => {
-            let _ = fs::create_dir_all(parent);
-        }
-        None => {}
-    }
-
-    let existing = match path.is_file() {
-        true => fs::read_to_string(&path).unwrap_or_default(),
-        false => String::new(),
-    };
-
-    let mut existing_bullets: Vec<String> = Vec::new();
-    for text in existing.lines().filter_map(clean_bullet_line) {
-        let should_add = !text.is_empty()
-            && !existing_bullets
-                .iter()
-                .any(|b| b.eq_ignore_ascii_case(text));
-        match should_add {
-            true => existing_bullets.push(text.to_string()),
-            false => {}
-        }
-    }
-
-    for line in trimmed_input.lines() {
-        let text = clean_bullet_line(line).unwrap_or_else(|| line.trim());
-        let should_add = text.len() > 3
-            && !existing_bullets.iter().any(|b| {
-                b.eq_ignore_ascii_case(text) || b.contains(text) || text.contains(b.as_str())
-            });
-        match should_add {
-            true => existing_bullets.push(text.to_string()),
-            false => {}
-        }
-    }
-
-    let mut updated_content = String::from("# User Profile & Preferences 👤\n\nDurable user preferences, styling tastes, persona rules, and coding conventions across sessions.\n\n## Preferences\n");
-    for bullet in &existing_bullets {
-        updated_content.push_str(&format!("- {}\n", bullet));
-    }
-
-    fs::write(path, updated_content)?;
-    Ok(())
+    crate::agent::core_memory::update_user_profile(new_preferences)
 }
 
 pub fn validate_skill_metadata(name: &str, content: &str) -> Vec<String> {
@@ -319,7 +252,11 @@ fn discover_skill_entry(path: PathBuf) -> Option<(String, PathBuf)> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("")
                 .to_string();
-            let valid = skill_file.exists() && skill_file.is_file() && !name.is_empty();
+            let valid = skill_file.exists()
+                && skill_file.is_file()
+                && !name.is_empty()
+                && name != "archive"
+                && !name.starts_with('.');
             valid.then_some((name, skill_file))
         }
         (false, false) => None,
@@ -493,30 +430,33 @@ fn migrate_old_skills_to_db(conn: &Connection) -> Result<()> {
     match global_dir.exists() && global_dir.is_dir() {
         false => {}
         true => {
-            for entry in fs::read_dir(&global_dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                let is_md =
-                    path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md");
-                let name = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("")
-                    .to_string();
-                let valid = is_md && !name.is_empty() && name != "INDEX" && !name.ends_with(".bak");
-                match valid {
-                    false => continue,
-                    true => match fs::read_to_string(&path) {
-                        Ok(content) => {
-                            let now = chrono::Utc::now().to_rfc3339();
-                            let _ = conn.execute(
-                                "INSERT OR IGNORE INTO skills (name, content, profile, created_at, last_used)
-                                 VALUES (?1, ?2, '', ?3, ?3)",
-                                params![name, content, now],
-                            );
-                        }
-                        Err(_) => {}
-                    },
+            for (name, skill_path) in discover_skill_files_in_dir(&global_dir)? {
+                match fs::read_to_string(&skill_path) {
+                    Ok(content) => {
+                        let now = chrono::Utc::now().to_rfc3339();
+                        let _ = conn.execute(
+                            "INSERT OR IGNORE INTO skills (name, content, profile, created_at, last_used)
+                             VALUES (?1, ?2, '', ?3, ?3)",
+                            params![name, content, now],
+                        );
+                        let is_legacy_flat = skill_path.parent() == Some(global_dir.as_path())
+                            && skill_path.extension().and_then(|s| s.to_str()) == Some("md");
+                        let _ = is_legacy_flat.then(|| {
+                            let pkg_dir = global_dir.join(&name);
+                            let pkg_skill_md = pkg_dir.join("SKILL.md");
+                            match !pkg_skill_md.exists() {
+                                true => {
+                                    let _ = fs::create_dir_all(&pkg_dir);
+                                    let _ = fs::write(&pkg_skill_md, &content)
+                                        .and_then(|_| fs::remove_file(&skill_path));
+                                }
+                                false => {
+                                    let _ = fs::remove_file(&skill_path);
+                                }
+                            }
+                        });
+                    }
+                    Err(_) => {}
                 }
             }
         }
@@ -903,6 +843,79 @@ fn add_file_skill_views(
     Ok(())
 }
 
+fn reconcile_global_disk_skill_views(
+    dir: &std::path::Path,
+    views: &mut std::collections::HashMap<String, SkillView>,
+) {
+    let entries = match discover_skill_files_in_dir(dir) {
+        Ok(items) => items,
+        Err(_) => return,
+    };
+    let conn_opt = get_connection().ok();
+    for (name, skill_path) in entries {
+        let content = match fs::read_to_string(&skill_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let path_display = skill_path.display().to_string();
+        let skill_ref = Skill {
+            name: name.clone(),
+            content: content.clone(),
+        };
+        match views.get_mut(&name) {
+            Some(existing_view) => {
+                existing_view.path = Some(path_display);
+                let changed = existing_view.content != content;
+                let _ = changed.then(|| {
+                    let prev = existing_view.content.clone();
+                    existing_view.description = skill_ref.description();
+                    existing_view.triggers = skill_ref.triggers();
+                    existing_view.validation_errors = validate_skill_metadata(&name, &content);
+                    existing_view.content = content.clone();
+                    let _ = conn_opt.as_ref().map(|conn| {
+                        let _ = record_skill_revision_snapshot(conn, &name, None, &prev);
+                        let _ = conn.execute(
+                            "UPDATE skills SET content = ?1 WHERE name = ?2 AND COALESCE(profile, '') = ''",
+                            params![content, name],
+                        );
+                    });
+                });
+            }
+            None => {
+                let now = chrono::Utc::now().to_rfc3339();
+                let _ = conn_opt.as_ref().map(|conn| {
+                    let _ = conn.execute(
+                        "INSERT OR IGNORE INTO skills (name, content, profile, created_at, last_used)
+                         VALUES (?1, ?2, '', ?3, ?3)",
+                        params![name, content, now],
+                    );
+                });
+                views.insert(
+                    name.clone(),
+                    SkillView {
+                        description: skill_ref.description(),
+                        triggers: skill_ref.triggers(),
+                        validation_errors: validate_skill_metadata(&name, &content),
+                        name,
+                        content,
+                        scope: "global".to_string(),
+                        profile: None,
+                        source: "global".to_string(),
+                        path: Some(path_display),
+                        enabled: true,
+                        is_protected: false,
+                        use_count: 0,
+                        success_count: 0,
+                        revision_count: 0,
+                        created_at: None,
+                        last_used: None,
+                    },
+                );
+            }
+        }
+    }
+}
+
 pub fn load_skill_views() -> Result<Vec<SkillView>> {
     let mut views = std::collections::HashMap::<String, SkillView>::new();
 
@@ -987,7 +1000,7 @@ pub fn load_skill_views() -> Result<Vec<SkillView>> {
         Err(_) => {}
     }
 
-    let _ = add_file_skill_views(&get_skills_dir(), "global", false, false, &mut views);
+    reconcile_global_disk_skill_views(&get_skills_dir(), &mut views);
 
     let skills_config = crate::config::loader::load_config()
         .map(|config| config.skills)
@@ -1100,12 +1113,145 @@ fn checked_within_last_24h(check_path: &std::path::Path) -> bool {
         })
 }
 
+fn archive_skill_artifacts_on_disk(name: &str, content: &str) -> Result<()> {
+    let archive_pkg_dir = get_skills_dir().join("archive").join(name);
+    fs::create_dir_all(&archive_pkg_dir)?;
+    let _ = fs::write(archive_pkg_dir.join("SKILL.md"), content);
+    let active_flat = get_skills_dir().join(format!("{}.md", name));
+    let _ = fs::remove_file(&active_flat);
+    let active_pkg = get_skills_dir().join(name);
+    match active_pkg.is_dir() {
+        true => {
+            let _ = fs::remove_dir_all(&active_pkg);
+        }
+        false => {}
+    }
+    Ok(())
+}
+
+fn skill_signature_tokens(skill: &Skill) -> std::collections::HashSet<String> {
+    let mut combined = skill.triggers().join(" ");
+    combined.push(' ');
+    combined.push_str(&skill.description());
+    for line in skill.content.lines().map(str::trim).filter(|l| l.starts_with('#')) {
+        combined.push(' ');
+        combined.push_str(line);
+    }
+    ranker::tokenize_stemmed(&combined, true).into_iter().collect()
+}
+
+pub fn consolidate_learned_skills() -> Result<usize> {
+    let conn = get_connection()?;
+    let mut stmt = conn.prepare(
+        "SELECT name, content, COALESCE(use_count, 0), COALESCE(success_count, 0)
+         FROM skills
+         WHERE COALESCE(profile, '') = ''",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, i64>(2).unwrap_or(0),
+            row.get::<_, i64>(3).unwrap_or(0),
+        ))
+    })?;
+
+    let mut active_rows = Vec::new();
+    let mut actions_taken = 0usize;
+
+    for (name, content, uses, successes) in rows.flatten() {
+        let low_efficacy = uses >= 5 && successes == 0;
+        match low_efficacy {
+            true => {
+                let _ = record_skill_revision_snapshot(&conn, &name, None, &content);
+                let _ = archive_skill_artifacts_on_disk(&name, &content);
+                let _ = conn.execute(
+                    "DELETE FROM skills WHERE name = ?1 AND COALESCE(profile, '') = ''",
+                    params![name],
+                );
+                actions_taken += 1;
+            }
+            false => active_rows.push((name, content, uses, successes)),
+        }
+    }
+
+    active_rows.sort_by(|a, b| {
+        let util_a = ranker::compute_utility_multiplier(a.2, a.3);
+        let util_b = ranker::compute_utility_multiplier(b.2, b.3);
+        util_b
+            .partial_cmp(&util_a)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| b.2.cmp(&a.2))
+            .then_with(|| a.0.cmp(&b.0))
+    });
+
+    let mut archived_dups = std::collections::HashSet::<String>::new();
+    let count = active_rows.len();
+    for i in 0..count {
+        let primary_name = active_rows[i].0.clone();
+        match archived_dups.contains(&primary_name) {
+            true => continue,
+            false => {}
+        }
+        let primary_skill = Skill {
+            name: primary_name.clone(),
+            content: active_rows[i].1.clone(),
+        };
+        let sig_a = skill_signature_tokens(&primary_skill);
+        match sig_a.len() >= 3 {
+            false => continue,
+            true => {}
+        }
+
+        for j in (i + 1)..count {
+            let candidate_name = active_rows[j].0.clone();
+            match archived_dups.contains(&candidate_name) {
+                true => continue,
+                false => {}
+            }
+            let candidate_skill = Skill {
+                name: candidate_name.clone(),
+                content: active_rows[j].1.clone(),
+            };
+            let sig_b = skill_signature_tokens(&candidate_skill);
+            let sim = match sig_b.len() >= 3 {
+                false => 0.0,
+                true => {
+                    let inter = sig_a.intersection(&sig_b).count() as f32;
+                    let union = sig_a.union(&sig_b).count().max(1) as f32;
+                    inter / union
+                }
+            };
+            let is_duplicate = sim >= 0.80;
+            let _ = is_duplicate.then(|| {
+                let _ = record_skill_revision_snapshot(
+                    &conn,
+                    &candidate_name,
+                    None,
+                    &candidate_skill.content,
+                );
+                let _ = archive_skill_artifacts_on_disk(&candidate_name, &candidate_skill.content);
+                let _ = conn.execute(
+                    "DELETE FROM skills WHERE name = ?1 AND COALESCE(profile, '') = ''",
+                    params![candidate_name],
+                );
+                archived_dups.insert(candidate_name);
+                actions_taken += 1;
+            });
+        }
+    }
+
+    Ok(actions_taken)
+}
+
 pub fn archive_stale_skills() -> Result<()> {
     let check_path = crate::config::runtime_data_dir().join("last_stale_skills_check.json");
     match checked_within_last_24h(&check_path) {
         true => return Ok(()),
         false => {}
     }
+
+    let _ = consolidate_learned_skills();
 
     match get_connection() {
         Ok(conn) => {
@@ -1136,10 +1282,7 @@ pub fn archive_stale_skills() -> Result<()> {
                         });
                 match is_stale {
                     true => {
-                        let archive_dir = get_skills_dir().join("archive");
-                        fs::create_dir_all(&archive_dir)?;
-                        let dest_path = archive_dir.join(format!("{}.md", name));
-                        let _ = fs::write(dest_path, content);
+                        archive_skill_artifacts_on_disk(&name, &content)?;
                         to_delete.push((name, profile_key));
                     }
                     false => {}
@@ -1151,8 +1294,6 @@ pub fn archive_stale_skills() -> Result<()> {
                     "DELETE FROM skills WHERE name = ?1 AND COALESCE(profile, '') = ?2",
                     params![name, profile_key],
                 );
-                let active_mirror = get_skills_dir().join(format!("{}.md", name));
-                let _ = fs::remove_file(&active_mirror);
 
                 let aura_blue = "\x1b[38;2;96;165;250m";
                 let color_reset = "\x1b[0m";
@@ -1374,25 +1515,73 @@ fn list_relative_files_under(pkg_dir: &std::path::Path, subdir: &str) -> Vec<Str
     }
 }
 
-pub fn inspect_skill_package(
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SkillBundleInspection {
+    pub skill: Skill,
+    pub references: Vec<String>,
+    pub scripts: Vec<String>,
+    pub templates: Vec<String>,
+    pub assets: Vec<String>,
+}
+
+pub fn inspect_skill_bundle(
     name: &str,
     profile: Option<&str>,
-) -> Result<Option<(Skill, Vec<String>, Vec<String>)>> {
+) -> Result<Option<SkillBundleInspection>> {
     let safe_name = sanitize_skill_name(name);
     let skills = load_skills_with_profile(profile)?;
     let found = skills
         .into_iter()
         .find(|s| s.name == safe_name || sanitize_skill_name(&s.name) == safe_name);
     Ok(found.map(|skill| {
-        let (refs, scripts) = match locate_skill_package_dir(&skill.name, profile) {
-            Some(pkg_dir) => (
-                list_relative_files_under(&pkg_dir, "references"),
-                list_relative_files_under(&pkg_dir, "scripts"),
-            ),
-            None => (Vec::new(), Vec::new()),
-        };
-        (skill, refs, scripts)
+        let (references, scripts, templates, assets) =
+            match locate_skill_package_dir(&skill.name, profile) {
+                Some(pkg_dir) => (
+                    list_relative_files_under(&pkg_dir, "references"),
+                    list_relative_files_under(&pkg_dir, "scripts"),
+                    list_relative_files_under(&pkg_dir, "templates"),
+                    list_relative_files_under(&pkg_dir, "assets"),
+                ),
+                None => (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+            };
+        SkillBundleInspection {
+            skill,
+            references,
+            scripts,
+            templates,
+            assets,
+        }
     }))
+}
+
+pub fn inspect_skill_package(
+    name: &str,
+    profile: Option<&str>,
+) -> Result<Option<(Skill, Vec<String>, Vec<String>)>> {
+    inspect_skill_bundle(name, profile)
+        .map(|opt| opt.map(|b| (b.skill, b.references, b.scripts)))
+}
+
+fn validate_skill_subpath(relative_path: &str) -> Result<&str> {
+    let trimmed = relative_path.trim().trim_start_matches('/');
+    let subdir_rest = trimmed
+        .strip_prefix("references/")
+        .or_else(|| trimmed.strip_prefix("scripts/"))
+        .or_else(|| trimmed.strip_prefix("templates/"))
+        .or_else(|| trimmed.strip_prefix("assets/"));
+    let valid = subdir_rest.is_some_and(|rest| {
+        !rest.trim().is_empty()
+            && !rest.ends_with('/')
+            && !trimmed.contains("..")
+            && !trimmed.contains('\0')
+    });
+    match valid {
+        true => Ok(trimmed),
+        false => anyhow::bail!(
+            "Skill package path '{}' must be inside references/, scripts/, templates/, or assets/ without '..'",
+            relative_path
+        ),
+    }
 }
 
 pub fn read_skill_reference(
@@ -1402,21 +1591,105 @@ pub fn read_skill_reference(
 ) -> Result<String> {
     let pkg_dir = locate_skill_package_dir(name, profile)
         .ok_or_else(|| anyhow::anyhow!("Skill '{}' has no package directory", name))?;
-    let trimmed = relative_path.trim().trim_start_matches('/');
-    let allowed_prefix = trimmed.starts_with("references/")
-        || trimmed.starts_with("scripts/")
-        || trimmed.starts_with("assets/");
-    match allowed_prefix && !trimmed.contains("..") {
+    let trimmed = validate_skill_subpath(relative_path)?;
+    let canonical_pkg = pkg_dir.canonicalize()?;
+    let canonical_target = pkg_dir.join(trimmed).canonicalize()?;
+    match canonical_target.starts_with(&canonical_pkg) && canonical_target.is_file() {
+        true => Ok(fs::read_to_string(canonical_target)?),
+        false => anyhow::bail!("Reference file '{}' is outside skill package", relative_path),
+    }
+}
+
+fn writable_skill_package_dir(safe_name: &str, profile: Option<&str>) -> PathBuf {
+    match profile {
+        Some(prof) => crate::config::runtime_data_dir()
+            .join("subagents")
+            .join(prof)
+            .join("skills")
+            .join(safe_name),
+        None => get_skills_dir().join(safe_name),
+    }
+}
+
+pub fn write_skill_package_file(
+    name: &str,
+    relative_path: &str,
+    file_content: &str,
+    profile: Option<&str>,
+) -> Result<PathBuf> {
+    let safe_name = sanitize_skill_name(name);
+    let trimmed = validate_skill_subpath(relative_path)?;
+    match scan_skill_content(file_content).unwrap_or(false) {
+        true => {}
         false => anyhow::bail!(
-            "Reference path '{}' must be inside references/, scripts/, or assets/ without '..'",
+            "Skill supporting file '{}' rejected: contains potentially unsafe commands or patterns.",
             relative_path
         ),
+    }
+
+    let skills = load_skills_with_profile(profile)?;
+    let existing = skills
+        .into_iter()
+        .find(|s| s.name == safe_name || sanitize_skill_name(&s.name) == safe_name)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Skill '{}' does not exist yet; create SKILL.md via curate_skill(action='add') first",
+                safe_name
+            )
+        })?;
+
+    let pkg_dir = writable_skill_package_dir(&safe_name, profile);
+    fs::create_dir_all(&pkg_dir)?;
+    let skill_md_path = pkg_dir.join("SKILL.md");
+    match !skill_md_path.is_file() {
+        true => fs::write(&skill_md_path, &existing.content)?,
+        false => {}
+    }
+
+    let target_path = pkg_dir.join(trimmed);
+    let parent = target_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Invalid parent directory for '{}'", relative_path))?;
+    fs::create_dir_all(parent)?;
+    let canonical_pkg = pkg_dir.canonicalize()?;
+    let canonical_parent = parent.canonicalize()?;
+    match canonical_parent.starts_with(&canonical_pkg) {
+        true => {}
+        false => anyhow::bail!("Supporting file path '{}' escapes skill package", relative_path),
+    }
+
+    fs::write(&target_path, file_content)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let make_exec =
+            trimmed.starts_with("scripts/") && file_content.trim_start().starts_with("#!");
+        let _ = make_exec.then(|| {
+            let _ = fs::set_permissions(&target_path, fs::Permissions::from_mode(0o755));
+        });
+    }
+    Ok(target_path)
+}
+
+pub fn remove_skill_package_file(
+    name: &str,
+    relative_path: &str,
+    profile: Option<&str>,
+) -> Result<()> {
+    let safe_name = sanitize_skill_name(name);
+    let trimmed = validate_skill_subpath(relative_path)?;
+    let pkg_dir = writable_skill_package_dir(&safe_name, profile);
+    match pkg_dir.is_dir() {
+        false => anyhow::bail!("Skill package '{}' does not exist", safe_name),
         true => {
             let canonical_pkg = pkg_dir.canonicalize()?;
             let canonical_target = pkg_dir.join(trimmed).canonicalize()?;
             match canonical_target.starts_with(&canonical_pkg) && canonical_target.is_file() {
-                true => Ok(fs::read_to_string(canonical_target)?),
-                false => anyhow::bail!("Reference file '{}' is outside skill package", relative_path),
+                true => {
+                    fs::remove_file(canonical_target)?;
+                    Ok(())
+                }
+                false => anyhow::bail!("Supporting file '{}' is outside skill package", relative_path),
             }
         }
     }
@@ -1517,7 +1790,8 @@ pub fn scan_skill_content(content: &str) -> Result<bool> {
 }
 
 fn sanitize_skill_name(name: &str) -> String {
-    name.to_lowercase()
+    name.trim()
+        .to_lowercase()
         .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_")
 }
 
@@ -1551,18 +1825,25 @@ fn current_skill_content_in_db(
     )
     .ok()
     .or_else(|| {
-        let file_path = match profile {
+        let base_dir = match profile {
             Some(prof) => crate::config::runtime_data_dir()
                 .join("subagents")
                 .join(prof)
-                .join("skills")
-                .join(format!("{}.md", safe_name)),
-            None => get_skills_dir().join(format!("{}.md", safe_name)),
+                .join("skills"),
+            None => get_skills_dir(),
         };
-        file_path
+        let pkg_md = base_dir.join(safe_name).join("SKILL.md");
+        let flat_md = base_dir.join(format!("{}.md", safe_name));
+        pkg_md
             .is_file()
-            .then(|| fs::read_to_string(file_path).ok())
+            .then(|| fs::read_to_string(pkg_md).ok())
             .flatten()
+            .or_else(|| {
+                flat_md
+                    .is_file()
+                    .then(|| fs::read_to_string(flat_md).ok())
+                    .flatten()
+            })
     })
 }
 
@@ -1663,9 +1944,11 @@ pub fn save_skill(name: &str, content: &str) -> Result<()> {
     )?;
 
     let global_skills_dir = get_skills_dir();
-    let _ = fs::create_dir_all(&global_skills_dir);
-    let skill_file = global_skills_dir.join(format!("{}.md", safe_name));
-    let _ = fs::write(&skill_file, &normalized_content);
+    let pkg_dir = global_skills_dir.join(&safe_name);
+    let _ = fs::create_dir_all(&pkg_dir);
+    let _ = fs::write(pkg_dir.join("SKILL.md"), &normalized_content);
+    let legacy_flat = global_skills_dir.join(format!("{}.md", safe_name));
+    let _ = fs::remove_file(&legacy_flat);
 
     Ok(())
 }
@@ -1687,12 +1970,18 @@ pub fn delete_skill_with_profile(name: &str, profile_name: Option<&str>) -> Resu
                 "DELETE FROM skills WHERE name = ?1 AND profile = ?2",
                 params![safe_name, prof],
             )?;
-            let file_path = crate::config::runtime_data_dir()
+            let prof_dir = crate::config::runtime_data_dir()
                 .join("subagents")
                 .join(prof)
-                .join("skills")
-                .join(format!("{}.md", safe_name));
-            let _ = fs::remove_file(&file_path);
+                .join("skills");
+            let _ = fs::remove_file(prof_dir.join(format!("{}.md", safe_name)));
+            let pkg_dir = prof_dir.join(&safe_name);
+            match pkg_dir.is_dir() {
+                true => {
+                    let _ = fs::remove_dir_all(&pkg_dir);
+                }
+                false => {}
+            }
         }
         None => {
             conn.execute(
@@ -1725,11 +2014,17 @@ pub fn clear_skills() -> Result<()> {
                 let path = entry.path();
                 let is_md =
                     path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md");
-                match is_md {
-                    true => {
+                let is_pkg = path.is_dir()
+                    && path.file_name().and_then(|n| n.to_str()) != Some("archive")
+                    && path.join("SKILL.md").is_file();
+                match (is_md, is_pkg) {
+                    (true, _) => {
                         let _ = fs::remove_file(path);
                     }
-                    false => {}
+                    (false, true) => {
+                        let _ = fs::remove_dir_all(path);
+                    }
+                    (false, false) => {}
                 }
             }
         }
@@ -1761,9 +2056,10 @@ pub fn save_subagent_skill(profile: &str, name: &str, content: &str) -> Result<(
         .join("subagents")
         .join(profile)
         .join("skills");
-    let _ = fs::create_dir_all(&profile_skills_dir);
-    let skill_file = profile_skills_dir.join(format!("{}.md", safe_name));
-    let _ = fs::write(&skill_file, &normalized_content);
+    let pkg_dir = profile_skills_dir.join(&safe_name);
+    let _ = fs::create_dir_all(&pkg_dir);
+    let _ = fs::write(pkg_dir.join("SKILL.md"), &normalized_content);
+    let _ = fs::remove_file(profile_skills_dir.join(format!("{}.md", safe_name)));
 
     Ok(())
 }

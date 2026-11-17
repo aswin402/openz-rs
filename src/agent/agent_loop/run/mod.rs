@@ -16,7 +16,7 @@ mod shell_http_rewrite;
 #[cfg(test)]
 mod tests;
 mod tool_pipeline;
-mod turn;
+pub(crate) mod turn;
 
 use self::artifacts::{
     auto_adjust_tool_call_with_availability,
@@ -1035,6 +1035,10 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     .explicitly_requested_for_prompt(&routing_prompt),
             );
         });
+        let _ = (run.skill_healing_nudged || run.skill_creation_nudged).then(|| {
+            explicit_mount_set.insert("curate_skill".to_string());
+            explicit_mount_set.insert("store_memory".to_string());
+        });
         let fresh_tools_openai = loop_ref
             .tools
             .to_openai_format_for_prompt_with_config(&routing_prompt, Some(&config));
@@ -1494,6 +1498,19 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 && result_val.get("status_code").is_none_or(|c| c == 0)
                 && !outcome_summary.contains("Failed")
                 && !outcome_summary.contains('\u{2715}');
+
+            let _ = self::turn::evaluate_in_loop_skill_nudge(
+                &mut run,
+                &mut ctx.skill_notice_names,
+                &call.name,
+                &call.arguments,
+                tool_success,
+            )
+            .map(|nudge_val| {
+                let _ = result_val.as_object_mut().map(|obj| {
+                    obj.insert("_openz_self_improvement_nudge".to_string(), nudge_val);
+                });
+            });
 
             crate::channels::ratatui::send_ratatui_turn_event(
                 crate::channels::ratatui::TurnEvent::ToolEnd {

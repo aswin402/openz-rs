@@ -3,17 +3,71 @@ use crate::agent::style::*;
 use crate::memory::with_graph_db;
 use anyhow::Result;
 use serde::Deserialize;
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+#[cfg_attr(not(test), allow(dead_code))]
 static CURATOR_LAST_SPAWN: OnceLock<Mutex<HashMap<String, Instant>>> = OnceLock::new();
+
+#[derive(Clone)]
+struct CuratorJobPayload {
+    session_manager: crate::session::SessionManager,
+    session_key: String,
+    user_query: String,
+    provider: Arc<dyn crate::providers::LLMProvider>,
+    messages: Vec<crate::session::Message>,
+    tools_used: Vec<String>,
+    turn_succeeded_cleanly: bool,
+    turn_recovered: bool,
+}
+
+#[derive(Default)]
+struct CuratorQueueState {
+    in_flight: HashSet<String>,
+    pending: HashMap<String, CuratorJobPayload>,
+}
+
+static CURATOR_QUEUE: OnceLock<Mutex<CuratorQueueState>> = OnceLock::new();
+
+fn claim_or_coalesce_curator_job(job: CuratorJobPayload) -> Option<CuratorJobPayload> {
+    let queue = CURATOR_QUEUE.get_or_init(|| Mutex::new(CuratorQueueState::default()));
+    let mut guard = match queue.lock() {
+        Ok(g) => g,
+        Err(_) => return Some(job),
+    };
+    match guard.in_flight.contains(&job.session_key) {
+        true => {
+            guard.pending.insert(job.session_key.clone(), job);
+            None
+        }
+        false => {
+            guard.in_flight.insert(job.session_key.clone());
+            Some(job)
+        }
+    }
+}
+
+fn finish_or_pop_coalesced_curator_job(session_key: &str) -> Option<CuratorJobPayload> {
+    let queue = CURATOR_QUEUE.get_or_init(|| Mutex::new(CuratorQueueState::default()));
+    let mut guard = match queue.lock() {
+        Ok(g) => g,
+        Err(_) => return None,
+    };
+    match guard.pending.remove(session_key) {
+        Some(next_job) => Some(next_job),
+        None => {
+            guard.in_flight.remove(session_key);
+            None
+        }
+    }
+}
 
 fn self_improvement_review_prompt() -> &'static str {
     "You are a specialized Self-Improvement Curator for OpenZ. Your job is to review the conversation between the User and the AI Agent and consolidate five types of learnings:\n\n\
-1. USER PREFERENCES (USER.md): Durable user preferences, aesthetic styling choices, favorite design themes, color palettes, fonts, preferred programming languages, frameworks, or persona constraints. (e.g. 'User prefers Cyberpunk Neon design with #00ffcc and #ff007f accents', 'Always use Tailwind CSS v4', 'Never explain code unless asked').\n\
-2. DELIVERABLE & PROCEDURAL SKILLS (SKILL.md): Whenever the agent creates, modifies, or inspects deliverables (websites, scripts, scrapers, data pipelines, media animations in openz_vault/ or project folders) or solves complex multi-step technical challenges:\n\
-   - Extract a clean, reusable procedural skill.\n\
+1. USER PREFERENCES (USER.md): Durable user preferences, aesthetic styling choices, favorite design themes, color palettes, fonts, preferred programming languages, frameworks, or persona constraints. Use '- replace: <old> => <new>' when updating an outdated preference or '- remove: <stale>' when a preference is retracted.\n\
+2. DELIVERABLE & PROCEDURAL SKILL BUNDLES (<name>/SKILL.md): Whenever the agent creates, modifies, or inspects deliverables (websites, scripts, scrapers, data pipelines, media animations in openz_vault/ or project folders) or solves complex multi-step technical challenges:\n\
+   - Extract a clean, reusable procedural skill package.\n\
    - Include standard YAML frontmatter with:\n\
      ---\n\
      name: <name_lowercase_with_underscores>\n\
@@ -22,7 +76,8 @@ fn self_improvement_review_prompt() -> &'static str {
      vault_category: <websites|scripts|images|videos|documents|presentations|data|diagrams|templates|exports>\n\
      ---\n\
    - Under the frontmatter, provide Markdown instructions with Design System / Tech Rules, File Locations (e.g. openz_vault/websites/...), and Step-by-Step Reproduction/Extension Steps.\n\
-3. GENERAL GUIDELINE SKILLS: Task-specific coding workarounds, bug fixes, or library quirks (e.g. 'cargo_build_fix', 'sqlite_lock_workaround').\n\
+   - Optionally include reusable helper scripts, templates, or deep reference docs in `supporting_files` (`scripts/...`, `templates/...`, `references/...`).\n\
+3. GENERAL GUIDELINE SKILLS & ACTIVE SKILL SELF-HEALING: Task-specific coding workarounds, bug fixes, or library quirks (e.g. 'cargo_build_fix', 'sqlite_lock_workaround'). When an existing skill had an outdated flag/step, use operation='patch' to heal it.\n\
 4. SOURCES: High-trust reusable URLs or documentation links.\n\
 5. WORKFLOWS: Reusable multi-step procedures with triggers, steps, preconditions, verification, risk, and status.\n\n\
 CRITICAL: Pay special attention to tool execution outcomes. If a tool call failed with an error, look at how the agent resolved it (or what workaround succeeded). Extract this learning into a reusable skill or workflow.\n\n\
@@ -35,7 +90,7 @@ You MUST return your response as a raw JSON object with the following structure.
 JSON Format:\n\
 {\n\
    \"memory_updated\": true/false,\n\
-   \"memory_content\": \"<updated memory markdown content. If memory_updated is false, keep it identical to existing memory or empty>\",\n\
+   \"memory_content\": \"<bullet points of durable cross-session environment/project facts for MEMORY.md (supports '- replace: old => new' and '- remove: stale'); empty when memory_updated is false>\",\n\
    \"user_preferences\": \"<bullet points of durable user preferences, design choices, styling tastes, or conventions to record in USER.md>\",\n\
    \"skills_to_save\": [\n\
      {\n\
@@ -46,7 +101,8 @@ JSON Format:\n\
        \"vault_category\": \"websites|scripts|images|videos|documents|presentations|data|diagrams|templates|exports\",\n\
        \"old_text\": \"<optional exact snippet from existing skill when operation='patch'>\",\n\
        \"new_text\": \"<optional replacement or appended section when operation='patch'>\",\n\
-       \"content\": \"<complete markdown content for operation='create' including YAML frontmatter with name, description, triggers, vault_category, followed by headers, rules, and steps.>\"\n\
+       \"content\": \"<complete markdown content for operation='create' including YAML frontmatter with name, description, triggers, vault_category, followed by headers, rules, and steps.>\",\n\
+       \"supporting_files\": [{\"path\": \"scripts/helper.py\", \"content\": \"<optional reusable script, template, or reference file>\"}]\n\
      }\n\
    ],\n\
    \"sources_to_save\": [\n\
@@ -98,6 +154,7 @@ pub async fn wait_for_curator(timeout_dur: Duration) -> bool {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn should_spawn_curator(session_key: &str, debounce: Duration) -> bool {
     let now = Instant::now();
     let registry = CURATOR_LAST_SPAWN.get_or_init(|| Mutex::new(HashMap::new()));
@@ -118,6 +175,14 @@ fn should_spawn_curator(session_key: &str, debounce: Duration) -> bool {
 }
 
 #[derive(Deserialize, Default, Clone, Debug)]
+pub(crate) struct ReviewSkillFile {
+    #[serde(default)]
+    pub(crate) path: String,
+    #[serde(default)]
+    pub(crate) content: String,
+}
+
+#[derive(Deserialize, Default, Clone, Debug)]
 pub(crate) struct ReviewSkill {
     #[serde(default)]
     pub(crate) operation: Option<String>,
@@ -135,6 +200,8 @@ pub(crate) struct ReviewSkill {
     pub(crate) new_text: Option<String>,
     #[serde(default)]
     pub(crate) content: String,
+    #[serde(default)]
+    pub(crate) supporting_files: Vec<ReviewSkillFile>,
 }
 
 #[derive(Deserialize, Clone, Debug)]
@@ -328,57 +395,69 @@ pub(crate) fn fallback_parse_curator(raw: &str) -> Option<ReviewResponse> {
     any_salvaged.then_some(resp)
 }
 
-const CURATOR_TRIGGER_TOOLS: &[&str] = &[
-    "write_file",
-    "patch_file",
-    "replace_lines",
-    "zenflow_edit",
-    "db_write",
-    "cargo",
-    "exec_command",
-    "browser",
-    "remote_input",
-    "mcp",
-    "curate_skill",
-    "store_memory",
-    "knowledge_source",
-    "workflow_memory",
-    "graph_memory",
-];
+const MEMORY_NUDGE_TURN_CADENCE: usize = 8;
 
-const CURATOR_USER_INTENT_KEYWORDS: &[&str] = &[
+const LEARNING_INTENT_STEMS: &[&str] = &[
     "remember",
-    "learn",
+    "prefer",
     "preference",
     "guideline",
-    "save this",
     "skill",
+    "convention",
+    "playbook",
+    "workflow",
 ];
 
-fn should_run_curator_for_turn(
-    messages: &[crate::session::Message],
-    tools_used: &[String],
-) -> bool {
-    let total_chars: usize = messages.iter().map(|m| m.content.len()).sum();
-    let estimated_tokens = total_chars / 4;
-    let complex_turn = estimated_tokens >= 4000 && tools_used.len() >= 3;
-    let used_state_tool = tools_used.iter().any(|tool| {
-        let t = tool.to_lowercase();
-        CURATOR_TRIGGER_TOOLS.iter().any(|needle| t.contains(needle))
-    });
-    let explicit_user_intent = messages
+pub(crate) fn has_explicit_learning_intent(messages: &[crate::session::Message]) -> bool {
+    messages
         .iter()
         .rev()
         .take(3)
         .filter(|msg| msg.role == "user")
         .any(|msg| {
-            let text = msg.content.to_lowercase();
-            CURATOR_USER_INTENT_KEYWORDS
-                .iter()
-                .any(|kw| text.contains(kw))
-        });
+            let stems = crate::agent::skills::ranker::tokenize_stemmed(&msg.content, false);
+            let stem_hit = stems.iter().any(|tok| {
+                LEARNING_INTENT_STEMS
+                    .iter()
+                    .any(|target| crate::agent::skills::ranker::stem_token(target) == *tok)
+            });
+            let phrase_hit =
+                crate::agent::skills::ranker::phrase_matches_tokens(&stems, "save this")
+                    || crate::agent::skills::ranker::phrase_matches_tokens(&stems, "learn from");
+            stem_hit || phrase_hit
+        })
+}
 
-    complex_turn || used_state_tool || explicit_user_intent
+fn has_state_or_learning_tool_signal(tools_used: &[String]) -> bool {
+    tools_used.iter().any(|tool| {
+        let meta = crate::tools::ToolMetadata::infer(tool);
+        meta.writes_disk
+            || matches!(
+                meta.domain,
+                "shell" | "self_management" | "memory" | "cron" | "code"
+            ) && crate::tools::metadata::is_state_changing_tool(tool)
+            || matches!(meta.domain, "self_management" | "memory")
+    })
+}
+
+pub(crate) fn should_run_curator_for_turn(
+    messages: &[crate::session::Message],
+    tools_used: &[String],
+) -> bool {
+    let total_chars: usize = messages.iter().map(|m| m.content.len()).sum();
+    let estimated_tokens = total_chars / 4;
+    let distinct_tools: HashSet<&str> = tools_used.iter().map(String::as_str).collect();
+    let complex_turn =
+        (estimated_tokens >= 3_500 && tools_used.len() >= 3) || distinct_tools.len() >= 4;
+    let user_turns = messages.iter().filter(|m| m.role == "user").count();
+    let periodic_memory_cadence =
+        user_turns > 0 && user_turns.is_multiple_of(MEMORY_NUDGE_TURN_CADENCE);
+
+    complex_turn
+        || has_state_or_learning_tool_signal(tools_used)
+        || has_explicit_learning_intent(messages)
+        || trajectory_recovered_after_error(messages)
+        || periodic_memory_cadence
 }
 
 fn extract_clean_curator_json(content: &str) -> String {
@@ -595,25 +674,86 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 
     match ctx.user_content.starts_with('/') {
         true => Ok(TurnState::Done),
-        false => match should_spawn_curator(ctx.session_key, Duration::from_secs(20)) {
-            false => {
-                tracing::debug!(
-                    session = %ctx.session_key,
-                    "Skipping self-improvement curator spawn during debounce window"
-                );
-                Ok(TurnState::Done)
+        false => {
+            let initial_job = CuratorJobPayload {
+                session_manager: loop_ref.session_manager.clone(),
+                session_key: ctx.session_key.to_string(),
+                user_query: ctx.user_content.to_string(),
+                provider: ctx.active_provider.clone(),
+                messages: ctx.messages.clone(),
+                tools_used: ctx.tools_used.clone(),
+                turn_succeeded_cleanly,
+                turn_recovered,
+            };
+            match claim_or_coalesce_curator_job(initial_job) {
+                None => {
+                    tracing::debug!(
+                        session = %ctx.session_key,
+                        "Coalesced self-improvement curator snapshot behind active in-flight curator"
+                    );
+                    Ok(TurnState::Done)
+                }
+                Some(mut current_job) => {
+                    let handle = tokio::spawn(async move {
+                        loop {
+                            run_single_curator_job(current_job.clone()).await;
+                            match finish_or_pop_coalesced_curator_job(&current_job.session_key) {
+                                Some(next_job) => {
+                                    current_job = next_job;
+                                }
+                                None => break,
+                            }
+                        }
+                    });
+                    set_last_curator_handle(handle);
+                    Ok(TurnState::Done)
+                }
             }
-            true => {
-                let session_manager = loop_ref.session_manager.clone();
-                let session_key = ctx.session_key.to_string();
-                let user_query = ctx.user_content.to_string();
-                let provider = ctx.active_provider.clone();
-                let messages = ctx.messages.clone();
-                let tools_used = ctx.tools_used.clone();
-                let initial_updated_at = ctx.session.updated_at;
-                let initial_msg_count = ctx.session.messages.len();
+        }
+    }
+}
 
-                let handle = tokio::spawn(async move {
+fn archive_facts_to_semantic_graph(session_key: &str, facts: &[String]) {
+    let uid = "*";
+    let sid = session_key;
+    let aid = "*";
+    for fact in facts.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        let node_id = format!("fact_{}", crate::core::short_uuid());
+        let timestamp = chrono::Utc::now().to_rfc3339();
+        let _ = with_graph_db(|conn| {
+            let mut check_stmt = conn
+                .prepare("SELECT 1 FROM semantic_metadata WHERE raw_text = ?1 AND valid_until IS NULL")
+                .map_err(|e| anyhow::anyhow!(e))?;
+            let exists = check_stmt
+                .exists(rusqlite::params![fact])
+                .map_err(|e| anyhow::anyhow!(e))?;
+            let _ = (!exists).then(|| {
+                let _ = conn.execute(
+                    "INSERT INTO semantic_metadata (node_id, raw_text, timestamp, importance, user_id, session_id, agent_id)
+                     VALUES (?1, ?2, ?3, 0.8, ?4, ?5, ?6)",
+                    rusqlite::params![node_id, fact, timestamp, uid, sid, aid],
+                );
+                let _ = conn.execute(
+                    "INSERT INTO semantic_fts (node_id, raw_text) VALUES (?1, ?2)",
+                    rusqlite::params![node_id, fact],
+                );
+            });
+            Ok(())
+        });
+    }
+}
+
+async fn run_single_curator_job(job: CuratorJobPayload) {
+                    let CuratorJobPayload {
+                        session_manager,
+                        session_key,
+                        user_query,
+                        provider,
+                        messages,
+                        tools_used,
+                        turn_succeeded_cleanly,
+                        turn_recovered,
+                    } = job;
                     let is_shutting_down =
                         crate::shutdown::receiver().is_some_and(|rx| *rx.borrow());
                     match is_shutting_down {
@@ -674,17 +814,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             .await
                             .unwrap_or_default();
 
-                    let existing_memory = session_manager
-                        .load_async(&session_key)
-                        .await
-                        .ok()
-                        .and_then(|s| {
-                            s.metadata
-                                .get("memory")
-                                .and_then(|v| v.as_str())
-                                .map(ToString::to_string)
-                        })
-                        .unwrap_or_default();
+                    let existing_memory = crate::agent::core_memory::load_global_memory();
 
                     let existing_skills_desc = build_budgeted_existing_skills_context(
                         &user_query,
@@ -717,17 +847,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     });
 
                     let tool_count = messages.iter().filter(|m| m.role == "tool").count();
-                    let explicit_learning_intent = messages
-                        .iter()
-                        .rev()
-                        .take(3)
-                        .filter(|msg| msg.role == "user")
-                        .any(|msg| {
-                            let text = msg.content.to_lowercase();
-                            CURATOR_USER_INTENT_KEYWORDS
-                                .iter()
-                                .any(|kw| text.contains(kw))
-                        });
+                    let explicit_learning_intent = has_explicit_learning_intent(&messages);
 
                     let created_vault_deliverable = turn_succeeded_cleanly
                         && messages.iter().any(|m| {
@@ -941,13 +1061,18 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                         });
 
                                         let _ = (!review.user_preferences.trim().is_empty()).then(
-                                            || match crate::agent::skills::update_user_profile(
+                                            || match crate::agent::core_memory::apply_user_profile_mutations(
                                                 &review.user_preferences,
+                                                &[],
                                             ) {
                                                 Err(e) => {
                                                     tracing::warn!(session = %session_key, error = %e, "Failed to update USER.md preferences");
                                                 }
-                                                Ok(()) => {
+                                                Ok(evicted) => {
+                                                    archive_facts_to_semantic_graph(
+                                                        &session_key,
+                                                        &evicted,
+                                                    );
                                                     tracing::info!(session = %session_key, "Self-improvement curator: updated USER.md preferences.");
                                                     crate::channels::send_session_notice(
                                                         &session_key,
@@ -960,9 +1085,57 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                             },
                                         );
 
-                                        match review.memory_updated {
+                                        match review.memory_updated
+                                            && !review.memory_content.trim().is_empty()
+                                        {
                                             false => {}
                                             true => {
+                                                match crate::agent::core_memory::update_global_memory(
+                                                    &review.memory_content,
+                                                ) {
+                                                    Err(e) => {
+                                                        let msg = format!(
+                                                            "Failed to update MEMORY.md: {}",
+                                                            e
+                                                        );
+                                                        error_msg = Some(msg);
+                                                    }
+                                                    Ok(evicted) => {
+                                                        memory_updated = true;
+                                                        archive_facts_to_semantic_graph(
+                                                            &session_key,
+                                                            &evicted,
+                                                        );
+                                                        let facts: Vec<String> = review
+                                                            .memory_content
+                                                            .lines()
+                                                            .filter_map(
+                                                                crate::agent::core_memory::clean_bullet_line,
+                                                            )
+                                                            .map(ToString::to_string)
+                                                            .filter(|f| !f.is_empty())
+                                                            .collect();
+                                                        archive_facts_to_semantic_graph(
+                                                            &session_key,
+                                                            &facts,
+                                                        );
+                                                        tracing::info!(session = %session_key, "Self-improvement curator: updated global MEMORY.md.");
+                                                        crate::channels::send_session_notice(
+                                                            &session_key,
+                                                            &format!(
+                                                                "{}◇ [Self-Improvement] Global memory updated (~/.openz/MEMORY.md).{}",
+                                                                AURA_BLUE, COLOR_RESET
+                                                            ),
+                                                        );
+                                                        crate::channels::websocket::publish_activity_notice(
+                                                            &session_key,
+                                                            "self_improvement",
+                                                            "Self-improvement memory updated",
+                                                            "Recent conversation learnings were consolidated into MEMORY.md",
+                                                        );
+                                                    }
+                                                }
+
                                                 let lock = get_session_lock(&session_key);
                                                 let _guard = lock.lock().await;
                                                 match session_manager
@@ -971,114 +1144,18 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                                 {
                                                     Err(_) => {}
                                                     Ok(mut latest_session) => {
-                                                        let session_changed =
-                                                            latest_session.updated_at
-                                                                != initial_updated_at
-                                                                || latest_session.messages.len()
-                                                                    != initial_msg_count;
-                                                        match session_changed {
-                                                            true => {
-                                                                let msg = "Skipped memory update: session was modified concurrently".to_string();
-                                                                error_msg = Some(msg);
-                                                                tracing::debug!(
-                                                                    session = %session_key,
-                                                                    "Self-improvement curator skipped stale write because session changed concurrently"
-                                                                );
-                                                            }
-                                                            false => {
-                                                                latest_session.metadata.insert(
-                                                                    "memory".to_string(),
-                                                                    serde_json::Value::String(
-                                                                        review
-                                                                            .memory_content
-                                                                            .trim()
-                                                                            .to_string(),
-                                                                    ),
-                                                                );
-                                                                match session_manager
-                                                                    .save(&latest_session)
-                                                                    .await
-                                                                {
-                                                                    Err(e) => {
-                                                                        let msg = format!(
-                                                                            "Failed to save memory: {}",
-                                                                            e
-                                                                        );
-                                                                        error_msg = Some(msg);
-                                                                        crate::channels::send_session_notice(&session_key, &format!(
-                                                                            "{}▲ [Self-Improvement] Failed to save self-improvement memory: {}{}",
-                                                                            AURA_GOLD, e, COLOR_RESET
-                                                                        ));
-                                                                    }
-                                                                    Ok(()) => {
-                                                                        memory_updated = true;
-                                                                        tracing::info!(session = %session_key, "Self-improvement curator: updated session memory.");
-                                                                        crate::channels::send_session_notice(&session_key, &format!(
-                                                                            "{}◇ [Self-Improvement] Memory updated based on recent conversation.{}",
-                                                                            AURA_BLUE, COLOR_RESET
-                                                                        ));
-                                                                        crate::channels::websocket::publish_activity_notice(
-                                                                            &session_key,
-                                                                            "self_improvement",
-                                                                            "Self-improvement memory updated",
-                                                                            "Recent conversation learnings were saved",
-                                                                        );
-
-                                                                        let facts: Vec<String> = review
-                                                                            .memory_content
-                                                                            .lines()
-                                                                            .map(|line| line.trim())
-                                                                            .filter(|line| {
-                                                                                line.starts_with('-')
-                                                                                    || line.starts_with('*')
-                                                                            })
-                                                                            .map(|line| {
-                                                                                let fact = line[1..].trim();
-                                                                                fact.trim_start_matches("**")
-                                                                                    .trim_end_matches("**")
-                                                                                    .trim()
-                                                                                    .to_string()
-                                                                            })
-                                                                            .filter(|fact| !fact.is_empty())
-                                                                            .collect();
-
-                                                                        let uid = "*";
-                                                                        let sid = &session_key;
-                                                                        let aid = "*";
-
-                                                                        for fact in facts {
-                                                                            let node_id = format!(
-                                                                                "fact_{}",
-                                                                                crate::core::short_uuid()
-                                                                            );
-                                                                            let timestamp = chrono::Utc::now().to_rfc3339();
-                                                                            let _ = with_graph_db(
-                                                                                |conn| {
-                                                                                    let mut check_stmt = conn.prepare(
-                                                                                        "SELECT 1 FROM semantic_metadata WHERE raw_text = ?1 AND valid_until IS NULL"
-                                                                                    ).map_err(|e| anyhow::anyhow!(e))?;
-                                                                                    let exists = check_stmt
-                                                                                        .exists(rusqlite::params![&fact])
-                                                                                        .map_err(|e| anyhow::anyhow!(e))?;
-                                                                                    let _ = (!exists).then(|| {
-                                                                                        let _ = conn.execute(
-                                                                                            "INSERT INTO semantic_metadata (node_id, raw_text, timestamp, importance, user_id, session_id, agent_id)
-                                                                                             VALUES (?1, ?2, ?3, 0.8, ?4, ?5, ?6)",
-                                                                                            rusqlite::params![node_id, fact, timestamp, uid, sid, aid],
-                                                                                        );
-                                                                                        let _ = conn.execute(
-                                                                                            "INSERT INTO semantic_fts (node_id, raw_text) VALUES (?1, ?2)",
-                                                                                            rusqlite::params![node_id, fact],
-                                                                                        );
-                                                                                    });
-                                                                                    Ok(())
-                                                                                },
-                                                                            );
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
+                                                        latest_session.metadata.insert(
+                                                            "memory".to_string(),
+                                                            serde_json::Value::String(
+                                                                review
+                                                                    .memory_content
+                                                                    .trim()
+                                                                    .to_string(),
+                                                            ),
+                                                        );
+                                                        let _ = session_manager
+                                                            .save(&latest_session)
+                                                            .await;
                                                     }
                                                 }
                                             }
@@ -1163,13 +1240,24 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                                     );
                                                 }
                                                 Ok(()) => {
+                                                    for sf in skill.supporting_files.iter().filter(|f| {
+                                                        !f.path.trim().is_empty()
+                                                            && !f.content.trim().is_empty()
+                                                    }) {
+                                                        let _ = crate::agent::skills::write_skill_package_file(
+                                                            &skill.name,
+                                                            &sf.path,
+                                                            &sf.content,
+                                                            profile_name.as_deref(),
+                                                        );
+                                                    }
                                                     skills_saved.push(skill.name.clone());
                                                     tracing::info!(session = %session_key, skill = %skill.name, "Self-improvement curator: saved skill.");
                                                     crate::channels::send_session_notice(
                                                         &session_key,
                                                         &format!(
-                                                            "{}◇ [Self-Improvement] Skill '{}' synthesized & saved to ~/.openz/skills/.{}",
-                                                            AURA_BLUE, skill.name, COLOR_RESET
+                                                            "{}◇ [Self-Improvement] Skill '{}' synthesized & saved to ~/.openz/skills/{}/SKILL.md.{}",
+                                                            AURA_BLUE, skill.name, skill.name, COLOR_RESET
                                                         ),
                                                     );
                                                     crate::channels::websocket::publish_activity_notice(
@@ -1288,12 +1376,6 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             write_log("failed", false, vec![], Some(msg));
                         }
                     }
-                });
-                set_last_curator_handle(handle);
-                Ok(TurnState::Done)
-            }
-        },
-    }
 }
 
 #[cfg(test)]

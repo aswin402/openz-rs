@@ -109,6 +109,8 @@ impl TurnToolWindow {
     }
 }
 
+pub(crate) const SKILL_CREATION_NUDGE_ITERATION: usize = 12;
+
 /// State that belongs to one Run phase and must survive across provider/tool
 /// iterations without being mixed into the durable TurnContext.
 pub(crate) struct RunContext {
@@ -123,6 +125,10 @@ pub(crate) struct RunContext {
     pub(crate) auto_suggested_open_targets: HashSet<String>,
     pub(crate) direct_page_only: bool,
     pub(crate) direct_page_fetched: bool,
+    pub(crate) saw_tool_error_in_turn: bool,
+    pub(crate) skill_healing_nudged: bool,
+    pub(crate) skill_creation_nudged: bool,
+    pub(crate) curated_skill_in_turn: bool,
     pub(crate) turn_cancel: crate::tools::subagent::CancellationToken,
     pub(crate) tool_window: TurnToolWindow,
 }
@@ -141,10 +147,88 @@ impl RunContext {
             auto_suggested_open_targets: HashSet::new(),
             direct_page_only: super::research::direct_page_research_only(ctx.user_content),
             direct_page_fetched: false,
+            saw_tool_error_in_turn: false,
+            skill_healing_nudged: false,
+            skill_creation_nudged: false,
+            curated_skill_in_turn: false,
             turn_cancel: super::super::current_turn_cancellation_context()
                 .map(|context| context.token)
                 .unwrap_or_default(),
             tool_window: TurnToolWindow::default(),
+        }
+    }
+}
+
+pub(crate) fn evaluate_in_loop_skill_nudge(
+    run: &mut RunContext,
+    active_skill_names: &mut HashSet<String>,
+    tool_name: &str,
+    tool_args: &serde_json::Value,
+    tool_succeeded: bool,
+) -> Option<serde_json::Value> {
+    let canonical = crate::tools::canonical_tool_name(tool_name);
+    let _ = (canonical == "curate_skill" && tool_succeeded).then(|| {
+        let act = ["action", "act", "command", "op"]
+            .iter()
+            .find_map(|k| tool_args.get(*k).and_then(|v| v.as_str()))
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        let target_skill = ["skill_name", "skillName", "name", "skill"]
+            .iter()
+            .find_map(|k| tool_args.get(*k).and_then(|v| v.as_str()))
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        match act.as_str() {
+            "view" | "inspect" | "get" | "read" | "read_ref" | "" => {
+                let _ = target_skill.map(|name| {
+                    active_skill_names.insert(name.to_string());
+                });
+            }
+            "add" | "save" | "create" | "patch" | "edit" | "write_file" => {
+                run.curated_skill_in_turn = true;
+            }
+            _ => {}
+        }
+    });
+
+    match tool_succeeded {
+        false => {
+            run.saw_tool_error_in_turn = true;
+            None
+        }
+        true => {
+            let can_self_heal = !run.skill_healing_nudged
+                && !run.curated_skill_in_turn
+                && run.saw_tool_error_in_turn
+                && !active_skill_names.is_empty();
+            let can_milestone_nudge = !can_self_heal
+                && !run.skill_creation_nudged
+                && !run.curated_skill_in_turn
+                && (run.iterations + 1) >= SKILL_CREATION_NUDGE_ITERATION;
+
+            match (can_self_heal, can_milestone_nudge) {
+                (true, _) => {
+                    run.skill_healing_nudged = true;
+                    let mut sorted_skills: Vec<String> =
+                        active_skill_names.iter().cloned().collect();
+                    sorted_skills.sort();
+                    Some(serde_json::json!({
+                        "kind": "active_skill_self_heal",
+                        "active_skills": sorted_skills,
+                        "hint": "An earlier tool call failed while active skill(s) were loaded and you verified a working fix. When an active skill has an outdated flag, path, or missing workaround, patch it via curate_skill(action='patch', skill_name='...', old_text='...', content='...') before concluding."
+                    }))
+                }
+                (false, true) => {
+                    run.skill_creation_nudged = true;
+                    Some(serde_json::json!({
+                        "kind": "workflow_crystallization_nudge",
+                        "iteration": run.iterations + 1,
+                        "hint": "Multi-step workflow milestone reached. Once the solution is verified, consider saving reusable procedures or helper scripts via curate_skill(action='add'|'patch'|'write_file') or durable facts via store_memory."
+                    }))
+                }
+                (false, false) => None,
+            }
         }
     }
 }

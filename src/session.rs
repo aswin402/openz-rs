@@ -448,7 +448,13 @@ impl SessionManager {
     pub fn delete(&self, key: &str) -> Result<bool> {
         let path = self.file_path(key);
         match fs::remove_file(&path) {
-            Ok(()) => Ok(true),
+            Ok(()) => {
+                crate::tools::self_management::session_search::remove_session_from_search_index(
+                    &self.dir,
+                    key,
+                );
+                Ok(true)
+            }
             Err(err) => match err.kind() {
                 std::io::ErrorKind::NotFound => Ok(false),
                 _ => Err(err).with_context(|| format!("Failed to delete session file {:?}", path)),
@@ -524,6 +530,10 @@ impl SessionManager {
                     temp_path, path
                 )
             })?;
+        crate::tools::self_management::session_search::index_session_for_search(
+            &self.dir,
+            &session_clone,
+        );
         Ok(())
     }
 

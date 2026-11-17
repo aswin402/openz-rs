@@ -221,6 +221,11 @@ async fn tool_registry_exposes_every_registered_tool() {
         ("firefox_browser", "browser"),
         ("inspect_browsers", "browser"),
         ("browser_status", "browser"),
+        ("session_search", "manage_sessions"),
+        ("search_sessions", "manage_sessions"),
+        ("skill_manage", "curate_skill"),
+        ("skill_view", "curate_skill"),
+        ("skills_list", "curate_skill"),
     ] {
         let resolved = registry
             .get(legacy_alias)

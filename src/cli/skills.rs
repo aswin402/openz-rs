@@ -33,19 +33,23 @@ pub async fn handle_skills(action: Option<SkillsAction>) -> Result<()> {
             }
         }
         SkillsAction::Inspect { name, profile } => {
-            match crate::agent::skills::inspect_skill_package(&name, profile.as_deref())? {
+            match crate::agent::skills::inspect_skill_bundle(&name, profile.as_deref())? {
                 None => anyhow::bail!("Skill '{}' not found.", name),
-                Some((skill, refs, scripts)) => {
-                    println!("=== Skill: {} ===", skill.name);
-                    println!("Description: {}", skill.description());
-                    let trigs = skill.triggers();
+                Some(bundle) => {
+                    println!("=== Skill: {} ===", bundle.skill.name);
+                    println!("Description: {}", bundle.skill.description());
+                    let trigs = bundle.skill.triggers();
                     let _ = (!trigs.is_empty())
                         .then(|| println!("Triggers:    {}", trigs.join(", ")));
-                    let _ = (!refs.is_empty())
-                        .then(|| println!("References:  {}", refs.join(", ")));
-                    let _ = (!scripts.is_empty())
-                        .then(|| println!("Scripts:     {}", scripts.join(", ")));
-                    println!("---\n{}", skill.content);
+                    let _ = (!bundle.references.is_empty())
+                        .then(|| println!("References:  {}", bundle.references.join(", ")));
+                    let _ = (!bundle.scripts.is_empty())
+                        .then(|| println!("Scripts:     {}", bundle.scripts.join(", ")));
+                    let _ = (!bundle.templates.is_empty())
+                        .then(|| println!("Templates:   {}", bundle.templates.join(", ")));
+                    let _ = (!bundle.assets.is_empty())
+                        .then(|| println!("Assets:      {}", bundle.assets.join(", ")));
+                    println!("---\n{}", bundle.skill.content);
                 }
             }
         }

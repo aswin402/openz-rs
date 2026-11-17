@@ -235,8 +235,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
           * Security Guard & BPF Sandbox: Subprocesses can be sandboxed using a Linux seccomp BPF filter, and interactive approvals follow a 3-tier Ask Permission policy ('low' default, 'medium', 'high'). Pre-flight discipline: the guard runs BEFORE execution but AFTER you emit the call — in default 'low' mode, OpenZ runs normal workspace file writes/edits, builds, searches, and local commits freely, while destructive deletes (rm/rmdir/unlink/shred, git reset --hard, git clean -fd, git push --force), privilege escalation (sudo/su/chmod/chown/eval/source), power commands (shutdown/reboot/poweroff/halt), shell pipe execution (| sh/bash/python), raw db_write, credential/whitelist mutations, and paths outside the workspace or ~/.openz require interactive user approval (and catastrophic wipes like rm -rf / or dd/mkfs are hard-blocked). 'medium' adds approval for git push, network downloads/transfers (curl/wget/scp/rsync), package installs, kill, cargo clean, and remote/destructive tool actions; 'high' adds approval before all workspace file writes/edits and local mutations. Prefer non-destructive alternatives and workspace-relative paths unless the user explicitly asks otherwise.\n\
           * Cryptographic Audit Ledger: Uses SHA-256 Merkle chain hashing on all session messages/states, verified on boot, with a '/audit' slash command.\n\
           * Proactive Memory & Knowledge Graph: Three memory layers. (1) Simple KV: 'store_memory'/'recall_memory'/'clear_memory' for quick facts. (2) Working/Ephemeral: 'set_working_memory'/'get_working_memory'/'evict_expired_working_memory' for temporary session context. (3) Knowledge Graph: 'create_entities'/'create_relations'/'add_observations'/'read_graph'/'search_nodes'/'open_nodes' for structured relational memory. Use semantic tools 'smart_store'/'extract_and_store_facts'/'proactive_recall' for smart fact extraction and retrieval. Don't ask for permission — just store it.\n\
-          * User Preference Discipline: Stable preferences in [Pinned Memory] are hard constraints. If pinned memory says no emojis, do not use emojis in final answers, headings, or tables.\n\
-          * Self-Improvement System: An asynchronous background curator refines your memory facts and procedural skills stored under ~/.openz/skills/ and SQLite database (~/.openz/memory.db).",
+          * User Preference Discipline: Stable preferences in [Pinned Memory] and [User Profile & Design Preferences] are hard constraints. If pinned memory says no emojis, do not use emojis in final answers, headings, or tables.\n\
+          * Closed-Loop Self-Improvement & Episodic Recall: Skills live as canonical AgentSkills bundles under ~/.openz/skills/<name>/SKILL.md (with optional scripts/, references/, templates/, assets/) indexed in ~/.openz/memory.db, alongside core identity/memory files (~/.openz/SOUL.md, ~/.openz/USER.md, ~/.openz/MEMORY.md). Use 'manage_sessions' with action='search' (or alias 'session_search') to FTS5-search past conversations across sessions. When an active skill has an outdated flag/step and you verify a working fix, patch it via curate_skill(action='patch'); when a complex workflow needs helper scripts or templates, bundle them via curate_skill(action='write_file').",
         get_version_history(),
         get_dynamic_tools_guideline(&loop_ref.tools),
         runtime_tool_discipline_rules(),
@@ -274,15 +274,29 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     let caveman_auto_clarity =
         opencaveman::compile_dynamic_auto_clarity(config.agents.defaults.caveman_mode, ctx.user_content);
 
-    let user_profile_raw = crate::agent::skills::load_user_profile();
-    let user_profile_part = (!user_profile_raw.trim().is_empty())
-        .then(|| {
-            format!(
-                "\n\n[User Profile & Design Preferences]\nFollow these persistent user preferences and styling guidelines unconditionally across all deliverables:\n{}\n",
-                user_profile_raw.trim()
-            )
-        })
-        .unwrap_or_default();
+    let soul_raw = crate::agent::core_memory::load_soul_profile();
+    let user_profile_raw = crate::agent::core_memory::load_user_profile();
+    let global_memory_raw = crate::agent::core_memory::load_global_memory();
+    let mut core_identity_block = String::new();
+    let _ = (!soul_raw.trim().is_empty()).then(|| {
+        core_identity_block.push_str(&format!(
+            "\n\n[Core Agent Soul & Persona — SOUL.md]\n{}\n",
+            soul_raw.trim()
+        ));
+    });
+    let _ = (!user_profile_raw.trim().is_empty()).then(|| {
+        core_identity_block.push_str(&format!(
+            "\n\n[User Profile & Design Preferences]\nFollow these persistent user preferences and styling guidelines unconditionally across all deliverables:\n{}\n",
+            user_profile_raw.trim()
+        ));
+    });
+    let _ = (!global_memory_raw.trim().is_empty()).then(|| {
+        core_identity_block.push_str(&format!(
+            "\n\n[Global Curated Memory — MEMORY.md]\n{}\n",
+            global_memory_raw.trim()
+        ));
+    });
+    let user_profile_part = core_identity_block;
 
     let budget_limit = crate::providers::DynamicContextRegistry::resolve_prompt_budget_chars(
         &config.agents.defaults.model,

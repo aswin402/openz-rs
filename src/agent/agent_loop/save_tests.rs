@@ -94,3 +94,120 @@ fn trajectory_recovered_after_error_detects_error_then_clean_fix() {
     ];
     assert!(!trajectory_recovered_after_error(&unrecovered));
 }
+
+#[test]
+fn stemmed_learning_intent_avoids_substring_false_positives() {
+    let make_user = |text: &str| {
+        vec![crate::session::Message {
+            role: "user".to_string(),
+            content: text.to_string(),
+            timestamp: None,
+            extra: serde_json::Map::new(),
+        }]
+    };
+    assert!(!has_explicit_learning_intent(&make_user(
+        "install sklearn and run k-means clustering"
+    )));
+    assert!(!has_explicit_learning_intent(&make_user(
+        "rename unskilled_worker field in schema"
+    )));
+    assert!(has_explicit_learning_intent(&make_user(
+        "remember that I prefer Swiss Minimalist layouts"
+    )));
+    assert!(has_explicit_learning_intent(&make_user(
+        "save this deployment workflow for future runs"
+    )));
+}
+
+#[test]
+fn coalescing_curator_queue_retains_latest_concurrent_snapshot() {
+    let session_key = format!("coalesce-test-{}", uuid::Uuid::new_v4());
+    let temp_sessions = crate::session::SessionManager::new(
+        std::env::temp_dir().join(format!("coalesce-sm-{}", uuid::Uuid::new_v4())),
+    );
+    let provider: std::sync::Arc<dyn crate::providers::LLMProvider> =
+        std::sync::Arc::new(crate::providers::mock::MockProvider::new());
+
+    let make_job = |query: &str| CuratorJobPayload {
+        session_manager: temp_sessions.clone(),
+        session_key: session_key.clone(),
+        user_query: query.to_string(),
+        provider: provider.clone(),
+        messages: Vec::new(),
+        tools_used: Vec::new(),
+        turn_succeeded_cleanly: true,
+        turn_recovered: false,
+    };
+
+    let claimed = claim_or_coalesce_curator_job(make_job("turn 1"));
+    assert!(claimed.is_some());
+
+    // Concurrent turns 2 and 3 coalesce behind turn 1 without dropping the latest state
+    assert!(claim_or_coalesce_curator_job(make_job("turn 2")).is_none());
+    assert!(claim_or_coalesce_curator_job(make_job("turn 3")).is_none());
+
+    let popped = finish_or_pop_coalesced_curator_job(&session_key)
+        .expect("coalesced turn 3 should pop next");
+    assert_eq!(popped.user_query, "turn 3");
+    assert!(finish_or_pop_coalesced_curator_job(&session_key).is_none());
+}
+
+#[test]
+fn in_loop_skill_nudge_fires_on_active_skill_recovery_and_milestone() {
+    let config = crate::config::schema::Config::default();
+    let provider: std::sync::Arc<dyn crate::providers::LLMProvider> =
+        std::sync::Arc::new(crate::providers::mock::MockProvider::new());
+    let ctx = crate::agent::agent_loop::TurnContext {
+        session_key: "cli:nudge_test",
+        user_content: "deploy app",
+        active_provider: provider,
+        session: crate::session::Session::new("cli:nudge_test"),
+        messages: Vec::new(),
+        system_prompt: String::new(),
+        final_content: String::new(),
+        tools_used: Vec::new(),
+        interaction_id: None,
+        turn_errors: Vec::new(),
+        session_file_lock: None,
+        streamed: false,
+        config,
+        workflow_notice_names: std::collections::HashSet::new(),
+        skill_notice_names: std::collections::HashSet::new(),
+    };
+    let mut run = super::super::run::turn::RunContext::new(&ctx);
+    let mut active_skills = std::collections::HashSet::new();
+    active_skills.insert("docker_deploy".to_string());
+
+    // 1. Tool fails while active skill is loaded -> marks error, no nudge yet
+    let n1 = super::super::run::turn::evaluate_in_loop_skill_nudge(
+        &mut run,
+        &mut active_skills,
+        "exec_command",
+        &serde_json::json!({"command": "docker compose --old-flag"}),
+        false,
+    );
+    assert!(n1.is_none());
+
+    // 2. Subsequent tool succeeds -> emits one-time active_skill_self_heal nudge!
+    let n2 = super::super::run::turn::evaluate_in_loop_skill_nudge(
+        &mut run,
+        &mut active_skills,
+        "exec_command",
+        &serde_json::json!({"command": "docker compose up -d"}),
+        true,
+    )
+    .expect("self-heal nudge should fire");
+    assert_eq!(n2["kind"].as_str(), Some("active_skill_self_heal"));
+
+    // 3. Reaching milestone iteration 12 without curating -> emits workflow_crystallization_nudge!
+    run.iterations = 11;
+    let n3 = super::super::run::turn::evaluate_in_loop_skill_nudge(
+        &mut run,
+        &mut active_skills,
+        "read_file",
+        &serde_json::json!({"path": "Cargo.toml"}),
+        true,
+    )
+    .expect("milestone nudge should fire at iteration 12");
+    assert_eq!(n3["kind"].as_str(), Some("workflow_crystallization_nudge"));
+}

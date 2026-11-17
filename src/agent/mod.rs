@@ -1,6 +1,7 @@
 pub mod activity;
 pub mod agent_loop;
 pub mod context_compactor;
+pub mod core_memory;
 pub mod events;
 pub mod marketplace_intent;
 pub mod security;

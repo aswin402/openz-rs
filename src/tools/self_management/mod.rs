@@ -6,6 +6,7 @@ mod config;
 mod diagnostics;
 mod inventory;
 mod scope;
+pub(crate) mod session_search;
 mod sessions;
 mod skills;
 

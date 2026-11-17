@@ -6,9 +6,18 @@ use serde_json::Value;
 pub struct CurateSkillTool;
 
 const SKILL_NAME_KEYS: &[&str] = &["skill_name", "skillName", "name", "skill", "id"];
-const SKILL_CONTENT_KEYS: &[&str] = &["content", "instructions", "body", "text", "new_text", "new_string"];
+const SKILL_CONTENT_KEYS: &[&str] = &[
+    "file_content",
+    "fileContent",
+    "content",
+    "instructions",
+    "body",
+    "text",
+    "new_text",
+    "new_string",
+];
 const OLD_TEXT_KEYS: &[&str] = &["old_text", "old_string", "search", "target"];
-const REF_PATH_KEYS: &[&str] = &["ref_path", "reference", "path", "file"];
+const REF_PATH_KEYS: &[&str] = &["ref_path", "file_path", "filePath", "reference", "path", "file"];
 
 fn notify_skill_curation(title: &str, detail: &str) {
     let _ = crate::agent::style::spinner::get_current_session_key().map(|session_key| {
@@ -23,7 +32,7 @@ impl Tool for CurateSkillTool {
     }
 
     fn description(&self) -> &str {
-        "Progressive skill manager: list compact catalog, view full SKILL.md on demand, read bundled references/, add, patch, delete, inspect history, or roll back procedural skills."
+        "Progressive AgentSkills bundle manager: list compact catalog, view full SKILL.md on demand, read/write/remove bundled references/scripts/templates/assets, add, patch, consolidate, delete, inspect history, or roll back procedural skills."
     }
 
     fn parameters(&self) -> Value {
@@ -32,8 +41,8 @@ impl Tool for CurateSkillTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "view", "read_ref", "add", "patch", "delete", "history", "rollback"],
-                    "description": "Skill action: 'view' loads one SKILL.md on demand; 'read_ref' loads a file under references/ or scripts/; 'patch' applies targeted edits."
+                    "enum": ["list", "view", "read_ref", "write_file", "remove_file", "add", "patch", "delete", "consolidate", "history", "rollback"],
+                    "description": "Skill action: 'view' loads one SKILL.md + bundle manifest; 'read_ref'/'write_file'/'remove_file' manage files under references/, scripts/, templates/, or assets/; 'patch' applies surgical edits; 'consolidate' deduplicates and quarantines broken skills."
                 },
                 "skill_name": {
                     "type": "string",
@@ -41,7 +50,11 @@ impl Tool for CurateSkillTool {
                 },
                 "content": {
                     "type": "string",
-                    "description": "Markdown instructions for 'add', or replacement/appended text for 'patch'."
+                    "description": "Markdown instructions for 'add', replacement/appended text for 'patch', or file text for 'write_file'."
+                },
+                "file_content": {
+                    "type": "string",
+                    "description": "Alias for supporting file text when action='write_file'."
                 },
                 "old_text": {
                     "type": "string",
@@ -49,7 +62,7 @@ impl Tool for CurateSkillTool {
                 },
                 "ref_path": {
                     "type": "string",
-                    "description": "Relative path inside the skill package (e.g. 'references/api.md' or 'scripts/check.sh') when action='read_ref'."
+                    "description": "Relative path inside the skill package (e.g. 'references/api.md', 'scripts/check.sh', 'templates/config.toml') for 'read_ref', 'write_file', or 'remove_file'."
                 },
                 "compact": {
                     "type": "boolean",
@@ -69,13 +82,19 @@ impl Tool for CurateSkillTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
+        let has_target_name = extract_trimmed_str(arguments, SKILL_NAME_KEYS).is_some();
+        let has_ref_path = extract_trimmed_str(arguments, REF_PATH_KEYS).is_some();
         let action_str = match arguments {
             Value::String(s) => Some(s.as_str()),
             Value::Object(obj) => extract_first_str(arguments, &ACTION_KEYS[..5]).or_else(|| {
-                SKILL_CONTENT_KEYS
-                    .iter()
-                    .any(|&k| obj.contains_key(k))
-                    .then_some("add")
+                let has_content = SKILL_CONTENT_KEYS.iter().any(|&k| obj.contains_key(k));
+                match (has_content, has_ref_path, has_target_name) {
+                    (true, true, _) => Some("write_file"),
+                    (true, false, _) => Some("add"),
+                    (false, true, true) => Some("read_ref"),
+                    (false, false, true) => Some("view"),
+                    _ => None,
+                }
             }),
             _ => None,
         };
@@ -83,15 +102,17 @@ impl Tool for CurateSkillTool {
         let normalized_action = action_str
             .map(|a| a.trim().to_lowercase())
             .unwrap_or_else(|| "list".to_string());
-        let has_target_name = extract_trimmed_str(arguments, SKILL_NAME_KEYS).is_some();
         let action = match (normalized_action.as_str(), has_target_name) {
             ("" | "list" | "ls" | "show", _) => "list",
             ("view" | "inspect" | "get" | "read", false) => "list",
             ("view" | "inspect" | "get" | "read", true) => "view",
             ("read_ref" | "read_reference" | "ref", _) => "read_ref",
+            ("write_file" | "save_file" | "put_file" | "write_ref", _) => "write_file",
+            ("remove_file" | "delete_file" | "rm_file", _) => "remove_file",
             ("add" | "save" | "create" | "set" | "update", _) => "add",
             ("patch" | "edit", _) => "patch",
             ("delete" | "remove" | "rm", _) => "delete",
+            ("consolidate" | "dedupe" | "maintain", _) => "consolidate",
             ("history" | "revisions" | "versions" | "snapshots", _) => "history",
             ("rollback" | "restore" | "revert" | "undo", _) => "rollback",
             (other, _) => other,
@@ -131,21 +152,23 @@ impl Tool for CurateSkillTool {
             "view" => {
                 let skill_name = extract_trimmed_str(arguments, SKILL_NAME_KEYS)
                     .ok_or_else(|| anyhow::anyhow!("Missing skill_name for action 'view'"))?;
-                match crate::agent::skills::inspect_skill_package(&skill_name, profile.as_deref())? {
-                    Some((skill, references, scripts)) => {
+                match crate::agent::skills::inspect_skill_bundle(&skill_name, profile.as_deref())? {
+                    Some(bundle) => {
                         crate::agent::skills::record_skill_activation(
-                            &skill.name,
+                            &bundle.skill.name,
                             profile.as_deref(),
                         );
-                        notify_skill_curation("Skill used", &skill.name);
+                        notify_skill_curation("Skill used", &bundle.skill.name);
                         Ok(serde_json::json!({
                             "success": true,
-                            "skill_name": skill.name,
-                            "description": skill.description(),
-                            "triggers": skill.triggers(),
-                            "content": skill.content,
-                            "references": references,
-                            "scripts": scripts
+                            "skill_name": bundle.skill.name,
+                            "description": bundle.skill.description(),
+                            "triggers": bundle.skill.triggers(),
+                            "content": bundle.skill.content,
+                            "references": bundle.references,
+                            "scripts": bundle.scripts,
+                            "templates": bundle.templates,
+                            "assets": bundle.assets
                         }))
                     }
                     None => Err(anyhow::anyhow!("Skill '{}' not found", skill_name)),
@@ -166,6 +189,54 @@ impl Tool for CurateSkillTool {
                     "skill_name": skill_name,
                     "ref_path": ref_path,
                     "content": content
+                }))
+            }
+            "write_file" => {
+                let skill_name = extract_trimmed_str(arguments, SKILL_NAME_KEYS)
+                    .ok_or_else(|| anyhow::anyhow!("Missing skill_name for action 'write_file'"))?;
+                let ref_path = extract_trimmed_str(arguments, REF_PATH_KEYS)
+                    .ok_or_else(|| anyhow::anyhow!("Missing ref_path for action 'write_file'"))?;
+                let file_content = extract_first_str(arguments, SKILL_CONTENT_KEYS)
+                    .ok_or_else(|| anyhow::anyhow!("Missing file_content/content for action 'write_file'"))?;
+                let saved_path = crate::agent::skills::write_skill_package_file(
+                    &skill_name,
+                    &ref_path,
+                    file_content,
+                    profile.as_deref(),
+                )?;
+                notify_skill_curation("Skill bundle updated", &format!("{}:{}", skill_name, ref_path));
+                Ok(serde_json::json!({
+                    "success": true,
+                    "skill_name": skill_name,
+                    "ref_path": ref_path,
+                    "path": saved_path.display().to_string(),
+                    "message": format!("Supporting file '{}' saved inside skill '{}'", ref_path, skill_name)
+                }))
+            }
+            "remove_file" => {
+                let skill_name = extract_trimmed_str(arguments, SKILL_NAME_KEYS)
+                    .ok_or_else(|| anyhow::anyhow!("Missing skill_name for action 'remove_file'"))?;
+                let ref_path = extract_trimmed_str(arguments, REF_PATH_KEYS)
+                    .ok_or_else(|| anyhow::anyhow!("Missing ref_path for action 'remove_file'"))?;
+                crate::agent::skills::remove_skill_package_file(
+                    &skill_name,
+                    &ref_path,
+                    profile.as_deref(),
+                )?;
+                notify_skill_curation("Skill bundle file removed", &format!("{}:{}", skill_name, ref_path));
+                Ok(serde_json::json!({
+                    "success": true,
+                    "skill_name": skill_name,
+                    "ref_path": ref_path,
+                    "message": format!("Supporting file '{}' removed from skill '{}'", ref_path, skill_name)
+                }))
+            }
+            "consolidate" => {
+                let actions = crate::agent::skills::consolidate_learned_skills()?;
+                Ok(serde_json::json!({
+                    "success": true,
+                    "consolidated_or_quarantined": actions,
+                    "message": format!("Consolidated or quarantined {} redundant/broken skill(s)", actions)
                 }))
             }
             "add" => {

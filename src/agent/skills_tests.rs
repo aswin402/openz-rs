@@ -251,3 +251,146 @@ fn default_subagent_skills_do_not_reference_deprecated_tool_names() {
         }
     }
 }
+
+#[tokio::test]
+async fn save_skill_writes_canonical_bundle_and_reconciles_disk_edits_into_views() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_bundle_reconcile_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    crate::config::loader::CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            let legacy_flat = get_skills_dir().join("bundle_sync_skill.md");
+            std::fs::create_dir_all(get_skills_dir()).unwrap();
+            std::fs::write(&legacy_flat, "# Old Flat\nLegacy flat copy").unwrap();
+
+            save_skill("bundle_sync_skill", "# Bundle V1\nInitial package body").unwrap();
+            let pkg_md = get_skills_dir().join("bundle_sync_skill").join("SKILL.md");
+            assert!(pkg_md.is_file(), "save_skill must write <name>/SKILL.md");
+            assert!(
+                !legacy_flat.exists(),
+                "save_skill must remove legacy flat <name>.md"
+            );
+
+            record_skill_activation("bundle_sync_skill", None);
+            record_skill_outcome("bundle_sync_skill", None, true);
+
+            std::fs::write(&pkg_md, "# Bundle V2\nEdited directly on disk").unwrap();
+            let views = load_skill_views().unwrap();
+            let view = views
+                .iter()
+                .find(|v| v.name == "bundle_sync_skill")
+                .expect("skill view present");
+            assert!(view.content.contains("Edited directly on disk"));
+            assert_eq!(view.use_count, 1);
+            assert_eq!(view.success_count, 1);
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[tokio::test]
+async fn consolidate_learned_skills_quarantines_failing_and_dedupes_twins() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_skill_consolidate_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    crate::config::loader::CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            save_skill(
+                "broken_auto_skill",
+                "---\ndescription: Broken docker network workaround\ntriggers: [\"docker network broken\"]\n---\n# Broken Skill\nBad steps",
+            )
+            .unwrap();
+            for _ in 0..5 {
+                record_skill_activation("broken_auto_skill", None);
+            }
+
+            save_skill(
+                " canonical_k8s_rollout ",
+                "---\ndescription: Kubernetes zero downtime rollout verification\ntriggers: [\"kubernetes rollout\", \"zero downtime deploy\"]\n---\n# Kubernetes Zero Downtime Rollout\nVerify pods.",
+            )
+            .unwrap();
+            record_skill_activation("canonical_k8s_rollout", None);
+            record_skill_outcome("canonical_k8s_rollout", None, true);
+
+            save_skill(
+                "dup_k8s_rollout",
+                "---\ndescription: Kubernetes zero downtime rollout verification\ntriggers: [\"kubernetes rollout\", \"zero downtime deploy\"]\n---\n# Kubernetes Zero Downtime Rollout\nDuplicate copy.",
+            )
+            .unwrap();
+
+            let actions = consolidate_learned_skills().unwrap();
+            assert_eq!(actions, 2);
+
+            let remaining = load_skills().unwrap();
+            assert!(!remaining.iter().any(|s| s.name == "broken_auto_skill"));
+            assert!(!remaining.iter().any(|s| s.name == "dup_k8s_rollout"));
+            assert!(remaining.iter().any(|s| s.name == "canonical_k8s_rollout"));
+            assert!(get_skills_dir()
+                .join("archive")
+                .join("broken_auto_skill")
+                .join("SKILL.md")
+                .is_file());
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[tokio::test]
+async fn core_memory_supports_surgical_replace_remove_and_budget_cap() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_core_memory_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    crate::config::loader::CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            std::fs::write(
+                crate::agent::core_memory::get_soul_path(),
+                "Speak with calm systems-engineering precision.",
+            )
+            .unwrap();
+            assert!(crate::agent::core_memory::load_soul_profile()
+                .contains("systems-engineering precision"));
+
+            crate::agent::core_memory::update_user_profile(
+                "- Theme: Cyberpunk Neon\n- Framework: React 19",
+            )
+            .unwrap();
+            crate::agent::core_memory::update_user_profile(
+                "- Theme: Swiss Minimalist Light\n- remove: React 19\n- Framework: SolidJS",
+            )
+            .unwrap();
+            let user_md = crate::agent::core_memory::load_user_profile();
+            assert!(user_md.contains("Theme: Swiss Minimalist Light"));
+            assert!(!user_md.contains("Cyberpunk Neon"));
+            assert!(!user_md.contains("React 19"));
+            assert!(user_md.contains("Framework: SolidJS"));
+
+            let mut huge_lines = String::new();
+            for idx in 0..60 {
+                huge_lines.push_str(&format!(
+                    "- Architecture invariant #{idx}: keep module boundaries strict and verified across crates\n"
+                ));
+            }
+            let evicted =
+                crate::agent::core_memory::update_global_memory(&huge_lines).unwrap();
+            let mem_md = crate::agent::core_memory::load_global_memory();
+            assert!(
+                mem_md.chars().count() <= crate::agent::core_memory::MAX_GLOBAL_MEMORY_CHARS
+            );
+            assert!(!evicted.is_empty());
+            assert!(mem_md.contains("Architecture invariant #59"));
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}

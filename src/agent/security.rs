@@ -887,6 +887,17 @@ impl SecurityGuard {
         writes_disk: bool,
     ) -> bool {
         match tool_name {
+            "curate_skill" => ["ref_path", "file_path", "filePath", "reference", "path", "file"]
+                .iter()
+                .find_map(|k| arguments.get(*k).and_then(Value::as_str))
+                .map(|raw| {
+                    let trimmed = raw.trim();
+                    trimmed.starts_with('/')
+                        || trimmed.starts_with('~')
+                        || trimmed.contains("..")
+                        || trimmed.contains('\0')
+                })
+                .unwrap_or(false),
             "retrieve_original" => arguments
                 .get("ccr_id")
                 .and_then(Value::as_str)
@@ -903,6 +914,25 @@ impl SecurityGuard {
                 .unwrap_or(false),
             _ => (Self::path_edit_label(tool_name).is_some() || writes_disk)
                 && Self::any_target_path_unsafe(arguments),
+        }
+    }
+
+    fn is_implicit_read_only_call(tool_name: &str, action: &str, arguments: &Value) -> bool {
+        match (tool_name, action) {
+            ("manage_sessions", "") => true,
+            ("curate_skill", "") => ![
+                "file_content",
+                "fileContent",
+                "content",
+                "instructions",
+                "body",
+                "text",
+                "new_text",
+                "new_string",
+            ]
+            .iter()
+            .any(|k| arguments.get(*k).is_some()),
+            _ => false,
         }
     }
 
@@ -935,6 +965,7 @@ impl SecurityGuard {
                         || crate::core::secrets::contains_secret_material(arguments));
                 let is_read_only_action = !has_cred_action
                     && (Self::is_read_only_tool_action(tool_name, &action)
+                        || Self::is_implicit_read_only_call(tool_name, &action, arguments)
                         || Self::is_self_owned_tool_output_retrieval(tool_name, arguments));
 
                 let low_tool_sensitive = unsafe_path
@@ -962,7 +993,10 @@ impl SecurityGuard {
                                 | "run_job_now"
                                 | "delete_subagent"
                         ) || (tool_name == "curate_skill"
-                            && matches!(action.as_str(), "delete" | "remove"))
+                            && matches!(
+                                action.as_str(),
+                                "delete" | "remove" | "remove_file" | "delete_file" | "rm_file"
+                            ))
                             || (tool_name == "manage_backups"
                                 && matches!(action.as_str(), "restore" | "delete" | "remove"))
                             || (tool_name == "manage_sessions"

@@ -64,7 +64,7 @@ impl Tool for ManageSessionsTool {
     }
 
     fn description(&self) -> &str {
-        "Manage, clean up, archive, or cryptographically audit session history files and temporary tool outputs."
+        "Search past conversations across sessions via SQLite FTS5 BM25 ('search' / alias 'session_search'), or list, clean up, archive, export, delete, and cryptographically audit session history."
     }
 
     fn parameters(&self) -> Value {
@@ -73,8 +73,24 @@ impl Tool for ManageSessionsTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "prune", "archive", "delete", "export", "audit"],
-                    "description": "The curation or verification action to perform."
+                    "enum": ["search", "list", "prune", "archive", "delete", "export", "audit"],
+                    "description": "Action: 'search' runs BM25 full-text recall across past sessions; 'list'/'prune'/'archive'/'delete'/'export'/'audit' manage session files."
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search keywords or command phrase when action='search' (e.g. 'docker gpu fix', 'tailwind config')."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Maximum BM25-ranked session hits to return for 'search' (1..=25, default 8)."
+                },
+                "session_prefix": {
+                    "type": "string",
+                    "description": "Optional channel/session prefix filter for 'search' (e.g. 'cli', 'ws', 'telegram', 'cron')."
+                },
+                "role": {
+                    "type": "string",
+                    "description": "Optional message role filter for 'search' ('user', 'assistant', or 'tool')."
                 },
                 "session_key": {
                     "type": "string",
@@ -90,6 +106,7 @@ impl Tool for ManageSessionsTool {
     }
 
     async fn call(&self, arguments: &Value) -> Result<Value> {
+        let query_arg = extract_trimmed_str(arguments, &["query", "q", "search", "keywords"]);
         let (action_str, direct_key) = match arguments {
             Value::String(s) => {
                 let s_trim = s.trim();
@@ -100,7 +117,11 @@ impl Tool for ManageSessionsTool {
                     _ => (Some("export"), Some(s_trim)),
                 }
             }
-            Value::Object(_) => (extract_first_str(arguments, ACTION_KEYS), None),
+            Value::Object(_) => (
+                extract_first_str(arguments, ACTION_KEYS)
+                    .or_else(|| query_arg.as_ref().map(|_| "search")),
+                None,
+            ),
             _ => (None, None),
         };
 
@@ -108,6 +129,7 @@ impl Tool for ManageSessionsTool {
             .map(|a| a.trim().to_lowercase())
             .unwrap_or_else(|| "list".to_string());
         let action = match normalized_action.as_str() {
+            "search" | "find" | "query" | "recall" | "session_search" => "search",
             "" | "list" | "ls" | "show" | "view" => "list",
             "prune" | "clean" | "cleanup" => "prune",
             "archive" => "archive",
@@ -120,6 +142,39 @@ impl Tool for ManageSessionsTool {
         let sessions_dir = openz_dir.join("sessions");
 
         match action {
+            "search" => {
+                let query = query_arg
+                    .ok_or_else(|| anyhow::anyhow!("Missing 'query' for session search"))?;
+                let limit = arguments
+                    .get("limit")
+                    .and_then(parse_u64_value)
+                    .map(|n| n as usize)
+                    .unwrap_or(8);
+                let session_prefix =
+                    extract_trimmed_str(arguments, &["session_prefix", "channel", "prefix"]);
+                let role_filter = extract_trimmed_str(arguments, &["role"]);
+                let current_session = crate::agent::style::spinner::get_current_session_key();
+                let exclude = arguments
+                    .get("include_current")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                    .then_some(None)
+                    .unwrap_or(current_session);
+                let hits = super::session_search::search_sessions_fts(
+                    &sessions_dir,
+                    &query,
+                    session_prefix.as_deref(),
+                    role_filter.as_deref(),
+                    exclude.as_deref(),
+                    limit,
+                )?;
+                Ok(serde_json::json!({
+                    "status": "success",
+                    "query": query,
+                    "hit_count": hits.len(),
+                    "hits": hits
+                }))
+            }
             "list" => {
                 let sessions_list: Vec<Value> = std::fs::read_dir(&sessions_dir)
                     .into_iter()
