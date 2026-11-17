@@ -18,9 +18,16 @@ const SKILL_CONTENT_KEYS: &[&str] = &[
 ];
 const OLD_TEXT_KEYS: &[&str] = &["old_text", "old_string", "search", "target"];
 const REF_PATH_KEYS: &[&str] = &["ref_path", "file_path", "filePath", "reference", "path", "file"];
+const SEARCH_QUERY_KEYS: &[&str] = &["query", "search_query", "q", "keyword"];
 
 fn notify_skill_curation(title: &str, detail: &str) {
     let _ = crate::agent::style::spinner::get_current_session_key().map(|session_key| {
+        let _ = (title == "Skill used").then(|| {
+            crate::channels::send_session_notice(
+                &session_key,
+                &format!("◇ Skill used: {}", detail),
+            );
+        });
         crate::channels::websocket::publish_activity_notice(&session_key, "skill", title, detail);
     });
 }
@@ -41,8 +48,12 @@ impl Tool for CurateSkillTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "list_archive", "view", "read_ref", "write_file", "remove_file", "add", "patch", "delete", "consolidate", "history", "rollback", "restore"],
-                    "description": "Skill action: 'view' loads one SKILL.md + bundle manifest; 'read_ref'/'write_file'/'remove_file' manage files under references/, scripts/, templates/, or assets/; 'patch' applies surgical edits; 'consolidate' deduplicates and quarantines broken skills; 'list_archive' and 'restore' inspect and recover skills from ~/.openz/skills/archive/."
+                    "enum": ["list", "search", "list_archive", "view", "read_ref", "write_file", "remove_file", "add", "patch", "delete", "consolidate", "history", "rollback", "restore"],
+                    "description": "Skill action: 'view' loads one SKILL.md + bundle manifest; 'search' ranks native + external ~/.agents/skills packages by query; 'read_ref'/'write_file'/'remove_file' manage files under references/, scripts/, templates/, or assets/; 'patch' applies surgical edits; 'consolidate' deduplicates and quarantines broken skills; 'list_archive' and 'restore' inspect and recover skills from ~/.openz/skills/archive/."
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search query when action='search' to discover relevant native or third-party ~/.agents/skills packages."
                 },
                 "skill_name": {
                     "type": "string",
@@ -104,6 +115,7 @@ impl Tool for CurateSkillTool {
             .unwrap_or_else(|| "list".to_string());
         let action = match (normalized_action.as_str(), has_target_name) {
             ("" | "list" | "ls" | "show", _) => "list",
+            ("search" | "find" | "query", _) => "search",
             ("view" | "inspect" | "get" | "read", false) => "list",
             ("view" | "inspect" | "get" | "read", true) => "view",
             ("read_ref" | "read_reference" | "ref", _) => "read_ref",
@@ -149,6 +161,33 @@ impl Tool for CurateSkillTool {
                 Ok(serde_json::json!({
                     "success": true,
                     "skills": formatted
+                }))
+            }
+            "search" => {
+                let query = extract_trimmed_str(arguments, SEARCH_QUERY_KEYS)
+                    .or_else(|| extract_trimmed_str(arguments, SKILL_NAME_KEYS))
+                    .ok_or_else(|| anyhow::anyhow!("Missing query for action 'search'"))?;
+                let matches = crate::agent::skills::load_ranked_skill_matches_with_profile(
+                    &query,
+                    &[],
+                    profile.as_deref(),
+                )?;
+                let hits: Vec<Value> = matches
+                    .into_iter()
+                    .take(15)
+                    .map(|m| {
+                        serde_json::json!({
+                            "name": m.skill.name,
+                            "description": m.skill.description(),
+                            "score": (m.score * 100.0).round() / 100.0,
+                        })
+                    })
+                    .collect();
+                Ok(serde_json::json!({
+                    "success": true,
+                    "query": query,
+                    "count": hits.len(),
+                    "matches": hits
                 }))
             }
             "view" => {

@@ -76,19 +76,13 @@ impl Skill {
     }
 
     pub fn triggers(&self) -> Vec<String> {
-        let mut triggers = extract_frontmatter_list(&self.content, "triggers");
-        match triggers.is_empty() {
-            true => {
-                triggers.extend(
-                    self.name
-                        .split(['_', '-'])
-                        .filter(|w| w.len() > 2)
-                        .map(|w| w.to_lowercase()),
-                );
-            }
-            false => {}
-        }
-        triggers
+        extract_frontmatter_list(&self.content, "triggers")
+    }
+
+    pub fn disable_model_invocation(&self) -> bool {
+        extract_frontmatter_field(&self.content, "disable-model-invocation")
+            .or_else(|| extract_frontmatter_field(&self.content, "disable_model_invocation"))
+            .is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "true" | "yes" | "1"))
     }
 
     pub fn vault_category(&self) -> Option<String> {
@@ -1174,6 +1168,136 @@ pub fn load_skills_with_profile(profile_name: Option<&str>) -> Result<Vec<Skill>
     }
 
     Ok(skills_map.into_values().collect())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogSkillSummary {
+    pub name: String,
+    pub scope: String,
+    pub description: String,
+}
+
+pub fn load_native_skill_catalog(
+    profile_name: Option<&str>,
+) -> Result<(Vec<CatalogSkillSummary>, usize)> {
+    let mut native_map = std::collections::BTreeMap::<String, (String, Skill)>::new();
+
+    match get_connection() {
+        Ok(conn) => {
+            let mut stmt = conn.prepare(
+                "SELECT name, content, COALESCE(profile, '') FROM skills WHERE COALESCE(profile, '') = '' OR profile = ?1",
+            )?;
+            let profile_str = profile_name.unwrap_or("");
+            let rows = stmt.query_map(params![profile_str], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })?;
+            for (name, content, raw_prof) in rows.flatten() {
+                let scope = match raw_prof.is_empty() {
+                    true => "global".to_string(),
+                    false => format!("subagent:{raw_prof}"),
+                };
+                native_map.insert(name.clone(), (scope, Skill { name, content }));
+            }
+        }
+        Err(_) => {}
+    }
+
+    let mut global_disk = std::collections::HashMap::new();
+    let _ = load_skill_files_from_dir(&get_skills_dir(), &mut global_disk);
+    for (name, skill) in global_disk {
+        native_map.insert(name, ("global".to_string(), skill));
+    }
+
+    match profile_name {
+        Some(prof) => {
+            let profile_skills_dir = crate::config::runtime_data_dir()
+                .join("subagents")
+                .join(prof)
+                .join("skills");
+            let mut prof_disk = std::collections::HashMap::new();
+            let _ = load_skill_files_from_dir(&profile_skills_dir, &mut prof_disk);
+            for (name, skill) in prof_disk {
+                native_map.insert(name, (format!("subagent:{prof}"), skill));
+            }
+        }
+        None => {}
+    }
+
+    let skills_config = crate::config::loader::load_config()
+        .map(|config| config.skills)
+        .unwrap_or_default();
+    let mut external_names = std::collections::BTreeSet::<String>::new();
+    for (dir, source) in discover_workspace_and_external_dirs(&skills_config) {
+        let mut dir_skills = std::collections::HashMap::new();
+        let _ = load_skill_files_from_dir(&dir, &mut dir_skills);
+        match source {
+            "workspace" => {
+                for (name, skill) in dir_skills {
+                    native_map.insert(name, ("workspace".to_string(), skill));
+                }
+            }
+            _ => {
+                for name in dir_skills.into_keys() {
+                    let _ = (!native_map.contains_key(&name)).then(|| external_names.insert(name));
+                }
+            }
+        }
+    }
+
+    match profile_name.is_none() {
+        true => {
+            for spec in opencaveman::builtin_caveman_skills() {
+                native_map
+                    .entry(spec.name.to_string())
+                    .or_insert_with(|| {
+                        (
+                            "builtin".to_string(),
+                            Skill {
+                                name: spec.name.to_string(),
+                                content: spec.content.to_string(),
+                            },
+                        )
+                    });
+            }
+        }
+        false => {}
+    }
+
+    let mut catalog = Vec::new();
+    for (name, (scope, skill)) in native_map {
+        match skill.disable_model_invocation() {
+            true => {}
+            false => {
+                let raw_desc = skill.description();
+                let one_line = raw_desc.split_whitespace().collect::<Vec<_>>().join(" ");
+                let bounded: String = one_line.chars().take(180).collect();
+                catalog.push(CatalogSkillSummary {
+                    name,
+                    scope,
+                    description: bounded,
+                });
+            }
+        }
+    }
+
+    Ok((catalog, external_names.len()))
+}
+
+pub fn find_skill_by_exact_name(name: &str, profile_name: Option<&str>) -> Result<Option<Skill>> {
+    let target = sanitize_skill_name(name);
+    match target.is_empty() {
+        true => Ok(None),
+        false => {
+            let all = load_skills_with_profile(profile_name)?;
+            Ok(all
+                .into_iter()
+                .find(|s| sanitize_skill_name(&s.name) == target))
+        }
+    }
 }
 
 fn checked_within_last_24h(check_path: &std::path::Path) -> bool {

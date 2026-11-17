@@ -199,6 +199,7 @@ impl Default for ToolRoutingConfig {
                 "request_tool_scope".to_string(),
                 "tool_catalog".to_string(),
                 "openz_inventory".to_string(),
+                "curate_skill".to_string(),
             ],
         }
     }

@@ -843,7 +843,12 @@ impl ToolRegistry {
         let always_visible_set: HashSet<String> =
             match (budgets.effective_mode == "minimal", !minimal_pinned.is_empty()) {
                 (true, true) => minimal_pinned,
-                _ => routing_cfg.always_visible_tools.iter().cloned().collect(),
+                _ => {
+                    let mut set: HashSet<String> =
+                        routing_cfg.always_visible_tools.iter().cloned().collect();
+                    set.insert("curate_skill".to_string());
+                    set
+                }
             };
         scope.allowed_names.extend(always_visible_set.iter().cloned());
         let pending_scope = self

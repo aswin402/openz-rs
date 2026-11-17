@@ -458,6 +458,7 @@ fn kv_cached_system_prompt_keeps_static_prefix_identical_across_turns_and_timest
         vision_instruction: " Use vision_agent.",
         caveman_rules: "\n\nRespond terse.",
         pinned_memory: "\n\n[Pinned Memory]\n- User name is Aswin",
+        available_skills_catalog: "\n\n<available_skills>\n  <skill name=\"caveman\" scope=\"builtin\">Compress prose</skill>\n</available_skills>\n",
     };
     let expected_prefix = prefix.render();
 
@@ -515,6 +516,7 @@ fn kv_cached_system_prompt_budget_truncates_dynamic_sections_without_touching_st
         vision_instruction: "",
         caveman_rules: "\nCaveman",
         pinned_memory: "\nPinned",
+        available_skills_catalog: "\n<available_skills></available_skills>",
     };
     let expected_prefix = prefix.render();
     let long_skills = format!("\nSkills: {}", "S".repeat(500));
@@ -588,4 +590,51 @@ fn foreign_workspace_path_filter_blocks_unrelated_repo_paths() {
         active_ws,
         "Read calculator.rs"
     ));
+}
+
+#[tokio::test]
+async fn normal_prompts_never_word_match_pin_skills_while_explicit_slash_skill_pins() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_llm_native_skills_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    crate::config::loader::CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            crate::agent::skills::save_skill(
+                "desktop_notify_demo",
+                "---\nname: desktop_notify_demo\ndescription: Send local desktop alerts with notify-send\n---\n# Notify\nExample: notify-send \"OpenZ\" \"hii\" for new alerts.",
+            )
+            .unwrap();
+
+            let mut notices = std::collections::HashSet::new();
+            let hii_part = format_explicit_skill_part("ws:test", "hii", None, &mut notices);
+            assert!(hii_part.is_empty(), "'hii' must never auto-pin any skill");
+            assert!(notices.is_empty());
+
+            let whats_new_part =
+                format_explicit_skill_part("ws:test", "so whats new", None, &mut notices);
+            assert!(
+                whats_new_part.is_empty(),
+                "'so whats new' must never auto-pin any skill"
+            );
+            assert!(notices.is_empty());
+
+            let catalog = build_static_available_skills_catalog(None);
+            assert!(catalog.contains("<available_skills>"));
+            assert!(catalog.contains("name=\"desktop_notify_demo\""));
+
+            let explicit_part = format_explicit_skill_part(
+                "ws:test",
+                "/skill:desktop_notify_demo alert build done",
+                None,
+                &mut notices,
+            );
+            assert!(explicit_part.contains("=== Active Skill: desktop_notify_demo ==="));
+            assert!(notices.contains("desktop_notify_demo"));
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
 }

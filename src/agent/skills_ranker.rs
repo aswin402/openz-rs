@@ -12,8 +12,9 @@ const GRAMMAR_STOP_WORDS: &[&str] = &[
     "up", "my", "the", "and", "for", "but", "not", "you", "your", "this", "that", "with", "from",
     "have", "are", "was", "were", "been", "has", "had", "will", "would", "should", "could", "can",
     "about", "there", "their", "here", "them", "then", "than", "into", "onto", "over", "under",
-    "some", "what", "when", "where", "which", "who", "how", "why", "please", "make", "need",
-    "want", "just", "also", "very", "more", "most", "only", "same", "such", "each",
+    "some", "what", "whats", "when", "where", "which", "who", "how", "why", "please", "make",
+    "need", "want", "just", "also", "very", "more", "most", "only", "same", "such", "each", "hi",
+    "hii", "hiii", "hello", "hey", "yo", "sup", "ok", "okay", "thanks", "thank", "bye",
 ];
 
 #[derive(Debug, Clone)]
@@ -203,6 +204,7 @@ pub fn rank_skills_bm25f(
     let recent_phrase_tokens = tokenize_stemmed(&recent_text, false);
 
     let primary_query_terms = tokenize_stemmed(user_content, true);
+    let primary_term_set: HashSet<String> = primary_query_terms.iter().cloned().collect();
     let recent_query_terms = tokenize_stemmed(&recent_text, true);
 
     let mut weighted_query_terms: HashMap<String, f32> = HashMap::new();
@@ -234,6 +236,7 @@ pub fn rank_skills_bm25f(
     let mut results = Vec::new();
     for (skill, fields) in skills.into_iter().zip(indexed.iter()) {
         let mut bm25_score = 0.0f32;
+        let mut metadata_matched_terms = 0usize;
         for (term, q_weight) in &weighted_query_terms {
             let df = *doc_freq.get(term).unwrap_or(&0) as f32;
             let idf = (1.0 + ((n_docs - df + 0.5) / (df + 0.5)).max(0.05)).ln();
@@ -243,6 +246,9 @@ pub fn rank_skills_bm25f(
             let tf_desc = *fields.desc_tf.get(term).unwrap_or(&0);
             let tf_head = *fields.heading_tf.get(term).unwrap_or(&0);
             let tf_body = *fields.body_tf.get(term).unwrap_or(&0);
+
+            let _ = (primary_term_set.contains(term) && (tf_trig > 0 || tf_name > 0 || tf_desc > 0))
+                .then(|| metadata_matched_terms += 1);
 
             let weighted_tf = 4.0 * length_norm(tf_trig, fields.trigger_len, avg_trig_len, b)
                 + 3.0 * (tf_name as f32)
@@ -260,11 +266,17 @@ pub fn rank_skills_bm25f(
         let triggers = skill.triggers();
         let direct_trigger_hits = triggers
             .iter()
-            .filter(|trig| phrase_matches_tokens(&user_phrase_tokens, trig))
+            .filter(|trig| {
+                tokenize_stemmed(trig, false).len() >= 2
+                    && phrase_matches_tokens(&user_phrase_tokens, trig)
+            })
             .count() as f32;
         let recent_trigger_hits = triggers
             .iter()
-            .filter(|trig| phrase_matches_tokens(&recent_phrase_tokens, trig))
+            .filter(|trig| {
+                tokenize_stemmed(trig, false).len() >= 2
+                    && phrase_matches_tokens(&recent_phrase_tokens, trig)
+            })
             .count() as f32;
 
         let skill_name_lower = skill.name.to_ascii_lowercase();
@@ -296,7 +308,7 @@ pub fn rank_skills_bm25f(
         let high_confidence = explicit_hit
             || exact_name_hit
             || direct_trigger_hits >= 1.0
-            || final_score >= HIGH_CONFIDENCE_SKILL_SCORE;
+            || (metadata_matched_terms >= 2 && final_score >= HIGH_CONFIDENCE_SKILL_SCORE);
 
         match final_score > 0.0 {
             true => results.push(ScoredSkillMatch {

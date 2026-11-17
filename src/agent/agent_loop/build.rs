@@ -56,95 +56,73 @@ fn should_emit_skill_notice(seen: &mut HashSet<String>, skill_name: &str) -> boo
     seen.insert(skill_name.to_string())
 }
 
-fn format_skills_part(
+pub(crate) fn build_static_available_skills_catalog(profile_name: Option<&str>) -> String {
+    let (catalog, external_count) =
+        crate::agent::skills::load_native_skill_catalog(profile_name).unwrap_or_default();
+    match (catalog.is_empty(), external_count > 0) {
+        (true, false) => String::new(),
+        _ => {
+            let mut out = String::from(
+                "\n\n[Available Procedural Skills — LLM-Native Progressive Disclosure]\n\
+                 Inspect <available_skills> below using semantic intent reasoning (never rigid word matching). \
+                 When — and ONLY when — the user's current task genuinely matches a skill's description, \
+                 call `curate_skill(action=\"view\", skill_name=\"<name>\")` (or alias `skill_view`) BEFORE executing \
+                 the task to load its full SKILL.md instructions and bundled `scripts/` or `references/`. \
+                 NEVER load skills for greetings (\"hi\", \"hello\"), acknowledgments (\"ok\", \"thanks\"), \
+                 status checks (\"what's new\"), or unrelated questions.\n\
+                 <available_skills>\n",
+            );
+            for item in &catalog {
+                out.push_str(&format!(
+                    "  <skill name=\"{}\" scope=\"{}\">{}</skill>\n",
+                    item.name, item.scope, item.description
+                ));
+            }
+            let _ = (external_count > 0).then(|| {
+                out.push_str(&format!(
+                    "  <!-- +{external_count} third-party ~/.agents/skills packages discoverable on demand via curate_skill(action=\"search\", query=\"...\") -->\n"
+                ));
+            });
+            out.push_str("</available_skills>\n");
+            out
+        }
+    }
+}
+
+pub(crate) fn format_explicit_skill_part(
     session_key: &str,
     user_content: &str,
-    messages: &[crate::session::Message],
     profile_name: Option<&str>,
     seen_skill_notices: &mut HashSet<String>,
 ) -> String {
-    let ranked = crate::agent::skills::load_ranked_skill_matches_with_profile(
-        user_content,
-        messages,
-        profile_name,
-    )
-    .unwrap_or_default();
+    let explicit_name = match crate::agent::skills::ranker::extract_explicit_skill_invocation(user_content) {
+        Some(name) => name,
+        None => return String::new(),
+    };
+    let skill = match crate::agent::skills::find_skill_by_exact_name(&explicit_name, profile_name)
+        .ok()
+        .flatten()
+    {
+        Some(found) => found,
+        None => return String::new(),
+    };
 
-    let mut pinned = Vec::new();
-    let mut progressive_index = Vec::new();
-    for item in ranked {
-        match item.high_confidence && pinned.len() < 2 {
-            true => pinned.push(item),
-            false => progressive_index.push(item.skill),
-        }
-    }
-
-    let mut skills_part = String::new();
-    let allow_notice = !is_local_operational_or_ack_query(user_content);
-    let mut notified_names: Vec<String> = Vec::new();
-
-    match pinned.is_empty() {
-        true => {}
-        false => {
-            skills_part.push_str(
-                "\n\nHere are the active high-confidence procedural skills matched for this task:\n",
-            );
-            for item in &pinned {
-                skills_part.push_str(&format!(
-                    "=== Active Skill: {} ===\n{}\n\n",
-                    item.skill.name, item.skill.content
-                ));
-                crate::agent::skills::record_skill_activation(&item.skill.name, profile_name);
-                let _ = should_emit_skill_notice(seen_skill_notices, &item.skill.name).then(|| {
-                    let _ = (allow_notice && item.score >= MIN_SKILL_NOTICE_SCORE)
-                        .then(|| notified_names.push(item.skill.name.clone()));
-                });
-            }
-        }
-    }
-
-    let _ = (!notified_names.is_empty()).then(|| {
-        let detail = notified_names.join(", ");
-        let notice = format!("◇ Skill used: {}", detail);
+    crate::agent::skills::record_skill_activation(&skill.name, profile_name);
+    let _ = should_emit_skill_notice(seen_skill_notices, &skill.name).then(|| {
+        let notice = format!("◇ Skill used: {}", skill.name);
         crate::channels::send_session_notice(session_key, &notice);
         crate::channels::websocket::publish_activity_notice(
             session_key,
             "skill",
             "Skill used",
-            detail,
+            skill.name.clone(),
         );
     });
 
-    let fallback_catalog = (pinned.is_empty() && progressive_index.is_empty())
-        .then(|| crate::agent::skills::load_skills_with_profile(profile_name).ok())
-        .flatten()
-        .unwrap_or_default();
-
-    let index_items: Vec<&crate::agent::skills::Skill> = match progressive_index.is_empty() {
-        false => progressive_index.iter().take(8).collect(),
-        true => fallback_catalog.iter().take(6).collect(),
-    };
-
-    let _ = (!index_items.is_empty()).then(|| {
-        skills_part.push_str(
-            "\n\n[Available Skills Index — Progressive Disclosure]\n\
-             Load full instructions or bundled `references/` on demand via `curate_skill(action=\"view\", skill_name=\"<name>\")`:\n",
-        );
-        for skill in index_items {
-            let desc = skill.description();
-            let triggers = skill.triggers();
-            let triggers_str = (!triggers.is_empty())
-                .then(|| {
-                    let preview: Vec<&str> = triggers.iter().take(4).map(String::as_str).collect();
-                    format!(" [triggers: {}]", preview.join(", "))
-                })
-                .unwrap_or_default();
-            skills_part.push_str(&format!("- {}: {}{}\n", skill.name, desc, triggers_str));
-        }
-        skills_part.push('\n');
-    });
-
-    skills_part
+    format!(
+        "\n\nHere is the explicitly requested procedural skill for this turn:\n=== Active Skill: {} ===\n{}\n\n",
+        skill.name, skill.content
+    )
 }
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
@@ -160,10 +138,10 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         "Here is the long-term memory of key facts, preferences, and decisions from this session:",
     );
     let profile_name = subagent_profile_name(ctx.session_key);
-    let skills_part = format_skills_part(
+    let available_skills_catalog = build_static_available_skills_catalog(profile_name);
+    let skills_part = format_explicit_skill_part(
         ctx.session_key,
         ctx.user_content,
-        &ctx.session.messages,
         profile_name,
         &mut ctx.skill_notice_names,
     );
@@ -347,6 +325,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         vision_instruction,
         caveman_rules: &caveman_rules,
         pinned_memory: &pinned_memory,
+        available_skills_catalog: &available_skills_catalog,
     };
     let dynamic_suffix = DynamicPromptSuffix {
         persona_priority_part: &persona_priority_part,
@@ -379,12 +358,13 @@ pub(crate) struct StaticPromptPrefix<'a> {
     pub vision_instruction: &'a str,
     pub caveman_rules: &'a str,
     pub pinned_memory: &'a str,
+    pub available_skills_catalog: &'a str,
 }
 
 impl StaticPromptPrefix<'_> {
     pub(crate) fn render(&self) -> String {
         format!(
-            "You are {}, a helpful assistant. Keep replies clear, precise, and concise.{}{}{}{}{}{}{}",
+            "You are {}, a helpful assistant. Keep replies clear, precise, and concise.{}{}{}{}{}{}{}{}",
             self.bot_name,
             self.user_profile_part,
             self.system_guidelines,
@@ -393,6 +373,7 @@ impl StaticPromptPrefix<'_> {
             self.vision_instruction,
             self.caveman_rules,
             self.pinned_memory,
+            self.available_skills_catalog,
         )
     }
 }
@@ -1018,6 +999,10 @@ async fn retrieve_workflow_context_with_limit(
     seen_workflow_notices: &mut HashSet<String>,
     max_chars: usize,
 ) -> String {
+    match crate::agent::skills::ranker::tokenize_stemmed(user_content, true).len() >= 2 {
+        false => return String::new(),
+        true => {}
+    }
     match crate::tools::shared_memory::search_workflow_cards(user_content, 3, true).await {
         Ok(items) => {
             let _ = items
