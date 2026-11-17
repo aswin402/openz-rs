@@ -149,6 +149,44 @@ JSON Format:\n\
 }"
 }
 
+fn trace_category_for_session(session_key: &str) -> &'static str {
+    [
+        ("cron:", "cron"),
+        ("subagent:", "subagent"),
+    ]
+    .into_iter()
+    .find_map(|(prefix, cat)| session_key.starts_with(prefix).then_some(cat))
+    .unwrap_or("session")
+}
+
+fn prune_trace_files(dir: &std::path::Path, max_files: usize) {
+    let mut entries: Vec<(std::time::SystemTime, std::path::PathBuf)> = std::fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            (p.is_file() && p.extension().and_then(|x| x.to_str()) == Some("json")).then(|| {
+                let mtime = e
+                    .metadata()
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .unwrap_or(std::time::UNIX_EPOCH);
+                (mtime, p)
+            })
+        })
+        .collect();
+    match entries.len() > max_files {
+        false => {}
+        true => {
+            entries.sort_by(|a, b| b.0.cmp(&a.0));
+            for (_, stale) in entries.into_iter().skip(max_files) {
+                let _ = std::fs::remove_file(stale);
+            }
+        }
+    }
+}
+
 static LAST_CURATOR_HANDLE: std::sync::OnceLock<
     tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 > = std::sync::OnceLock::new();
@@ -687,7 +725,9 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
     });
     tracing::info!(session = %ctx.session_key, "Session saved successfully. Turn complete.");
 
-    let traces_dir = crate::config::traces_dir();
+    let traces_root = crate::config::traces_dir();
+    let trace_cat = trace_category_for_session(ctx.session_key);
+    let traces_dir = traces_root.join(trace_cat);
     match std::fs::create_dir_all(&traces_dir) {
         Err(e) => {
             tracing::error!(
@@ -705,6 +745,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 timestamp
             ));
             let trace_record = serde_json::json!({
+                "category": trace_cat,
                 "session_key": ctx.session_key,
                 "timestamp": chrono::Utc::now().to_rfc3339(),
                 "user_query": ctx.user_content,
@@ -716,11 +757,23 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             });
             let _ = serde_json::to_string_pretty(&trace_record)
                 .ok()
-                .map(|content| std::fs::write(trace_file, content));
+                .map(|raw| crate::logs::redact_sensitive_text(&raw))
+                .map(|scrubbed| std::fs::write(trace_file, scrubbed));
+            let max_cat_traces = match trace_cat {
+                "cron" => 20,
+                _ => 60,
+            };
+            prune_trace_files(&traces_dir, max_cat_traces);
+            prune_trace_files(&traces_root, 30);
         }
     }
 
-    match ctx.user_content.starts_with('/') {
+    let is_routine_cron = ctx.session_key.starts_with("cron:")
+        && !turn_recovered
+        && !ctx.session_key.contains("curator")
+        && !has_explicit_skill_intent(&ctx.messages);
+
+    match ctx.user_content.starts_with('/') || is_routine_cron {
         true => Ok(TurnState::Done),
         false => {
             let initial_job = CuratorJobPayload {

@@ -121,6 +121,26 @@ pub fn cron_runs_file_path() -> PathBuf {
     crate::config::loader::config_dir().join("cron_runs.jsonl")
 }
 
+fn compact_cron_runs_if_large(path: &std::path::Path) {
+    const MAX_CRON_RUNS_BYTES: u64 = 256 * 1024;
+    const KEEP_RECENT_RECORDS: usize = 500;
+    let over_limit = fs::metadata(path)
+        .map(|m| m.len() > MAX_CRON_RUNS_BYTES)
+        .unwrap_or(false);
+    let _ = over_limit.then(|| {
+        let _ = fs::read_to_string(path).map(|content| {
+            let valid_lines: Vec<&str> = content
+                .lines()
+                .filter(|l| !l.trim().is_empty())
+                .collect();
+            let start = valid_lines.len().saturating_sub(KEEP_RECENT_RECORDS);
+            let mut trimmed = valid_lines[start..].join("\n");
+            trimmed.push('\n');
+            let _ = fs::write(path, trimmed);
+        });
+    });
+}
+
 pub fn append_cron_run_record(record: &CronRunRecord) -> Result<()> {
     let path = cron_runs_file_path();
     match path.parent() {
@@ -136,6 +156,7 @@ pub fn append_cron_run_record(record: &CronRunRecord) -> Result<()> {
         .open(&path)
         .with_context(|| format!("Failed to open cron run log at {:?}", path))?;
     file.write_all(line.as_bytes())?;
+    compact_cron_runs_if_large(&path);
     Ok(())
 }
 
@@ -149,13 +170,12 @@ pub fn load_cron_run_records(job_id: Option<&str>, limit: usize) -> Result<Vec<C
     let content = fs::read_to_string(&path)
         .with_context(|| format!("Failed to read cron run log at {:?}", path))?;
     let mut records = Vec::new();
-    for line in content.lines() {
-        match line.trim().is_empty() {
-            true => continue,
-            false => {}
-        }
-        let record: CronRunRecord = serde_json::from_str(line)
-            .with_context(|| format!("Failed to parse cron run record from {:?}", path))?;
+    for record in content
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .filter_map(|l| serde_json::from_str::<CronRunRecord>(l).ok())
+    {
         match job_id.map(|wanted| wanted == record.job_id).unwrap_or(true) {
             true => records.push(record),
             false => {}

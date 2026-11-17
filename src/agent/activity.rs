@@ -137,19 +137,33 @@ fn update_activity_at_path(path: PathBuf, activity: AgentActivity) {
     }
 }
 
+pub fn cron_activity_file() -> PathBuf {
+    runtime_data_dir().join("cron_activity.json")
+}
+
 pub fn update_activity(session_id: &str, status: &str, current_tool: Option<&str>) {
-    let path = activity_file();
     let activity = AgentActivity {
         session_id: session_id.to_string(),
         status: status.to_string(),
         current_tool: current_tool.map(|s| s.to_string()),
         timestamp: chrono::Utc::now().to_rfc3339(),
     };
-    update_activity_at_path(path, activity);
+    match session_id.starts_with("cron:") {
+        true => write_activity_file(&cron_activity_file(), &activity),
+        false => update_activity_at_path(activity_file(), activity),
+    }
 }
 
 pub fn get_activity() -> Option<AgentActivity> {
     let path = activity_file();
+    path.exists().then_some(())?;
+    let content = fs::read_to_string(path).ok()?;
+    let parsed: AgentActivity = serde_json::from_str(&content).ok()?;
+    (!parsed.session_id.starts_with("cron:")).then_some(parsed)
+}
+
+pub fn get_cron_activity() -> Option<AgentActivity> {
+    let path = cron_activity_file();
     path.exists().then_some(())?;
     let content = fs::read_to_string(path).ok()?;
     serde_json::from_str(&content).ok()

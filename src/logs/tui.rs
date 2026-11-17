@@ -6,8 +6,11 @@ use std::time::Duration;
 use anyhow::Result;
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 
-use super::query::{detect_active_session, session_matches, LogLevelFilter, SessionFilter};
-use super::storage::default_db_path;
+use super::query::{
+    classify_log_category, detect_active_session, session_matches, LogCategoryFilter,
+    LogLevelFilter, SessionFilter,
+};
+use super::storage::{default_db_path, ensure_logs_schema};
 
 // ── AURA palette (raw ANSI — no crossterm needed) ──────────────────────────
 const RESET: &str = "\x1b[0m";
@@ -478,6 +481,22 @@ fn format_lifecycle_log(message: &str) -> Option<(String, String, String, &'stat
 
 type LogFormatterFn = fn(&str) -> Option<(String, String, String, &'static str)>;
 
+fn format_cron_log(message: &str) -> Option<(String, String, String, &'static str)> {
+    message.contains("cron job ").then(|| {
+        let is_err = message.contains("failed");
+        let color = match is_err {
+            true => ROSE,
+            false => CYAN,
+        };
+        (
+            "⏰".to_string(),
+            "CRON".to_string(),
+            message.to_string(),
+            color,
+        )
+    })
+}
+
 const PRETTY_LOG_FORMATTERS: &[LogFormatterFn] = &[
     format_user_log,
     format_llm_call_log,
@@ -489,6 +508,7 @@ const PRETTY_LOG_FORMATTERS: &[LogFormatterFn] = &[
     format_tool_fail_log,
     format_blocked_log,
     format_curator_log,
+    format_cron_log,
     format_lifecycle_log,
 ];
 
@@ -678,12 +698,14 @@ fn print_header(
     tail: usize,
     filter: &SessionFilter,
     level_filter: &LogLevelFilter,
+    category_filter: &LogCategoryFilter,
 ) {
     let fname = path.display();
     let filter_label = filter.label();
+    let cat_label = category_filter.label();
     let level_label = format!("{:?}", level_filter);
     println!(
-        "\n{PURPLE}{BOLD}  ◇ openz{RESET}  {SLATE}live logs{RESET}  {DIM}─{RESET}  {SLATE}{fname}{RESET}  {DIM}(tail {tail}  ·  {filter_label}  ·  level {level_label}){RESET}"
+        "\n{PURPLE}{BOLD}  ◇ openz{RESET}  {SLATE}live logs{RESET}  {DIM}─{RESET}  {SLATE}{fname}{RESET}  {DIM}(tail {tail}  ·  {cat_label}  ·  {filter_label}  ·  level {level_label}){RESET}"
     );
     println!("{SLATE}{DIM}  {}{RESET}\n", "─".repeat(72));
     println!(
@@ -1005,10 +1027,39 @@ pub(crate) fn print_tail_sqlite(
     level_filter: &LogLevelFilter,
     search: Option<&str>,
 ) -> Result<i64> {
+    print_tail_sqlite_with_category(
+        db_path,
+        tail,
+        filter,
+        level_filter,
+        &LogCategoryFilter::All,
+        search,
+    )
+}
+
+pub(crate) fn print_tail_sqlite_with_category(
+    db_path: &Path,
+    tail: usize,
+    filter: &SessionFilter,
+    level_filter: &LogLevelFilter,
+    category_filter: &LogCategoryFilter,
+    search: Option<&str>,
+) -> Result<i64> {
     let conn = rusqlite::Connection::open(db_path)?;
-    let mut stmt = conn.prepare(
-        "SELECT id, timestamp, level, target, message, session FROM logs ORDER BY id DESC LIMIT ?1",
-    )?;
+    let _ = ensure_logs_schema(&conn);
+    let sql = match category_filter {
+        LogCategoryFilter::All => {
+            "SELECT id, timestamp, level, target, message, session, COALESCE(category, '')
+             FROM logs ORDER BY id DESC LIMIT ?1"
+                .to_string()
+        }
+        LogCategoryFilter::Only(cat) => format!(
+            "SELECT id, timestamp, level, target, message, session, COALESCE(category, '')
+             FROM logs WHERE category = '{}' ORDER BY id DESC LIMIT ?1",
+            cat.as_str()
+        ),
+    };
+    let mut stmt = conn.prepare(&sql)?;
 
     struct DbRow {
         id: i64,
@@ -1017,6 +1068,7 @@ pub(crate) fn print_tail_sqlite(
         target: String,
         message: String,
         session: Option<String>,
+        category: String,
     }
 
     let rows_iter = stmt.query_map([tail], |row| {
@@ -1027,6 +1079,7 @@ pub(crate) fn print_tail_sqlite(
             target: row.get(3)?,
             message: row.get(4)?,
             session: row.get(5)?,
+            category: row.get(6)?,
         })
     })?;
 
@@ -1035,16 +1088,25 @@ pub(crate) fn print_tail_sqlite(
 
     let mut last_id = 0;
     for r in &rows {
-        print_row(
-            &r.timestamp,
-            &r.level,
-            &r.target,
-            &r.message,
-            r.session.as_deref(),
-            filter,
-            level_filter,
-            search,
-        );
+        let resolved_cat = match r.category.is_empty() {
+            true => classify_log_category(&r.target, r.session.as_deref(), &r.message).as_str(),
+            false => r.category.as_str(),
+        };
+        match category_filter.matches(resolved_cat) {
+            true => {
+                print_row(
+                    &r.timestamp,
+                    &r.level,
+                    &r.target,
+                    &r.message,
+                    r.session.as_deref(),
+                    filter,
+                    level_filter,
+                    search,
+                );
+            }
+            false => {}
+        }
         last_id = r.id;
     }
 
@@ -1056,6 +1118,7 @@ fn poll_sqlite_rows(
     last_id: &mut i64,
     filter: &SessionFilter,
     level_filter: &LogLevelFilter,
+    category_filter: &LogCategoryFilter,
     search: Option<&str>,
 ) {
     let conn = match rusqlite::Connection::open(db_path) {
@@ -1063,7 +1126,7 @@ fn poll_sqlite_rows(
         Err(_) => return,
     };
     let mut stmt = match conn.prepare(
-        "SELECT id, timestamp, level, target, message, session FROM logs WHERE id > ?1 ORDER BY id ASC",
+        "SELECT id, timestamp, level, target, message, session, COALESCE(category, '') FROM logs WHERE id > ?1 ORDER BY id ASC",
     ) {
         Ok(s) => s,
         Err(_) => return,
@@ -1076,22 +1139,32 @@ fn poll_sqlite_rows(
             row.get::<_, String>(3)?,
             row.get::<_, String>(4)?,
             row.get::<_, Option<String>>(5)?,
+            row.get::<_, String>(6)?,
         ))
     }) {
         Ok(rows) => rows,
         Err(_) => return,
     };
-    for (id, timestamp, level, target, message, session) in rows_iter.flatten() {
-        print_row(
-            &timestamp,
-            &level,
-            &target,
-            &message,
-            session.as_deref(),
-            filter,
-            level_filter,
-            search,
-        );
+    for (id, timestamp, level, target, message, session, category) in rows_iter.flatten() {
+        let resolved_cat = match category.is_empty() {
+            true => classify_log_category(&target, session.as_deref(), &message).as_str(),
+            false => category.as_str(),
+        };
+        match category_filter.matches(resolved_cat) {
+            true => {
+                print_row(
+                    &timestamp,
+                    &level,
+                    &target,
+                    &message,
+                    session.as_deref(),
+                    filter,
+                    level_filter,
+                    search,
+                );
+            }
+            false => {}
+        }
         *last_id = id;
     }
 }
@@ -1101,6 +1174,7 @@ async fn follow_sqlite(
     mut last_id: i64,
     mut filter: SessionFilter,
     level_filter: LogLevelFilter,
+    category_filter: LogCategoryFilter,
     search: Option<&str>,
 ) -> Result<()> {
     let ctrl_c = tokio::signal::ctrl_c();
@@ -1119,7 +1193,7 @@ async fn follow_sqlite(
                 break Ok(());
             }
             _ = interval.tick() => {
-                poll_sqlite_rows(db_path, &mut last_id, &filter, &level_filter, search);
+                poll_sqlite_rows(db_path, &mut last_id, &filter, &level_filter, &category_filter, search);
                 maybe_refresh_auto_session(&mut last_session_check, &mut filter);
             }
         }
@@ -1133,6 +1207,25 @@ pub async fn run_logs_viewer(
     tail: usize,
     filter: SessionFilter,
     level_filter: LogLevelFilter,
+    search: Option<String>,
+) -> Result<()> {
+    run_logs_viewer_with_category(
+        log_path,
+        tail,
+        filter,
+        level_filter,
+        LogCategoryFilter::All,
+        search,
+    )
+    .await
+}
+
+pub async fn run_logs_viewer_with_category(
+    log_path: Option<PathBuf>,
+    tail: usize,
+    filter: SessionFilter,
+    level_filter: LogLevelFilter,
+    category_filter: LogCategoryFilter,
     search: Option<String>,
 ) -> Result<()> {
     let path = log_path.unwrap_or_else(default_db_path);
@@ -1151,14 +1244,15 @@ pub async fn run_logs_viewer(
         }
     };
 
-    print_header(&path, tail, &effective_filter, &level_filter);
+    print_header(&path, tail, &effective_filter, &level_filter, &category_filter);
     match is_sqlite {
         true => {
-            let last_id = print_tail_sqlite(
+            let last_id = print_tail_sqlite_with_category(
                 &path,
                 tail,
                 &effective_filter,
                 &level_filter,
+                &category_filter,
                 search.as_deref(),
             )?;
             println!("\n  {PURPLE}{DIM}── live ──{RESET}\n");
@@ -1167,6 +1261,7 @@ pub async fn run_logs_viewer(
                 last_id,
                 effective_filter,
                 level_filter,
+                category_filter,
                 search.as_deref(),
             )
             .await

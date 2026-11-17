@@ -1,16 +1,64 @@
 use std::fs::OpenOptions;
 use std::io::Write;
 
-/// Wraps a File with flush-after-every-write for zero-latency live log streaming.
-struct FlushWriter(std::fs::File);
-impl Write for FlushWriter {
+struct RotatingLogState {
+    path: std::path::PathBuf,
+    file: Option<std::fs::File>,
+    size_bytes: u64,
+}
+
+impl RotatingLogState {
+    fn new(path: std::path::PathBuf) -> Self {
+        rotate_logs(&path);
+        let file = OpenOptions::new().create(true).append(true).open(&path).ok();
+        let size_bytes = file
+            .as_ref()
+            .and_then(|f| f.metadata().ok())
+            .map(|m| m.len())
+            .unwrap_or(0);
+        Self {
+            path,
+            file,
+            size_bytes,
+        }
+    }
+
+    fn write_and_rotate(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        const MAX_LOG_SIZE: u64 = 10 * 1024 * 1024;
+        let needs_rotate = self.size_bytes.saturating_add(buf.len() as u64) > MAX_LOG_SIZE;
+        let _ = needs_rotate.then(|| {
+            let _ = self.file.take().map(|mut f| f.flush());
+            rotate_logs(&self.path);
+            self.file = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&self.path)
+                .ok();
+            self.size_bytes = 0;
+        });
+        match self.file.as_mut() {
+            Some(f) => {
+                f.write_all(buf)?;
+                f.flush()?;
+                self.size_bytes = self.size_bytes.saturating_add(buf.len() as u64);
+                Ok(buf.len())
+            }
+            None => Ok(buf.len()),
+        }
+    }
+}
+
+struct SharedRotatingWriter(std::sync::Arc<std::sync::Mutex<RotatingLogState>>);
+
+impl Write for SharedRotatingWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let n = self.0.write(buf)?;
-        self.0.flush()?;
-        Ok(n)
+        match self.0.lock() {
+            Ok(mut guard) => guard.write_and_rotate(buf),
+            Err(_) => Ok(buf.len()),
+        }
     }
     fn flush(&mut self) -> std::io::Result<()> {
-        self.0.flush()
+        Ok(())
     }
 }
 
@@ -106,30 +154,15 @@ async fn async_main() -> anyhow::Result<()> {
         None => {}
     }
 
-    // Rotate before opening to keep file size bounded
-    rotate_logs(&log_path);
-
-    let log_path_clone = log_path.clone();
+    let shared_log_state = std::sync::Arc::new(std::sync::Mutex::new(RotatingLogState::new(
+        log_path.clone(),
+    )));
     let file_secrets = log_secrets.clone();
     let make_writer = move || -> Box<dyn Write + Send> {
-        match OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path_clone)
-        {
-            Ok(file) => Box::new(openz::logs::SecretScrubWriter::new(
-                FlushWriter(file),
-                file_secrets.clone(),
-            )),
-            Err(e) => {
-                eprintln!(
-                    "openz: failed to open log file {}: {}; logs will be discarded",
-                    log_path_clone.display(),
-                    e
-                );
-                Box::new(std::io::sink())
-            }
-        }
+        Box::new(openz::logs::SecretScrubWriter::new(
+            SharedRotatingWriter(shared_log_state.clone()),
+            file_secrets.clone(),
+        ))
     };
 
     use tracing_subscriber::prelude::*;
@@ -142,8 +175,11 @@ async fn async_main() -> anyhow::Result<()> {
         .find(|arg| !arg.starts_with('-'))
         .map(String::as_str);
 
-    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        tracing_subscriber::EnvFilter::new(
+            "info,html5ever=error,selectors=error,scraper=warn,chromiumoxide=error,hyper_util=warn,ort=warn",
+        )
+    });
 
     match subcommand {
         Some("logs") => {

@@ -75,6 +75,8 @@ pub enum Command {
         tail: usize,
         #[arg(index = 1)]
         session: Option<String>,
+        #[arg(long, short = 'c')]
+        category: Option<String>,
         #[arg(long, short)]
         level: Option<String>,
         #[arg(long, short)]

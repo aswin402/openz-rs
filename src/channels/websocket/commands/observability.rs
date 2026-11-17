@@ -30,39 +30,75 @@ pub(crate) async fn mcp_servers_event(config: &crate::config::schema::Config) ->
     super::super::protocol::mcp_servers(servers, loaded, failed, failed + loaded)
 }
 
-pub(crate) async fn logs_event() -> Value {
-    let mut log_entries = Vec::new();
-    let log_path = crate::logs::default_log_path();
-    match std::fs::read_to_string(&log_path) {
-        Ok(content) => {
-            let lines: Vec<&str> = content.lines().rev().take(100).collect();
-            for (index, line) in lines.iter().enumerate() {
-                match line.trim().is_empty() {
-                    true => continue,
-                    false => {}
-                }
-                let level = match (line.contains("ERROR"), line.contains("WARN")) {
-                    (true, _) => "ERROR",
-                    (false, true) => "WARN",
-                    (false, false) => "INFO",
-                };
-                let timestamp = match (
-                    line.as_bytes().get(10).copied() == Some(b'T'),
-                    line.get(11..19),
-                ) {
-                    (true, Some(ts)) => ts.to_string(),
-                    _ => chrono::Local::now().format("%H:%M:%S").to_string(),
-                };
-                log_entries.push(super::super::protocol::log_entry(
-                    format!("log-{}", index),
-                    timestamp,
-                    level,
-                    "openz::gateway",
-                    line.to_string(),
-                ));
-            }
-        }
-        Err(_) => {}
+fn short_hms_timestamp(ts: &str) -> String {
+    match (ts.as_bytes().get(10).copied() == Some(b'T'), ts.get(11..19)) {
+        (true, Some(hms)) => hms.to_string(),
+        _ => ts.chars().take(19).collect(),
     }
+}
+
+fn load_recent_ws_logs_blocking(limit: usize) -> Vec<super::super::protocol::WsLogEntry> {
+    let db_path = crate::logs::default_db_path();
+    let mut entries = Vec::new();
+    match db_path.exists().then(|| rusqlite::Connection::open(&db_path).ok()).flatten() {
+        Some(conn) => {
+            let _ = crate::logs::ensure_logs_schema(&conn);
+            let _ = conn
+                .prepare(
+                    "SELECT id, timestamp, level, target, message, session, COALESCE(category, '')
+                     FROM logs ORDER BY id DESC LIMIT ?1",
+                )
+                .and_then(|mut stmt| {
+                    let rows = stmt.query_map([limit], |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, Option<String>>(5)?,
+                            row.get::<_, String>(6)?,
+                        ))
+                    })?;
+                    for (id, ts, level, target, message, session, raw_cat) in rows.flatten() {
+                        let category = match raw_cat.is_empty() {
+                            true => crate::logs::classify_log_category(
+                                &target,
+                                session.as_deref(),
+                                &message,
+                            )
+                            .as_str()
+                            .to_string(),
+                            false => raw_cat,
+                        };
+                        let clean_level = match level.to_ascii_uppercase().as_str() {
+                            "ERROR" => "ERROR",
+                            "WARN" => "WARN",
+                            "DEBUG" => "DEBUG",
+                            "TRACE" => "TRACE",
+                            _ => "INFO",
+                        };
+                        entries.push(super::super::protocol::log_entry(
+                            format!("log-{id}"),
+                            short_hms_timestamp(&ts),
+                            clean_level,
+                            category,
+                            target,
+                            message,
+                            session,
+                        ));
+                    }
+                    Ok(())
+                });
+        }
+        None => {}
+    }
+    entries
+}
+
+pub(crate) async fn logs_event() -> Value {
+    let log_entries = tokio::task::spawn_blocking(|| load_recent_ws_logs_blocking(150))
+        .await
+        .unwrap_or_default();
     super::super::protocol::logs_data(log_entries)
 }

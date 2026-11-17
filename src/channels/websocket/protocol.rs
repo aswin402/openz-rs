@@ -59,8 +59,11 @@ pub(crate) struct WsLogEntry {
     id: String,
     timestamp: String,
     level: String,
+    category: String,
     target: String,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session: Option<String>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -416,15 +419,19 @@ pub(crate) fn log_entry(
     id: impl Into<String>,
     timestamp: impl Into<String>,
     level: impl Into<String>,
+    category: impl Into<String>,
     target: impl Into<String>,
     message: impl Into<String>,
+    session: Option<String>,
 ) -> WsLogEntry {
     WsLogEntry {
         id: id.into(),
         timestamp: timestamp.into(),
         level: level.into(),
+        category: category.into(),
         target: target.into(),
         message: message.into(),
+        session,
     }
 }
 

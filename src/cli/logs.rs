@@ -44,10 +44,11 @@ fn select_running_session_id() -> Result<Option<String>> {
     }
 }
 
-fn resolve_default_session_id(session: Option<String>) -> String {
-    match session {
-        Some(s) => s,
-        None => match crate::agent::activity::get_activity() {
+fn resolve_default_session_id(session: Option<String>, has_category_filter: bool) -> String {
+    match (session, has_category_filter) {
+        (Some(s), _) => s,
+        (None, true) => "all".to_string(),
+        (None, false) => match crate::agent::activity::get_activity() {
             Some(act) => act.session_id,
             None => crate::logs::get_latest_session_id().unwrap_or_else(|| "all".to_string()),
         },
@@ -58,18 +59,40 @@ pub async fn handle_logs(
     path: Option<PathBuf>,
     tail: usize,
     session: Option<String>,
+    category: Option<String>,
     level: Option<String>,
     global: bool,
     search: Option<String>,
 ) -> Result<()> {
     let is_global = global || session.as_deref() == Some("global");
 
+    // Allow ergonomic positional shorthand like `openz logs cronlogs` or `openz logs sessionlogs`
+    let positional_category = category
+        .is_none()
+        .then(|| {
+            session
+                .as_deref()
+                .filter(|s| !s.contains(':'))
+                .and_then(crate::logs::LogCategory::from_alias)
+        })
+        .flatten();
+
+    let (resolved_session_arg, resolved_category) = match (category, positional_category) {
+        (Some(explicit_cat), _) => (
+            session,
+            crate::logs::LogCategoryFilter::from_opt(Some(&explicit_cat)),
+        ),
+        (None, Some(pos_cat)) => (None, crate::logs::LogCategoryFilter::Only(pos_cat)),
+        (None, None) => (session, crate::logs::LogCategoryFilter::All),
+    };
+
+    let has_cat_filter = !matches!(resolved_category, crate::logs::LogCategoryFilter::All);
     let target_session = match is_global {
         true => match select_running_session_id()? {
             Some(id) => id,
             None => return Ok(()),
         },
-        false => resolve_default_session_id(session),
+        false => resolve_default_session_id(resolved_session_arg, has_cat_filter),
     };
 
     let effective_tail = match tail {
@@ -79,5 +102,13 @@ pub async fn handle_logs(
 
     let filter = crate::logs::SessionFilter::from_opt(Some(&target_session));
     let level_filter = crate::logs::LogLevelFilter::from_opt(level.as_deref());
-    crate::logs::run_logs_viewer(path, effective_tail, filter, level_filter, search).await
+    crate::logs::run_logs_viewer_with_category(
+        path,
+        effective_tail,
+        filter,
+        level_filter,
+        resolved_category,
+        search,
+    )
+    .await
 }

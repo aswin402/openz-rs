@@ -72,7 +72,16 @@ where
 {
     match action {
         Some(ChannelAction::Logs { tail }) => {
-            logs::handle_logs(None, tail, Some(channel_name.to_string()), None, false, None).await
+            logs::handle_logs(
+                None,
+                tail,
+                Some(channel_name.to_string()),
+                Some("channel".to_string()),
+                None,
+                false,
+                None,
+            )
+            .await
         }
         None => start_fut.await,
     }
@@ -214,11 +223,12 @@ pub async fn run_cli() -> Result<()> {
             path,
             tail,
             session,
+            category,
             level,
             global,
             search,
         }) => {
-            logs::handle_logs(path, tail, session, level, global, search).await?;
+            logs::handle_logs(path, tail, session, category, level, global, search).await?;
         }
         Some(Command::Changelog) => {
             changelog::handle_changelog().await?;

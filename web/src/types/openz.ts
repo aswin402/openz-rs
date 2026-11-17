@@ -175,12 +175,24 @@ export interface McpStats {
   total: number;
 }
 
+export type LogCategoryName =
+  | "session"
+  | "tool"
+  | "cron"
+  | "subagent"
+  | "curator"
+  | "channel"
+  | "security"
+  | "system";
+
 export interface LogEntry {
   id: string;
   timestamp: string;
   level: "TRACE" | "DEBUG" | "INFO" | "WARN" | "ERROR";
+  category?: LogCategoryName | string;
   target: string;
   message: string;
+  session?: string;
 }
 
 /** A provider + its list of models, from the backend `models_list` event. */

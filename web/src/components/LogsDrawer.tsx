@@ -23,6 +23,16 @@ import type { LogEntry } from '../types';
 
 type LogsViewMode = 'activity' | 'raw';
 type LevelFilter = 'ALL' | LogEntry['level'];
+type CategoryFilter =
+  | 'ALL'
+  | 'session'
+  | 'tool'
+  | 'cron'
+  | 'subagent'
+  | 'curator'
+  | 'channel'
+  | 'security'
+  | 'system';
 
 const LEVEL_FILTERS: ReadonlyArray<LevelFilter> = [
   'ALL',
@@ -30,6 +40,18 @@ const LEVEL_FILTERS: ReadonlyArray<LevelFilter> = [
   'WARN',
   'INFO',
   'DEBUG',
+];
+
+const CATEGORY_FILTERS: ReadonlyArray<{ id: CategoryFilter; label: string }> = [
+  { id: 'ALL', label: 'All' },
+  { id: 'session', label: 'Session' },
+  { id: 'tool', label: 'Tools' },
+  { id: 'cron', label: 'Cron' },
+  { id: 'subagent', label: 'Subagent' },
+  { id: 'curator', label: 'Curator' },
+  { id: 'channel', label: 'Channel' },
+  { id: 'security', label: 'Security' },
+  { id: 'system', label: 'System' },
 ];
 
 const BADGE_VARIANT_BY_LEVEL: Record<
@@ -61,24 +83,36 @@ export const LogsDrawer: React.FC = () => {
 
   const [viewMode, setViewMode] = useState<LogsViewMode>('activity');
   const [levelFilter, setLevelFilter] = useState<LevelFilter>('ALL');
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('ALL');
   const [query, setQuery] = useState('');
+
+  const categoryScopedLogs = useMemo(
+    () =>
+      logs.filter(
+        (entry) =>
+          categoryFilter === 'ALL' || (entry.category ?? 'system') === categoryFilter,
+      ),
+    [logs, categoryFilter],
+  );
 
   const filteredRawLogs = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return logs.filter((entry) => {
-      if (levelFilter !== 'ALL' && entry.level !== levelFilter) return false;
-      if (!q) return true;
-      return (
+    return categoryScopedLogs.filter((entry) => {
+      const levelOk = levelFilter === 'ALL' || entry.level === levelFilter;
+      const queryOk =
+        !q ||
         entry.message.toLowerCase().includes(q) ||
         entry.target.toLowerCase().includes(q) ||
-        entry.level.toLowerCase().includes(q)
-      );
+        entry.level.toLowerCase().includes(q) ||
+        (entry.category ?? '').toLowerCase().includes(q) ||
+        (entry.session ?? '').toLowerCase().includes(q);
+      return levelOk && queryOk;
     });
-  }, [logs, levelFilter, query]);
+  }, [categoryScopedLogs, levelFilter, query]);
 
   const activitySteps = useMemo(
-    () => buildLogActivitySteps(logs, { levelFilter, query, limit: 100 }),
-    [logs, levelFilter, query],
+    () => buildLogActivitySteps(categoryScopedLogs, { levelFilter, query, limit: 100 }),
+    [categoryScopedLogs, levelFilter, query],
   );
 
   if (!isLogsOpen) return null;
@@ -202,6 +236,24 @@ export const LogsDrawer: React.FC = () => {
         </div>
 
         <div className="flex flex-wrap gap-1">
+          {CATEGORY_FILTERS.map((cat) => (
+            <button
+              key={cat.id}
+              type="button"
+              onClick={() => setCategoryFilter(cat.id)}
+              className={cn(
+                'rounded-md border px-2 py-0.5 text-[10px] font-semibold transition-colors',
+                categoryFilter === cat.id
+                  ? 'border-primary/45 bg-primary/12 text-primary'
+                  : 'border-border/50 bg-background/60 text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {cat.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap gap-1">
           {LEVEL_FILTERS.map((lvl) => (
             <button
               key={lvl}
@@ -251,8 +303,15 @@ export const LogsDrawer: React.FC = () => {
                 key={log.id}
                 className="rounded-lg border border-border/50 bg-muted/30 p-2.5"
               >
-                <div className="mb-1 flex items-center justify-between text-[10px] text-muted-foreground">
-                  <span>{log.timestamp}</span>
+                <div className="mb-1 flex items-center justify-between gap-2 text-[10px] text-muted-foreground">
+                  <div className="flex items-center gap-1.5">
+                    <span>{log.timestamp}</span>
+                    {log.category && (
+                      <Badge variant="outline" className="px-1.5 py-0 text-[8.5px] uppercase">
+                        {log.category}
+                      </Badge>
+                    )}
+                  </div>
                   <Badge
                     variant={BADGE_VARIANT_BY_LEVEL[log.level]}
                     className="px-1.5 py-0 text-[9px]"
@@ -261,8 +320,9 @@ export const LogsDrawer: React.FC = () => {
                   </Badge>
                 </div>
                 <div className="break-all text-foreground/90">{log.message}</div>
-                <div className="mt-1 text-[9px] text-muted-foreground/65">
-                  {log.target}
+                <div className="mt-1 flex items-center justify-between gap-2 text-[9px] text-muted-foreground/65">
+                  <span className="truncate">{log.target}</span>
+                  {log.session && <span className="truncate font-mono">{log.session}</span>}
                 </div>
               </div>
             ))}
