@@ -59,7 +59,7 @@ export interface WebSocketCommandMethods {
   deleteSession(chatId: string): void;
   requestCognitiveMemory(): void;
   requestMcpServers(): void;
-  requestLogs(): void;
+  requestLogs(chatId?: string): void;
   requestServers(): void;
   stopServer(target: string): void;
   requestModels(): void;
@@ -144,7 +144,10 @@ export function createWebSocketCommands(
     },
     requestCognitiveMemory: sendSimple({ type: 'get_cognitive_memory' }),
     requestMcpServers: sendSimple({ type: 'get_mcp_servers' }),
-    requestLogs: sendSimple({ type: 'get_logs' }),
+    requestLogs(chatId?: string) {
+      const trimmed = typeof chatId === 'string' ? chatId.trim() : '';
+      send(trimmed ? { type: 'get_logs', chat_id: trimmed } : { type: 'get_logs' });
+    },
     requestServers: sendSimple({ type: 'get_servers' }),
     stopServer: (target) => {
       send({ type: 'stop_server', target });

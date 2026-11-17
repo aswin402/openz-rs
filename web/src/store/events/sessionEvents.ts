@@ -75,7 +75,7 @@ export function registerSessionEvents({ set, get }: StoreEventContext) {
     if (currentActiveChatId && preferredChatId) wsService.requestHistory(preferredChatId);
     wsService.requestCognitiveMemory();
     wsService.requestMcpServers();
-    wsService.requestLogs();
+    wsService.requestLogs(preferredChatId);
     wsService.requestModels();
     wsService.requestConfig();
     wsService.requestStatus();

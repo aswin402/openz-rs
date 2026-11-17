@@ -447,6 +447,9 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
     }, 750);
     // Refresh the session list so titles/message counts stay in sync.
     wsService.requestSessions();
+    if (get().isLogsOpen) {
+      wsService.requestLogs(chatId);
+    }
   });
 
   wsService.on('stopped', (payload) => {

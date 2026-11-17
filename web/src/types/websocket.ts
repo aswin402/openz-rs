@@ -25,7 +25,8 @@ export type WebSocketCommand =
   | { type: 'stop_turn'; chat_id: string; turn_id?: string }
   | { type: 'attach' | 'load_history' | 'clear_session' | 'archive_session' | 'delete_session'; chat_id: string }
   | { type: 'list_sessions'; offset?: number; limit?: number }
-  | { type: 'get_cognitive_memory' | 'get_mcp_servers' | 'get_logs' | 'get_servers' | 'get_config' | 'get_status' | 'get_runtime_inventory' }
+  | { type: 'get_cognitive_memory' | 'get_mcp_servers' | 'get_servers' | 'get_config' | 'get_status' | 'get_runtime_inventory' }
+  | { type: 'get_logs'; chat_id?: string; session?: string }
   | { type: 'stop_server'; target: string }
   | { type: 'get_models'; provider?: string }
   | { type: 'toggle_favorite_model'; provider: string; model: string }

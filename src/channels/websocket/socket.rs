@@ -335,9 +335,11 @@ pub(crate) async fn handle_socket(socket: WebSocket, state: WsState) {
                 });
             }
             "get_logs" => {
+                let envelope_owned = envelope.clone();
+                let chat_id_owned = chat_id.clone();
                 let tx_clone = tx.clone();
                 tokio::spawn(async move {
-                    let evt = logs_event().await;
+                    let evt = logs_event(&envelope_owned, &chat_id_owned).await;
                     send_event(&tx_clone, evt).await;
                 });
             }

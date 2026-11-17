@@ -5,6 +5,11 @@ import type {
   BeuiActivityContentType,
 } from '../../components/beui';
 import { formatDuration } from '../../shared/lib/format';
+import {
+  isBackgroundLogEntry,
+  prepareScopedLogs,
+  presentLogItem,
+} from '../logs/logPresentation';
 import type {
   CronRunRecord,
   LogEntry,
@@ -58,14 +63,6 @@ const DELEGATE_TOOLS = new Set([
   'parallel_research',
   'evaluator_optimizer_loop',
 ]);
-
-const LOG_LEVEL_STATUS: Record<LogEntry['level'], AgentActivityStepStatus> = {
-  ERROR: 'error',
-  WARN: 'pending',
-  INFO: 'info',
-  DEBUG: 'info',
-  TRACE: 'info',
-};
 
 const ORCHESTRATION_STEP_STATUS: Record<
   OrchestrationRunState['steps'][number]['status'],
@@ -695,6 +692,8 @@ export interface BuildLogStepsOptions {
   levelFilter?: 'ALL' | LogEntry['level'];
   query?: string;
   limit?: number;
+  essentialOnly?: boolean;
+  excludeBackgroundCron?: boolean;
 }
 
 export function buildLogActivitySteps(
@@ -705,34 +704,48 @@ export function buildLogActivitySteps(
   const query = (options.query ?? '').trim().toLowerCase();
   const limit = options.limit ?? 80;
 
-  const filtered = logs.filter((entry) => {
+  const baseLogs = options.excludeBackgroundCron
+    ? logs.filter((entry) => !isBackgroundLogEntry(entry))
+    : logs;
+
+  const { items } = prepareScopedLogs(baseLogs, {
+    essentialOnly: options.essentialOnly ?? false,
+  });
+
+  const filtered = items.filter(({ entry, baseMessage, fields }) => {
     if (levelFilter !== 'ALL' && entry.level !== levelFilter) return false;
     if (!query) return true;
     return (
       entry.message.toLowerCase().includes(query) ||
+      baseMessage.toLowerCase().includes(query) ||
       entry.target.toLowerCase().includes(query) ||
-      entry.level.toLowerCase().includes(query)
+      entry.level.toLowerCase().includes(query) ||
+      (entry.category ?? '').toLowerCase().includes(query) ||
+      (entry.session ?? '').toLowerCase().includes(query) ||
+      Object.values(fields).some((v) => v.toLowerCase().includes(query))
     );
   });
 
-  return filtered.slice(0, limit).map((entry, idx) => {
-    const targetParts = entry.target.split('::').filter(Boolean);
-    const shortTarget =
-      targetParts[targetParts.length - 1] || entry.target || 'openz';
-    const parsedTs = parseTimestampSafely(entry.timestamp);
-    const cleanMsg = stripTerminalFormatting(entry.message);
+  return filtered.slice(0, limit).map((item, idx) => {
+    const presented = presentLogItem(item);
+    const parsedTs = parseTimestampSafely(item.entry.timestamp);
+    const stepKind =
+      presented.contentType === 'tool' || presented.contentType === 'search'
+        ? 'tool'
+        : 'trace';
 
     return {
-      id: `log-${entry.id}-${idx}`,
-      kind: 'trace',
-      contentType: 'trace',
-      toolAction: 'run',
-      title: shortTarget,
-      detail: cleanMsg,
-      payload: `[${entry.timestamp}] ${entry.level} ${entry.target}\n${cleanMsg}`,
-      actor: entry.level,
-      meta: entry.timestamp,
-      status: LOG_LEVEL_STATUS[entry.level] ?? 'info',
+      id: `log-${item.entry.id}-${idx}`,
+      kind: stepKind,
+      contentType: presented.contentType,
+      toolAction: presented.toolAction,
+      toolTarget: presented.toolTarget,
+      title: presented.title,
+      detail: presented.detail,
+      payload: presented.payload,
+      actor: item.entry.category || item.entry.level,
+      meta: presented.badge ? `${presented.badge} · ${item.entry.timestamp}` : item.entry.timestamp,
+      status: presented.status,
       timestamp: parsedTs,
     };
   });
@@ -875,7 +888,11 @@ export function buildUnifiedDashboardActivitySteps(
     input.cronLogs ?? [],
     6,
   );
-  const logSteps = buildLogActivitySteps(input.logs, { limit: 8 });
+  const logSteps = buildLogActivitySteps(input.logs, {
+    limit: 8,
+    essentialOnly: true,
+    excludeBackgroundCron: true,
+  });
 
   return [...chatSteps, ...orchSteps, ...invSteps, ...logSteps]
     .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0))

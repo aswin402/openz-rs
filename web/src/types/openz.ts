@@ -193,6 +193,7 @@ export interface LogEntry {
   target: string;
   message: string;
   session?: string;
+  fields?: Record<string, string>;
 }
 
 /** A provider + its list of models, from the backend `models_list` event. */

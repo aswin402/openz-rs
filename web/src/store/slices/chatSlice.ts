@@ -65,6 +65,9 @@ export const createChatSlice: StateCreator<
       );
       set({ activeChatId: normalizedChatId, isStreaming: isTargetStreaming });
       wsService.attachChat(normalizedChatId);
+      if (get().isLogsOpen) {
+        wsService.requestLogs(normalizedChatId);
+      }
     }
   },
 

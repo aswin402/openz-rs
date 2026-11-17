@@ -64,6 +64,8 @@ pub(crate) struct WsLogEntry {
     message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     session: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    fields: Option<std::collections::BTreeMap<String, String>>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -415,6 +417,7 @@ pub(crate) fn mcp_servers(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn log_entry(
     id: impl Into<String>,
     timestamp: impl Into<String>,
@@ -423,6 +426,7 @@ pub(crate) fn log_entry(
     target: impl Into<String>,
     message: impl Into<String>,
     session: Option<String>,
+    fields: Option<std::collections::BTreeMap<String, String>>,
 ) -> WsLogEntry {
     WsLogEntry {
         id: id.into(),
@@ -432,6 +436,7 @@ pub(crate) fn log_entry(
         target: target.into(),
         message: message.into(),
         session,
+        fields,
     }
 }
 

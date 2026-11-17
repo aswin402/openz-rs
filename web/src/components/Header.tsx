@@ -133,10 +133,10 @@ export const Header: React.FC = () => {
         <button
           onClick={() => {
             setIsLogsOpen(true);
-            wsService.requestLogs();
+            wsService.requestLogs(activeChatId);
           }}
           className="flex h-8 w-8 items-center justify-center rounded-lg border border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground hover:bg-muted transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-          title="Live Runtime Logs"
+          title="Session & Runtime Logs"
         >
           <ScrollText className="h-4 w-4" />
         </button>

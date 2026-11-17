@@ -381,14 +381,14 @@ export const DashboardView: React.FC = () => {
             }}
           />
           <LauncherCard
-            label="Gateway Logs"
-            desc="Stream server traces and debug logs in real time."
+            label="Session & Cron Logs"
+            desc="Inspect clean session events, isolated cron jobs, and gateway health."
             icon={ScrollText}
             badge={logs.length > 0 ? String(logs.length) : undefined}
             accent="text-chart-5 bg-chart-5/12 border-chart-5/25"
             onClick={() => {
               setIsLogsOpen(true);
-              wsService.requestLogs();
+              wsService.requestLogs(activeChatId);
             }}
           />
         </div>
