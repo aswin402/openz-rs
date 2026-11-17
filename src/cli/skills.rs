@@ -83,6 +83,25 @@ pub async fn handle_skills(action: Option<SkillsAction>) -> Result<()> {
                 crate::agent::skills::rollback_skill(&name, profile.as_deref(), revision_id)?;
             println!("Rolled back skill '{}' cleanly.", restored.name);
         }
+        SkillsAction::Archive => {
+            let archived = crate::agent::skills::list_archived_skills()?;
+            match archived.is_empty() {
+                true => println!("No archived skills found in ~/.openz/skills/archive/."),
+                false => {
+                    println!("Archived OpenZ Skills ({} total):", archived.len());
+                    for name in archived {
+                        println!("  • {}", name);
+                    }
+                }
+            }
+        }
+        SkillsAction::Restore { name } => {
+            let restored = crate::agent::skills::restore_archived_skill(&name)?;
+            println!(
+                "Restored archived skill '{}' to ~/.openz/skills/{}/SKILL.md.",
+                restored.name, restored.name
+            );
+        }
     }
     Ok(())
 }

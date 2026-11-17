@@ -351,7 +351,7 @@ impl LLMProvider for OpenAIProvider {
             None => {}
         }
 
-        match (tool_calls.is_empty(), content.as_deref()) {
+        match (!tools.is_empty() && tool_calls.is_empty(), content.as_deref()) {
             (true, Some(text)) => {
                 let parsed = parse_fallback_tool_calls(text);
                 match parsed.is_empty() {

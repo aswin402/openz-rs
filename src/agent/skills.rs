@@ -110,11 +110,38 @@ fn frontmatter_block(content: &str) -> Option<&str> {
 pub fn extract_frontmatter_field(content: &str, field: &str) -> Option<String> {
     let yaml_block = frontmatter_block(content)?;
     let field_prefix = format!("{}:", field);
-    yaml_block.lines().find_map(|line| {
-        line.trim()
-            .strip_prefix(&field_prefix)
-            .map(|val| val.trim().trim_matches(['"', '\'']).to_string())
-    })
+    let mut lines = yaml_block.lines().peekable();
+    while let Some(raw_line) = lines.next() {
+        let trimmed = raw_line.trim();
+        match trimmed.strip_prefix(&field_prefix) {
+            None => {}
+            Some(rhs) => {
+                let inline = rhs.trim().trim_matches(['"', '\'']);
+                let is_block_scalar = matches!(inline, "" | ">" | ">-" | ">+" | "|" | "|-" | "|+");
+                return match is_block_scalar {
+                    false => Some(inline.to_string()),
+                    true => {
+                        let mut parts = Vec::new();
+                        while let Some(&next_raw) = lines.peek() {
+                            let indented =
+                                next_raw.starts_with(' ') || next_raw.starts_with('\t');
+                            let blank_between = next_raw.trim().is_empty() && !parts.is_empty();
+                            match indented || blank_between {
+                                true => {
+                                    let consumed = lines.next().unwrap_or("");
+                                    let seg = consumed.trim();
+                                    let _ = (!seg.is_empty()).then(|| parts.push(seg.to_string()));
+                                }
+                                false => break,
+                            }
+                        }
+                        (!parts.is_empty()).then(|| parts.join(" "))
+                    }
+                };
+            }
+        }
+    }
+    None
 }
 
 pub fn extract_frontmatter_list(content: &str, field: &str) -> Vec<String> {
@@ -299,6 +326,7 @@ fn create_skills_schema(conn: &Connection) -> Result<()> {
             profile TEXT NOT NULL DEFAULT '',
             use_count INTEGER DEFAULT 0,
             success_count INTEGER DEFAULT 0,
+            failure_count INTEGER DEFAULT 0,
             last_used TEXT,
             created_at TEXT,
             PRIMARY KEY (name, profile)
@@ -307,6 +335,10 @@ fn create_skills_schema(conn: &Connection) -> Result<()> {
     )?;
     let _ = conn.execute(
         "ALTER TABLE skills ADD COLUMN success_count INTEGER DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE skills ADD COLUMN failure_count INTEGER DEFAULT 0",
         [],
     );
     let _ = conn.execute(
@@ -425,6 +457,32 @@ pub fn get_connection() -> Result<Connection> {
     Ok(conn)
 }
 
+fn migrate_flat_files_in_skill_root(dir: &std::path::Path) {
+    let entries = match discover_skill_files_in_dir(dir) {
+        Ok(items) => items,
+        Err(_) => return,
+    };
+    for (name, skill_path) in entries {
+        let is_legacy_flat = skill_path.parent() == Some(dir)
+            && skill_path.extension().and_then(|s| s.to_str()) == Some("md");
+        let _ = is_legacy_flat.then(|| {
+            let pkg_dir = dir.join(&name);
+            let pkg_skill_md = pkg_dir.join("SKILL.md");
+            match (!pkg_skill_md.exists(), fs::read_to_string(&skill_path)) {
+                (true, Ok(content)) => {
+                    let _ = fs::create_dir_all(&pkg_dir);
+                    let _ = fs::write(&pkg_skill_md, &content)
+                        .and_then(|_| fs::remove_file(&skill_path));
+                }
+                (false, _) => {
+                    let _ = fs::remove_file(&skill_path);
+                }
+                _ => {}
+            }
+        });
+    }
+}
+
 fn migrate_old_skills_to_db(conn: &Connection) -> Result<()> {
     let global_dir = get_skills_dir();
     match global_dir.exists() && global_dir.is_dir() {
@@ -439,28 +497,47 @@ fn migrate_old_skills_to_db(conn: &Connection) -> Result<()> {
                              VALUES (?1, ?2, '', ?3, ?3)",
                             params![name, content, now],
                         );
-                        let is_legacy_flat = skill_path.parent() == Some(global_dir.as_path())
-                            && skill_path.extension().and_then(|s| s.to_str()) == Some("md");
-                        let _ = is_legacy_flat.then(|| {
-                            let pkg_dir = global_dir.join(&name);
-                            let pkg_skill_md = pkg_dir.join("SKILL.md");
-                            match !pkg_skill_md.exists() {
-                                true => {
-                                    let _ = fs::create_dir_all(&pkg_dir);
-                                    let _ = fs::write(&pkg_skill_md, &content)
-                                        .and_then(|_| fs::remove_file(&skill_path));
-                                }
-                                false => {
-                                    let _ = fs::remove_file(&skill_path);
-                                }
-                            }
-                        });
                     }
                     Err(_) => {}
                 }
             }
+            migrate_flat_files_in_skill_root(&global_dir);
         }
     }
+
+    let _ = fs::create_dir_all(&global_dir);
+    let _ = conn
+        .prepare("SELECT name, content FROM skills WHERE COALESCE(profile, '') = ''")
+        .and_then(|mut stmt| {
+            let rows = stmt.query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            for (name, content) in rows.flatten() {
+                let safe_name = sanitize_skill_name(&name);
+                let pkg_dir = global_dir.join(&safe_name);
+                let pkg_md = pkg_dir.join("SKILL.md");
+                let should_materialize = !safe_name.is_empty() && !pkg_md.is_file();
+                let _ = should_materialize.then(|| {
+                    let _ = fs::create_dir_all(&pkg_dir);
+                    let _ = fs::write(&pkg_md, &content);
+                });
+            }
+            Ok(())
+        });
+
+    let subagents_root = crate::config::runtime_data_dir().join("subagents");
+    match (subagents_root.is_dir(), fs::read_dir(&subagents_root)) {
+        (true, Ok(profiles)) => {
+            for entry in profiles.flatten() {
+                let prof_skills_dir = entry.path().join("skills");
+                let _ = prof_skills_dir
+                    .is_dir()
+                    .then(|| migrate_flat_files_in_skill_root(&prof_skills_dir));
+            }
+        }
+        _ => {}
+    }
+
     Ok(())
 }
 
@@ -1143,7 +1220,7 @@ fn skill_signature_tokens(skill: &Skill) -> std::collections::HashSet<String> {
 pub fn consolidate_learned_skills() -> Result<usize> {
     let conn = get_connection()?;
     let mut stmt = conn.prepare(
-        "SELECT name, content, COALESCE(use_count, 0), COALESCE(success_count, 0)
+        "SELECT name, content, COALESCE(use_count, 0), COALESCE(success_count, 0), COALESCE(failure_count, 0)
          FROM skills
          WHERE COALESCE(profile, '') = ''",
     )?;
@@ -1153,14 +1230,15 @@ pub fn consolidate_learned_skills() -> Result<usize> {
             row.get::<_, String>(1)?,
             row.get::<_, i64>(2).unwrap_or(0),
             row.get::<_, i64>(3).unwrap_or(0),
+            row.get::<_, i64>(4).unwrap_or(0),
         ))
     })?;
 
     let mut active_rows = Vec::new();
     let mut actions_taken = 0usize;
 
-    for (name, content, uses, successes) in rows.flatten() {
-        let low_efficacy = uses >= 5 && successes == 0;
+    for (name, content, uses, successes, failures) in rows.flatten() {
+        let low_efficacy = failures >= 5 && successes == 0;
         match low_efficacy {
             true => {
                 let _ = record_skill_revision_snapshot(&conn, &name, None, &content);
@@ -1171,13 +1249,13 @@ pub fn consolidate_learned_skills() -> Result<usize> {
                 );
                 actions_taken += 1;
             }
-            false => active_rows.push((name, content, uses, successes)),
+            false => active_rows.push((name, content, uses, successes, failures)),
         }
     }
 
     active_rows.sort_by(|a, b| {
-        let util_a = ranker::compute_utility_multiplier(a.2, a.3);
-        let util_b = ranker::compute_utility_multiplier(b.2, b.3);
+        let util_a = ranker::compute_utility_multiplier(a.3, a.4);
+        let util_b = ranker::compute_utility_multiplier(b.3, b.4);
         util_b
             .partial_cmp(&util_a)
             .unwrap_or(std::cmp::Ordering::Equal)
@@ -1316,6 +1394,69 @@ pub fn archive_stale_skills() -> Result<()> {
     Ok(())
 }
 
+pub fn list_archived_skills() -> Result<Vec<String>> {
+    let archive_dir = get_skills_dir().join("archive");
+    let mut names = std::collections::BTreeSet::new();
+    match archive_dir.is_dir() {
+        false => return Ok(Vec::new()),
+        true => {}
+    }
+    let entries = fs::read_dir(&archive_dir)?;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let dir_skill = path
+            .is_dir()
+            .then(|| path.join("SKILL.md"))
+            .filter(|md| md.is_file())
+            .and_then(|_| path.file_name().and_then(|s| s.to_str()))
+            .map(sanitize_skill_name);
+        let flat_skill = path
+            .is_file()
+            .then(|| path.extension().and_then(|e| e.to_str()))
+            .flatten()
+            .filter(|ext| *ext == "md")
+            .and_then(|_| path.file_stem().and_then(|s| s.to_str()))
+            .map(sanitize_skill_name);
+        let _ = dir_skill
+            .or(flat_skill)
+            .filter(|s| !s.is_empty())
+            .map(|s| names.insert(s));
+    }
+    Ok(names.into_iter().collect())
+}
+
+pub fn restore_archived_skill(name: &str) -> Result<Skill> {
+    let sanitized = sanitize_skill_name(name);
+    match sanitized.is_empty() {
+        true => anyhow::bail!("Invalid empty skill name"),
+        false => {}
+    }
+    let archive_dir = get_skills_dir().join("archive");
+    let pkg_dir = archive_dir.join(&sanitized);
+    let pkg_md = pkg_dir.join("SKILL.md");
+    let flat_md = archive_dir.join(format!("{}.md", sanitized));
+
+    let content = match (pkg_md.is_file(), flat_md.is_file()) {
+        (true, _) => fs::read_to_string(&pkg_md)?,
+        (false, true) => fs::read_to_string(&flat_md)?,
+        (false, false) => anyhow::bail!("Archived skill '{}' not found in ~/.openz/skills/archive/", sanitized),
+    };
+
+    save_skill(&sanitized, &content)?;
+    match pkg_dir.is_dir() {
+        true => {
+            let _ = fs::remove_dir_all(&pkg_dir);
+        }
+        false => {}
+    }
+    let _ = fs::remove_file(&flat_md);
+
+    Ok(Skill {
+        name: sanitized,
+        content,
+    })
+}
+
 fn load_profile_skill_names(profile_name: Option<&str>) -> std::collections::HashSet<String> {
     let mut profile_skills = std::collections::HashSet::new();
     let prof = match profile_name {
@@ -1350,7 +1491,7 @@ fn load_skill_usage_stats(
     };
     let profile_str = profile_name.unwrap_or("");
     let mut stmt = match conn.prepare(
-        "SELECT name, use_count, COALESCE(success_count, 0)
+        "SELECT name, COALESCE(success_count, 0), COALESCE(failure_count, 0)
          FROM skills
          WHERE COALESCE(profile, '') = '' OR profile = ?1",
     ) {
@@ -1367,8 +1508,8 @@ fn load_skill_usage_stats(
         Ok(r) => r,
         Err(_) => return stats,
     };
-    for (name, uses, successes) in rows.flatten() {
-        stats.insert(name, (uses, successes));
+    for (name, successes, failures) in rows.flatten() {
+        stats.insert(name, (successes, failures));
     }
     stats
 }
@@ -1396,31 +1537,24 @@ pub fn record_skill_activation(name: &str, profile_name: Option<&str>) {
 }
 
 pub fn record_skill_outcome(name: &str, profile_name: Option<&str>, succeeded: bool) {
-    match succeeded {
-        false => {}
-        true => {
-            let safe_name = sanitize_skill_name(name);
-            let profile_key = profile_name.unwrap_or("");
-            let _ = get_connection().map(|conn| {
-                let updated = conn
-                    .execute(
-                        "UPDATE skills
-                         SET success_count = COALESCE(success_count, 0) + 1
-                         WHERE name = ?1 AND COALESCE(profile, '') = ?2",
-                        params![safe_name, profile_key],
-                    )
-                    .unwrap_or(0);
-                let _ = (updated == 0 && !profile_key.is_empty()).then(|| {
-                    let _ = conn.execute(
-                        "UPDATE skills
-                         SET success_count = COALESCE(success_count, 0) + 1
-                         WHERE name = ?1 AND COALESCE(profile, '') = ''",
-                        params![safe_name],
-                    );
-                });
-            });
-        }
-    }
+    let safe_name = sanitize_skill_name(name);
+    let profile_key = profile_name.unwrap_or("");
+    let sql_scoped = match succeeded {
+        true => "UPDATE skills SET success_count = COALESCE(success_count, 0) + 1 WHERE name = ?1 AND COALESCE(profile, '') = ?2",
+        false => "UPDATE skills SET failure_count = COALESCE(failure_count, 0) + 1 WHERE name = ?1 AND COALESCE(profile, '') = ?2",
+    };
+    let sql_global = match succeeded {
+        true => "UPDATE skills SET success_count = COALESCE(success_count, 0) + 1 WHERE name = ?1 AND COALESCE(profile, '') = ''",
+        false => "UPDATE skills SET failure_count = COALESCE(failure_count, 0) + 1 WHERE name = ?1 AND COALESCE(profile, '') = ''",
+    };
+    let _ = get_connection().map(|conn| {
+        let updated = conn
+            .execute(sql_scoped, params![safe_name, profile_key])
+            .unwrap_or(0);
+        let _ = (updated == 0 && !profile_key.is_empty()).then(|| {
+            let _ = conn.execute(sql_global, params![safe_name]);
+        });
+    });
 }
 
 pub fn load_ranked_skill_matches_with_profile(

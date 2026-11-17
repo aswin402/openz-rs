@@ -167,11 +167,14 @@ fn length_norm(tf: usize, field_len: f32, avg_len: f32, b: f32) -> f32 {
     }
 }
 
-/// Wilson / Beta-Binomial smoothed outcome utility factor in `[0.85, 1.15]`.
-pub fn compute_utility_multiplier(use_count: i64, success_count: i64) -> f32 {
-    let uses = use_count.max(0) as f32;
-    let successes = success_count.clamp(0, use_count.max(0)) as f32;
-    let bayesian_rate = (successes + 1.0) / (uses + 2.0);
+/// Wilson / Beta-Binomial smoothed outcome utility factor in `[0.85, 1.15]`
+/// over verified turn outcomes (`success_count`, `failure_count`), keeping
+/// pre-v0.0.334 legacy `use_count` rows neutral (`1.00x`) until evaluated.
+pub fn compute_utility_multiplier(success_count: i64, failure_count: i64) -> f32 {
+    let successes = success_count.max(0) as f32;
+    let failures = failure_count.max(0) as f32;
+    let total_outcomes = successes + failures;
+    let bayesian_rate = (successes + 1.0) / (total_outcomes + 2.0);
     0.85 + 0.30 * bayesian_rate
 }
 
@@ -286,8 +289,8 @@ pub fn rank_skills_bm25f(
                 false => 0.0,
             };
 
-        let (uses, successes) = usage_stats.get(&skill.name).copied().unwrap_or((0, 0));
-        let utility = compute_utility_multiplier(uses, successes);
+        let (successes, failures) = usage_stats.get(&skill.name).copied().unwrap_or((0, 0));
+        let utility = compute_utility_multiplier(successes, failures);
         let final_score = raw_score * utility;
 
         let high_confidence = explicit_hit

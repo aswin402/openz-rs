@@ -331,7 +331,7 @@ pub async fn handle_headless(args: crate::cli::args::HeadlessArgs) -> anyhow::Re
 
     match args.wait_curator {
         true => {
-            crate::agent::agent_loop::save::wait_for_curator(std::time::Duration::from_secs(30))
+            crate::agent::agent_loop::save::wait_for_curator(std::time::Duration::from_secs(90))
                 .await;
         }
         false => {}

@@ -41,8 +41,8 @@ impl Tool for CurateSkillTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "view", "read_ref", "write_file", "remove_file", "add", "patch", "delete", "consolidate", "history", "rollback"],
-                    "description": "Skill action: 'view' loads one SKILL.md + bundle manifest; 'read_ref'/'write_file'/'remove_file' manage files under references/, scripts/, templates/, or assets/; 'patch' applies surgical edits; 'consolidate' deduplicates and quarantines broken skills."
+                    "enum": ["list", "list_archive", "view", "read_ref", "write_file", "remove_file", "add", "patch", "delete", "consolidate", "history", "rollback", "restore"],
+                    "description": "Skill action: 'view' loads one SKILL.md + bundle manifest; 'read_ref'/'write_file'/'remove_file' manage files under references/, scripts/, templates/, or assets/; 'patch' applies surgical edits; 'consolidate' deduplicates and quarantines broken skills; 'list_archive' and 'restore' inspect and recover skills from ~/.openz/skills/archive/."
                 },
                 "skill_name": {
                     "type": "string",
@@ -113,8 +113,10 @@ impl Tool for CurateSkillTool {
             ("patch" | "edit", _) => "patch",
             ("delete" | "remove" | "rm", _) => "delete",
             ("consolidate" | "dedupe" | "maintain", _) => "consolidate",
+            ("list_archive" | "archive_list" | "archived" | "archive", _) => "list_archive",
+            ("unarchive" | "restore", _) => "restore",
             ("history" | "revisions" | "versions" | "snapshots", _) => "history",
-            ("rollback" | "restore" | "revert" | "undo", _) => "rollback",
+            ("rollback" | "revert" | "undo", _) => "rollback",
             (other, _) => other,
         };
 
@@ -304,6 +306,45 @@ impl Tool for CurateSkillTool {
                     "revisions": revisions
                 }))
             }
+            "list_archive" => {
+                let archived = crate::agent::skills::list_archived_skills()?;
+                Ok(serde_json::json!({
+                    "success": true,
+                    "count": archived.len(),
+                    "archived_skills": archived
+                }))
+            }
+            "restore" => {
+                let skill_name = extract_trimmed_str(arguments, SKILL_NAME_KEYS)
+                    .ok_or_else(|| anyhow::anyhow!("Missing skill_name for action 'restore'"))?;
+                let revision_id = arguments
+                    .get("revision_id")
+                    .or_else(|| arguments.get("revisionId"))
+                    .and_then(|v| v.as_i64());
+                let restored = match revision_id {
+                    Some(rev_id) => crate::agent::skills::rollback_skill(
+                        &skill_name,
+                        profile.as_deref(),
+                        Some(rev_id),
+                    )?,
+                    None => crate::agent::skills::restore_archived_skill(&skill_name)
+                        .or_else(|_| {
+                            crate::agent::skills::rollback_skill(
+                                &skill_name,
+                                profile.as_deref(),
+                                None,
+                            )
+                        })?,
+                };
+                notify_skill_curation("Skill restored", &restored.name);
+                Ok(serde_json::json!({
+                    "success": true,
+                    "skill_name": restored.name,
+                    "profile": profile,
+                    "content": restored.content,
+                    "message": format!("Skill '{}' restored cleanly", restored.name)
+                }))
+            }
             "rollback" => {
                 let skill_name = extract_trimmed_str(arguments, SKILL_NAME_KEYS)
                     .ok_or_else(|| anyhow::anyhow!("Missing skill_name for action 'rollback'"))?;
@@ -315,7 +356,8 @@ impl Tool for CurateSkillTool {
                     &skill_name,
                     profile.as_deref(),
                     revision_id,
-                )?;
+                )
+                .or_else(|_| crate::agent::skills::restore_archived_skill(&skill_name))?;
                 notify_skill_curation("Skill rolled back", &restored.name);
                 Ok(serde_json::json!({
                     "success": true,

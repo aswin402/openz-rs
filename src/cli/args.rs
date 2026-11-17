@@ -172,6 +172,12 @@ pub enum SkillsAction {
         #[arg(long)]
         profile: Option<String>,
     },
+    #[command(alias = "archived")]
+    Archive,
+    #[command(alias = "unarchive")]
+    Restore {
+        name: String,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]

@@ -86,6 +86,7 @@ Specific workflow patterns to preserve when observed:\n\
 - HTML/video generation longer than roughly 20 seconds: render in shorter segments, concatenate with ffmpeg, verify duration, then open.\n\
 - Dev servers: when exec_command returns server_registered=true, record the server id and use manage_servers to stop it automatically when the preview/verification task is finished.\n\
 - Feature/tool inventory answers: use openz_inventory/tool_catalog instead of answering exact counts from memory.\n\n\
+REASONING BUDGET: Keep internal thinking under 120 words and emit the raw JSON object immediately. When the agent already called curate_skill during this turn to add or patch a skill, leave skills_to_save empty [] so you never overwrite in-turn edits.\n\n\
 You MUST return your response as a raw JSON object with the following structure. Do not wrap it in conversational text. Return empty arrays when there is nothing to save.\n\n\
 JSON Format:\n\
 {\n\
@@ -128,6 +129,23 @@ JSON Format:\n\
        \"status\": \"active|draft\"\n\
      }\n\
    ]\n\
+}"
+}
+
+fn memory_only_review_prompt() -> &'static str {
+    "You are OpenZ's fast Memory & Preference Curator. Review the latest turn and extract ONLY durable cross-session facts or user preferences that are NOT already in Existing Memory or USER.md.\n\n\
+Rules:\n\
+- MEMORY.md (`memory_content`): Durable project/architecture facts, verified environment paths, or persistent operational truths. Supports '- replace: <old> => <new>' and '- remove: <stale>'. Leave `memory_updated: false` and `memory_content: \"\"` when nothing new and durable was learned.\n\
+- USER.md (`user_preferences`): Explicit durable user tastes, coding conventions, persona rules, or workflow preferences. Supports '- replace: <old> => <new>' and '- remove: <stale>'. Leave `\"\"` when no user preference was stated.\n\
+- Keep internal thinking under 60 words and output raw JSON immediately.\n\n\
+JSON Format:\n\
+{\n\
+  \"memory_updated\": true/false,\n\
+  \"memory_content\": \"- <concise durable fact bullet>\",\n\
+  \"user_preferences\": \"- <concise durable preference bullet>\",\n\
+  \"skills_to_save\": [],\n\
+  \"sources_to_save\": [],\n\
+  \"workflows_to_save\": []\n\
 }"
 }
 
@@ -407,6 +425,36 @@ const LEARNING_INTENT_STEMS: &[&str] = &[
     "playbook",
     "workflow",
 ];
+
+const SKILL_SYNTHESIS_INTENT_STEMS: &[&str] = &[
+    "skill",
+    "playbook",
+    "workflow",
+    "runbook",
+    "sop",
+];
+
+pub(crate) fn has_explicit_skill_intent(messages: &[crate::session::Message]) -> bool {
+    messages
+        .iter()
+        .rev()
+        .take(2)
+        .filter(|msg| msg.role == "user")
+        .any(|msg| {
+            let stems = crate::agent::skills::ranker::tokenize_stemmed(&msg.content, false);
+            let has_create_verb = stems.iter().any(|tok| {
+                ["create", "save", "synthesize", "extract", "write", "build"]
+                    .iter()
+                    .any(|target| crate::agent::skills::ranker::stem_token(target) == *tok)
+            });
+            let has_skill_noun = stems.iter().any(|tok| {
+                SKILL_SYNTHESIS_INTENT_STEMS
+                    .iter()
+                    .any(|target| crate::agent::skills::ranker::stem_token(target) == *tok)
+            });
+            has_create_verb && has_skill_noun
+        })
+}
 
 pub(crate) fn has_explicit_learning_intent(messages: &[crate::session::Message]) -> bool {
     messages
@@ -807,47 +855,16 @@ async fn run_single_curator_job(job: CuratorJobPayload) {
                     write_log("running", false, vec![], None);
 
                     let _ = crate::agent::skills::archive_stale_skills();
-                    let _ = crate::tools::shared_memory::consolidate_shared_memory(&provider).await;
-
-                    let recent_interactions =
-                        crate::tools::shared_memory::get_recent_interactions(15)
-                            .await
-                            .unwrap_or_default();
 
                     let existing_memory = crate::agent::core_memory::load_global_memory();
-
-                    let existing_skills_desc = build_budgeted_existing_skills_context(
-                        &user_query,
-                        &messages,
-                        profile_name.as_deref(),
-                    );
-
-                    let system_prompt_review = self_improvement_review_prompt();
-                    let mut prompt_content = String::new();
-
-                    let _ = (!recent_interactions.is_empty()).then(|| {
-                        prompt_content.push_str("Recent user tasks across all sessions:\n");
-                        for (i, item) in recent_interactions.iter().enumerate() {
-                            let query = item["query"].as_str().unwrap_or("");
-                            let success = item["success"].as_bool().unwrap_or(true);
-                            let errors = item["errors"].as_str().unwrap_or("");
-                            let status_label = success.then_some("SUCCESS").unwrap_or("FAILED");
-                            prompt_content.push_str(&format!(
-                                "{}. Task: \"{}\" | Status: {}\n",
-                                i + 1,
-                                query,
-                                status_label
-                            ));
-                            let _ = (!errors.is_empty()).then(|| {
-                                prompt_content
-                                    .push_str(&format!("   Errors encountered: {}\n", errors));
-                            });
-                        }
-                        prompt_content.push('\n');
-                    });
-
                     let tool_count = messages.iter().filter(|m| m.role == "tool").count();
-                    let explicit_learning_intent = has_explicit_learning_intent(&messages);
+                    let explicit_skill_intent = has_explicit_skill_intent(&messages);
+                    let agent_curated_skill_in_turn = tools_used.iter().any(|t| {
+                        matches!(
+                            t.as_str(),
+                            "curate_skill" | "skill_manage" | "manage_skills"
+                        )
+                    });
 
                     let created_vault_deliverable = turn_succeeded_cleanly
                         && messages.iter().any(|m| {
@@ -884,34 +901,63 @@ async fn run_single_curator_job(job: CuratorJobPayload) {
                                 })
                         });
 
-                    let allow_skill_synthesis = explicit_learning_intent
-                        || (turn_succeeded_cleanly
+                    let allow_skill_synthesis = explicit_skill_intent
+                        || (!agent_curated_skill_in_turn
+                            && turn_succeeded_cleanly
                             && (turn_recovered
                                 || created_vault_deliverable
                                 || tool_count >= 5));
 
-                    let _ = (turn_succeeded_cleanly && turn_recovered).then(|| {
+                    let system_prompt_review = match allow_skill_synthesis {
+                        true => self_improvement_review_prompt(),
+                        false => memory_only_review_prompt(),
+                    };
+                    let mut prompt_content = String::new();
+
+                    let recent_interactions = match allow_skill_synthesis {
+                        true => crate::tools::shared_memory::get_recent_interactions(10)
+                            .await
+                            .unwrap_or_default(),
+                        false => Vec::new(),
+                    };
+
+                    let _ = (!recent_interactions.is_empty()).then(|| {
+                        prompt_content.push_str("Recent user tasks across all sessions:\n");
+                        for (i, item) in recent_interactions.iter().enumerate() {
+                            let query = item["query"].as_str().unwrap_or("");
+                            let success = item["success"].as_bool().unwrap_or(true);
+                            let errors = item["errors"].as_str().unwrap_or("");
+                            let status_label = success.then_some("SUCCESS").unwrap_or("FAILED");
+                            prompt_content.push_str(&format!(
+                                "{}. Task: \"{}\" | Status: {}\n",
+                                i + 1,
+                                query,
+                                status_label
+                            ));
+                            let _ = (!errors.is_empty()).then(|| {
+                                prompt_content
+                                    .push_str(&format!("   Errors encountered: {}\n", errors));
+                            });
+                        }
+                        prompt_content.push('\n');
+                    });
+
+                    let _ = (allow_skill_synthesis && turn_succeeded_cleanly && turn_recovered).then(|| {
                         prompt_content.push_str(
                             "[VERIFIED ERROR RECOVERY DETECTED: An earlier tool call failed and the agent resolved it cleanly. Extract or patch a concise troubleshooting skill ONLY when the root cause and fix generalize beyond this single file.]\n\n",
                         );
                     });
 
-                    let _ = (turn_succeeded_cleanly && tool_count >= 5).then(|| {
+                    let _ = (allow_skill_synthesis && turn_succeeded_cleanly && tool_count >= 5).then(|| {
                         prompt_content.push_str(&format!(
                             "[MULTI-STEP WORKFLOW COMPLETED: Turn succeeded across {} tool executions. Extract or patch a reusable procedural skill ONLY when the workflow is generalizable across future tasks; return empty `skills_to_save` for routine single-repo edits.]\n\n",
                             tool_count
                         ));
                     });
 
-                    let _ = created_vault_deliverable.then(|| {
+                    let _ = (allow_skill_synthesis && created_vault_deliverable).then(|| {
                         prompt_content.push_str(
                             "[VAULT DELIVERABLE COMPLETED: Synthesize or patch a reusable deliverable skill documenting the architecture, design tokens, and reproduction steps.]\n\n",
-                        );
-                    });
-
-                    let _ = (!allow_skill_synthesis).then(|| {
-                        prompt_content.push_str(
-                            "[SKILL GATE: Keep `skills_to_save` empty `[]` for this turn; only consolidate `user_preferences` or `memory_content` when applicable.]\n\n",
                         );
                     });
 
@@ -927,12 +973,22 @@ async fn run_single_curator_job(job: CuratorJobPayload) {
                         prompt_content
                             .push_str(&format!("Existing Memory:\n{}\n\n", existing_memory));
                     });
+
+                    let existing_skills_desc = match allow_skill_synthesis {
+                        true => build_budgeted_existing_skills_context(
+                            &user_query,
+                            &messages,
+                            profile_name.as_deref(),
+                        ),
+                        false => String::new(),
+                    };
                     let _ = (!existing_skills_desc.is_empty()).then(|| {
                         prompt_content
                             .push_str(&format!("Existing Skills:\n{}\n\n", existing_skills_desc));
                     });
                     prompt_content.push_str("Recent conversation history to review:\n");
-                    for msg in &messages {
+                    let window_start = messages.len().saturating_sub(12);
+                    for msg in &messages[window_start..] {
                         match msg.role.as_str() {
                             "user" => {
                                 prompt_content.push_str(&format!("[user]: {}\n", msg.content));
@@ -945,8 +1001,10 @@ async fn run_single_curator_job(job: CuratorJobPayload) {
                                     .and_then(|v| v.as_str())
                                     .filter(|r| !r.is_empty())
                                     .map(|reasoning| {
+                                        let short_reasoning =
+                                            truncate_curator_log_text(reasoning, 250, true);
                                         prompt_content
-                                            .push_str(&format!("  Thinking:\n{}\n", reasoning));
+                                            .push_str(&format!("  Thinking:\n{}\n", short_reasoning));
                                     });
                                 let _ = msg
                                     .extra
@@ -970,7 +1028,7 @@ async fn run_single_curator_job(job: CuratorJobPayload) {
                                             let _ = name.zip(args).map(|(name_str, args_val)| {
                                                 let args_truncated = truncate_curator_log_text(
                                                     &args_val.to_string(),
-                                                    1000,
+                                                    600,
                                                     true,
                                                 );
                                                 prompt_content.push_str(&format!(
@@ -982,7 +1040,7 @@ async fn run_single_curator_job(job: CuratorJobPayload) {
                                     });
                                 let _ = (!msg.content.is_empty()).then(|| {
                                     let content_truncated =
-                                        truncate_curator_log_text(&msg.content, 2000, true);
+                                        truncate_curator_log_text(&msg.content, 1200, true);
                                     prompt_content
                                         .push_str(&format!("  Response: {}\n", content_truncated));
                                 });
@@ -994,7 +1052,7 @@ async fn run_single_curator_job(job: CuratorJobPayload) {
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("unknown");
                                 let content_truncated =
-                                    truncate_curator_log_text(&msg.content, 2000, false);
+                                    truncate_curator_log_text(&msg.content, 800, false);
                                 prompt_content.push_str(&format!(
                                     "[tool output for '{}']:\n{}\n",
                                     tool_name, content_truncated
@@ -1014,10 +1072,14 @@ async fn run_single_curator_job(job: CuratorJobPayload) {
                         extra: serde_json::Map::new(),
                     }];
 
+                    let curator_max_tokens = match allow_skill_synthesis {
+                        true => 4096,
+                        false => 2048,
+                    };
                     let settings = crate::providers::GenerationSettings {
                         temperature: 0.1,
-                        max_tokens: 4096,
-                        reasoning_effort: None,
+                        max_tokens: curator_max_tokens,
+                        reasoning_effort: Some("low".to_string()),
                     };
 
                     let mut skills_saved = Vec::new();
@@ -1028,16 +1090,21 @@ async fn run_single_curator_job(job: CuratorJobPayload) {
                         .chat(system_prompt_review, &review_msgs, &[], &settings)
                         .await
                     {
-                        Ok(resp) => match resp.content {
-                            None => {
-                                write_log(
-                                    "failed",
-                                    false,
-                                    vec![],
-                                    Some("Empty content returned from LLM".to_string()),
-                                );
-                            }
-                            Some(content) => {
+                        Ok(resp) => {
+                            let resolved_content = resp.content.or_else(|| {
+                                resp.reasoning_content
+                                    .filter(|r| r.contains('{') && r.contains('}'))
+                            });
+                            match resolved_content {
+                                None => {
+                                    write_log(
+                                        "failed",
+                                        false,
+                                        vec![],
+                                        Some("Empty content returned from LLM".to_string()),
+                                    );
+                                }
+                                Some(content) => {
                                 let clean_json = extract_clean_curator_json(&content);
                                 let (review_opt, was_salvaged) =
                                     match serde_json::from_str::<ReviewResponse>(&clean_json) {
@@ -1369,11 +1436,37 @@ async fn run_single_curator_job(job: CuratorJobPayload) {
                                         }
                                     }
                                 }
+                                }
                             }
-                        },
+                        }
                         Err(e) => {
                             let msg = format!("LLM chat query failed: {}", e);
                             write_log("failed", false, vec![], Some(msg));
+                        }
+                    }
+
+                    let shared_consolidation_stamp = crate::config::runtime_data_dir()
+                        .join("last_shared_memory_consolidation.json");
+                    let consolidated_recently = shared_consolidation_stamp
+                        .is_file()
+                        .then(|| std::fs::read_to_string(&shared_consolidation_stamp).ok())
+                        .flatten()
+                        .and_then(|s| serde_json::from_str::<String>(&s).ok())
+                        .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts).ok())
+                        .is_some_and(|dt| {
+                            chrono::Utc::now()
+                                .signed_duration_since(dt.with_timezone(&chrono::Utc))
+                                < chrono::Duration::hours(24)
+                        });
+                    match consolidated_recently {
+                        true => {}
+                        false => {
+                            let _ = serde_json::to_string(&chrono::Utc::now().to_rfc3339())
+                                .ok()
+                                .map(|ts_json| std::fs::write(&shared_consolidation_stamp, ts_json));
+                            let _ =
+                                crate::tools::shared_memory::consolidate_shared_memory(&provider)
+                                    .await;
                         }
                     }
 }
