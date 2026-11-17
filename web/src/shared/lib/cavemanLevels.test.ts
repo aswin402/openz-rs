@@ -14,27 +14,27 @@ describe('cavemanLevels descriptor helpers', () => {
       'lite',
       'full',
       'ultra',
-      'wenyan_lite',
-      'wenyan_full',
-      'wenyan_ultra',
+      'symbolic_lite',
+      'symbolic_full',
+      'symbolic_ultra',
     ]);
   });
 
   it('normalizes canonical slugs, hyphens, spaces, and upstream aliases without regex', () => {
     expect(normalizeCavemanLevel('lite')).toBe('lite');
     expect(normalizeCavemanLevel('ULTRACAVE')).toBe('ultra');
-    expect(normalizeCavemanLevel('wenyan-lite')).toBe('wenyan_lite');
-    expect(normalizeCavemanLevel('wenyan full')).toBe('wenyan_full');
-    expect(normalizeCavemanLevel('megacave-ultra')).toBe('wenyan_ultra');
+    expect(normalizeCavemanLevel('symbolic-lite')).toBe('symbolic_lite');
+    expect(normalizeCavemanLevel('symbolic full')).toBe('symbolic_full');
+    expect(normalizeCavemanLevel('megacave-ultra')).toBe('symbolic_ultra');
     expect(normalizeCavemanLevel('unknown_value')).toBe('full');
     expect(normalizeCavemanLevel(undefined)).toBe('full');
   });
 
   it('cycles forward and backward cleanly across all 6 tiers', () => {
     expect(cycleCavemanLevelSlug('full', true)).toBe('ultra');
-    expect(cycleCavemanLevelSlug('wenyan_ultra', true)).toBe('lite');
-    expect(cycleCavemanLevelSlug('lite', false)).toBe('wenyan_ultra');
-    expect(getCavemanLevelOption('wenyan_full').targetSavingsPct).toBe(70);
+    expect(cycleCavemanLevelSlug('symbolic_ultra', true)).toBe('lite');
+    expect(cycleCavemanLevelSlug('lite', false)).toBe('symbolic_ultra');
+    expect(getCavemanLevelOption('symbolic_full').targetSavingsPct).toBe(72);
   });
 
   it('normalizes telemetry snapshots and formats non-zero badges', () => {

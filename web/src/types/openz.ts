@@ -563,6 +563,8 @@ export interface BackgroundServerInfo {
 export interface SkillInfo {
   name: string;
   content: string;
+  description?: string;
+  triggers?: string[];
   scope?: string;
   profile?: string | null;
   source?: string;
@@ -570,6 +572,8 @@ export interface SkillInfo {
   enabled?: boolean;
   isProtected?: boolean;
   useCount?: number;
+  successCount?: number;
+  revisionCount?: number;
   createdAt?: string | null;
   lastUsed?: string | null;
   validationErrors?: string[];

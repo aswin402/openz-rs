@@ -383,7 +383,7 @@ impl Tool for ManageConfigTool {
                         },
                         "caveman_level": {
                             "type": "string",
-                            "enum": ["lite", "full", "ultra", "wenyan_lite", "wenyan_full", "wenyan_ultra"],
+                            "enum": ["lite", "full", "ultra", "symbolic_lite", "symbolic_full", "symbolic_ultra"],
                             "description": "Intensity level for 'caveman' terse mode."
                         },
                         "tool_timeout_secs": {
@@ -639,7 +639,7 @@ impl Tool for ManageConfigTool {
                                     return Ok(serde_json::json!({
                                         "success": false,
                                         "error": format!(
-                                            "Invalid caveman_level '{}'. Use lite, full, ultra, wenyan_lite, wenyan_full, or wenyan_ultra.",
+                                            "Invalid caveman_level '{}'. Use lite, full, ultra, symbolic_lite, symbolic_full, or symbolic_ultra.",
                                             raw
                                         )
                                     }));

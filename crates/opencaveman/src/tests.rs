@@ -16,11 +16,11 @@ fn level_descriptors_resolve_aliases_and_cycle_cleanly() {
     assert_eq!(CavemanLevel::parse_flexible("ultracave"), Some(CavemanLevel::Ultra));
     assert_eq!(
         CavemanLevel::parse_flexible("megacave"),
-        Some(CavemanLevel::WenyanFull)
+        Some(CavemanLevel::SymbolicFull)
     );
     assert_eq!(
-        CavemanLevel::parse_flexible("wenyan-ultra"),
-        Some(CavemanLevel::WenyanUltra)
+        CavemanLevel::parse_flexible("symbolic-ultra"),
+        Some(CavemanLevel::SymbolicUltra)
     );
     assert_eq!(normalize_level_slug("ULTRACAVE"), "ultra");
 
@@ -33,7 +33,7 @@ fn level_descriptors_resolve_aliases_and_cycle_cleanly() {
         .cycle_next()
         .cycle_next();
     assert_eq!(cycled, start);
-    assert_eq!(start.cycle_prev(), CavemanLevel::WenyanUltra);
+    assert_eq!(start.cycle_prev(), CavemanLevel::SymbolicUltra);
 }
 
 #[test]

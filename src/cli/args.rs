@@ -47,6 +47,11 @@ pub enum Command {
         action: Option<ChannelAction>,
     },
     Subagent,
+    #[command(alias = "skill")]
+    Skills {
+        #[command(subcommand)]
+        action: Option<SkillsAction>,
+    },
     Doctor {
         #[arg(long)]
         scrub_secrets: bool,
@@ -134,6 +139,38 @@ pub enum ChannelAction {
     Logs {
         #[arg(long, short, default_value = "0")]
         tail: usize,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+pub enum SkillsAction {
+    List {
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    #[command(alias = "view")]
+    Inspect {
+        name: String,
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    #[command(alias = "rm")]
+    Delete {
+        name: String,
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    History {
+        name: String,
+        #[arg(long)]
+        profile: Option<String>,
+    },
+    Rollback {
+        name: String,
+        #[arg(long)]
+        revision_id: Option<i64>,
+        #[arg(long)]
+        profile: Option<String>,
     },
 }
 

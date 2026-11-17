@@ -139,6 +139,20 @@ pub(super) async fn handle_post_message_command(
                 }
             });
         }
+        "rollback_skill" => {
+            let envelope_owned = envelope.clone();
+            let tx_clone = tx.clone();
+            tokio::spawn(async move {
+                match tokio::task::spawn_blocking(move || {
+                    profiles::rollback_skill_event(&envelope_owned)
+                })
+                .await
+                {
+                    Ok(event) => super::send_event(&tx_clone, event).await,
+                    Err(_) => {}
+                }
+            });
+        }
         "save_subagent" => {
             let config = state.current_config();
             let envelope_owned = envelope.clone();
@@ -255,6 +269,7 @@ pub(crate) enum WsCommand {
     SetConfig,
     SaveSkill,
     DeleteSkill,
+    RollbackSkill,
     SaveSubagent,
     UpdateSubagentSettings,
     DeleteSubagent,
@@ -291,6 +306,7 @@ impl WsCommand {
             "set_config" => Self::SetConfig,
             "save_skill" => Self::SaveSkill,
             "delete_skill" => Self::DeleteSkill,
+            "rollback_skill" => Self::RollbackSkill,
             "save_subagent" => Self::SaveSubagent,
             "update_subagent_settings" => Self::UpdateSubagentSettings,
             "delete_subagent" => Self::DeleteSubagent,

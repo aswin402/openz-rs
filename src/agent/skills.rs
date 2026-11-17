@@ -3,6 +3,11 @@ use rusqlite::{params, Connection};
 use std::fs;
 use std::path::PathBuf;
 
+#[path = "skills_ranker.rs"]
+pub mod ranker;
+
+pub use ranker::{HIGH_CONFIDENCE_SKILL_SCORE, ScoredSkillMatch};
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Skill {
     pub name: String,
@@ -23,6 +28,10 @@ pub struct SkillRevision {
 pub struct SkillView {
     pub name: String,
     pub content: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub triggers: Vec<String>,
     pub scope: String,
     pub profile: Option<String>,
     pub source: String,
@@ -30,23 +39,35 @@ pub struct SkillView {
     pub enabled: bool,
     pub is_protected: bool,
     pub use_count: i64,
+    #[serde(default)]
+    pub success_count: i64,
+    #[serde(default)]
+    pub revision_count: usize,
     pub created_at: Option<String>,
     pub last_used: Option<String>,
     pub validation_errors: Vec<String>,
 }
 
+pub fn strip_frontmatter(content: &str) -> &str {
+    let trimmed = content.trim_start();
+    match trimmed
+        .strip_prefix("---")
+        .and_then(|rest| rest.find("---").map(|idx| &rest[idx + 3..]))
+    {
+        Some(body) => body.trim_start(),
+        None => content,
+    }
+}
+
 impl Skill {
     pub fn description(&self) -> String {
         extract_frontmatter_field(&self.content, "description")
+            .filter(|v| !v.is_empty())
             .or_else(|| {
-                self.content
+                strip_frontmatter(&self.content)
                     .lines()
                     .map(str::trim)
-                    .find(|trimmed| {
-                        !trimmed.starts_with('#')
-                            && !trimmed.starts_with("---")
-                            && !trimmed.is_empty()
-                    })
+                    .find(|trimmed| !trimmed.starts_with('#') && !trimmed.is_empty())
                     .map(|trimmed| trimmed.chars().take(160).collect::<String>())
             })
             .unwrap_or_else(|| {
@@ -55,26 +76,12 @@ impl Skill {
     }
 
     pub fn triggers(&self) -> Vec<String> {
-        let mut triggers: Vec<String> = extract_frontmatter_field(&self.content, "triggers")
-            .map(|trig_str| {
-                let cleaned_str = trig_str.trim();
-                let inner = cleaned_str
-                    .strip_prefix('[')
-                    .and_then(|s| s.strip_suffix(']'))
-                    .unwrap_or(cleaned_str);
-                inner
-                    .split(',')
-                    .map(|part| part.trim().trim_matches(['"', '\'']).to_lowercase())
-                    .filter(|cleaned| !cleaned.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default();
-
+        let mut triggers = extract_frontmatter_list(&self.content, "triggers");
         match triggers.is_empty() {
             true => {
                 triggers.extend(
                     self.name
-                        .split('_')
+                        .split(['_', '-'])
                         .filter(|w| w.len() > 2)
                         .map(|w| w.to_lowercase()),
                 );
@@ -86,21 +93,89 @@ impl Skill {
 
     pub fn vault_category(&self) -> Option<String> {
         extract_frontmatter_field(&self.content, "vault_category")
-            .or_else(|| extract_frontmatter_field(&self.content, "category"))
+            .filter(|v| !v.is_empty())
+            .or_else(|| {
+                extract_frontmatter_field(&self.content, "category").filter(|v| !v.is_empty())
+            })
     }
 }
 
-pub fn extract_frontmatter_field(content: &str, field: &str) -> Option<String> {
+fn frontmatter_block(content: &str) -> Option<&str> {
     let trimmed = content.trim_start();
     let rest = trimmed.strip_prefix("---")?;
     let end_idx = rest.find("---")?;
-    let yaml_block = &rest[..end_idx];
+    Some(&rest[..end_idx])
+}
+
+pub fn extract_frontmatter_field(content: &str, field: &str) -> Option<String> {
+    let yaml_block = frontmatter_block(content)?;
     let field_prefix = format!("{}:", field);
     yaml_block.lines().find_map(|line| {
         line.trim()
             .strip_prefix(&field_prefix)
             .map(|val| val.trim().trim_matches(['"', '\'']).to_string())
     })
+}
+
+pub fn extract_frontmatter_list(content: &str, field: &str) -> Vec<String> {
+    let yaml_block = match frontmatter_block(content) {
+        Some(b) => b,
+        None => return Vec::new(),
+    };
+    let field_prefix = format!("{}:", field);
+    let mut items = Vec::new();
+    let mut collecting_multiline = false;
+
+    for raw_line in yaml_block.lines() {
+        let trimmed = raw_line.trim();
+        let is_indented = raw_line.starts_with(' ') || raw_line.starts_with('\t');
+
+        match collecting_multiline {
+            true => match is_indented || trimmed.starts_with('-') {
+                true => {
+                    let _ = trimmed
+                        .strip_prefix('-')
+                        .map(|item| item.trim().trim_matches(['"', '\'']).to_lowercase())
+                        .filter(|item| !item.is_empty())
+                        .map(|item| items.push(item));
+                }
+                false => {
+                    collecting_multiline = false;
+                }
+            },
+            false => {}
+        }
+
+        match !collecting_multiline {
+            true => match trimmed.strip_prefix(&field_prefix) {
+                Some(rhs) => {
+                    let cleaned = rhs.trim();
+                    match cleaned.is_empty() {
+                        true => {
+                            collecting_multiline = true;
+                        }
+                        false => {
+                            let inner = cleaned
+                                .strip_prefix('[')
+                                .and_then(|s| s.strip_suffix(']'))
+                                .unwrap_or(cleaned);
+                            items.extend(
+                                inner
+                                    .split(',')
+                                    .map(|part| {
+                                        part.trim().trim_matches(['"', '\'']).to_lowercase()
+                                    })
+                                    .filter(|part| !part.is_empty()),
+                            );
+                        }
+                    }
+                }
+                None => {}
+            },
+            false => {}
+        }
+    }
+    items
 }
 
 pub fn get_user_profile_path() -> PathBuf {
@@ -284,14 +359,30 @@ fn create_skills_schema(conn: &Connection) -> Result<()> {
         "CREATE TABLE IF NOT EXISTS skills (
             name TEXT NOT NULL,
             content TEXT NOT NULL,
-            profile TEXT,
+            profile TEXT NOT NULL DEFAULT '',
             use_count INTEGER DEFAULT 0,
+            success_count INTEGER DEFAULT 0,
             last_used TEXT,
             created_at TEXT,
             PRIMARY KEY (name, profile)
         )",
         [],
     )?;
+    let _ = conn.execute(
+        "ALTER TABLE skills ADD COLUMN success_count INTEGER DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "DELETE FROM skills
+         WHERE rowid NOT IN (
+             SELECT MAX(rowid) FROM skills GROUP BY name, COALESCE(profile, '')
+         )",
+        [],
+    );
+    let _ = conn.execute(
+        "UPDATE skills SET profile = '' WHERE profile IS NULL",
+        [],
+    );
     conn.execute(
         "CREATE TABLE IF NOT EXISTS skill_revisions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -420,7 +511,7 @@ fn migrate_old_skills_to_db(conn: &Connection) -> Result<()> {
                             let now = chrono::Utc::now().to_rfc3339();
                             let _ = conn.execute(
                                 "INSERT OR IGNORE INTO skills (name, content, profile, created_at, last_used)
-                                 VALUES (?1, ?2, NULL, ?3, ?3)",
+                                 VALUES (?1, ?2, '', ?3, ?3)",
                                 params![name, content, now],
                             );
                         }
@@ -635,9 +726,9 @@ Manage multi-agent workflows, coordinate subagent delegations, and execute basic
 ## 1. Basic Tools Execution Protocol
 
 * **Filesystem & Code Outline**:
-  - Prefer reading specific line ranges via `view_file` over reading entire large files.
+  - Prefer reading specific line ranges via `read_file` over reading entire large files.
   - Locate targets using structural outlines (`code_outline`) or semantic queries (`ast_grep`) rather than generic substring lookups.
-  - Limit multi-line replacement scopes to contiguous blocks using `replace_file_content` or non-contiguous chunks using `multi_replace_file_content`.
+  - Limit multi-line replacement scopes to contiguous blocks using `replace_lines` or structured unified diffs/SEARCH-REPLACE blocks using `patch_file`.
 
 * **Command Execution & Safety**:
   - Use `exec_command` to compile and test code (`cargo check`, `cargo test`) immediately after code changes.
@@ -672,7 +763,7 @@ Manage multi-agent workflows, coordinate subagent delegations, and execute basic
         ("openz", "openz_fullstack_playbook", "# Skill: OpenZ Fullstack Playbook
 
 Execute autonomous end-to-end tasks across codebase search, file manipulation, cognitive memory, bookmarks, procedural skills, and tool catalog inspection with high reliability:
-1. Inspect codebase and project layout before making changes (`list_dir`, `view_file`, `grep_search`).
+1. Inspect codebase and project layout before making changes (`list_dir`, `read_file`, `grep_search`).
 2. Store workspace-critical context using `store_memory` and recall relevant information with `recall_memory`.
 3. Save external documentation, package registries, and git repos with `knowledge_source`.
 4. Persist newly discovered patterns or repetitive troubleshooting procedures via `curate_skill`.
@@ -713,7 +804,7 @@ Format, template, and dispatch messages across communication channels:
         ("automation_agent", "system_task_automation", "# Skill: System Task Automation
 
 Automate workflows, interact with user interfaces, and schedule actions:
-1. Conduct browser automation (scraping, E2E testing, visual QA) using Playwright, CDP, or web scrapers.
+1. Conduct browser automation (scraping, E2E testing, visual QA) using OpenZ's native `browser` tool and `crawl_site` / `web_fetch`.
 2. Structure and dispatch HTTP API calls and webhooks securely.
 3. Manage and configure recurring background cron jobs and schedules.
 4. Execute operations on the local file system and coordinate background alerts safely."),
@@ -733,6 +824,12 @@ Iteratively write, refactor, and verify code blocks inside compilation harnesses
              VALUES (?1, ?2, ?3, ?4, ?4)",
             params![name, content, profile, now],
         );
+        let _ = conn.execute(
+            "UPDATE skills SET content = ?2
+             WHERE name = ?1 AND profile = ?3
+               AND (content LIKE '%view_file%' OR content LIKE '%replace_file_content%')",
+            params![name, content, profile],
+        );
     }
     Ok(())
 }
@@ -741,30 +838,67 @@ pub fn load_skills() -> Result<Vec<Skill>> {
     load_skills_with_profile(None)
 }
 
+fn discover_workspace_and_external_dirs(
+    skills_config: &crate::config::schema::SkillsConfig,
+) -> Vec<(PathBuf, &'static str)> {
+    let mut roots = Vec::new();
+    match skills_config.workspace_skills_enabled {
+        true => {
+            for rel in [".openz/skills", ".agents/skills", ".claude/skills"] {
+                roots.push((crate::config::resolve_path(rel), "workspace"));
+            }
+        }
+        false => {}
+    }
+    let _ = dirs::home_dir().map(|home| {
+        roots.push((home.join(".agents").join("skills"), "external"));
+    });
+    for external_dir in &skills_config.external_dirs {
+        roots.push((crate::config::resolve_path(external_dir), "external"));
+    }
+    roots
+}
+
 fn add_file_skill_views(
     dir: &std::path::Path,
     source: &str,
+    is_protected: bool,
+    overwrite_existing: bool,
     views: &mut std::collections::HashMap<String, SkillView>,
 ) -> Result<()> {
     for (name, skill_path) in discover_skill_files_in_dir(dir)? {
-        let content = fs::read_to_string(&skill_path)?;
-        views.insert(
-            name.clone(),
-            SkillView {
-                validation_errors: validate_skill_metadata(&name, &content),
-                name,
-                content,
-                scope: source.to_string(),
-                profile: None,
-                source: source.to_string(),
-                path: Some(skill_path.display().to_string()),
-                enabled: true,
-                is_protected: true,
-                use_count: 0,
-                created_at: None,
-                last_used: None,
-            },
-        );
+        let should_insert = overwrite_existing || !views.contains_key(&name);
+        match should_insert {
+            false => {}
+            true => {
+                let content = fs::read_to_string(&skill_path)?;
+                let skill_ref = Skill {
+                    name: name.clone(),
+                    content: content.clone(),
+                };
+                views.insert(
+                    name.clone(),
+                    SkillView {
+                        description: skill_ref.description(),
+                        triggers: skill_ref.triggers(),
+                        validation_errors: validate_skill_metadata(&name, &content),
+                        name,
+                        content,
+                        scope: source.to_string(),
+                        profile: None,
+                        source: source.to_string(),
+                        path: Some(skill_path.display().to_string()),
+                        enabled: true,
+                        is_protected,
+                        use_count: 0,
+                        success_count: 0,
+                        revision_count: 0,
+                        created_at: None,
+                        last_used: None,
+                    },
+                );
+            }
+        }
     }
     Ok(())
 }
@@ -774,23 +908,42 @@ pub fn load_skill_views() -> Result<Vec<SkillView>> {
 
     match get_connection() {
         Ok(conn) => {
+            let mut rev_counts = std::collections::HashMap::<(String, String), usize>::new();
+            let _ = conn
+                .prepare("SELECT name, profile, COUNT(*) FROM skill_revisions GROUP BY name, profile")
+                .and_then(|mut rev_stmt| {
+                    let rows = rev_stmt.query_map([], |r| {
+                        Ok((
+                            r.get::<_, String>(0)?,
+                            r.get::<_, String>(1)?,
+                            r.get::<_, i64>(2).unwrap_or(0) as usize,
+                        ))
+                    })?;
+                    for (rname, rprof, rcnt) in rows.flatten() {
+                        rev_counts.insert((rname, rprof), rcnt);
+                    }
+                    Ok(())
+                });
+
             let mut stmt = conn.prepare(
-                "SELECT name, content, profile, use_count, created_at, last_used FROM skills",
+                "SELECT name, content, COALESCE(profile, ''), use_count, COALESCE(success_count, 0), created_at, last_used FROM skills",
             )?;
             let rows = stmt.query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
+                    row.get::<_, String>(2)?,
                     row.get::<_, i64>(3).unwrap_or(0),
-                    row.get::<_, Option<String>>(4).unwrap_or(None),
+                    row.get::<_, i64>(4).unwrap_or(0),
                     row.get::<_, Option<String>>(5).unwrap_or(None),
+                    row.get::<_, Option<String>>(6).unwrap_or(None),
                 ))
             })?;
 
             let db_path = get_db_path().display().to_string();
             for row in rows.flatten() {
-                let (name, content, profile, use_count, created_at, last_used) = row;
+                let (name, content, raw_prof, use_count, success_count, created_at, last_used) = row;
+                let profile = (!raw_prof.is_empty()).then_some(raw_prof.clone());
                 let scope = profile
                     .as_ref()
                     .map(|p| format!("subagent:{p}"))
@@ -800,9 +953,19 @@ pub fn load_skill_views() -> Result<Vec<SkillView>> {
                     .map(|p| format!("{p}/{name}"))
                     .unwrap_or_else(|| name.clone());
                 let is_protected = profile.is_some();
+                let revision_count = rev_counts
+                    .get(&(name.clone(), raw_prof))
+                    .copied()
+                    .unwrap_or(0);
+                let skill_ref = Skill {
+                    name: name.clone(),
+                    content: content.clone(),
+                };
                 views.insert(
                     key,
                     SkillView {
+                        description: skill_ref.description(),
+                        triggers: skill_ref.triggers(),
                         validation_errors: validate_skill_metadata(&name, &content),
                         name,
                         content,
@@ -813,6 +976,8 @@ pub fn load_skill_views() -> Result<Vec<SkillView>> {
                         enabled: true,
                         is_protected,
                         use_count,
+                        success_count,
+                        revision_count,
                         created_at,
                         last_used,
                     },
@@ -822,34 +987,41 @@ pub fn load_skill_views() -> Result<Vec<SkillView>> {
         Err(_) => {}
     }
 
+    let _ = add_file_skill_views(&get_skills_dir(), "global", false, false, &mut views);
+
     let skills_config = crate::config::loader::load_config()
         .map(|config| config.skills)
         .unwrap_or_default();
-    match skills_config.workspace_skills_enabled {
-        true => add_file_skill_views(&get_workspace_skills_dir(), "workspace", &mut views)?,
-        false => {}
-    }
-    for external_dir in skills_config.external_dirs {
-        let dir = crate::config::resolve_path(&external_dir);
-        add_file_skill_views(&dir, "external", &mut views)?;
+    for (dir, source) in discover_workspace_and_external_dirs(&skills_config) {
+        add_file_skill_views(&dir, source, true, true, &mut views)?;
     }
 
     for spec in opencaveman::builtin_caveman_skills() {
         views
             .entry(spec.name.to_string())
-            .or_insert_with(|| SkillView {
-                validation_errors: validate_skill_metadata(spec.name, spec.content),
-                name: spec.name.to_string(),
-                content: spec.content.to_string(),
-                scope: "builtin".to_string(),
-                profile: None,
-                source: "opencaveman".to_string(),
-                path: Some(format!("opencaveman://skills/{}", spec.name)),
-                enabled: true,
-                is_protected: true,
-                use_count: 0,
-                created_at: None,
-                last_used: None,
+            .or_insert_with(|| {
+                let skill_ref = Skill {
+                    name: spec.name.to_string(),
+                    content: spec.content.to_string(),
+                };
+                SkillView {
+                    description: skill_ref.description(),
+                    triggers: skill_ref.triggers(),
+                    validation_errors: validate_skill_metadata(spec.name, spec.content),
+                    name: spec.name.to_string(),
+                    content: spec.content.to_string(),
+                    scope: "builtin".to_string(),
+                    profile: None,
+                    source: "opencaveman".to_string(),
+                    path: Some(format!("opencaveman://skills/{}", spec.name)),
+                    enabled: true,
+                    is_protected: true,
+                    use_count: 0,
+                    success_count: 0,
+                    revision_count: 0,
+                    created_at: None,
+                    last_used: None,
+                }
             });
     }
 
@@ -862,7 +1034,7 @@ pub fn load_skills_with_profile(profile_name: Option<&str>) -> Result<Vec<Skill>
     match get_connection() {
         Ok(conn) => {
             let mut stmt = conn.prepare(
-                "SELECT name, content FROM skills WHERE profile IS NULL OR profile = ?",
+                "SELECT name, content FROM skills WHERE COALESCE(profile, '') = '' OR profile = ?1",
             )?;
             let profile_str = profile_name.unwrap_or("");
             let rows = stmt.query_map(params![profile_str], |row| {
@@ -893,12 +1065,7 @@ pub fn load_skills_with_profile(profile_name: Option<&str>) -> Result<Vec<Skill>
     let skills_config = crate::config::loader::load_config()
         .map(|config| config.skills)
         .unwrap_or_default();
-    match skills_config.workspace_skills_enabled {
-        true => load_skill_files_from_dir(&get_workspace_skills_dir(), &mut skills_map)?,
-        false => {}
-    }
-    for external_dir in skills_config.external_dirs {
-        let dir = crate::config::resolve_path(&external_dir);
+    for (dir, _) in discover_workspace_and_external_dirs(&skills_config) {
         load_skill_files_from_dir(&dir, &mut skills_map)?;
     }
 
@@ -945,42 +1112,47 @@ pub fn archive_stale_skills() -> Result<()> {
             let now = chrono::Utc::now();
             let stale_duration = chrono::Duration::days(30);
 
-            let mut stmt = conn.prepare("SELECT name, profile, last_used, content FROM skills")?;
+            let mut stmt = conn.prepare(
+                "SELECT name, COALESCE(profile, ''), last_used, content FROM skills",
+            )?;
             let rows = stmt.query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
-                    row.get::<_, Option<String>>(1)?,
+                    row.get::<_, String>(1)?,
                     row.get::<_, Option<String>>(2)?,
                     row.get::<_, String>(3)?,
                 ))
             })?;
 
             let mut to_delete = Vec::new();
-            for (name, profile, last_used_opt, content) in rows.flatten() {
-                let is_stale = last_used_opt
-                    .as_deref()
-                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                    .is_some_and(|last_used_date| {
-                        let last_used_utc = last_used_date.with_timezone(&chrono::Utc);
-                        now.signed_duration_since(last_used_utc) > stale_duration
-                    });
+            for (name, profile_key, last_used_opt, content) in rows.flatten() {
+                let is_stale = profile_key.is_empty()
+                    && last_used_opt
+                        .as_deref()
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .is_some_and(|last_used_date| {
+                            let last_used_utc = last_used_date.with_timezone(&chrono::Utc);
+                            now.signed_duration_since(last_used_utc) > stale_duration
+                        });
                 match is_stale {
                     true => {
                         let archive_dir = get_skills_dir().join("archive");
                         fs::create_dir_all(&archive_dir)?;
                         let dest_path = archive_dir.join(format!("{}.md", name));
                         let _ = fs::write(dest_path, content);
-                        to_delete.push((name, profile));
+                        to_delete.push((name, profile_key));
                     }
                     false => {}
                 }
             }
 
-            for (name, profile) in to_delete {
+            for (name, profile_key) in to_delete {
                 let _ = conn.execute(
-                    "DELETE FROM skills WHERE name = ?1 AND profile IS ?2",
-                    params![name, profile],
+                    "DELETE FROM skills WHERE name = ?1 AND COALESCE(profile, '') = ?2",
+                    params![name, profile_key],
                 );
+                let active_mirror = get_skills_dir().join(format!("{}.md", name));
+                let _ = fs::remove_file(&active_mirror);
 
                 let aura_blue = "\x1b[38;2;96;165;250m";
                 let color_reset = "\x1b[0m";
@@ -1003,63 +1175,6 @@ pub fn archive_stale_skills() -> Result<()> {
     Ok(())
 }
 
-fn is_stop_word(w: &str) -> bool {
-    matches!(
-        w,
-        "the"
-            | "and"
-            | "for"
-            | "but"
-            | "not"
-            | "you"
-            | "your"
-            | "this"
-            | "that"
-            | "with"
-            | "from"
-            | "have"
-            | "are"
-            | "was"
-            | "were"
-            | "been"
-            | "has"
-            | "had"
-            | "will"
-            | "would"
-            | "should"
-            | "could"
-            | "can"
-            | "about"
-            | "there"
-            | "their"
-            | "here"
-            | "them"
-            | "then"
-            | "than"
-            | "standard"
-            | "openz"
-            | "agent"
-            | "tool"
-            | "logic"
-            | "code"
-            | "implementation"
-            | "project"
-            | "file"
-            | "custom"
-            | "user"
-            | "does"
-            | "done"
-            | "some"
-            | "what"
-            | "when"
-            | "where"
-            | "which"
-            | "who"
-            | "how"
-            | "why"
-    )
-}
-
 fn load_profile_skill_names(profile_name: Option<&str>) -> std::collections::HashSet<String> {
     let mut profile_skills = std::collections::HashSet::new();
     let prof = match profile_name {
@@ -1070,7 +1185,7 @@ fn load_profile_skill_names(profile_name: Option<&str>) -> std::collections::Has
         Ok(conn) => conn,
         Err(_) => return profile_skills,
     };
-    let mut stmt = match conn.prepare("SELECT name FROM skills WHERE profile = ?") {
+    let mut stmt = match conn.prepare("SELECT name FROM skills WHERE profile = ?1") {
         Ok(stmt) => stmt,
         Err(_) => return profile_skills,
     };
@@ -1082,6 +1197,106 @@ fn load_profile_skill_names(profile_name: Option<&str>) -> std::collections::Has
         profile_skills.insert(name);
     }
     profile_skills
+}
+
+fn load_skill_usage_stats(
+    profile_name: Option<&str>,
+) -> std::collections::HashMap<String, (i64, i64)> {
+    let mut stats = std::collections::HashMap::new();
+    let conn = match get_connection() {
+        Ok(c) => c,
+        Err(_) => return stats,
+    };
+    let profile_str = profile_name.unwrap_or("");
+    let mut stmt = match conn.prepare(
+        "SELECT name, use_count, COALESCE(success_count, 0)
+         FROM skills
+         WHERE COALESCE(profile, '') = '' OR profile = ?1",
+    ) {
+        Ok(s) => s,
+        Err(_) => return stats,
+    };
+    let rows = match stmt.query_map(params![profile_str], |r| {
+        Ok((
+            r.get::<_, String>(0)?,
+            r.get::<_, i64>(1).unwrap_or(0),
+            r.get::<_, i64>(2).unwrap_or(0),
+        ))
+    }) {
+        Ok(r) => r,
+        Err(_) => return stats,
+    };
+    for (name, uses, successes) in rows.flatten() {
+        stats.insert(name, (uses, successes));
+    }
+    stats
+}
+
+pub fn record_skill_activation(name: &str, profile_name: Option<&str>) {
+    let safe_name = sanitize_skill_name(name);
+    let profile_key = profile_name.unwrap_or("");
+    let now = chrono::Utc::now().to_rfc3339();
+    let _ = get_connection().map(|conn| {
+        let updated = conn
+            .execute(
+                "UPDATE skills SET use_count = use_count + 1, last_used = ?1
+                 WHERE name = ?2 AND COALESCE(profile, '') = ?3",
+                params![now, safe_name, profile_key],
+            )
+            .unwrap_or(0);
+        let _ = (updated == 0 && !profile_key.is_empty()).then(|| {
+            let _ = conn.execute(
+                "UPDATE skills SET use_count = use_count + 1, last_used = ?1
+                 WHERE name = ?2 AND COALESCE(profile, '') = ''",
+                params![now, safe_name],
+            );
+        });
+    });
+}
+
+pub fn record_skill_outcome(name: &str, profile_name: Option<&str>, succeeded: bool) {
+    match succeeded {
+        false => {}
+        true => {
+            let safe_name = sanitize_skill_name(name);
+            let profile_key = profile_name.unwrap_or("");
+            let _ = get_connection().map(|conn| {
+                let updated = conn
+                    .execute(
+                        "UPDATE skills
+                         SET success_count = COALESCE(success_count, 0) + 1
+                         WHERE name = ?1 AND COALESCE(profile, '') = ?2",
+                        params![safe_name, profile_key],
+                    )
+                    .unwrap_or(0);
+                let _ = (updated == 0 && !profile_key.is_empty()).then(|| {
+                    let _ = conn.execute(
+                        "UPDATE skills
+                         SET success_count = COALESCE(success_count, 0) + 1
+                         WHERE name = ?1 AND COALESCE(profile, '') = ''",
+                        params![safe_name],
+                    );
+                });
+            });
+        }
+    }
+}
+
+pub fn load_ranked_skill_matches_with_profile(
+    user_content: &str,
+    session_messages: &[crate::session::Message],
+    profile_name: Option<&str>,
+) -> Result<Vec<ScoredSkillMatch>> {
+    let all_skills = load_skills_with_profile(profile_name)?;
+    let profile_skills = load_profile_skill_names(profile_name);
+    let usage_stats = load_skill_usage_stats(profile_name);
+    Ok(ranker::rank_skills_bm25f(
+        all_skills,
+        user_content,
+        session_messages,
+        &profile_skills,
+        &usage_stats,
+    ))
 }
 
 pub fn load_relevant_skills_with_profile(
@@ -1098,91 +1313,149 @@ pub fn load_scored_relevant_skills_with_profile(
     session_messages: &[crate::session::Message],
     profile_name: Option<&str>,
 ) -> Result<Vec<(f32, Skill)>> {
-    let all_skills = load_skills_with_profile(profile_name)?;
-    match all_skills.is_empty() {
-        true => return Ok(Vec::new()),
-        false => {}
+    load_ranked_skill_matches_with_profile(user_content, session_messages, profile_name).map(
+        |matches| {
+            matches
+                .into_iter()
+                .map(|m| (m.score, m.skill))
+                .collect()
+        },
+    )
+}
+
+fn locate_skill_package_dir(name: &str, profile: Option<&str>) -> Option<PathBuf> {
+    let safe_name = sanitize_skill_name(name);
+    let skills_config = crate::config::loader::load_config()
+        .map(|config| config.skills)
+        .unwrap_or_default();
+    let mut candidate_roots = Vec::new();
+    for (dir, _) in discover_workspace_and_external_dirs(&skills_config) {
+        candidate_roots.push(dir);
     }
+    let _ = profile.map(|prof| {
+        candidate_roots.push(
+            crate::config::runtime_data_dir()
+                .join("subagents")
+                .join(prof)
+                .join("skills"),
+        );
+    });
+    candidate_roots.push(get_skills_dir());
 
-    let profile_skills = load_profile_skill_names(profile_name);
+    candidate_roots.into_iter().find_map(|root| {
+        let pkg_dir = root.join(&safe_name);
+        (pkg_dir.join("SKILL.md").is_file()).then_some(pkg_dir)
+    })
+}
 
-    let mut search_context = user_content.to_lowercase();
-    for msg in session_messages.iter().rev().take(3) {
-        search_context.push(' ');
-        search_context.push_str(&msg.content.to_lowercase());
-    }
-
-    let search_words: Vec<&str> = search_context
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|w| w.len() > 3 && !is_stop_word(w))
-        .collect();
-
-    let mut relevant_scored = Vec::new();
-    for skill in all_skills {
-        let is_profile_specific = profile_skills.contains(&skill.name);
-        let triggers = skill.triggers();
-        let trigger_match = triggers
-            .iter()
-            .any(|t| !t.trim().is_empty() && search_context.contains(&t.to_lowercase()));
-        let name_exact_match = search_context.contains(&skill.name.to_lowercase());
-        let name_match = skill
-            .name
-            .split('_')
-            .any(|word| word.len() > 2 && search_context.contains(word));
-
-        let desc_sample = skill
-            .content
-            .chars()
-            .take(500)
-            .collect::<String>()
-            .to_lowercase();
-        let content_match = search_words.iter().any(|word| desc_sample.contains(*word));
-
-        let score = [
-            (trigger_match, 10.0f32),
-            (name_exact_match, 8.0f32),
-            (is_profile_specific, 5.0f32),
-            (name_match, 3.0f32),
-            (content_match, 1.0f32),
-        ]
-        .into_iter()
-        .fold(0.0f32, |acc, (matched, weight)| match matched {
-            true => acc + weight,
-            false => acc,
-        });
-
-        match score > 0.0 {
-            true => relevant_scored.push((score, skill)),
-            false => {}
+fn list_relative_files_under(pkg_dir: &std::path::Path, subdir: &str) -> Vec<String> {
+    let target = pkg_dir.join(subdir);
+    match target.is_dir() {
+        false => Vec::new(),
+        true => {
+            let mut out = Vec::new();
+            let _ = fs::read_dir(&target).map(|entries| {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    let _ = p
+                        .is_file()
+                        .then(|| {
+                            p.file_name()
+                                .and_then(|n| n.to_str())
+                                .map(|name| format!("{subdir}/{name}"))
+                        })
+                        .flatten()
+                        .map(|rel| out.push(rel));
+                }
+            });
+            out.sort();
+            out
         }
     }
+}
 
-    relevant_scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+pub fn inspect_skill_package(
+    name: &str,
+    profile: Option<&str>,
+) -> Result<Option<(Skill, Vec<String>, Vec<String>)>> {
+    let safe_name = sanitize_skill_name(name);
+    let skills = load_skills_with_profile(profile)?;
+    let found = skills
+        .into_iter()
+        .find(|s| s.name == safe_name || sanitize_skill_name(&s.name) == safe_name);
+    Ok(found.map(|skill| {
+        let (refs, scripts) = match locate_skill_package_dir(&skill.name, profile) {
+            Some(pkg_dir) => (
+                list_relative_files_under(&pkg_dir, "references"),
+                list_relative_files_under(&pkg_dir, "scripts"),
+            ),
+            None => (Vec::new(), Vec::new()),
+        };
+        (skill, refs, scripts)
+    }))
+}
 
-    match (!relevant_scored.is_empty(), get_connection()) {
-        (true, Ok(conn)) => {
-            let now = chrono::Utc::now().to_rfc3339();
-            for (_, skill) in &relevant_scored {
-                match profile_skills.contains(&skill.name) {
-                    true => {
-                        let _ = conn.execute(
-                            "UPDATE skills SET use_count = use_count + 1, last_used = ?1 WHERE name = ?2 AND profile = ?3",
-                            params![now, skill.name, profile_name.unwrap_or("")],
-                        );
-                    }
-                    false => {
-                        let _ = conn.execute(
-                            "UPDATE skills SET use_count = use_count + 1, last_used = ?1 WHERE name = ?2 AND profile IS NULL",
-                            params![now, skill.name],
-                        );
-                    }
-                }
+pub fn read_skill_reference(
+    name: &str,
+    relative_path: &str,
+    profile: Option<&str>,
+) -> Result<String> {
+    let pkg_dir = locate_skill_package_dir(name, profile)
+        .ok_or_else(|| anyhow::anyhow!("Skill '{}' has no package directory", name))?;
+    let trimmed = relative_path.trim().trim_start_matches('/');
+    let allowed_prefix = trimmed.starts_with("references/")
+        || trimmed.starts_with("scripts/")
+        || trimmed.starts_with("assets/");
+    match allowed_prefix && !trimmed.contains("..") {
+        false => anyhow::bail!(
+            "Reference path '{}' must be inside references/, scripts/, or assets/ without '..'",
+            relative_path
+        ),
+        true => {
+            let canonical_pkg = pkg_dir.canonicalize()?;
+            let canonical_target = pkg_dir.join(trimmed).canonicalize()?;
+            match canonical_target.starts_with(&canonical_pkg) && canonical_target.is_file() {
+                true => Ok(fs::read_to_string(canonical_target)?),
+                false => anyhow::bail!("Reference file '{}' is outside skill package", relative_path),
             }
         }
-        _ => {}
+    }
+}
+
+pub fn patch_skill(
+    name: &str,
+    old_text: Option<&str>,
+    new_text: &str,
+    profile: Option<&str>,
+) -> Result<Skill> {
+    let safe_name = sanitize_skill_name(name);
+    let skills = load_skills_with_profile(profile)?;
+    let existing = skills
+        .into_iter()
+        .find(|s| s.name == safe_name || sanitize_skill_name(&s.name) == safe_name)
+        .ok_or_else(|| anyhow::anyhow!("Skill '{}' not found for patch", name))?;
+
+    let updated_content = match old_text.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(needle) => match existing.content.contains(needle) {
+            true => existing.content.replacen(needle, new_text, 1),
+            false => anyhow::bail!(
+                "old_text snippet was not found in skill '{}'; call curate_skill(action='view', skill_name='{}') first",
+                safe_name,
+                safe_name
+            ),
+        },
+        None => format!("{}\n\n{}\n", existing.content.trim_end(), new_text.trim()),
+    };
+
+    match profile {
+        Some(prof) => save_subagent_skill(prof, &safe_name, &updated_content)?,
+        None => save_skill(&safe_name, &updated_content)?,
     }
 
-    Ok(relevant_scored)
+    Ok(Skill {
+        name: safe_name,
+        content: updated_content,
+    })
 }
 
 fn is_shell_name(tok: &str) -> bool {
@@ -1382,19 +1655,12 @@ pub fn save_skill(name: &str, content: &str) -> Result<()> {
         .map(|existing| record_skill_revision_snapshot(&conn, &safe_name, None, &existing));
 
     let now = chrono::Utc::now().to_rfc3339();
-    let updated = conn.execute(
-        "UPDATE skills SET content = ?2, last_used = ?3 WHERE name = ?1 AND profile IS NULL",
+    conn.execute(
+        "INSERT INTO skills (name, content, profile, created_at, last_used)
+         VALUES (?1, ?2, '', ?3, ?3)
+         ON CONFLICT(name, profile) DO UPDATE SET content = ?2, last_used = ?3",
         params![safe_name, normalized_content, now],
     )?;
-    (updated == 0)
-        .then(|| {
-            conn.execute(
-                "INSERT INTO skills (name, content, profile, created_at, last_used)
-                 VALUES (?1, ?2, NULL, ?3, ?3)",
-                params![safe_name, normalized_content, now],
-            )
-        })
-        .transpose()?;
 
     let global_skills_dir = get_skills_dir();
     let _ = fs::create_dir_all(&global_skills_dir);
@@ -1430,7 +1696,7 @@ pub fn delete_skill_with_profile(name: &str, profile_name: Option<&str>) -> Resu
         }
         None => {
             conn.execute(
-                "DELETE FROM skills WHERE name = ?1 AND profile IS NULL",
+                "DELETE FROM skills WHERE name = ?1 AND COALESCE(profile, '') = ''",
                 params![safe_name],
             )?;
             let file_path = get_skills_dir().join(format!("{}.md", safe_name));

@@ -48,3 +48,49 @@ fn fallback_parse_curator_salvages_user_preferences_and_skills() {
     assert_eq!(salvaged.skills_to_save[0].name, "cyberpunk_ui");
     assert_eq!(salvaged.skills_to_save[0].vault_category.as_deref(), Some("websites"));
 }
+
+#[test]
+fn fallback_parse_curator_handles_escaped_quotes_and_code_braces() {
+    let raw = r##"{
+        "user_preferences": "- Always quote \"strict_mode\" in configs",
+        "skills_to_save": [
+            {
+                "operation": "patch",
+                "name": "rust_brace_skill",
+                "new_text": "# Rust Example\n```rust\nfn demo() { let map = \"{\\\"k\\\": 1}\"; }\n```"
+            }
+        ],
+        "truncated_tail": "unfinished..."##;
+
+    let salvaged = fallback_parse_curator(raw).expect("escape-aware salvage should succeed");
+    assert_eq!(
+        salvaged.user_preferences,
+        "- Always quote \"strict_mode\" in configs"
+    );
+    assert_eq!(salvaged.skills_to_save.len(), 1);
+    assert_eq!(salvaged.skills_to_save[0].name, "rust_brace_skill");
+    assert_eq!(salvaged.skills_to_save[0].operation.as_deref(), Some("patch"));
+}
+
+#[test]
+fn trajectory_recovered_after_error_detects_error_then_clean_fix() {
+    let make_msg = |role: &str, content: &str| crate::session::Message {
+        role: role.to_string(),
+        content: content.to_string(),
+        timestamp: None,
+        extra: serde_json::Map::new(),
+    };
+    let recovered = vec![
+        make_msg("user", "compile project"),
+        make_msg("tool", r#"{"error":"compile failed"}"#),
+        make_msg("tool", r#"{"status":"ok","status_code":0}"#),
+    ];
+    assert!(trajectory_recovered_after_error(&recovered));
+
+    let unrecovered = vec![
+        make_msg("user", "compile project"),
+        make_msg("tool", r#"{"status":"ok"}"#),
+        make_msg("tool", r#"{"error":"still broken"}"#),
+    ];
+    assert!(!trajectory_recovered_after_error(&unrecovered));
+}

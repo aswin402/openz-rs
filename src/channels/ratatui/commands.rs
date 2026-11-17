@@ -32,7 +32,7 @@ enum RatatuiSlashCommand<'a> {
     Memory,
     Sources(&'a str),
     Workflows(&'a str),
-    Skills,
+    Skills(&'a str),
     Mcps,
     Audit,
     Sop(&'a str),
@@ -51,10 +51,17 @@ impl<'a> RatatuiSlashCommand<'a> {
             "/streaming" => return Self::Streaming,
             "/servers" => return Self::Servers,
             "/memory" => return Self::Memory,
-            "/skills" | "/skill" => return Self::Skills,
+            "/skills" | "/skill" => return Self::Skills(""),
             "/mcps" => return Self::Mcps,
             "/audit" => return Self::Audit,
             _ => {}
+        }
+        match trimmed.strip_prefix("/skills").or_else(|| trimmed.strip_prefix("/skill")) {
+            Some(rest) => match rest.starts_with(char::is_whitespace) {
+                true => return Self::Skills(rest.trim()),
+                false => {}
+            },
+            None => {}
         }
         match trimmed.strip_prefix("/settings") {
             Some(rest) => match rest.is_empty() || rest.starts_with(char::is_whitespace) {
@@ -509,19 +516,58 @@ pub async fn handle_slash_command(
                 Err(e) => assistant_msg(format!("✕ Error searching workflows: {}", e)),
             }
         }
-        RatatuiSlashCommand::Skills => match crate::agent::skills::load_skills() {
-            Ok(skills) => match skills.is_empty() {
-                true => assistant_msg("No active skills found in `~/.openz/skills`."),
-                false => {
-                    let mut lines = vec!["**Active Skills:**".to_string()];
-                    for skill in skills {
-                        lines.push(format!("• **{}** — {}", skill.name, skill.description()));
+        RatatuiSlashCommand::Skills(args_raw) => {
+            let tokens: Vec<&str> = args_raw.split_whitespace().collect();
+            match tokens.as_slice() {
+                [] | ["list"] => match crate::agent::skills::load_skills() {
+                    Ok(skills) => match skills.is_empty() {
+                        true => assistant_msg("No active skills found in `~/.openz/skills`."),
+                        false => {
+                            let mut lines = vec!["**Active Skills:**".to_string()];
+                            for skill in skills {
+                                lines.push(format!(
+                                    "• **{}** — {}",
+                                    skill.name,
+                                    skill.description()
+                                ));
+                            }
+                            assistant_msg(lines.join("\n"))
+                        }
+                    },
+                    Err(e) => assistant_msg(format!("✕ Error loading skills: {}", e)),
+                },
+                ["view" | "inspect", name] | [name] => {
+                    match crate::agent::skills::inspect_skill_package(name, None) {
+                        Ok(Some((skill, refs, _))) => {
+                            let refs_note = (!refs.is_empty())
+                                .then(|| format!("\n\n**References:** `{}`", refs.join("`, `")))
+                                .unwrap_or_default();
+                            assistant_msg(format!(
+                                "### Skill: `{}`\n\n{}{}",
+                                skill.name, skill.content, refs_note
+                            ))
+                        }
+                        Ok(None) => assistant_msg(format!("✕ Skill `{}` not found.", name)),
+                        Err(e) => assistant_msg(format!("✕ Error inspecting skill: {}", e)),
                     }
-                    assistant_msg(lines.join("\n"))
                 }
-            },
-            Err(e) => assistant_msg(format!("✕ Error loading skills: {}", e)),
-        },
+                ["delete" | "rm", name] => match crate::agent::skills::delete_skill(name) {
+                    Ok(()) => assistant_msg(format!("✓ Deleted skill `{}`.", name)),
+                    Err(e) => assistant_msg(format!("✕ Error deleting skill: {}", e)),
+                },
+                ["rollback" | "undo", name] => {
+                    match crate::agent::skills::rollback_skill(name, None, None) {
+                        Ok(restored) => {
+                            assistant_msg(format!("✓ Rolled back skill `{}`.", restored.name))
+                        }
+                        Err(e) => assistant_msg(format!("✕ Rollback failed: {}", e)),
+                    }
+                }
+                _ => assistant_msg(
+                    "Usage: `/skills`, `/skill view <name>`, `/skill delete <name>`, or `/skill rollback <name>`",
+                ),
+            }
+        }
         RatatuiSlashCommand::Mcps => {
             let latest_cfg = crate::config::loader::load_config().ok();
             let servers = latest_cfg

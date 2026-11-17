@@ -72,8 +72,9 @@ export interface ConfigSlice {
   setCavemanLevel: (level: string) => void;
   cycleCavemanLevel: (forward?: boolean) => void;
   toggleStreamingMode: () => void;
-  saveSkill: (name: string, content: string) => void;
-  deleteSkill: (name: string) => void;
+  saveSkill: (name: string, content: string, profile?: string | null) => void;
+  deleteSkill: (name: string, profile?: string | null) => void;
+  rollbackSkill: (name: string, profile?: string | null) => void;
   saveSubagent: (data: SaveSubagentData) => void;
   updateSubagentSettings: (data: UpdateSubagentSettingsData) => void;
   deleteSubagent: (name: string) => void;
@@ -205,7 +206,7 @@ export const createConfigSlice: StateCreator<
     get().updateSettings({ streaming: !get().streamingMode });
   },
 
-  saveSkill: (name, content) => {
+  saveSkill: (name, content, profile) => {
     set({
       workspaceNotice: createWorkspaceNotice(
         'skills',
@@ -213,10 +214,10 @@ export const createConfigSlice: StateCreator<
         'Skill save requested. Waiting for gateway refresh.',
       ),
     });
-    wsService.saveSkill(name, content);
+    wsService.saveSkill(name, content, profile);
   },
 
-  deleteSkill: (name) => {
+  deleteSkill: (name, profile) => {
     set({
       workspaceNotice: createWorkspaceNotice(
         'skills',
@@ -224,7 +225,18 @@ export const createConfigSlice: StateCreator<
         'Skill delete requested. Waiting for gateway refresh.',
       ),
     });
-    wsService.deleteSkill(name);
+    wsService.deleteSkill(name, profile);
+  },
+
+  rollbackSkill: (name, profile) => {
+    set({
+      workspaceNotice: createWorkspaceNotice(
+        'skills',
+        'info',
+        'Skill rollback requested. Waiting for gateway refresh.',
+      ),
+    });
+    wsService.rollbackSkill(name, profile);
   },
 
   saveSubagent: (data) => {

@@ -824,7 +824,7 @@ pub struct RatatuiApp {
     pub start_time: Instant,
     /// Active caveman mode flag for the TUI session
     pub caveman_mode: bool,
-    /// Active caveman intensity tier slug (`lite`, `full`, `ultra`, `wenyan_*`)
+    /// Active caveman intensity tier slug (`lite`, `full`, `ultra`, `symbolic_*`)
     pub caveman_level: String,
     /// Compact cumulative token savings badge (e.g. `1.2k`)
     pub caveman_saved_badge: String,

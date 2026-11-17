@@ -4,11 +4,11 @@ export type CavemanLevelSlug =
   | 'lite'
   | 'full'
   | 'ultra'
-  | 'wenyan_lite'
-  | 'wenyan_full'
-  | 'wenyan_ultra';
+  | 'symbolic_lite'
+  | 'symbolic_full'
+  | 'symbolic_ultra';
 
-export type CavemanScriptFamily = 'latin_controlled' | 'classical_wenyan';
+export type CavemanScriptFamily = 'latin_controlled' | 'symbolic_notation';
 
 export interface CavemanLevelOption {
   slug: CavemanLevelSlug;
@@ -65,34 +65,34 @@ export const CAVEMAN_LEVEL_OPTIONS: readonly CavemanLevelOption[] = [
     example: 'DB pool timeout: max_connections too low -> raise 10 to 32 in db.toml.',
   },
   {
-    slug: 'wenyan_lite',
-    label: 'Wenyan Lite — Semi-Classical',
-    shortBadge: '文·Lite',
+    slug: 'symbolic_lite',
+    label: 'Symbolic Lite — Structured Shorthand',
+    shortBadge: 'Sym·Lite',
     targetSavingsPct: 62,
-    scriptFamily: 'classical_wenyan',
+    scriptFamily: 'symbolic_notation',
     summary:
-      'Concise semi-classical Chinese prose while keeping all code, paths, CLI flags, and symbols verbatim.',
-    example: '組件重繪因 options 每幀新建引用，宜以 useMemo 緩存之。',
+      'Compact English shorthand using causal arrows and engineering abbreviations while keeping all code, paths, and flags verbatim.',
+    example: 'Component re-renders each frame -> options allocates new ref; wrap in useMemo.',
   },
   {
-    slug: 'wenyan_full',
-    label: 'Wenyan Full — Classical 文言',
-    shortBadge: '文·Full',
-    targetSavingsPct: 70,
-    scriptFamily: 'classical_wenyan',
+    slug: 'symbolic_full',
+    label: 'Symbolic Full — Causal Notation',
+    shortBadge: 'Sym·Full',
+    targetSavingsPct: 72,
+    scriptFamily: 'symbolic_notation',
     summary:
-      'Classical Literary Chinese syntax for prose paired with byte-exact ASCII code, identifiers, and commands.',
-    example: 'auth 鑑權誤：過期判式反置，易 < 為 > 即癒。',
+      'Dense [CAUSE] -> [FIX] English causal notation paired with byte-exact ASCII code, identifiers, and commands.',
+    example: '[CAUSE] auth middleware exp check inverted -> [FIX] flip < to >.',
   },
   {
-    slug: 'wenyan_ultra',
-    label: 'Wenyan Ultra — Extreme 極簡文言',
-    shortBadge: '文·Ultra',
+    slug: 'symbolic_ultra',
+    label: 'Symbolic Ultra — Atomic Delta',
+    shortBadge: 'Sym·Ultra',
     targetSavingsPct: 76,
-    scriptFamily: 'classical_wenyan',
+    scriptFamily: 'symbolic_notation',
     summary:
-      'Ultra-compact 4–8 character classical clauses paired with exact ASCII symbols for peak token density.',
-    example: 'db.toml max_connections 隘→改 32。',
+      'Ultra-compact 3–6 word English target: issue -> patch deltas paired with exact ASCII symbols for peak token density.',
+    example: 'db.toml max_connections low -> set 32.',
   },
 ];
 
@@ -114,13 +114,15 @@ const CAVEMAN_ALIAS_MAP: Readonly<Record<string, CavemanLevelSlug>> = {
   max: 'ultra',
   extreme: 'ultra',
   telegraphic: 'ultra',
-  wenyan_lite: 'wenyan_lite',
-  wenyan: 'wenyan_full',
-  wenyan_full: 'wenyan_full',
-  classical: 'wenyan_full',
-  megacave: 'wenyan_full',
-  wenyan_ultra: 'wenyan_ultra',
-  megacave_ultra: 'wenyan_ultra',
+  symbolic_lite: 'symbolic_lite',
+  shorthand: 'symbolic_lite',
+  symbolic: 'symbolic_full',
+  symbolic_full: 'symbolic_full',
+  notation: 'symbolic_full',
+  megacave: 'symbolic_full',
+  symbolic_ultra: 'symbolic_ultra',
+  megacave_ultra: 'symbolic_ultra',
+  atomic: 'symbolic_ultra',
 };
 
 function sanitizeLevelToken(raw: string): string {

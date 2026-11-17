@@ -1,7 +1,7 @@
 //! Interactive `/settings` modal for the OpenZ Ratatui TUI.
 //!
 //! Descriptor-driven configuration menu supporting `caveman` mode enable/disable,
-//! `caveman` intensity tier selection (`lite`..`wenyan_ultra`), response streaming,
+//! `caveman` intensity tier selection (`lite`..`symbolic_ultra`), response streaming,
 //! reasoning display, security policy, BPF sandboxing, and TUI color themes —
 //! without requiring dedicated slash commands.
 
@@ -43,7 +43,7 @@ pub const TUI_SETTING_DESCRIPTORS: &[TuiSettingDescriptor] = &[
     TuiSettingDescriptor {
         id: TuiSettingId::CavemanLevel,
         label: "Caveman Intensity",
-        subtitle: "Select caveman compression tier: lite, full, ultra, or wenyan classical",
+        subtitle: "Select caveman compression tier: lite, full, ultra, or symbolic notation",
     },
     TuiSettingDescriptor {
         id: TuiSettingId::Streaming,

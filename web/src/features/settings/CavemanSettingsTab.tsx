@@ -34,12 +34,12 @@ interface ScriptFilterOption {
 const SCRIPT_FILTER_OPTIONS: readonly ScriptFilterOption[] = [
   { id: 'all', label: 'All Modes', badge: '6' },
   { id: 'latin_controlled', label: 'English ASD-STE100', badge: '3' },
-  { id: 'classical_wenyan', label: 'Classical Wenyan 文言', badge: '3' },
+  { id: 'symbolic_notation', label: 'Symbolic Notation', badge: '3' },
 ];
 
 const SCRIPT_FAMILY_LABELS: Readonly<Record<CavemanScriptFamily, string>> = {
   latin_controlled: 'ASD-STE100 English',
-  classical_wenyan: 'Classical Wenyan 文言',
+  symbolic_notation: 'Symbolic Notation',
 };
 
 const AUTO_CLARITY_GUARDRAILS: readonly { title: string; detail: string }[] = [

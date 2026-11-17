@@ -63,7 +63,7 @@ const NAV_SECTIONS: NavSectionMeta[] = [
     id: 'caveman',
     label: 'Caveman Mode',
     subtitle:
-      'Enable or disable caveman mode, configure intensity modes (Lite, Full, Ultra, Wenyan), and inspect OpenCaveman token savings',
+      'Enable or disable caveman mode, configure intensity modes (Lite, Full, Ultra, Symbolic), and inspect OpenCaveman token savings',
     icon: Zap,
   },
   {

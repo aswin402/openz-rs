@@ -30,8 +30,9 @@ export type WebSocketCommand =
   | { type: 'get_models'; provider?: string }
   | { type: 'toggle_favorite_model'; provider: string; model: string }
   | { type: 'set_config'; defaults?: Record<string, unknown>; providers?: Record<string, unknown>; channels?: Record<string, unknown> }
-  | { type: 'save_skill'; name: string; content: string }
-  | { type: 'delete_skill' | 'delete_subagent'; name: string }
+  | { type: 'save_skill'; name: string; content: string; profile?: string }
+  | { type: 'delete_skill' | 'rollback_skill'; name: string; profile?: string }
+  | { type: 'delete_subagent'; name: string }
   | { type: 'save_subagent'; name: string; description: string; systemPrompt: string; model?: string; fallbacks?: string[] }
   | { type: 'update_subagent_settings'; name: string; model?: string | null; fallbacks?: string[] | null }
   | { type: 'pause_cron_job' | 'resume_cron_job' | 'delete_cron_job'; id: string }
@@ -84,6 +85,7 @@ const COMMAND_NAMES = new Set<WebSocketCommandName>([
   'set_config',
   'save_skill',
   'delete_skill',
+  'rollback_skill',
   'delete_subagent',
   'save_subagent',
   'update_subagent_settings',

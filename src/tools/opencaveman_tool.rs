@@ -123,9 +123,9 @@ impl Tool for OpenCavemanTool {
                         "lite",
                         "full",
                         "ultra",
-                        "wenyan_lite",
-                        "wenyan_full",
-                        "wenyan_ultra"
+                        "symbolic_lite",
+                        "symbolic_full",
+                        "symbolic_ultra"
                     ],
                     "description": "Intensity tier for 'caveman' mode or compression."
                 },

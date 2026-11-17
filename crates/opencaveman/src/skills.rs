@@ -19,11 +19,11 @@ pub struct CavecrewProfileSpec {
 pub const BUILTIN_SKILLS: &[BuiltinSkillSpec] = &[
     BuiltinSkillSpec {
         name: "caveman",
-        description: "Adaptive terseness-driven token compression with Auto-Clarity safety boundaries across Lite, Full, Ultra, and Wenyan modes.",
+        description: "Adaptive terseness-driven token compression with Auto-Clarity safety boundaries across Lite, Full, Ultra, and Symbolic modes.",
         content: "---\n\
 name: caveman\n\
 description: Adaptive terseness-driven token compression with Auto-Clarity safety boundaries\n\
-triggers: [\"caveman\", \"terse mode\", \"token savings\", \"ultracave\", \"megacave\", \"wenyan mode\"]\n\
+triggers: [\"caveman\", \"terse mode\", \"token savings\", \"ultracave\", \"megacave\", \"symbolic mode\"]\n\
 vault_category: scripts\n\
 ---\n\
 # OpenCaveman Core Skill\n\n\

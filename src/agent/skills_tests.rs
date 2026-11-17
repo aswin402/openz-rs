@@ -165,3 +165,89 @@ fn builtin_opencaveman_skills_load_and_validate_cleanly() {
         );
     }
 }
+
+#[test]
+fn multiline_yaml_triggers_and_frontmatter_parse_cleanly() {
+    let raw = "---\n\
+name: curator_multiline_skill\n\
+description: Multiline trigger extraction verification\n\
+triggers:\n\
+  - \"static html chunk\"\n\
+  - \"segmented video render\"\n\
+vault_category: videos\n\
+---\n\n\
+# Curator Multiline Skill\n\
+Split renders into 8-second segments.";
+
+    let skill = Skill {
+        name: "curator_multiline_skill".to_string(),
+        content: raw.to_string(),
+    };
+    let trigs = skill.triggers();
+    assert_eq!(
+        trigs,
+        vec![
+            "static html chunk".to_string(),
+            "segmented video render".to_string()
+        ]
+    );
+    assert_eq!(skill.vault_category().as_deref(), Some("videos"));
+}
+
+#[test]
+fn bm25f_avoids_substring_false_positives_and_separates_high_confidence() {
+    let candidates = vec![
+        Skill {
+            name: "api_git_doc".to_string(),
+            content: "---\ndescription: REST API and Git documentation workflow\ntriggers: [\"rest api\", \"git workflow\"]\n---\n# API Git Doc\nUse structured commits.".to_string(),
+        },
+        Skill {
+            name: "postgres_index_tuning".to_string(),
+            content: "---\ndescription: Tune slow PostgreSQL queries with EXPLAIN ANALYZE\ntriggers: [\"postgres slow query\", \"explain analyze\"]\n---\n# Postgres Tuning\nInspect btree indexes.".to_string(),
+        },
+    ];
+    let profile_skills = std::collections::HashSet::new();
+    let usage = std::collections::HashMap::new();
+
+    // "rapid digital docker" previously matched "api", "git", "doc" via raw .contains()!
+    let false_positive = ranker::rank_skills_bm25f(
+        candidates.clone(),
+        "build a rapid digital docker container",
+        &[],
+        &profile_skills,
+        &usage,
+    );
+    assert!(
+        false_positive.iter().all(|m| m.skill.name != "api_git_doc"),
+        "whole-token BM25F must not substring-match 'api'/'git'/'doc' inside 'rapid'/'digital'/'docker'"
+    );
+
+    let exact_hit = ranker::rank_skills_bm25f(
+        candidates,
+        "run explain analyze on this postgres slow query",
+        &[],
+        &profile_skills,
+        &usage,
+    );
+    assert_eq!(exact_hit.first().map(|m| m.skill.name.as_str()), Some("postgres_index_tuning"));
+    assert!(exact_hit[0].high_confidence);
+}
+
+#[test]
+fn default_subagent_skills_do_not_reference_deprecated_tool_names() {
+    for prof in ["openz_coordinator", "openz", "automation_agent"] {
+        let skills = load_skills_with_profile(Some(prof)).expect("load subagent skills");
+        for skill in skills {
+            assert!(
+                !skill.content.contains("view_file"),
+                "skill '{}' still references deprecated view_file",
+                skill.name
+            );
+            assert!(
+                !skill.content.contains("replace_file_content"),
+                "skill '{}' still references deprecated replace_file_content",
+                skill.name
+            );
+        }
+    }
+}

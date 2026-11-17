@@ -39,11 +39,14 @@ JSON Format:\n\
    \"user_preferences\": \"<bullet points of durable user preferences, design choices, styling tastes, or conventions to record in USER.md>\",\n\
    \"skills_to_save\": [\n\
      {\n\
-       \"name\": \"<name of skill, lowercase with underscores>\",\n\
+       \"operation\": \"create|patch\",\n\
+       \"name\": \"<name of skill, lowercase with underscores — reuse an existing skill name with operation='patch' whenever refining an existing skill rather than creating duplicates>\",\n\
        \"description\": \"<one-sentence summary of when to use this skill>\",\n\
        \"triggers\": [\"<keyword or user intent phrase>\"],\n\
        \"vault_category\": \"websites|scripts|images|videos|documents|presentations|data|diagrams|templates|exports\",\n\
-       \"content\": \"<complete markdown content for the skill including YAML frontmatter with name, description, triggers, vault_category, followed by headers, design rules, paths, and examples.>\"\n\
+       \"old_text\": \"<optional exact snippet from existing skill when operation='patch'>\",\n\
+       \"new_text\": \"<optional replacement or appended section when operation='patch'>\",\n\
+       \"content\": \"<complete markdown content for operation='create' including YAML frontmatter with name, description, triggers, vault_category, followed by headers, rules, and steps.>\"\n\
      }\n\
    ],\n\
    \"sources_to_save\": [\n\
@@ -117,6 +120,8 @@ fn should_spawn_curator(session_key: &str, debounce: Duration) -> bool {
 #[derive(Deserialize, Default, Clone, Debug)]
 pub(crate) struct ReviewSkill {
     #[serde(default)]
+    pub(crate) operation: Option<String>,
+    #[serde(default)]
     pub(crate) name: String,
     #[serde(default)]
     pub(crate) description: Option<String>,
@@ -124,6 +129,10 @@ pub(crate) struct ReviewSkill {
     pub(crate) triggers: Vec<String>,
     #[serde(default)]
     pub(crate) vault_category: Option<String>,
+    #[serde(default)]
+    pub(crate) old_text: Option<String>,
+    #[serde(default)]
+    pub(crate) new_text: Option<String>,
     #[serde(default)]
     pub(crate) content: String,
 }
@@ -172,14 +181,46 @@ pub(crate) struct ReviewResponse {
     pub(crate) workflows_to_save: Vec<ReviewWorkflow>,
 }
 
+fn decode_json_string_escape(after_open_quote: &str) -> Option<String> {
+    let mut decoded = String::new();
+    let mut escaped = false;
+    for ch in after_open_quote.chars() {
+        match (escaped, ch) {
+            (true, 'n') => {
+                decoded.push('\n');
+                escaped = false;
+            }
+            (true, 'r') => {
+                decoded.push('\r');
+                escaped = false;
+            }
+            (true, 't') => {
+                decoded.push('\t');
+                escaped = false;
+            }
+            (true, other) => {
+                decoded.push(other);
+                escaped = false;
+            }
+            (false, '\\') => {
+                escaped = true;
+            }
+            (false, '"') => return Some(decoded),
+            (false, other) => {
+                decoded.push(other);
+            }
+        }
+    }
+    (!decoded.trim().is_empty()).then_some(decoded)
+}
+
 fn salvage_string_field(raw: &str, field_name: &str) -> Option<String> {
     let pos = raw.find(field_name)?;
     let after = &raw[pos + field_name.len()..];
     let colon_pos = after.find(':')?;
     let val_part = after[colon_pos + 1..].trim_start();
     let inner = val_part.strip_prefix('"')?;
-    let end_quote = inner.find('"')?;
-    let unescaped = inner[..end_quote].replace("\\n", "\n").replace("\\\"", "\"");
+    let unescaped = decode_json_string_escape(inner)?;
     (!unescaped.trim().is_empty()).then_some(unescaped)
 }
 
@@ -199,19 +240,34 @@ where
     };
     let inside_array = &after[bracket_start + 1..];
     let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
     let mut obj_start: Option<usize> = None;
     let mut items = Vec::new();
 
     for (idx, ch) in inside_array.char_indices() {
-        match (ch, depth) {
-            ('{', 0) => {
+        match (in_string, escaped, ch, depth) {
+            (true, true, _, _) => {
+                escaped = false;
+            }
+            (true, false, '\\', _) => {
+                escaped = true;
+            }
+            (true, false, '"', _) => {
+                in_string = false;
+            }
+            (true, false, _, _) => {}
+            (false, _, '"', _) => {
+                in_string = true;
+            }
+            (false, _, '{', 0) => {
                 obj_start = Some(idx);
                 depth = 1;
             }
-            ('{', _) => {
+            (false, _, '{', _) => {
                 depth += 1;
             }
-            ('}', 1) => {
+            (false, _, '}', 1) => {
                 depth = 0;
                 let _ = obj_start
                     .take()
@@ -219,14 +275,23 @@ where
                     .filter(&is_valid)
                     .map(|item| items.push(item));
             }
-            ('}', d) => {
+            (false, _, '}', d) => {
                 depth = d.saturating_sub(1);
             }
-            (']', 0) => break,
+            (false, _, ']', 0) => break,
             _ => {}
         }
     }
     items
+}
+
+fn review_skill_has_payload(skill: &ReviewSkill) -> bool {
+    !skill.name.trim().is_empty()
+        && (!skill.content.trim().is_empty()
+            || skill
+                .new_text
+                .as_deref()
+                .is_some_and(|s| !s.trim().is_empty()))
 }
 
 pub(crate) fn fallback_parse_curator(raw: &str) -> Option<ReviewResponse> {
@@ -245,9 +310,7 @@ pub(crate) fn fallback_parse_curator(raw: &str) -> Option<ReviewResponse> {
     });
 
     resp.skills_to_save =
-        salvage_json_array_objects::<ReviewSkill, _>(raw, "\"skills_to_save\"", |skill| {
-            !skill.name.is_empty() && !skill.content.is_empty()
-        });
+        salvage_json_array_objects::<ReviewSkill, _>(raw, "\"skills_to_save\"", review_skill_has_payload);
     any_salvaged = any_salvaged || !resp.skills_to_save.is_empty();
 
     resp.sources_to_save =
@@ -392,9 +455,95 @@ fn truncate_curator_log_text(text: &str, max_len: usize, with_dash: bool) -> Str
     }
 }
 
+fn tool_message_indicates_failure(content: &str) -> bool {
+    match serde_json::from_str::<serde_json::Value>(content) {
+        Ok(val) => {
+            val.get("error").is_some()
+                || val.get("status_code").is_some_and(|c| c != 0)
+                || val.get("exit_code").is_some_and(|c| c != 0)
+                || val.get("success").and_then(|v| v.as_bool()) == Some(false)
+        }
+        Err(_) => false,
+    }
+}
+
+pub(crate) fn trajectory_recovered_after_error(messages: &[crate::session::Message]) -> bool {
+    let last_user_idx = messages.iter().rposition(|m| m.role == "user").unwrap_or(0);
+    let mut saw_failure = false;
+    let mut recovered_after_failure = false;
+    for msg in messages[last_user_idx..].iter().filter(|m| m.role == "tool") {
+        let failed = tool_message_indicates_failure(&msg.content);
+        match (failed, saw_failure) {
+            (true, _) => {
+                saw_failure = true;
+                recovered_after_failure = false;
+            }
+            (false, true) => {
+                recovered_after_failure = true;
+            }
+            (false, false) => {}
+        }
+    }
+    saw_failure && recovered_after_failure
+}
+
+fn build_budgeted_existing_skills_context(
+    user_query: &str,
+    messages: &[crate::session::Message],
+    profile_name: Option<&str>,
+) -> String {
+    let all_skills = crate::agent::skills::load_skills_with_profile(profile_name).unwrap_or_default();
+    match all_skills.is_empty() {
+        true => String::new(),
+        false => {
+            let mut out = String::from(
+                "Existing Skills Catalog (reuse an existing skill name with operation='patch' instead of creating duplicate skills):\n",
+            );
+            for skill in &all_skills {
+                let line = format!("- {}: {}\n", skill.name, skill.description());
+                match out.chars().count() + line.chars().count() <= 3_000 {
+                    true => out.push_str(&line),
+                    false => break,
+                }
+            }
+
+            let closest = crate::agent::skills::load_ranked_skill_matches_with_profile(
+                user_query,
+                messages,
+                profile_name,
+            )
+            .unwrap_or_default();
+            let _ = (!closest.is_empty()).then(|| {
+                out.push_str("\nClosest Existing Skill Bodies (for exact `old_text` when patching):\n");
+                for m in closest.iter().take(3) {
+                    let snippet = truncate_curator_log_text(&m.skill.content, 1_800, false);
+                    let block = format!("=== {} ===\n{}\n\n", m.skill.name, snippet);
+                    match out.chars().count() + block.chars().count() <= 8_500 {
+                        true => out.push_str(&block),
+                        false => break,
+                    }
+                }
+            });
+            out
+        }
+    }
+}
+
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
     let config = &ctx.config;
     loop_ref.session_manager.save(&ctx.session).await?;
+    let turn_recovered = trajectory_recovered_after_error(&ctx.messages);
+    let turn_succeeded_cleanly = (!ctx.final_content.trim().is_empty())
+        && (!ctx.final_content.starts_with("⚠️ Halted execution:"))
+        && (ctx.turn_errors.is_empty() || turn_recovered);
+    let active_prof = super::build::subagent_profile_name(ctx.session_key);
+    for used_skill in &ctx.skill_notice_names {
+        crate::agent::skills::record_skill_outcome(
+            used_skill,
+            active_prof,
+            turn_succeeded_cleanly,
+        );
+    }
     let _ = (config.agents.defaults.caveman_mode && !ctx.final_content.trim().is_empty()).then(
         || {
             let level =
@@ -457,6 +606,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
             true => {
                 let session_manager = loop_ref.session_manager.clone();
                 let session_key = ctx.session_key.to_string();
+                let user_query = ctx.user_content.to_string();
                 let provider = ctx.active_provider.clone();
                 let messages = ctx.messages.clone();
                 let tools_used = ctx.tools_used.clone();
@@ -536,17 +686,11 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                         })
                         .unwrap_or_default();
 
-                    let mut existing_skills_desc = String::new();
-                    let _ =
-                        crate::agent::skills::load_skills_with_profile(profile_name.as_deref())
-                            .map(|skills| {
-                                for skill in skills {
-                                    existing_skills_desc.push_str(&format!(
-                                        "Skill Name: {}\nContent:\n{}\n\n",
-                                        skill.name, skill.content
-                                    ));
-                                }
-                            });
+                    let existing_skills_desc = build_budgeted_existing_skills_context(
+                        &user_query,
+                        &messages,
+                        profile_name.as_deref(),
+                    );
 
                     let system_prompt_review = self_improvement_review_prompt();
                     let mut prompt_content = String::new();
@@ -573,58 +717,82 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     });
 
                     let tool_count = messages.iter().filter(|m| m.role == "tool").count();
-                    let _ = (tool_count >= 5).then(|| {
+                    let explicit_learning_intent = messages
+                        .iter()
+                        .rev()
+                        .take(3)
+                        .filter(|msg| msg.role == "user")
+                        .any(|msg| {
+                            let text = msg.content.to_lowercase();
+                            CURATOR_USER_INTENT_KEYWORDS
+                                .iter()
+                                .any(|kw| text.contains(kw))
+                        });
+
+                    let created_vault_deliverable = turn_succeeded_cleanly
+                        && messages.iter().any(|m| {
+                            m.extra
+                                .get("tool_calls")
+                                .and_then(|v| v.as_array())
+                                .is_some_and(|tool_calls| {
+                                    tool_calls.iter().any(|tc| {
+                                        let name = tc
+                                            .get("name")
+                                            .and_then(|v| v.as_str())
+                                            .or_else(|| {
+                                                tc.get("function")
+                                                    .and_then(|f| f.get("name"))
+                                                    .and_then(|v| v.as_str())
+                                            })
+                                            .unwrap_or("");
+                                        let args = tc
+                                            .get("arguments")
+                                            .or_else(|| {
+                                                tc.get("function")
+                                                    .and_then(|f| f.get("arguments"))
+                                            })
+                                            .map(|v| v.to_string())
+                                            .unwrap_or_default();
+                                        matches!(
+                                            name,
+                                            "write_file"
+                                                | "patch_file"
+                                                | "replace_lines"
+                                                | "generate_image"
+                                        ) && args.contains("openz_vault")
+                                    })
+                                })
+                        });
+
+                    let allow_skill_synthesis = explicit_learning_intent
+                        || (turn_succeeded_cleanly
+                            && (turn_recovered
+                                || created_vault_deliverable
+                                || tool_count >= 5));
+
+                    let _ = (turn_succeeded_cleanly && turn_recovered).then(|| {
+                        prompt_content.push_str(
+                            "[VERIFIED ERROR RECOVERY DETECTED: An earlier tool call failed and the agent resolved it cleanly. Extract or patch a concise troubleshooting skill ONLY when the root cause and fix generalize beyond this single file.]\n\n",
+                        );
+                    });
+
+                    let _ = (turn_succeeded_cleanly && tool_count >= 5).then(|| {
                         prompt_content.push_str(&format!(
-                            "[SYSTEM NOTICE: The recent task was complex and involved {} tool executions. Review the successful trajectory and extract a reusable skill so the agent can perform this category of work efficiently next time.]\n\n",
+                            "[MULTI-STEP WORKFLOW COMPLETED: Turn succeeded across {} tool executions. Extract or patch a reusable procedural skill ONLY when the workflow is generalizable across future tasks; return empty `skills_to_save` for routine single-repo edits.]\n\n",
                             tool_count
                         ));
                     });
 
-                    let created_deliverable = messages.iter().any(|m| {
-                        m.extra
-                            .get("tool_calls")
-                            .and_then(|v| v.as_array())
-                            .is_some_and(|tool_calls| {
-                                tool_calls.iter().any(|tc| {
-                                    let name = tc
-                                        .get("name")
-                                        .and_then(|v| v.as_str())
-                                        .or_else(|| {
-                                            tc.get("function")
-                                                .and_then(|f| f.get("name"))
-                                                .and_then(|v| v.as_str())
-                                        })
-                                        .unwrap_or("");
-                                    let args = tc
-                                        .get("arguments")
-                                        .or_else(|| {
-                                            tc.get("function").and_then(|f| f.get("arguments"))
-                                        })
-                                        .map(|v| v.to_string())
-                                        .unwrap_or_default();
-                                    matches!(
-                                        name,
-                                        "write_file"
-                                            | "patch_file"
-                                            | "replace_lines"
-                                            | "generate_image"
-                                    ) && [
-                                        "openz_vault",
-                                        "index.html",
-                                        ".css",
-                                        ".js",
-                                        ".py",
-                                        ".sh",
-                                        ".rs",
-                                    ]
-                                    .iter()
-                                    .any(|ext| args.contains(ext))
-                                })
-                            })
+                    let _ = created_vault_deliverable.then(|| {
+                        prompt_content.push_str(
+                            "[VAULT DELIVERABLE COMPLETED: Synthesize or patch a reusable deliverable skill documenting the architecture, design tokens, and reproduction steps.]\n\n",
+                        );
                     });
 
-                    let _ = created_deliverable.then(|| {
-                        prompt_content.push_str("[DELIVERABLE DETECTED: The agent produced project files or creative deliverables in this turn. You MUST synthesize a reusable procedural skill in `skills_to_save` documenting the architecture, design choices, colors/styling, tech stack, and step-by-step procedure used to build this deliverable so subsequent requests can replicate or build upon it.]\n\n");
+                    let _ = (!allow_skill_synthesis).then(|| {
+                        prompt_content.push_str(
+                            "[SKILL GATE: Keep `skills_to_save` empty `[]` for this turn; only consolidate `user_preferences` or `memory_content` when applicable.]\n\n",
+                        );
                     });
 
                     let existing_user_profile = crate::agent::skills::load_user_profile();
@@ -916,23 +1084,68 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                                             }
                                         }
 
-                                        for skill in review.skills_to_save.into_iter().filter(|s| {
-                                            !s.name.is_empty() && !s.content.is_empty()
-                                        }) {
-                                            let final_content =
-                                                format_curator_skill_content(&skill);
-                                            let res = match profile_name.as_deref() {
-                                                Some(prof) => {
-                                                    crate::agent::skills::save_subagent_skill(
-                                                        prof,
-                                                        &skill.name,
-                                                        &final_content,
-                                                    )
-                                                }
-                                                None => crate::agent::skills::save_skill(
+                                        for skill in review
+                                            .skills_to_save
+                                            .into_iter()
+                                            .filter(|_| allow_skill_synthesis)
+                                            .filter(review_skill_has_payload)
+                                        {
+                                            let is_patch = skill
+                                                .operation
+                                                .as_deref()
+                                                .is_some_and(|op| op.eq_ignore_ascii_case("patch"));
+                                            let patch_payload = skill
+                                                .new_text
+                                                .as_deref()
+                                                .filter(|s| !s.trim().is_empty())
+                                                .unwrap_or(skill.content.as_str());
+                                            let res = match is_patch && !patch_payload.trim().is_empty() {
+                                                true => crate::agent::skills::patch_skill(
                                                     &skill.name,
-                                                    &final_content,
-                                                ),
+                                                    skill.old_text.as_deref(),
+                                                    patch_payload,
+                                                    profile_name.as_deref(),
+                                                )
+                                                .map(|_| ())
+                                                .or_else(|_| {
+                                                    match !skill.content.trim().is_empty() {
+                                                        false => Err(anyhow::anyhow!(
+                                                            "Patch target missing and no fallback content supplied"
+                                                        )),
+                                                        true => {
+                                                            let final_content =
+                                                                format_curator_skill_content(&skill);
+                                                            match profile_name.as_deref() {
+                                                                Some(prof) => crate::agent::skills::save_subagent_skill(
+                                                                    prof,
+                                                                    &skill.name,
+                                                                    &final_content,
+                                                                ),
+                                                                None => crate::agent::skills::save_skill(
+                                                                    &skill.name,
+                                                                    &final_content,
+                                                                ),
+                                                            }
+                                                        }
+                                                    }
+                                                }),
+                                                false => {
+                                                    let final_content =
+                                                        format_curator_skill_content(&skill);
+                                                    match profile_name.as_deref() {
+                                                        Some(prof) => {
+                                                            crate::agent::skills::save_subagent_skill(
+                                                                prof,
+                                                                &skill.name,
+                                                                &final_content,
+                                                            )
+                                                        }
+                                                        None => crate::agent::skills::save_skill(
+                                                            &skill.name,
+                                                            &final_content,
+                                                        ),
+                                                    }
+                                                }
                                             };
                                             match res {
                                                 Err(e) => {

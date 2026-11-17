@@ -233,7 +233,7 @@ export const App: React.FC = () => {
         id: 'open-caveman-settings',
         group: 'Actions',
         label: 'Caveman Mode Settings',
-        subtitle: 'Enable or disable caveman mode and configure Lite, Full, Ultra, or Wenyan modes',
+        subtitle: 'Enable or disable caveman mode and configure Lite, Full, Ultra, or Symbolic modes',
         icon: Zap,
         onSelect: () => {
           setActiveGatewaySection('caveman');

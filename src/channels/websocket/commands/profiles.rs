@@ -43,19 +43,30 @@ pub(crate) fn save_skill_event(envelope: &Value) -> Value {
         .get("content")
         .and_then(Value::as_str)
         .unwrap_or("");
+    let profile = envelope
+        .get("profile")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     match name.is_empty() {
         true => super::super::protocol::event_error("Skill name is required."),
-        false => match crate::agent::skills::save_skill(name, content) {
-            Ok(()) => super::super::protocol::skills_updated(
-                crate::agent::skills::load_skill_views().unwrap_or_default(),
-                "saved",
-                Some(name.to_string()),
-            ),
-            Err(err) => super::super::protocol::event_error(format!(
-                "Failed to save skill: {}",
-                err
-            )),
-        },
+        false => {
+            let res = match profile {
+                Some(prof) => crate::agent::skills::save_subagent_skill(prof, name, content),
+                None => crate::agent::skills::save_skill(name, content),
+            };
+            match res {
+                Ok(()) => super::super::protocol::skills_updated(
+                    crate::agent::skills::load_skill_views().unwrap_or_default(),
+                    "saved",
+                    Some(name.to_string()),
+                ),
+                Err(err) => super::super::protocol::event_error(format!(
+                    "Failed to save skill: {}",
+                    err
+                )),
+            }
+        }
     }
 }
 
@@ -65,9 +76,14 @@ pub(crate) fn delete_skill_event(envelope: &Value) -> Value {
         .and_then(Value::as_str)
         .unwrap_or("")
         .trim();
+    let profile = envelope
+        .get("profile")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     match name.is_empty() {
         true => super::super::protocol::event_error("Skill name is required."),
-        false => match crate::agent::skills::delete_skill(name) {
+        false => match crate::agent::skills::delete_skill_with_profile(name, profile) {
             Ok(()) => super::super::protocol::skills_updated(
                 crate::agent::skills::load_skill_views().unwrap_or_default(),
                 "deleted",
@@ -75,6 +91,37 @@ pub(crate) fn delete_skill_event(envelope: &Value) -> Value {
             ),
             Err(err) => super::super::protocol::event_error(format!(
                 "Failed to delete skill: {}",
+                err
+            )),
+        },
+    }
+}
+
+pub(crate) fn rollback_skill_event(envelope: &Value) -> Value {
+    let name = envelope
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim();
+    let profile = envelope
+        .get("profile")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let revision_id = envelope
+        .get("revisionId")
+        .or_else(|| envelope.get("revision_id"))
+        .and_then(Value::as_i64);
+    match name.is_empty() {
+        true => super::super::protocol::event_error("Skill name is required."),
+        false => match crate::agent::skills::rollback_skill(name, profile, revision_id) {
+            Ok(restored) => super::super::protocol::skills_updated(
+                crate::agent::skills::load_skill_views().unwrap_or_default(),
+                "rolled_back",
+                Some(restored.name),
+            ),
+            Err(err) => super::super::protocol::event_error(format!(
+                "Failed to roll back skill: {}",
                 err
             )),
         },

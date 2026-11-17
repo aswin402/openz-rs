@@ -68,8 +68,9 @@ export interface WebSocketCommandMethods {
   requestConfig(): void;
   updateConfig(patch: Record<string, unknown>): string | null;
   sendSetConfig(data: WebSocketConfigData): string | null;
-  saveSkill(name: string, content: string): void;
-  deleteSkill(name: string): void;
+  saveSkill(name: string, content: string, profile?: string | null): void;
+  deleteSkill(name: string, profile?: string | null): void;
+  rollbackSkill(name: string, profile?: string | null): void;
   saveSubagent(data: SaveSubagentData): void;
   updateSubagentSettings(data: UpdateSubagentSettingsData): void;
   deleteSubagent(name: string): void;
@@ -160,11 +161,14 @@ export function createWebSocketCommands(
       send({ type: 'set_config', defaults: patch }, { queueIfDisconnected: true }),
     sendSetConfig: (data) =>
       send({ type: 'set_config', ...data }, { queueIfDisconnected: true }),
-    saveSkill: (name, content) => {
-      send({ type: 'save_skill', name, content });
+    saveSkill: (name, content, profile) => {
+      send({ type: 'save_skill', name, content, ...(profile ? { profile } : {}) });
     },
-    deleteSkill: (name) => {
-      send({ type: 'delete_skill', name });
+    deleteSkill: (name, profile) => {
+      send({ type: 'delete_skill', name, ...(profile ? { profile } : {}) });
+    },
+    rollbackSkill: (name, profile) => {
+      send({ type: 'rollback_skill', name, ...(profile ? { profile } : {}) });
     },
     saveSubagent: (data) => {
       send({ type: 'save_subagent', ...data });

@@ -183,7 +183,7 @@ pub fn detect_command_intent(user_prompt: &str) -> Option<CavemanCommandIntent> 
                     [first] => match first.as_str() {
                         "ultracave" => Some(CavemanCommandIntent::EnableLevel(CavemanLevel::Ultra)),
                         "megacave" => {
-                            Some(CavemanCommandIntent::EnableLevel(CavemanLevel::WenyanFull))
+                            Some(CavemanCommandIntent::EnableLevel(CavemanLevel::SymbolicFull))
                         }
                         _ => None,
                     },

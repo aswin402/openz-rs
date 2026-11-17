@@ -4,7 +4,7 @@ use anyhow::Result;
 use std::collections::HashSet;
 
 pub const MIN_MATCH_SCORE: f64 = 6.0;
-pub const MIN_SKILL_NOTICE_SCORE: f32 = 3.0;
+pub const MIN_SKILL_NOTICE_SCORE: f32 = crate::agent::skills::HIGH_CONFIDENCE_SKILL_SCORE;
 pub const MAX_SOURCE_CONTEXT_CHARS: usize = 3000;
 pub const DEFAULT_BRIEF_CONTEXT_CHARS: usize = 3600;
 pub const DEFAULT_WORKFLOW_CONTEXT_CHARS: usize = 3600;
@@ -63,74 +63,88 @@ fn format_skills_part(
     profile_name: Option<&str>,
     seen_skill_notices: &mut HashSet<String>,
 ) -> String {
-    let relevant_scored = crate::agent::skills::load_scored_relevant_skills_with_profile(
+    let ranked = crate::agent::skills::load_ranked_skill_matches_with_profile(
         user_content,
         messages,
         profile_name,
     )
     .unwrap_or_default();
 
-    match relevant_scored.is_empty() {
-        false => {
-            let mut skills_part =
-                "\n\nHere are the active guidelines and procedural skills you should follow:\n"
-                    .to_string();
-            let top_count = 2.min(relevant_scored.len());
-            let mut notified_names: Vec<String> = Vec::new();
-            let allow_notice = !is_local_operational_or_ack_query(user_content);
+    let mut pinned = Vec::new();
+    let mut progressive_index = Vec::new();
+    for item in ranked {
+        match item.high_confidence && pinned.len() < 2 {
+            true => pinned.push(item),
+            false => progressive_index.push(item.skill),
+        }
+    }
 
-            for (score, skill) in relevant_scored.iter().take(top_count) {
+    let mut skills_part = String::new();
+    let allow_notice = !is_local_operational_or_ack_query(user_content);
+    let mut notified_names: Vec<String> = Vec::new();
+
+    match pinned.is_empty() {
+        true => {}
+        false => {
+            skills_part.push_str(
+                "\n\nHere are the active high-confidence procedural skills matched for this task:\n",
+            );
+            for item in &pinned {
                 skills_part.push_str(&format!(
                     "=== Active Skill: {} ===\n{}\n\n",
-                    skill.name, skill.content
+                    item.skill.name, item.skill.content
                 ));
-                let _ = (allow_notice
-                    && *score >= MIN_SKILL_NOTICE_SCORE
-                    && should_emit_skill_notice(seen_skill_notices, &skill.name))
-                .then(|| {
-                    notified_names.push(skill.name.clone());
+                crate::agent::skills::record_skill_activation(&item.skill.name, profile_name);
+                let _ = should_emit_skill_notice(seen_skill_notices, &item.skill.name).then(|| {
+                    let _ = (allow_notice && item.score >= MIN_SKILL_NOTICE_SCORE)
+                        .then(|| notified_names.push(item.skill.name.clone()));
                 });
             }
-
-            let _ = (!notified_names.is_empty()).then(|| {
-                let detail = notified_names.join(", ");
-                let notice = format!("◇ Skill used: {}", detail);
-                crate::channels::send_session_notice(session_key, &notice);
-                crate::channels::websocket::publish_activity_notice(
-                    session_key,
-                    "skill",
-                    "Skill used",
-                    detail,
-                );
-            });
-
-            let _ = (relevant_scored.len() > top_count).then(|| {
-                skills_part.push_str("[Indexed Skills Catalog]\nThe following additional skills are active in ~/.openz/skills/:\n");
-                for (_, skill) in relevant_scored.iter().skip(top_count) {
-                    let desc = skill.description();
-                    let triggers = skill.triggers();
-                    let triggers_str = (!triggers.is_empty())
-                        .then(|| format!(" (triggers: {})", triggers.join(", ")))
-                        .unwrap_or_default();
-                    skills_part.push_str(&format!("- {}: {}{}\n", skill.name, desc, triggers_str));
-                }
-                skills_part.push('\n');
-            });
-            skills_part
         }
-        true => crate::agent::skills::load_skills_with_profile(profile_name)
-            .ok()
-            .filter(|all_skills| !all_skills.is_empty())
-            .map(|all_skills| {
-                let mut skills_part = "\n\n[Available Skills Catalog]\nThe following procedural skills are indexed in ~/.openz/skills/:\n".to_string();
-                for skill in all_skills.iter().take(5) {
-                    skills_part.push_str(&format!("- {}: {}\n", skill.name, skill.description()));
-                }
-                skills_part.push('\n');
-                skills_part
-            })
-            .unwrap_or_default(),
     }
+
+    let _ = (!notified_names.is_empty()).then(|| {
+        let detail = notified_names.join(", ");
+        let notice = format!("◇ Skill used: {}", detail);
+        crate::channels::send_session_notice(session_key, &notice);
+        crate::channels::websocket::publish_activity_notice(
+            session_key,
+            "skill",
+            "Skill used",
+            detail,
+        );
+    });
+
+    let fallback_catalog = (pinned.is_empty() && progressive_index.is_empty())
+        .then(|| crate::agent::skills::load_skills_with_profile(profile_name).ok())
+        .flatten()
+        .unwrap_or_default();
+
+    let index_items: Vec<&crate::agent::skills::Skill> = match progressive_index.is_empty() {
+        false => progressive_index.iter().take(8).collect(),
+        true => fallback_catalog.iter().take(6).collect(),
+    };
+
+    let _ = (!index_items.is_empty()).then(|| {
+        skills_part.push_str(
+            "\n\n[Available Skills Index — Progressive Disclosure]\n\
+             Load full instructions or bundled `references/` on demand via `curate_skill(action=\"view\", skill_name=\"<name>\")`:\n",
+        );
+        for skill in index_items {
+            let desc = skill.description();
+            let triggers = skill.triggers();
+            let triggers_str = (!triggers.is_empty())
+                .then(|| {
+                    let preview: Vec<&str> = triggers.iter().take(4).map(String::as_str).collect();
+                    format!(" [triggers: {}]", preview.join(", "))
+                })
+                .unwrap_or_default();
+            skills_part.push_str(&format!("- {}: {}{}\n", skill.name, desc, triggers_str));
+        }
+        skills_part.push('\n');
+    });
+
+    skills_part
 }
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {

@@ -209,9 +209,9 @@ fn test_settings_modal_caveman_mode_and_intensity_cycling() {
 
     let expected_forward = [
         opencaveman::CavemanLevel::Ultra,
-        opencaveman::CavemanLevel::WenyanLite,
-        opencaveman::CavemanLevel::WenyanFull,
-        opencaveman::CavemanLevel::WenyanUltra,
+        opencaveman::CavemanLevel::SymbolicLite,
+        opencaveman::CavemanLevel::SymbolicFull,
+        opencaveman::CavemanLevel::SymbolicUltra,
         opencaveman::CavemanLevel::Lite,
         opencaveman::CavemanLevel::Full,
     ];

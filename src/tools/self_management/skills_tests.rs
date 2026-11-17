@@ -213,3 +213,77 @@ async fn test_curate_skills_snapshot_history_and_rollback() {
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[tokio::test]
+async fn test_curate_skill_view_patch_and_read_ref() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_skills_progressive_test_{}",
+        uuid::Uuid::new_v4()
+    ));
+    let pkg_dir = temp_dir.join("skills").join("pkg_demo");
+    std::fs::create_dir_all(pkg_dir.join("references")).unwrap();
+    std::fs::write(
+        pkg_dir.join("SKILL.md"),
+        "---\nname: pkg_demo\ndescription: Demo progressive skill\ntriggers:\n  - \"demo trigger\"\n---\n\n# Demo Skill\nStep 1: Old instruction",
+    )
+    .unwrap();
+    std::fs::write(
+        pkg_dir.join("references").join("guide.md"),
+        "# Reference Guide\nDeep API spec.",
+    )
+    .unwrap();
+
+    CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            let tool = CurateSkillTool;
+
+            let view_res = tool
+                .call(&serde_json::json!({
+                    "action": "view",
+                    "skill_name": "pkg_demo"
+                }))
+                .await
+                .unwrap();
+            assert_eq!(view_res["success"].as_bool(), Some(true));
+            assert_eq!(
+                view_res["references"].as_array().unwrap()[0].as_str(),
+                Some("references/guide.md")
+            );
+
+            let ref_res = tool
+                .call(&serde_json::json!({
+                    "action": "read_ref",
+                    "skill_name": "pkg_demo",
+                    "ref_path": "references/guide.md"
+                }))
+                .await
+                .unwrap();
+            assert!(ref_res["content"].as_str().unwrap().contains("Deep API spec"));
+
+            let traversal_err = tool
+                .call(&serde_json::json!({
+                    "action": "read_ref",
+                    "skill_name": "pkg_demo",
+                    "ref_path": "references/../../SKILL.md"
+                }))
+                .await;
+            assert!(traversal_err.is_err());
+
+            let patch_res = tool
+                .call(&serde_json::json!({
+                    "action": "patch",
+                    "skill_name": "pkg_demo",
+                    "old_text": "Step 1: Old instruction",
+                    "new_text": "Step 1: Patched instruction"
+                }))
+                .await
+                .unwrap();
+            assert!(patch_res["content"]
+                .as_str()
+                .unwrap()
+                .contains("Step 1: Patched instruction"));
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}

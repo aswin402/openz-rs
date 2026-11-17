@@ -8,6 +8,7 @@ pub mod doctor;
 pub mod logs;
 pub mod onboard;
 pub mod headless;
+pub mod skills;
 pub mod sop;
 pub mod streaming;
 pub mod tools;
@@ -183,6 +184,9 @@ pub async fn run_cli() -> Result<()> {
         Some(Command::Subagent) => {
             let config = crate::config::loader::load_config()?;
             crate::subagents::run_subagent_manager(config).await?;
+        }
+        Some(Command::Skills { action }) => {
+            skills::handle_skills(action).await?;
         }
         Some(Command::Doctor {
             scrub_secrets,
