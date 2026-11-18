@@ -5,6 +5,7 @@ import {
   BookOpen,
   Brain,
   CheckCircle2,
+  ChevronDown,
   FileCode2,
   GitBranch,
   Loader2,
@@ -26,6 +27,7 @@ import {
 import { ThinkingShimmer } from "@/components/agents/loading-states/thinking-shimmer"
 import { FOX_SILHOUETTE_PATH } from "@/components/OpenZFoxIcon"
 import { cn } from "@/lib/utils"
+import { ThinkingLoaderBadge, type BeuiLoaderVariant } from "./loader"
 
 export { OfficialBeuiAgentActivity }
 export type { AgentSearchResult, BeuiOfficialActivityItem }
@@ -293,6 +295,7 @@ export interface AgentActivityProps {
   mode?: "timeline" | "inline-collapsible"
   variant?: BeuiActivityVariant
   orbStyle?: BeuiActivityOrbStyle
+  loaderVariant?: BeuiLoaderVariant | null
   density?: BeuiActivityDensity
   maxHeight?: BeuiActivityMaxHeight | number
   contentType?: BeuiActivityContentType
@@ -817,6 +820,7 @@ export const AgentActivity: React.FC<AgentActivityProps> = ({
   mode = "inline-collapsible",
   variant = "orb-card",
   orbStyle = "dotted-orb",
+  loaderVariant = null,
   density = "comfortable",
   maxHeight = "standard",
   contentType = "mixed",
@@ -856,6 +860,27 @@ export const AgentActivity: React.FC<AgentActivityProps> = ({
   )
 
   if (!working && officialItems.length === 0) {
+    if (title && onOpenChange) {
+      const isExpanded = Boolean(open)
+      return (
+        <div className={cn("w-full text-sm", className)}>
+          <button
+            type="button"
+            aria-expanded={isExpanded}
+            onClick={() => onOpenChange(!isExpanded)}
+            className="group flex h-7 min-w-0 items-center gap-1.5 rounded-md text-left font-medium text-muted-foreground outline-none transition-colors hover:text-foreground"
+          >
+            <span className="truncate">{title}</span>
+            <ChevronDown
+              className={cn(
+                "size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-200 group-hover:text-foreground",
+                isExpanded && "rotate-180"
+              )}
+            />
+          </button>
+        </div>
+      )
+    }
     if (!emptyLabel) return null
     return (
       <div
@@ -876,8 +901,20 @@ export const AgentActivity: React.FC<AgentActivityProps> = ({
     defaultOpen ?? (mode === "timeline" ? true : !autoCollapse)
   const resolvedCollapseOnComplete = mode === "timeline" ? false : autoCollapse
 
-  const renderWorkingStatus =
-    orbStyle === "minimal-spinner"
+  const renderWorkingStatus = loaderVariant
+    ? ({ label }: { label: React.ReactNode; duration: number }) => (
+        <span className="inline-flex min-w-0 items-center gap-2">
+          <ThinkingLoaderBadge
+            variant={loaderVariant}
+            size={15}
+            className="shrink-0 text-primary"
+          />
+          {loaderVariant !== "scramble" && loaderVariant !== "percent" && (
+            <ThinkingShimmer>{label}</ThinkingShimmer>
+          )}
+        </span>
+      )
+    : orbStyle === "minimal-spinner"
       ? undefined
       : ({ label }: { label: React.ReactNode; duration: number }) => (
           <span className="inline-flex min-w-0 items-center gap-2">

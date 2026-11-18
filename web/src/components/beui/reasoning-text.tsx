@@ -1,7 +1,11 @@
 import * as React from "react"
-import { Brain, Sparkles } from "lucide-react"
+import { Brain } from "lucide-react"
 
 import { BeuiCollapsible } from "./collapsible"
+import {
+  ThinkingLoaderBadge,
+  type BeuiLoaderVariant,
+} from "./loader"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
@@ -13,12 +17,14 @@ export interface ReasoningTextProps {
   label?: string
   defaultOpen?: boolean
   variant?: BeuiReasoningVariant
+  loaderVariant?: BeuiLoaderVariant
   compact?: boolean
   className?: string
 }
 
 /**
- * @beui/reasoning-text — Shimmering status & collapsible chain-of-thought block.
+ * @beui/reasoning-text — Shimmering status & collapsible chain-of-thought block
+ * paired with `@beui/loader` thinking animations.
  */
 export const ReasoningText: React.FC<ReasoningTextProps> = ({
   text = "",
@@ -26,6 +32,7 @@ export const ReasoningText: React.FC<ReasoningTextProps> = ({
   label,
   defaultOpen,
   variant = "card",
+  loaderVariant = "dot-matrix",
   compact = false,
   className,
 }) => {
@@ -45,19 +52,23 @@ export const ReasoningText: React.FC<ReasoningTextProps> = ({
   )
 
   const latestThoughtLine = lines[lines.length - 1] ?? ""
+  const hideSeparateLabel =
+    loaderVariant === "scramble" || loaderVariant === "percent"
 
   if (!text) {
     return (
       <div
         className={cn(
-          "inline-flex select-none items-center gap-2 rounded-lg border border-border/55 bg-muted/30 px-2.5 py-1 text-xs",
+          "inline-flex select-none items-center gap-2 rounded-lg border border-border/55 bg-muted/30 px-2.5 py-1.5 text-xs text-primary",
           className
         )}
       >
-        <Sparkles className="size-3.5 animate-pulse text-primary" />
-        <span className="animate-pulse font-medium text-foreground/90">
-          {label || "Thinking…"}
-        </span>
+        <ThinkingLoaderBadge variant={loaderVariant} size={15} />
+        {!hideSeparateLabel && (
+          <span className="animate-pulse font-medium text-foreground/90">
+            {label || "Thinking…"}
+          </span>
+        )}
       </div>
     )
   }
@@ -70,9 +81,15 @@ export const ReasoningText: React.FC<ReasoningTextProps> = ({
           className
         )}
       >
-        <Brain
-          className={cn("size-3.5 shrink-0 text-primary", isStreaming && "animate-pulse")}
-        />
+        {isStreaming ? (
+          <ThinkingLoaderBadge
+            variant={loaderVariant}
+            size={14}
+            className="shrink-0 text-primary"
+          />
+        ) : (
+          <Brain className="size-3.5 shrink-0 text-primary" />
+        )}
         <span className="truncate">
           {isStreaming
             ? latestThoughtLine || label || "Reasoning…"
@@ -91,9 +108,15 @@ export const ReasoningText: React.FC<ReasoningTextProps> = ({
       variant={effectiveVariant === "timeline" ? "ghost" : "subtle"}
       className={cn("my-1.5", className)}
       icon={
-        <Brain
-          className={cn("size-3.5", isStreaming && "animate-pulse text-primary")}
-        />
+        isStreaming ? (
+          <ThinkingLoaderBadge
+            variant={loaderVariant}
+            size={14}
+            className="text-primary"
+          />
+        ) : (
+          <Brain className="size-3.5" />
+        )
       }
       title={
         <span className="flex min-w-0 items-center gap-2">

@@ -68,6 +68,8 @@ import {
   ACTIVITY_PLACEMENT_OPTIONS,
   ACTIVITY_VARIANT_OPTIONS,
   AGENT_AVATAR_OPTIONS,
+  BEUI_ALERT_STYLE_OPTIONS,
+  BEUI_LOADER_OPTIONS,
   AnimatedToastStack,
   AgentActivity,
   BeuiActivityOrb,
@@ -80,6 +82,7 @@ import {
   BeuiDataTable,
   BeuiFileDiff,
   BeuiJsonViewer,
+  BeuiLoader,
   BeuiMessageActions,
   BeuiModelSelector,
   BeuiPlanChecklist,
@@ -1540,48 +1543,119 @@ export const UiStudioModal: React.FC = () => {
               </div>
             )}
 
-            {/* 10. REASONING TEXT (@beui/reasoning-text) */}
+            {/* 10. REASONING TEXT & THINKING LOADER (@beui/reasoning-text & @beui/loader) */}
             {activeSection === 'reasoning-text' && (
-              <div className="grid grid-cols-1 gap-6">
-                {(
-                  [
-                    {
-                      id: 'card',
-                      title: 'BEUI Collapsible Reasoning Card',
-                      desc: 'Expandable chain-of-thought block with step count badge and monospace trace.',
-                      isDefault: true,
-                    },
-                    {
-                      id: 'timeline',
-                      title: 'BEUI Numbered Reasoning Timeline',
-                      desc: 'Clean numbered reasoning steps along a left accent rail.',
-                      isDefault: false,
-                    },
-                    {
-                      id: 'compact',
-                      title: 'BEUI Compact Status Pill',
-                      desc: 'Single-line live thinking summary pill without expanding height.',
-                      isDefault: false,
-                    },
-                  ] as const
-                ).map((opt) => (
-                  <VariantPreviewCard
-                    key={opt.id}
-                    title={opt.title}
-                    description={opt.desc}
-                    selected={state.thinkingAnimation === opt.id}
-                    isDefault={opt.isDefault}
-                    onSelect={() => applyCustomization({ thinkingAnimation: opt.id })}
-                  >
-                    <ReasoningText
-                      variant={opt.id}
-                      defaultOpen
-                      text={
-                        '1. Inspecting Cargo.toml & WebUI component tree\n2. Verifying zero-regex guard invariants\n3. Preparing concise response'
-                      }
-                    />
-                  </VariantPreviewCard>
-                ))}
+              <div className="space-y-8">
+                <div>
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                      <h2 className="text-sm font-semibold text-foreground">
+                        1. Thinking Loader Animation (@beui/loader — {BEUI_LOADER_OPTIONS.length} Styles)
+                      </h2>
+                      <p className="text-xs text-muted-foreground">
+                        Animates active Thinking, Searching, and Running Tools headers across Chat and Agent Activity.
+                      </p>
+                    </div>
+                    <Badge variant="secondary" className="font-mono text-[10px]">
+                      {state.thinkingLoader}
+                    </Badge>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                    {BEUI_LOADER_OPTIONS.map((loaderOpt) => {
+                      const activeLoader = state.thinkingLoader === loaderOpt.id;
+                      return (
+                        <button
+                          key={loaderOpt.id}
+                          type="button"
+                          onClick={() => applyCustomization({ thinkingLoader: loaderOpt.id })}
+                          className={cn(
+                            'flex flex-col items-start justify-between gap-3 rounded-2xl border p-3.5 text-left transition-colors',
+                            activeLoader
+                              ? 'border-primary/60 bg-primary/10 text-foreground ring-1 ring-primary/30'
+                              : 'border-border/65 bg-card/60 text-muted-foreground hover:border-border hover:bg-card hover:text-foreground',
+                          )}
+                        >
+                          <div className="flex h-10 w-full items-center justify-between">
+                            <span className="inline-flex h-9 min-w-9 items-center justify-center rounded-xl border border-border/55 bg-background/70 px-2 text-primary">
+                              <BeuiLoader
+                                variant={loaderOpt.id}
+                                size={
+                                  loaderOpt.id === 'scramble' || loaderOpt.id === 'percent'
+                                    ? 20
+                                    : 18
+                                }
+                                labels={{ label: 'Thinking', scramble: 'THINKING' }}
+                              />
+                            </span>
+                            {loaderOpt.isDefault && (
+                              <Badge variant="outline" className="px-1.5 py-0 text-[9px]">
+                                Default
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="min-w-0 w-full">
+                            <div className="truncate text-xs font-semibold text-foreground">
+                              {loaderOpt.title}
+                            </div>
+                            <div className="mt-0.5 line-clamp-2 text-[10.5px] text-muted-foreground">
+                              {loaderOpt.description}
+                            </div>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <h2 className="mb-3 text-sm font-semibold text-foreground">
+                    2. Reasoning Disclosure Layout (@beui/reasoning-text)
+                  </h2>
+                  <div className="grid grid-cols-1 gap-6">
+                    {(
+                      [
+                        {
+                          id: 'card',
+                          title: 'BEUI Collapsible Reasoning Card',
+                          desc: 'Expandable chain-of-thought block with step count badge and monospace trace.',
+                          isDefault: true,
+                        },
+                        {
+                          id: 'timeline',
+                          title: 'BEUI Numbered Reasoning Timeline',
+                          desc: 'Clean numbered reasoning steps along a left accent rail.',
+                          isDefault: false,
+                        },
+                        {
+                          id: 'compact',
+                          title: 'BEUI Compact Status Pill',
+                          desc: 'Single-line live thinking summary pill without expanding height.',
+                          isDefault: false,
+                        },
+                      ] as const
+                    ).map((opt) => (
+                      <VariantPreviewCard
+                        key={opt.id}
+                        title={opt.title}
+                        description={opt.desc}
+                        selected={state.thinkingAnimation === opt.id}
+                        isDefault={opt.isDefault}
+                        onSelect={() => applyCustomization({ thinkingAnimation: opt.id })}
+                      >
+                        <ReasoningText
+                          variant={opt.id}
+                          loaderVariant={state.thinkingLoader}
+                          isStreaming
+                          defaultOpen
+                          text={
+                            '1. Inspecting Cargo.toml & WebUI component tree\n2. Verifying zero-regex guard invariants\n3. Preparing concise response'
+                          }
+                        />
+                      </VariantPreviewCard>
+                    ))}
+                  </div>
+                </div>
               </div>
             )}
 
@@ -2557,7 +2631,7 @@ export const UiStudioModal: React.FC = () => {
               </div>
             )}
 
-            {/* 17. TOOL CALL (@assistant-ui/elements-tool-call) */}
+            {/* 17. TOOL CALL (@beui/agent-activity & @assistant-ui/elements-tool-call) */}
             {activeSection === 'tool-result' && (
               <div className="grid grid-cols-1 gap-6">
                 {TOOL_CALL_STYLE_OPTIONS.map((opt) => (
@@ -2569,42 +2643,75 @@ export const UiStudioModal: React.FC = () => {
                     isDefault={opt.isDefault}
                     onSelect={() => applyCustomization({ toolResultStyle: opt.id })}
                   >
-                    <div className="flex flex-col gap-2">
-                      <ToolExecutionCard
-                        key={`demo-ok-${opt.id}`}
-                        styleOverride={opt.id}
-                        tool={{
-                          id: `demo-ok-${opt.id}`,
-                          name: 'grep_search',
-                          status: 'success',
-                          durationMs: 48,
-                          args: { query: 'TurnState', path: 'src/agent' },
-                          output: 'Found 6 matches across src/agent/agent_loop/mod.rs',
-                        }}
+                    {opt.id === 'beui-activity' ? (
+                      <AgentActivity
+                        mode="inline-collapsible"
+                        defaultOpen
+                        autoCollapse={false}
+                        variant="orb-card"
+                        orbStyle={state.activityOrbStyle}
+                        loaderVariant={state.thinkingLoader}
+                        steps={[
+                          {
+                            id: 'preview-read-inv',
+                            kind: 'tool',
+                            contentType: 'tool',
+                            title: 'openz_inventory',
+                            toolAction: 'read',
+                            toolTarget: 'openz_inventory',
+                            status: 'success',
+                            timestamp: STUDIO_PREVIEW_ANCHOR_TS - 900,
+                          },
+                          {
+                            id: 'preview-write-skill',
+                            kind: 'tool',
+                            contentType: 'tool',
+                            title: 'curate_skill',
+                            toolAction: 'write',
+                            toolTarget: 'youtube_song_playback',
+                            status: 'success',
+                            timestamp: STUDIO_PREVIEW_ANCHOR_TS - 400,
+                          },
+                        ]}
                       />
-                      <ToolExecutionCard
-                        key={`demo-run-${opt.id}`}
-                        styleOverride={opt.id}
-                        tool={{
-                          id: `demo-run-${opt.id}`,
-                          name: 'exec_command',
-                          status: 'running',
-                          args: { command: 'cargo check -p openz -j 1' },
-                        }}
-                      />
-                      <ToolExecutionCard
-                        key={`demo-err-${opt.id}`}
-                        styleOverride={opt.id}
-                        tool={{
-                          id: `demo-err-${opt.id}`,
-                          name: 'cargo_manager',
-                          status: 'error',
-                          durationMs: 312,
-                          args: { action: 'test', package: 'openz' },
-                          error: 'Test assertion failed in session::tests::compaction_roundtrip',
-                        }}
-                      />
-                    </div>
+                    ) : (
+                      <div className="flex flex-col gap-2">
+                        <ToolExecutionCard
+                          key={`demo-ok-${opt.id}`}
+                          styleOverride={opt.id}
+                          tool={{
+                            id: `demo-ok-${opt.id}`,
+                            name: 'grep_search',
+                            status: 'success',
+                            durationMs: 48,
+                            args: { query: 'TurnState', path: 'src/agent' },
+                            output: 'Found 6 matches across src/agent/agent_loop/mod.rs',
+                          }}
+                        />
+                        <ToolExecutionCard
+                          key={`demo-run-${opt.id}`}
+                          styleOverride={opt.id}
+                          tool={{
+                            id: `demo-run-${opt.id}`,
+                            name: 'exec_command',
+                            status: 'running',
+                            args: { command: 'cargo check -p openz -j 1' },
+                          }}
+                        />
+                        <ToolExecutionCard
+                          key={`demo-err-${opt.id}`}
+                          styleOverride={opt.id}
+                          tool={{
+                            id: `demo-err-${opt.id}`,
+                            name: 'cargo_manager',
+                            status: 'error',
+                            durationMs: 312,
+                            args: { action: 'test', package: 'openz' },
+                            error: 'Test assertion failed in session::tests::compaction_roundtrip',
+                          }}
+                        />
+                      </div>
+                    )}
                   </VariantPreviewCard>
                 ))}
               </div>
@@ -2848,40 +2955,44 @@ export const UiStudioModal: React.FC = () => {
             {/* 23. ALERT & COLLAPSIBLE (@beui/alert & @beui/collapsible) */}
             {activeSection === 'alert-collapsible' && (
               <div className="space-y-8">
-                <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-                  {(
-                    [
-                      {
-                        id: 'beui-alert',
-                        title: 'BEUI Standard Callout Alert',
-                        desc: 'Spacious semantic alert banner with icon and title.',
-                        isDefault: true,
-                      },
-                      {
-                        id: 'compact-pill',
-                        title: 'BEUI Compact Inline Notice',
-                        desc: 'Slim single-row status banner for system & tool notices.',
-                        isDefault: false,
-                      },
-                    ] as const
-                  ).map((opt) => (
-                    <VariantPreviewCard
-                      key={opt.id}
-                      title={opt.title}
-                      description={opt.desc}
-                      selected={state.alertStyle === opt.id}
-                      isDefault={opt.isDefault}
-                      onSelect={() => applyCustomization({ alertStyle: opt.id })}
-                    >
-                      <BeuiAlert
-                        tone="info"
-                        title={opt.id === 'beui-alert' ? 'Session Restored' : undefined}
-                        compact={opt.id === 'compact-pill'}
+                <div>
+                  <h2 className="mb-1 text-sm font-semibold text-foreground">
+                    1. Animated Alert Surface (@beui/alert — {BEUI_ALERT_STYLE_OPTIONS.length} Styles)
+                  </h2>
+                  <p className="mb-4 text-xs text-muted-foreground">
+                    Powered by official @beui/alert with spring layout transitions, icon morphing, and animated dismiss.
+                  </p>
+                  <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                    {BEUI_ALERT_STYLE_OPTIONS.map((opt) => (
+                      <VariantPreviewCard
+                        key={opt.id}
+                        title={opt.title}
+                        description={opt.description}
+                        selected={state.alertStyle === opt.id}
+                        isDefault={Boolean(opt.isDefault)}
+                        onSelect={() => applyCustomization({ alertStyle: opt.id })}
                       >
-                        Connected to OpenZ Gateway at {gatewayEndpoint}.
-                      </BeuiAlert>
-                    </VariantPreviewCard>
-                  ))}
+                        <div className="space-y-2.5">
+                          <BeuiAlert
+                            tone="info"
+                            styleVariant={opt.id}
+                            title="Session Restored"
+                          >
+                            Connected to OpenZ Gateway at {gatewayEndpoint}.
+                          </BeuiAlert>
+                          {opt.id !== 'compact-pill' && (
+                            <BeuiAlert
+                              tone="success"
+                              styleVariant={opt.id}
+                              title="Self-improvement consolidated"
+                            >
+                              Updated skill bundle on disk with zero conflicts.
+                            </BeuiAlert>
+                          )}
+                        </div>
+                      </VariantPreviewCard>
+                    ))}
+                  </div>
                 </div>
 
                 <div>

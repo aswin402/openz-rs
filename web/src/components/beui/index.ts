@@ -15,9 +15,30 @@ export {
 } from "./collapsible"
 export {
   BeuiAlert,
+  OfficialBeuiAlert,
+  BeuiAlertAction,
+  BeuiAlertClose,
+  BeuiAlertContent,
+  BeuiAlertDescription,
+  BeuiAlertIcon,
+  BeuiAlertTitle,
+  BEUI_ALERT_STYLE_OPTIONS,
+  normalizeAlertStyle,
   type BeuiAlertProps,
   type BeuiAlertTone,
+  type BeuiAlertStyleVariant,
+  type BeuiAlertStyleDescriptor,
 } from "./alert"
+export {
+  BeuiLoader,
+  ThinkingLoaderBadge,
+  BEUI_LOADER_OPTIONS,
+  isBeuiLoaderVariant,
+  normalizeBeuiLoaderVariant,
+  type BeuiLoaderProps,
+  type BeuiLoaderVariant,
+  type BeuiLoaderOptionDescriptor,
+} from "./loader"
 export {
   MessageScroller,
   type MessageScrollerProps,

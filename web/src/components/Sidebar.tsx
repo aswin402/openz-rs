@@ -40,7 +40,7 @@ export const Sidebar: React.FC = () => {
     <>
       {isSidebarOpen && (
         <div
-          className="fixed inset-0 z-40 bg-foreground/45 backdrop-blur-xs md:hidden"
+          className="fixed inset-0 z-40 bg-black/45 backdrop-blur-md dark:bg-black/60 md:hidden"
           onClick={() => setIsSidebarOpen(false)}
         />
       )}

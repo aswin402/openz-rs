@@ -5,6 +5,7 @@ import type { ApprovalState } from "./approval-card";
 import type { ToolCallProps } from "./tool-call";
 
 export type ToolResultStyleChoice =
+  | "beui-activity"
   | "assistant-collapsed"
   | "assistant-error-open"
   | "assistant-expanded";
@@ -25,11 +26,18 @@ export const TOOL_CALL_STYLE_OPTIONS: ReadonlyArray<
   AssistantUiStyleOption<ToolResultStyleChoice>
 > = [
   {
+    id: "beui-activity",
+    title: "Minimal @beui/agent-activity Row (Default)",
+    description:
+      "Clean single-line Read / Wrote / Ran activity row inside Completed N steps without duplicate standalone tool cards.",
+    isDefault: true,
+  },
+  {
     id: "assistant-collapsed",
     title: "Collapsed Disclosure (@assistant-ui/elements-tool-call)",
     description:
-      "Compact inline tool row with shimmer status and query pill; click to inspect Request and Result.",
-    isDefault: true,
+      "Interactive inline tool row with arguments pill and checkmark; click to inspect Request and Result.",
+    isDefault: false,
   },
   {
     id: "assistant-error-open",
@@ -74,6 +82,7 @@ export const APPROVAL_CARD_STYLE_OPTIONS: ReadonlyArray<
 ];
 
 const TOOL_STYLE_NORMALIZATION: Record<string, ToolResultStyleChoice> = {
+  "beui-activity": "beui-activity",
   "assistant-collapsed": "assistant-collapsed",
   "assistant-error-open": "assistant-error-open",
   "assistant-expanded": "assistant-expanded",
@@ -93,8 +102,8 @@ const APPROVAL_STYLE_NORMALIZATION: Record<string, ApprovalStyleChoice> = {
 };
 
 export function normalizeToolResultStyle(raw: unknown): ToolResultStyleChoice {
-  if (typeof raw !== "string") return "assistant-collapsed";
-  return TOOL_STYLE_NORMALIZATION[raw] ?? "assistant-collapsed";
+  if (typeof raw !== "string") return "beui-activity";
+  return TOOL_STYLE_NORMALIZATION[raw] ?? "beui-activity";
 }
 
 export function normalizeApprovalStyle(raw: unknown): ApprovalStyleChoice {

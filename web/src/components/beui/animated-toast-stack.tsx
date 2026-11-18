@@ -12,10 +12,8 @@ import {
   CheckCircle2,
   GitBranch,
   Layers,
-  MapPin,
   Search,
   ShieldAlert,
-  SlidersHorizontal,
   Sparkles,
   Terminal,
   Trash2,
@@ -23,8 +21,23 @@ import {
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
+import {
+  Alert as OfficialBeuiAlert,
+  AlertAction,
+  AlertClose,
+  AlertContent,
+  AlertDescription,
+  AlertIcon,
+  AlertTitle,
+  type AlertVariant,
+} from "@/components/motion/alert"
+import {
+  AnimatedToastStack as OfficialMotionToastStack,
+  type AnimatedToast as OfficialAnimatedToast,
+  type ToastPosition as OfficialMotionToastPosition,
+  type ToastStatus as OfficialMotionToastStatus,
+} from "@/components/motion/animated-toast-stack"
 import { cn } from "@/lib/utils"
 import type { ActivityNotice } from "@/types"
 
@@ -49,6 +62,8 @@ export type BeuiToastStatus =
 
 export type BeuiToastVariant =
   | "beui-stack"
+  | "beui-motion"
+  | "beui-alert"
   | "compact-pills"
   | "dynamic-island"
   | "minimal-glass"
@@ -297,6 +312,20 @@ export const TOAST_VARIANT_OPTIONS: ReadonlyArray<
     isDefault: true,
   },
   {
+    id: "beui-motion",
+    title: "Official @beui/animated-toast-stack Motion",
+    shortLabel: "Motion",
+    description:
+      "Official @beui/animated-toast-stack spring-blur portal list with swipe-to-dismiss, icon popLayout, and pill CTA.",
+  },
+  {
+    id: "beui-alert",
+    title: "Official @beui/alert Callout Toast",
+    shortLabel: "Alert",
+    description:
+      "Renders live notifications using @beui/alert semantic motion surfaces, animated icons, and spring close controls.",
+  },
+  {
     id: "compact-pills",
     title: "Compact Telemetry Capsule",
     shortLabel: "Pills",
@@ -363,6 +392,8 @@ export const TOAST_VARIANT_OPTIONS: ReadonlyArray<
 
 const VALID_TOAST_VARIANTS: Readonly<Record<BeuiToastVariant, true>> = {
   "beui-stack": true,
+  "beui-motion": true,
+  "beui-alert": true,
   "compact-pills": true,
   "dynamic-island": true,
   "minimal-glass": true,
@@ -654,6 +685,10 @@ function resolveToastVariantSurfaceClass(
       "w-[344px] max-w-[calc(100vw-2rem)] rounded-2xl border bg-card/96 p-3 shadow-xl shadow-foreground/10 backdrop-blur-md",
       meta.cardBorderClass
     ),
+    "beui-motion":
+      "w-[344px] max-w-[calc(100vw-2rem)] rounded-2xl border border-border bg-card/95 p-3 shadow-2xl backdrop-blur-xl",
+    "beui-alert":
+      "w-[348px] max-w-[calc(100vw-2rem)] rounded-xl bg-transparent p-0 shadow-xl backdrop-blur-xl",
     "compact-pills": cn(
       "w-[336px] max-w-[calc(100vw-2rem)] rounded-full border bg-card/96 px-3 py-2 shadow-lg shadow-foreground/10 backdrop-blur-md",
       meta.cardBorderClass
@@ -687,6 +722,8 @@ function resolveToastVariantSurfaceClass(
 }
 
 const PROGRESS_DISABLED_VARIANTS: Readonly<Partial<Record<BeuiToastVariant, true>>> = {
+  "beui-motion": true,
+  "beui-alert": true,
   "compact-pills": true,
   "dynamic-island": true,
   "micro-badge": true,
@@ -1127,11 +1164,130 @@ const MicroBadgeBody: React.FC<ToastVariantBodyProps> = ({
   </div>
 )
 
+function mapItemToAlertTone(item: BeuiToastItem): AlertVariant {
+  if (item.status === "error" || item.category === "error" || item.category === "security") {
+    return "destructive"
+  }
+  if (item.status === "warning") return "warning"
+  if (item.status === "success" || item.category === "self_improvement") return "success"
+  return "info"
+}
+
+const BeuiMotionPreviewBody: React.FC<ToastVariantBodyProps> = ({
+  item,
+  Icon,
+  actionLabel,
+  onTriggerAction,
+  onDismiss,
+}) => (
+  <div className={cn("flex gap-3", item.detail || actionLabel ? "items-start" : "items-center")}>
+    <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-primary">
+      <Icon className="h-3.5 w-3.5" />
+    </span>
+    <div className="min-w-0 flex-1">
+      <p className="truncate text-sm font-medium leading-5 text-foreground">
+        {item.title}
+        {item.count && item.count > 1 ? ` (×${item.count})` : ""}
+      </p>
+      {item.detail && (
+        <p className="mt-0.5 line-clamp-2 text-xs leading-4 text-muted-foreground">
+          {item.detail}
+        </p>
+      )}
+      {item.onAction && actionLabel && (
+        <button
+          type="button"
+          onClick={onTriggerAction}
+          className="mt-2 inline-flex h-7 items-center rounded-full bg-muted/80 px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+        >
+          {actionLabel}
+        </button>
+      )}
+    </div>
+    <button
+      type="button"
+      onClick={onDismiss}
+      aria-label="Dismiss toast"
+      className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground"
+    >
+      <X className="h-3.5 w-3.5" />
+    </button>
+  </div>
+)
+
+const BeuiAlertToastBody: React.FC<ToastVariantBodyProps> = ({
+  item,
+  Icon,
+  actionLabel,
+  onTriggerAction,
+  onDismiss,
+}) => {
+  const tone = mapItemToAlertTone(item)
+  return (
+    <OfficialBeuiAlert
+      variant={tone}
+      onOpenChange={(open) => {
+        if (!open) onDismiss()
+      }}
+      className="border border-border/65 bg-card/92 p-3 shadow-none backdrop-blur-xl"
+    >
+      <AlertIcon>
+        <Icon className="size-4" />
+      </AlertIcon>
+      <AlertContent className="space-y-0.5">
+        <AlertTitle className="text-xs font-semibold">
+          {item.title}
+          {item.count && item.count > 1 ? ` (×${item.count})` : ""}
+        </AlertTitle>
+        {item.detail && (
+          <AlertDescription className="line-clamp-2 text-[11px]">
+            {item.detail}
+          </AlertDescription>
+        )}
+        {item.onAction && actionLabel && (
+          <AlertAction className="pt-1.5">
+            <button
+              type="button"
+              onClick={onTriggerAction}
+              className="inline-flex items-center gap-1 rounded-md border border-border/70 bg-background/75 px-2 py-0.5 text-[10px] font-semibold text-foreground transition hover:border-primary/45 hover:text-primary"
+            >
+              <span>{actionLabel}</span>
+              <ArrowUpRight className="size-2.5" />
+            </button>
+          </AlertAction>
+        )}
+      </AlertContent>
+      <AlertClose />
+    </OfficialBeuiAlert>
+  )
+}
+
+const OFFICIAL_MOTION_POSITION_MAP: Record<
+  BeuiCanonicalToastPosition,
+  OfficialMotionToastPosition
+> = {
+  "top-start": "top-left",
+  "top-center": "top-center",
+  "top-end": "top-right",
+  "bottom-start": "bottom-left",
+  "bottom-center": "bottom-center",
+  "bottom-end": "bottom-right",
+}
+
+function mapItemToOfficialMotionStatus(item: BeuiToastItem): OfficialMotionToastStatus {
+  if (item.status === "error" || item.category === "error") return "error"
+  if (item.status === "success" || item.category === "self_improvement") return "success"
+  if (item.status === "running") return "loading"
+  return "info"
+}
+
 const TOAST_VARIANT_RENDERERS: Record<
   BeuiToastVariant,
   React.FC<ToastVariantBodyProps>
 > = {
   "beui-stack": (props) => <StandardCardBody {...props} />,
+  "beui-motion": BeuiMotionPreviewBody,
+  "beui-alert": BeuiAlertToastBody,
   "compact-pills": CompactPillsBody,
   "dynamic-island": DynamicIslandBody,
   "minimal-glass": (props) => <StandardCardBody {...props} linkAction />,
@@ -1430,6 +1586,52 @@ export const AnimatedToastStack: React.FC<AnimatedToastStackProps> = ({
   }, [toasts.length, maxVisible, expandedOffsets, measuredHeights, visibleSlice])
 
   if (toasts.length === 0) return null
+
+  if (resolvedVariant === "beui-motion" && !previewStatic) {
+    const durationMs = resolveToastDurationMs(durationPreset)
+    const mappedToasts: OfficialAnimatedToast[] = [...toasts]
+      .reverse()
+      .map((item) => {
+        const meta = TOAST_CATEGORY_META[item.category] ?? TOAST_CATEGORY_META.system
+        const Icon = meta.icon
+        const actionLabel =
+          item.actionLabel ??
+          (item.onAction ? meta.defaultActionLabel ?? "Inspect" : undefined)
+        return {
+          id: item.id,
+          title:
+            item.count && item.count > 1
+              ? `${item.title} (×${item.count})`
+              : item.title,
+          description: item.detail,
+          status: mapItemToOfficialMotionStatus(item),
+          icon: <Icon className="h-3.5 w-3.5" />,
+          duration: durationMs,
+          dismissible: true,
+          createdAt: item.createdAt,
+          action:
+            item.onAction && actionLabel
+              ? {
+                  label: actionLabel,
+                  onClick: () => {
+                    item.onAction?.()
+                    onDismiss(item.id)
+                  },
+                }
+              : undefined,
+        }
+      })
+    return (
+      <OfficialMotionToastStack
+        toasts={mappedToasts}
+        onDismiss={onDismiss}
+        position={OFFICIAL_MOTION_POSITION_MAP[canonicalPosition]}
+        fixed
+        maxVisible={maxVisible}
+        className={className}
+      />
+    )
+  }
 
   if (previewStatic) {
     return (
@@ -1758,17 +1960,17 @@ export interface BeuiNotificationCenterPopoverProps {
   onClose: () => void
   history: ReadonlyArray<BeuiToastItem>
   toastEnabled: boolean
-  toastVariant: BeuiToastVariant
+  toastVariant?: BeuiToastVariant
   toastPosition?: BeuiToastPosition
   onToggleEnabled: (enabled: boolean) => void
-  onSelectVariant: (variant: BeuiToastVariant) => void
+  onSelectVariant?: (variant: BeuiToastVariant) => void
   onSelectPosition?: (position: BeuiCanonicalToastPosition) => void
   onClearHistory: () => void
-  onOpenStudioOptions: () => void
+  onOpenStudioOptions?: () => void
 }
 
 /**
- * Workspace Telemetry & Notification History Popover anchored from the top-right rail.
+ * Minimal Workspace Notification History Popover anchored from the top-right rail.
  */
 export const BeuiNotificationCenterPopover: React.FC<
   BeuiNotificationCenterPopoverProps
@@ -1777,18 +1979,10 @@ export const BeuiNotificationCenterPopover: React.FC<
   onClose,
   history,
   toastEnabled,
-  toastVariant,
-  toastPosition = "bottom-end",
   onToggleEnabled,
-  onSelectVariant,
-  onSelectPosition,
   onClearHistory,
-  onOpenStudioOptions,
 }) => {
   if (!open) return null
-
-  const canonicalPosition = normalizeToastPosition(toastPosition)
-  const resolvedVariant = normalizeToastVariant(toastVariant)
 
   return (
     <>
@@ -1800,110 +1994,58 @@ export const BeuiNotificationCenterPopover: React.FC<
       />
       <div
         role="dialog"
-        aria-label="Agent Telemetry & Toast Notifications"
-        className="t-popover fixed top-14 right-14 z-50 flex max-h-[min(580px,calc(100vh-5rem))] w-[372px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border/80 bg-popover/98 text-popover-foreground shadow-2xl backdrop-blur-xl"
+        aria-label="Notifications"
+        className="t-popover fixed top-14 right-14 z-50 flex max-h-[min(480px,calc(100vh-5rem))] w-[340px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border/75 bg-popover/90 text-popover-foreground shadow-2xl backdrop-blur-2xl"
       >
-        <div className="border-b border-border/60 px-3.5 py-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <span className="inline-flex size-7 items-center justify-center rounded-xl border border-primary/35 bg-primary/12 text-primary">
-                {toastEnabled ? (
-                  <Bell className="size-3.5" />
-                ) : (
-                  <BellOff className="size-3.5" />
-                )}
-              </span>
-              <div>
-                <div className="text-xs font-semibold text-foreground">
-                  Telemetry Notifications
-                </div>
-                <div className="text-[10px] text-muted-foreground">
-                  10 UI component styles · 6 placements
-                </div>
-              </div>
-            </div>
+        <div className="flex items-center justify-between gap-2 border-b border-border/55 px-3.5 py-2.5">
+          <div className="flex min-w-0 items-center gap-2">
+            <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-lg border border-primary/30 bg-primary/12 text-primary">
+              {toastEnabled ? (
+                <Bell className="size-3.5" />
+              ) : (
+                <BellOff className="size-3.5" />
+              )}
+            </span>
+            <span className="truncate text-xs font-semibold text-foreground">
+              Notifications
+            </span>
+            {history.length > 0 && (
+              <Badge variant="secondary" className="px-1.5 py-0 font-mono text-[10px]">
+                {history.length}
+              </Badge>
+            )}
+          </div>
 
-            <div className="flex items-center gap-1.5">
-              <Switch
-                checked={toastEnabled}
-                onCheckedChange={onToggleEnabled}
-                aria-label="Enable live toast notifications"
-              />
-              <Button
+          <div className="flex shrink-0 items-center gap-2">
+            {history.length > 0 && (
+              <button
                 type="button"
-                variant="ghost"
-                size="icon-sm"
-                onClick={onOpenStudioOptions}
-                title="Customize @beui/animated-toast-stack options"
-                aria-label="Customize toast options"
+                onClick={onClearHistory}
+                className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground transition hover:bg-muted/60 hover:text-foreground"
               >
-                <SlidersHorizontal className="size-3.5" />
-              </Button>
-            </div>
+                <Trash2 className="size-3" />
+                <span>Clear</span>
+              </button>
+            )}
+            <Switch
+              checked={toastEnabled}
+              onCheckedChange={onToggleEnabled}
+              aria-label="Enable live notifications"
+            />
           </div>
-
-          <div className="mt-2.5">
-            <div className="mb-1 text-[9.5px] font-semibold uppercase tracking-wider text-muted-foreground">
-              UI Component Style
-            </div>
-            <div className="grid grid-cols-5 gap-1">
-              {TOAST_VARIANT_OPTIONS.map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => onSelectVariant(opt.id)}
-                  title={opt.title}
-                  className={cn(
-                    "truncate rounded-lg border px-1.5 py-1 text-center text-[10px] font-medium transition",
-                    resolvedVariant === opt.id
-                      ? "border-primary/50 bg-primary/12 text-primary"
-                      : "border-border/55 bg-background/55 text-muted-foreground hover:text-foreground"
-                  )}
-                >
-                  {opt.shortLabel}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {onSelectPosition && (
-            <div className="mt-2">
-              <div className="mb-1 flex items-center gap-1 text-[9.5px] font-semibold uppercase tracking-wider text-muted-foreground">
-                <MapPin className="size-2.5" />
-                <span>Placement</span>
-              </div>
-              <div className="grid grid-cols-3 gap-1">
-                {TOAST_POSITION_OPTIONS.map((pos) => (
-                  <button
-                    key={pos.id}
-                    type="button"
-                    onClick={() => onSelectPosition(pos.id)}
-                    className={cn(
-                      "truncate rounded-lg border px-1.5 py-1 text-center text-[9.5px] font-medium transition",
-                      canonicalPosition === pos.id
-                        ? "border-primary/50 bg-primary/12 text-primary"
-                        : "border-border/55 bg-background/55 text-muted-foreground hover:text-foreground"
-                    )}
-                  >
-                    {pos.shortLabel}
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
 
         <div className="flex-1 space-y-1.5 overflow-y-auto p-2.5">
           {history.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 py-8 text-center">
-              <span className="inline-flex size-9 items-center justify-center rounded-2xl border border-border/70 bg-muted/40 text-muted-foreground">
-                <Bell className="size-4" />
+            <div className="flex flex-col items-center justify-center gap-1.5 py-7 text-center">
+              <span className="inline-flex size-8 items-center justify-center rounded-xl border border-border/65 bg-muted/35 text-muted-foreground">
+                <Bell className="size-3.5" />
               </span>
               <div className="text-xs font-medium text-foreground">
-                No telemetry notifications yet
+                No notifications yet
               </div>
-              <p className="max-w-[240px] text-[11px] text-muted-foreground">
-                Matched workflows, active procedural skills, and self-improvement updates appear here automatically.
+              <p className="max-w-[220px] text-[11px] text-muted-foreground">
+                Skill updates, workflow runs, and self-improvement events appear here.
               </p>
             </div>
           ) : (
@@ -1961,28 +2103,6 @@ export const BeuiNotificationCenterPopover: React.FC<
                 </div>
               )
             })
-          )}
-        </div>
-
-        <div className="flex items-center justify-between border-t border-border/60 bg-muted/25 px-3 py-2 text-[11px]">
-          <button
-            type="button"
-            onClick={onOpenStudioOptions}
-            className="inline-flex items-center gap-1 font-semibold text-primary hover:underline"
-          >
-            <span>All @beui Toast Component Styles</span>
-            <ArrowUpRight className="size-3" />
-          </button>
-
-          {history.length > 0 && (
-            <button
-              type="button"
-              onClick={onClearHistory}
-              className="inline-flex items-center gap-1 text-muted-foreground transition hover:text-foreground"
-            >
-              <Trash2 className="size-3" />
-              <span>Clear</span>
-            </button>
           )}
         </div>
       </div>

@@ -102,11 +102,11 @@ export const BeuiCommandPalette: React.FC<BeuiCommandPaletteProps> = ({
       aria-modal="true"
       aria-label="Command Palette"
       onClick={() => onOpenChange(false)}
-      className="fixed inset-0 z-50 flex items-start justify-center bg-foreground/45 p-4 pt-[12vh] backdrop-blur-xs"
+      className="fixed inset-0 z-50 flex items-start justify-center bg-black/45 p-4 pt-[12vh] backdrop-blur-md dark:bg-black/60"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-xl overflow-hidden rounded-2xl border border-border bg-popover text-popover-foreground shadow-2xl"
+        className="w-full max-w-xl overflow-hidden rounded-2xl border border-border/75 bg-popover/90 text-popover-foreground shadow-2xl ring-1 ring-white/[0.06] backdrop-blur-2xl"
       >
         <div className="flex items-center gap-2 border-b border-border/60 px-3.5 py-2.5">
           <Search className="size-4 shrink-0 text-primary" />

@@ -22,6 +22,7 @@ import { LogsDrawer } from './components/LogsDrawer';
 import { McpServersModal } from './components/McpServersModal';
 import { SettingsModal } from './features/settings/SettingsModal';
 import { ServersModal } from './components/ServersModal';
+import { ThemedHintLayer } from './components/ThemedHintLayer';
 import { AgentActivityPanel } from './features/chat/AgentActivityPanel';
 import { UiStudioModal } from './features/customize/UiStudioModal';
 import {
@@ -430,23 +431,15 @@ export const App: React.FC = () => {
       <SettingsModal />
       <ServersModal />
       <UiStudioModal />
+      <ThemedHintLayer />
 
       <BeuiNotificationCenterPopover
         open={isToastCenterOpen}
         onClose={() => setIsToastCenterOpen(false)}
         history={toastHistory}
         toastEnabled={toastEnabled}
-        toastVariant={toastVariant}
-        toastPosition={toastPosition}
         onToggleEnabled={(enabled) => applyCustomization({ toastEnabled: enabled })}
-        onSelectVariant={(variant) => applyCustomization({ toastVariant: variant })}
-        onSelectPosition={(position) => applyCustomization({ toastPosition: position })}
         onClearHistory={clearToastHistory}
-        onOpenStudioOptions={() => {
-          setIsToastCenterOpen(false);
-          setActiveCustomizeSection('animated-toast-stack');
-          setIsCustomizeOpen(true);
-        }}
       />
 
       {toastEnabled && (
@@ -549,7 +542,7 @@ const WorkspaceQuickActions: React.FC<{
     },
     {
       id: 'notifications',
-      label: toastEnabled ? 'Telemetry notifications' : 'Telemetry notifications (muted)',
+      label: toastEnabled ? 'Notifications' : 'Notifications (muted)',
       icon: toastEnabled ? Bell : BellOff,
       action: onNotificationsToggle,
       active: notificationsOpen,
@@ -598,14 +591,16 @@ const WorkspaceQuickActions: React.FC<{
               'group relative flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
               item.active && 'bg-primary/15 text-primary',
             )}
-            title={item.label}
             aria-label={item.label}
           >
             <Icon className="h-4 w-4" />
             {item.badgeCount && item.badgeCount > 0 ? (
               <span className="pointer-events-none absolute right-1 top-1 flex h-2 w-2 rounded-full bg-primary ring-2 ring-background" />
             ) : null}
-            <span className="pointer-events-none absolute right-full top-1/2 mr-2 hidden -translate-y-1/2 whitespace-nowrap rounded-md border border-border bg-popover px-2 py-1 text-[11px] font-medium text-foreground shadow-lg group-hover:block">
+            <span
+              data-openz-custom-hint="true"
+              className="pointer-events-none absolute right-full top-1/2 mr-2 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-border/80 bg-popover/95 px-2.5 py-1 text-[11px] font-medium text-popover-foreground shadow-lg backdrop-blur-md group-hover:block"
+            >
               {item.label}
             </span>
           </button>

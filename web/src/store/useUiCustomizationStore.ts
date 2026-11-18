@@ -7,6 +7,8 @@ import {
   type ToolResultStyleChoice,
 } from "../components/assistant-ui/elements";
 import {
+  normalizeAlertStyle,
+  normalizeBeuiLoaderVariant,
   normalizeToastPosition,
   normalizeToastVariant,
   type BeuiActivityDensity,
@@ -15,6 +17,7 @@ import {
   type BeuiActivityPlacement,
   type BeuiActivityVariant,
   type BeuiAgentAvatarVariant,
+  type BeuiAlertStyleVariant,
   type BeuiCitationsVariant,
   type BeuiCodeBlockVariant,
   type BeuiCollapsibleVariant,
@@ -23,6 +26,7 @@ import {
   type BeuiDiffViewMode,
   type BeuiInlineNoticeStyle,
   type BeuiJsonViewerVariant,
+  type BeuiLoaderVariant,
   type BeuiMessageActionsVariant,
   type BeuiModelSelectorVariant,
   type BeuiPlanChecklistVariant,
@@ -123,7 +127,8 @@ export type BubbleStyleChoice = "beui-card" | "beui-full" | "editorial";
 export type { ApprovalStyleChoice, ToolResultStyleChoice };
 export type ImageGenStyleChoice = "beui-frame" | "minimal";
 export type ActivityStyleChoice = BeuiActivityPlacement;
-export type AlertStyleChoice = "beui-alert" | "compact-pill";
+export type AlertStyleChoice = BeuiAlertStyleVariant;
+export type ThinkingLoaderChoice = BeuiLoaderVariant;
 
 export type GatewaySettingsSectionId = "agent" | "caveman" | "providers" | "channels";
 
@@ -170,6 +175,7 @@ export interface UiCustomizationSnapshot {
   showMessageActions: boolean;
   streamingAnimation: BeuiStreamingCursorStyle;
   thinkingAnimation: BeuiReasoningVariant;
+  thinkingLoader: ThinkingLoaderChoice;
   activityStyle: ActivityStyleChoice;
   activityVariant: BeuiActivityVariant;
   activityOrbStyle: BeuiActivityOrbStyle;
@@ -221,6 +227,7 @@ export const DEFAULT_CUSTOMIZATION: UiCustomizationSnapshot = {
   showMessageActions: true,
   streamingAnimation: "beui-pulse",
   thinkingAnimation: "card",
+  thinkingLoader: "dot-matrix",
   activityStyle: "beui-timeline",
   activityVariant: "orb-card",
   activityOrbStyle: "dotted-orb",
@@ -246,7 +253,7 @@ export const DEFAULT_CUSTOMIZATION: UiCustomizationSnapshot = {
   codeStyle: "framed",
   diffLayout: "unified",
   terminalStyle: "console",
-  toolResultStyle: "assistant-collapsed",
+  toolResultStyle: "beui-activity",
   approvalStyle: "assistant-default",
   imageGenStyle: "beui-frame",
   citationsStyle: "pills",
@@ -301,6 +308,18 @@ export function sanitizeCustomizationSnapshot(
     if (key === "approvalStyle") {
       if (typeof val === "string") {
         clean.approvalStyle = normalizeApprovalStyle(val);
+      }
+      continue;
+    }
+    if (key === "thinkingLoader") {
+      if (typeof val === "string") {
+        clean.thinkingLoader = normalizeBeuiLoaderVariant(val);
+      }
+      continue;
+    }
+    if (key === "alertStyle") {
+      if (typeof val === "string") {
+        clean.alertStyle = normalizeAlertStyle(val);
       }
       continue;
     }
@@ -388,6 +407,7 @@ export function extractSnapshot(state: UiCustomizationSnapshot): UiCustomization
     showMessageActions: state.showMessageActions,
     streamingAnimation: state.streamingAnimation,
     thinkingAnimation: state.thinkingAnimation,
+    thinkingLoader: state.thinkingLoader,
     activityStyle: state.activityStyle,
     activityVariant: state.activityVariant,
     activityOrbStyle: state.activityOrbStyle,
@@ -554,8 +574,16 @@ export const useUiCustomizationStore = create<UiCustomizationState>()(
     }),
     {
       name: UI_CUSTOMIZATION_STORAGE_KEY,
+      version: 2,
       storage: createJSONStorage(() => safePersistStorage),
       partialize: (state) => extractSnapshot(state),
+      migrate: (persistedState, version) => {
+        const clean = sanitizeCustomizationSnapshot(persistedState);
+        if (version < 2 && clean.toolResultStyle === "assistant-collapsed") {
+          clean.toolResultStyle = "beui-activity";
+        }
+        return { ...DEFAULT_CUSTOMIZATION, ...clean };
+      },
       merge: (persistedState, currentState) => {
         const clean = sanitizeCustomizationSnapshot(persistedState);
         return { ...currentState, ...clean };

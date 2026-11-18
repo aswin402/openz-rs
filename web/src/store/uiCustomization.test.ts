@@ -39,6 +39,8 @@ import {
   ACTIVITY_PLACEMENT_OPTIONS,
   ACTIVITY_VARIANT_OPTIONS,
   AGENT_AVATAR_OPTIONS,
+  BEUI_ALERT_STYLE_OPTIONS,
+  BEUI_LOADER_OPTIONS,
   INLINE_NOTICE_STYLE_OPTIONS,
   TOAST_DURATION_OPTIONS,
   TOAST_MAX_VISIBLE_OPTIONS,
@@ -51,6 +53,8 @@ import {
   extractMarkdownCitations,
   extractToolImagePayload,
   mapNoticeKindToToastCategory,
+  normalizeAlertStyle,
+  normalizeBeuiLoaderVariant,
   normalizeToastPosition,
   normalizeToastVariant,
   orchestrationRunToSubagentProps,
@@ -124,7 +128,8 @@ describe('useUiCustomizationStore (@beui + shadcn/ui v5)', () => {
     expect(state.codeStyle).toBe('framed');
     expect(state.diffLayout).toBe('unified');
     expect(state.terminalStyle).toBe('console');
-    expect(state.toolResultStyle).toBe('assistant-collapsed');
+    expect(state.toolResultStyle).toBe('beui-activity');
+    expect(state.thinkingLoader).toBe('dot-matrix');
     expect(state.approvalStyle).toBe('assistant-default');
     expect(state.imageGenStyle).toBe('beui-frame');
     expect(state.citationsStyle).toBe('pills');
@@ -467,8 +472,16 @@ describe('zero-regex @beui parsers & adapters', () => {
   });
 
   test('maps SecurityGuard prompts and ToolExecution calls to @assistant-ui elements cleanly without duplicate rows', () => {
-    expect(TOOL_CALL_STYLE_OPTIONS.length).toBe(3);
+    expect(TOOL_CALL_STYLE_OPTIONS.length).toBe(4);
+    expect(TOOL_CALL_STYLE_OPTIONS[0]?.id).toBe('beui-activity');
     expect(APPROVAL_CARD_STYLE_OPTIONS.length).toBe(3);
+    expect(BEUI_LOADER_OPTIONS.length).toBe(17);
+    expect(BEUI_ALERT_STYLE_OPTIONS.length).toBe(4);
+    expect(normalizeBeuiLoaderVariant('helix')).toBe('helix');
+    expect(normalizeBeuiLoaderVariant('unknown')).toBe('dot-matrix');
+    expect(normalizeAlertStyle('beui-bordered')).toBe('beui-bordered');
+    expect(normalizeAlertStyle('unknown')).toBe('beui-alert');
+    expect(normalizeToolResultStyle('beui-activity')).toBe('beui-activity');
     expect(normalizeToolResultStyle('beui-card')).toBe('assistant-collapsed');
     expect(normalizeToolResultStyle('expanded-terminal')).toBe('assistant-expanded');
     expect(normalizeApprovalStyle('beui-tool-approval')).toBe('assistant-default');
@@ -702,9 +715,11 @@ describe('zero-regex @beui parsers & adapters', () => {
     useToastStore.getState().resetToastStore();
     useUiCustomizationStore.getState().resetAllCustomization();
 
-    expect(TOAST_VARIANT_OPTIONS.length).toBe(10);
+    expect(TOAST_VARIANT_OPTIONS.length).toBe(12);
     expect(TOAST_VARIANT_OPTIONS.map((opt) => opt.id)).toEqual([
       'beui-stack',
+      'beui-motion',
+      'beui-alert',
       'compact-pills',
       'dynamic-island',
       'minimal-glass',

@@ -14,8 +14,14 @@ export const CognitiveMemoryModal: React.FC = () => {
   if (!isMemoryOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/45 p-4 backdrop-blur-xs">
-      <div className="w-full max-w-lg rounded-2xl border border-border bg-card p-6 shadow-2xl">
+    <div
+      onClick={() => setIsMemoryOpen(false)}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4 backdrop-blur-md dark:bg-black/60"
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-lg rounded-2xl border border-border/75 bg-card/88 p-6 shadow-2xl ring-1 ring-white/[0.06] backdrop-blur-2xl"
+      >
         <div className="flex items-center justify-between border-b border-border/50 pb-4">
           <div className="flex items-center gap-2 text-base font-semibold text-foreground">
             <Brain className="size-5 text-primary" />

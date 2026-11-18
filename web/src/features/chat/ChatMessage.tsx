@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -6,6 +6,11 @@ import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';
 import type { ActivityNotice, OpenZMessage } from '../../types';
 import { ToolExecutionCard } from './ToolExecutionCard';
+import {
+  filterInlineStepsForToolStyle,
+  isMessageActivityWorking,
+  shouldDisplayExpandedToolCalls,
+} from './toolVisibility';
 import { buildMessageActivitySteps } from '../activity/activityAdapters';
 import { SecurityGuardPrompt } from '../../components/SecurityGuardPrompt';
 import { pairSecurityPromptsWithToolCalls } from '../../components/assistant-ui/elements';
@@ -25,8 +30,7 @@ import {
   ReasoningText,
   StreamingResponse,
   extractAllMarkdownSources,
-  type AgentActivityStep,
-  type BeuiActivityPlacement,
+  extractToolImagePayload,
 } from '../../components/beui';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
@@ -119,20 +123,6 @@ function looksLikeUnifiedDiffBlock(language: string | undefined, text: string): 
   return false;
 }
 
-const INLINE_PLACEMENT_PREDICATES: Record<
-  BeuiActivityPlacement,
-  (
-    msg: OpenZMessage,
-    steps: ReadonlyArray<AgentActivityStep>,
-    working: boolean,
-  ) => boolean
-> = {
-  'panel-only': () => false,
-  'streaming-only': (_msg, _steps, working) => working,
-  'always-inline': (_msg, steps, working) => steps.length > 0 || working,
-  'beui-timeline': (_msg, steps, working) => steps.length > 0 || working,
-};
-
 export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) => {
   const handleSecurityChoice = useOpenZStore((s) => s.handleSecurityChoice);
   const regenerateMessage = useOpenZStore((s) => s.regenerateMessage);
@@ -145,6 +135,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
 
   const chatWidth = useUiCustomizationStore((s) => s.chatWidth);
   const thinkingAnimation = useUiCustomizationStore((s) => s.thinkingAnimation);
+  const thinkingLoader = useUiCustomizationStore((s) => s.thinkingLoader);
   const streamingAnimation = useUiCustomizationStore((s) => s.streamingAnimation);
   const agentAvatar = useUiCustomizationStore((s) => s.agentAvatar);
   const userAvatar = useUiCustomizationStore((s) => s.userAvatar);
@@ -162,6 +153,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
   const activityAutoCollapse = useUiCustomizationStore((s) => s.activityAutoCollapse);
   const activityShowDetails = useUiCustomizationStore((s) => s.activityShowDetails);
   const inlineNoticeStyle = useUiCustomizationStore((s) => s.inlineNoticeStyle);
+  const toolResultStyle = useUiCustomizationStore((s) => s.toolResultStyle);
   const approvalStyle = useUiCustomizationStore((s) => s.approvalStyle);
   const alertStyle = useUiCustomizationStore((s) => s.alertStyle);
   const messageActionsStyle = useUiCustomizationStore((s) => s.messageActionsStyle);
@@ -256,35 +248,48 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
     return extractAllMarkdownSources(message.content);
   }, [isUser, message.content]);
 
-  const hasActiveTool = Boolean(
-    message.toolCalls?.some(
-      (tc) => tc.status === 'running' || tc.status === 'awaiting_approval',
-    ),
-  );
-  const hasPendingGuard = Boolean(
-    message.securityPrompts?.some((sp) => sp.status === 'pending'),
-  );
-  const isActivityWorking =
-    !isUser &&
-    (hasActiveTool ||
-      hasPendingGuard ||
-      (Boolean(message.isStreaming) && message.content.trim().length === 0));
+  const isActivityWorking = isMessageActivityWorking(message);
 
   const inlineActivitySteps = useMemo(() => {
     if (isUser || activityStyle === 'panel-only') return [];
-    return buildMessageActivitySteps([message], {
+    const allSteps = buildMessageActivitySteps([message], {
       chronological: true,
       limit: 64,
     });
-  }, [isUser, activityStyle, message]);
+    return filterInlineStepsForToolStyle(allSteps, toolResultStyle);
+  }, [isUser, activityStyle, message, toolResultStyle]);
+
+  const hasAnyTurnActivity = Boolean(
+    !isUser &&
+      (inlineActivitySteps.length > 0 ||
+        (message.toolCalls?.length ?? 0) > 0 ||
+        isActivityWorking),
+  );
 
   const showInlineActivity =
     !isUser &&
-    INLINE_PLACEMENT_PREDICATES[activityStyle](
-      message,
-      inlineActivitySteps,
-      isActivityWorking,
-    );
+    activityStyle !== 'panel-only' &&
+    (activityStyle === 'streaming-only' ? isActivityWorking : hasAnyTurnActivity);
+
+  const [isActivityExpanded, setIsActivityExpanded] = useState<boolean>(
+    () => !activityAutoCollapse,
+  );
+  const previousWorkingRef = useRef<boolean>(isActivityWorking);
+
+  useEffect(() => {
+    if (previousWorkingRef.current && !isActivityWorking && activityAutoCollapse) {
+      setIsActivityExpanded(false);
+    }
+    previousWorkingRef.current = isActivityWorking;
+  }, [isActivityWorking, activityAutoCollapse]);
+
+  const showExpandedToolCards = shouldDisplayExpandedToolCalls({
+    toolResultStyle,
+    isActivityWorking,
+    showInlineActivity,
+    activityAutoCollapse,
+    isActivityExpanded,
+  });
 
   const coordinatedToolsAndApprovals = useMemo(() => {
     if (isUser) {
@@ -298,6 +303,25 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
   }, [isUser, message.toolCalls, message.securityPrompts, approvalStyle]);
 
   const { visibleToolCalls, visibleApprovals } = coordinatedToolsAndApprovals;
+
+  const collapsedGeneratedImages = useMemo(() => {
+    if (isUser || showExpandedToolCards || visibleToolCalls.length === 0) {
+      return [];
+    }
+    return visibleToolCalls
+      .map((tool) => {
+        const payload = extractToolImagePayload(tool.name, tool.args, tool.output ?? '');
+        return payload.isImageTool && payload.src
+          ? { id: tool.id, src: payload.src, prompt: payload.prompt }
+          : null;
+      })
+      .filter(
+        (
+          entry,
+        ): entry is { id: string; src: string; prompt: string | undefined } =>
+          entry !== null,
+      );
+  }, [isUser, showExpandedToolCards, visibleToolCalls]);
 
   const visibleTelemetryNotices = useMemo<ActivityNotice[]>(() => {
     if (isUser || !message.activityNotices || message.activityNotices.length === 0) {
@@ -343,7 +367,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
     if (!message.content) return null;
     return (
       <ChatTrackRow chatWidth={chatWidth} className="py-1">
-        <BeuiAlert tone="info" compact={alertStyle === 'compact-pill'}>
+        <BeuiAlert tone="info" styleVariant={alertStyle}>
           {message.content}
         </BeuiAlert>
       </ChatTrackRow>
@@ -353,7 +377,8 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
   const hasWideAssistantBlocks = Boolean(
     !isUser &&
       (showInlineActivity ||
-        visibleToolCalls.length > 0 ||
+        (showExpandedToolCards && visibleToolCalls.length > 0) ||
+        collapsedGeneratedImages.length > 0 ||
         visibleApprovals.length > 0 ||
         message.content.includes('```')),
   );
@@ -488,7 +513,12 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
 
             {!showInlineActivity && !message.content && message.isStreaming && (
               <div className="select-none py-0.5">
-                <ReasoningText isStreaming label="Thinking…" variant={thinkingAnimation} />
+                <ReasoningText
+                  isStreaming
+                  label="Thinking…"
+                  variant={thinkingAnimation}
+                  loaderVariant={thinkingLoader}
+                />
               </div>
             )}
 
@@ -500,19 +530,43 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
                 mode="inline-collapsible"
                 variant={activityVariant}
                 orbStyle={activityOrbStyle}
+                loaderVariant={thinkingLoader}
                 density={activityDensity}
                 maxHeight={activityMaxHeight}
                 autoCollapse={activityAutoCollapse}
                 showDetails={activityShowDetails}
+                open={isActivityExpanded}
+                onOpenChange={setIsActivityExpanded}
+                title={
+                  !isActivityWorking &&
+                  inlineActivitySteps.length === 0 &&
+                  visibleToolCalls.length > 0
+                    ? `Completed ${visibleToolCalls.length} ${visibleToolCalls.length === 1 ? 'step' : 'steps'}`
+                    : undefined
+                }
                 startedAt={message.timestamp}
                 className={message.content ? 'mb-2' : undefined}
               />
             )}
 
-            {visibleToolCalls.length > 0 && (
+            {showExpandedToolCards && visibleToolCalls.length > 0 && (
               <div className="my-1.5 flex w-full min-w-0 flex-col gap-1 not-prose">
                 {visibleToolCalls.map((tool) => (
                   <ToolExecutionCard key={tool.id} tool={tool} />
+                ))}
+              </div>
+            )}
+
+            {!showExpandedToolCards && collapsedGeneratedImages.length > 0 && (
+              <div className="my-2 flex w-full min-w-0 flex-col gap-2 not-prose">
+                {collapsedGeneratedImages.map((img) => (
+                  <ImageGeneration
+                    key={img.id}
+                    src={img.src}
+                    prompt={img.prompt}
+                    status="completed"
+                    variant={imageGenStyle}
+                  />
                 ))}
               </div>
             )}
