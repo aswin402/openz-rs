@@ -11,7 +11,6 @@ use crate::tools::searchxyz::core::diagnostics::{
 };
 use crate::tools::searchxyz::core::evidence::build_evidence_summary;
 use crate::tools::searchxyz::core::extractor::{ExtractedContent, ExtractionPipeline};
-use crate::tools::searchxyz::core::graph::extract_and_persist_relations;
 use crate::tools::searchxyz::core::index::SearchIndex;
 use crate::tools::searchxyz::core::pipeline::SearchAndReadPipeline;
 use crate::tools::searchxyz::core::search::{SearchDispatcher, SearchQuery};
@@ -202,7 +201,6 @@ impl SearchXyzServer {
                 tracing::warn!(url = %page.url, source, error = %e, "Failed to index document (non-fatal)");
             }
         }
-        let _ = extract_and_persist_relations(&page.url, &page.title, &page.content_markdown);
     }
 
     pub async fn search_web(&self, req: SearchWebRequest) -> Result<String> {
@@ -396,18 +394,6 @@ impl SearchXyzServer {
         let report = pipeline
             .run_with_options(search_query, max, render_js, cache_mode, save)
             .await?;
-        match save {
-            true => {
-                for result in &report.pages {
-                    let _ = extract_and_persist_relations(
-                        &result.url,
-                        &result.title,
-                        &result.content_markdown,
-                    );
-                }
-            }
-            false => {}
-        }
         let mut text = format_crawled_pages_markdown(&report.pages);
         match req.include_diagnostics.unwrap_or(false) {
             true => {
@@ -518,19 +504,6 @@ impl SearchXyzServer {
             executed_count,
             all_pages.len()
         ));
-
-        match save {
-            true => {
-                for page in all_pages.values() {
-                    let _ = extract_and_persist_relations(
-                        &page.url,
-                        &page.title,
-                        &page.content_markdown,
-                    );
-                }
-            }
-            false => {}
-        }
 
         let evidence_pages: Vec<_> = all_pages.values().cloned().collect();
         output.push_str(&build_evidence_summary(query, &evidence_pages));

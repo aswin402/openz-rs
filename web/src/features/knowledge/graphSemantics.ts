@@ -1,4 +1,5 @@
 import type { CognitiveEdge, CognitiveNode } from '../../types/openz';
+import { normalizeGraphCategory } from './coreGraphBuilder';
 import { stableHash } from './graphLayout';
 
 export type EdgeProvenance = 'extracted' | 'inferred' | 'not_recorded';
@@ -129,7 +130,7 @@ export function buildGraphSemantics(nodes: CognitiveNode[], edges: CognitiveEdge
   componentMap.forEach((names) => {
     const onlyName = names[0];
     if (names.length === 1 && (degree.get(onlyName) || 0) === 0) {
-      const type = (nodeByName.get(onlyName)?.entity_type || 'unknown').trim().toLowerCase() || 'unknown';
+      const type = normalizeGraphCategory(nodeByName.get(onlyName)?.entity_type);
       const bucket = isolatedByType.get(type) || [];
       bucket.push(onlyName);
       isolatedByType.set(type, bucket);

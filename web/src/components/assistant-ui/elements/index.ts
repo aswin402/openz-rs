@@ -20,3 +20,5 @@ export {
   type MappedToolCallData,
   type ToolResultStyleChoice,
 } from "./adapters";
+export * from "./workspace-elements";
+export * from "./knowledge-and-workflow";

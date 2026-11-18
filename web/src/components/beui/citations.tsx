@@ -11,7 +11,12 @@ import {
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 
-export type BeuiCitationsVariant = "pills" | "cards" | "footnotes"
+export type BeuiCitationsVariant =
+  | "pills"
+  | "cards"
+  | "footnotes"
+  | "kokonut-citations"
+  | "minimal-inline"
 
 export interface BeuiCitationsProps {
   refs: CiteRef[]
@@ -118,10 +123,35 @@ export const BeuiCitations: React.FC<BeuiCitationsProps> = ({
     )
   }
 
+  if (variant === "minimal-inline" || variant === "kokonut-citations") {
+    return (
+      <div className={cn("flex flex-wrap items-center gap-1.5 text-xs", className)}>
+        {refs.map((ref) => (
+          <a
+            key={`${ref.n}-${ref.url}`}
+            href={ref.url}
+            target="_blank"
+            rel="noreferrer"
+            className={cn(
+              "inline-flex items-center gap-1 transition-colors",
+              variant === "kokonut-citations"
+                ? "rounded-md border border-border/55 bg-foreground/[0.035] px-2 py-0.5 text-[11px] text-foreground/85 hover:border-primary/40 hover:text-primary"
+                : "text-[11px] text-muted-foreground hover:text-primary"
+            )}
+          >
+            <Globe className="size-2.5 shrink-0 text-primary/75" />
+            <span className="max-w-[170px] truncate">{ref.host}</span>
+            <span className="font-mono text-[9.5px] text-muted-foreground">[{ref.n}]</span>
+          </a>
+        ))}
+      </div>
+    )
+  }
+
   if (variant === "pills" && !defaultOpen) {
     return (
       <div className={cn("flex flex-wrap items-center gap-1.5", className)}>
-        <span className="mr-1 inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        <span className="mr-1 inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
           <BookOpen className="size-3 text-primary" />
           <span>Sources</span>
         </span>
@@ -132,7 +162,7 @@ export const BeuiCitations: React.FC<BeuiCitationsProps> = ({
                 href={ref.url}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex max-w-[210px] items-center gap-1.5 rounded-full border border-border/75 bg-muted/40 px-2.5 py-0.5 text-[11px] text-foreground transition-colors hover:border-primary/50 hover:bg-muted"
+                className="inline-flex max-w-[210px] items-center gap-1.5 rounded-full border border-border/60 bg-foreground/[0.035] px-2.5 py-0.5 text-[11px] text-foreground/90 transition-colors hover:border-primary/45 hover:bg-foreground/[0.06]"
               >
                 <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-primary/18 font-mono text-[9px] font-bold text-primary">
                   {ref.n}

@@ -20,96 +20,6 @@ pub struct KnowledgeGraph {
     pub edges: Vec<Edge>,
 }
 
-const TECH_TOPIC_KEYWORDS: &[(&str, &str)] = &[
-    ("rust", "Rust"),
-    ("python", "Python"),
-    ("javascript", "JavaScript"),
-    ("typescript", "TypeScript"),
-    ("go", "Go"),
-    ("java", "Java"),
-    ("c++", "C++"),
-    ("docker", "Docker"),
-    ("kubernetes", "Kubernetes"),
-    ("aws", "AWS"),
-    ("gcp", "GCP"),
-    ("azure", "Azure"),
-    ("sqlite", "SQLite"),
-    ("postgresql", "PostgreSQL"),
-    ("mysql", "MySQL"),
-    ("mongodb", "MongoDB"),
-    ("redis", "Redis"),
-    ("elasticsearch", "Elasticsearch"),
-    ("tokio", "Tokio"),
-    ("actix", "Actix"),
-    ("axum", "Axum"),
-    ("fastapi", "FastAPI"),
-    ("django", "Django"),
-    ("flask", "Flask"),
-    ("react", "React"),
-    ("vue", "Vue"),
-    ("next.js", "Next.js"),
-    ("tailwind", "Tailwind"),
-    ("npm", "NPM"),
-    ("cargo", "Cargo"),
-    ("git", "Git"),
-    ("github", "GitHub"),
-    ("linux", "Linux"),
-    ("windows", "Windows"),
-    ("macos", "macOS"),
-    ("mcp", "MCP"),
-    ("fastembed", "Fastembed"),
-    ("neural", "Neural"),
-    ("embedding", "Embedding"),
-    ("search", "Search"),
-    ("crawl", "Crawl"),
-    ("vector", "Vector"),
-    ("semantic", "Semantic"),
-    ("llm", "LLM"),
-    ("ai", "AI"),
-    ("gemini", "Gemini"),
-];
-
-pub fn extract_heuristic_triples(
-    url: &str,
-    title: &str,
-    content: &str,
-) -> Vec<(String, String, String)> {
-    let combined_lower = format!("{title}\n{content}").to_lowercase();
-    TECH_TOPIC_KEYWORDS
-        .iter()
-        .filter(|(kw, _)| contains_keyword_boundary(&combined_lower, kw))
-        .map(|(_, canonical)| {
-            (
-                url.to_string(),
-                "mentions".to_string(),
-                (*canonical).to_string(),
-            )
-        })
-        .collect()
-}
-
-/// Extract heuristic relations from a crawled document or source file and persist
-/// them directly into OpenZ's native SQLite `graph_memory.db`.
-pub fn extract_and_persist_relations(url: &str, title: &str, content: &str) -> usize {
-    let triples = extract_heuristic_triples(url, title, content);
-    crate::tools::graph_memory::record_graph_relations_batch(&triples, Some(url)).unwrap_or(0)
-}
-
-fn contains_keyword_boundary(lower_text: &str, keyword: &str) -> bool {
-    lower_text.match_indices(keyword).any(|(idx, _)| {
-        let before_ok = match lower_text[..idx].chars().next_back() {
-            Some(ch) => !ch.is_alphanumeric() && ch != '_',
-            None => true,
-        };
-        let end = idx + keyword.len();
-        let after_ok = match lower_text[end..].chars().next() {
-            Some(ch) => !ch.is_alphanumeric() && ch != '_',
-            None => true,
-        };
-        before_ok && after_ok
-    })
-}
-
 impl KnowledgeGraph {
     pub fn new() -> Self {
         Self {
@@ -208,25 +118,6 @@ impl KnowledgeGraph {
         (nodes, edges)
     }
 
-    pub fn extract_heuristics(&mut self, url: &str, title: &str, content: &str) {
-        let triples = extract_heuristic_triples(url, title, content);
-        match triples.is_empty() {
-            true => {}
-            false => {
-                self.add_node(url.to_string(), "Document".to_string());
-                for (source, rel, target) in triples {
-                    self.add_edge(
-                        source,
-                        "Document".to_string(),
-                        target,
-                        "Technology/Topic".to_string(),
-                        rel,
-                    );
-                }
-            }
-        }
-    }
-
     pub fn prune_node(&mut self, name: &str) {
         let canonical_name = self
             .find_canonical_node_name(name)
@@ -301,26 +192,6 @@ mod tests {
 
         let (nodes_a, _) = graph.query_neighbors("A", 2);
         assert_eq!(nodes_a.len(), 3);
-    }
-
-    #[test]
-    fn test_extract_heuristics() {
-        let mut graph = KnowledgeGraph::new();
-        graph.extract_heuristics(
-            "https://example.com/rust-async",
-            "Async Rust",
-            "This article describes building async systems in Rust using the Tokio runtime.",
-        );
-
-        assert!(graph.nodes.contains_key("https://example.com/rust-async"));
-        assert!(graph.nodes.contains_key("Rust"));
-        assert!(graph.nodes.contains_key("Tokio"));
-
-        let has_rust_edge = graph
-            .edges
-            .iter()
-            .any(|e| e.source == "https://example.com/rust-async" && e.target == "Rust");
-        assert!(has_rust_edge);
     }
 
     #[test]

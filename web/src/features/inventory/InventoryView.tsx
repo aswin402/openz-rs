@@ -1,12 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Activity, Archive, RefreshCw, SlidersHorizontal, X } from 'lucide-react';
+import { Archive, RefreshCw, X } from 'lucide-react';
 import { useOpenZStore } from '../../store/useOpenZStore';
-import { useUiCustomizationStore } from '../../store/useUiCustomizationStore';
 import { wsService } from '../../services/websocket';
 import { TIMING_MS } from '../../config/runtime';
 import { cn } from '../../lib/utils';
-import { AgentActivity } from '../../components/beui';
-import { buildInventoryActivitySteps } from '../activity/activityAdapters';
 import {
   ChannelsTab,
   CoreTab,
@@ -35,19 +32,6 @@ export const InventoryView: React.FC = () => {
   const clearWorkspaceNotice = useOpenZStore((s) => s.clearWorkspaceNotice);
   const [activeTab, setActiveTab] = useState<InventoryTab>('core');
   const [toolSearch, setToolSearch] = useState('');
-
-  const activityVariant = useUiCustomizationStore((s) => s.activityVariant);
-  const activityOrbStyle = useUiCustomizationStore((s) => s.activityOrbStyle);
-  const activityDensity = useUiCustomizationStore((s) => s.activityDensity);
-  const activityMaxHeight = useUiCustomizationStore((s) => s.activityMaxHeight);
-  const activityShowDetails = useUiCustomizationStore((s) => s.activityShowDetails);
-  const setActiveCustomizeSection = useUiCustomizationStore((s) => s.setActiveCustomizeSection);
-  const setIsCustomizeOpen = useUiCustomizationStore((s) => s.setIsCustomizeOpen);
-
-  const inventoryActivitySteps = useMemo(
-    () => buildInventoryActivitySteps(inventory, cronLogs, 20),
-    [inventory, cronLogs],
-  );
 
   // Cron status is persisted by a background scheduler, so refresh inventory
   // while this page is open instead of showing the connection-time snapshot.
@@ -122,39 +106,6 @@ export const InventoryView: React.FC = () => {
       ) : (
         <>
           <InventorySummary inventory={inventory} />
-
-          <div className="mt-5 rounded-2xl border border-border/60 bg-card/45 p-4">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2 text-xs font-bold text-foreground">
-                <Activity className="h-3.5 w-3.5 text-primary" />
-                <span>Runtime Sessions, Cron &amp; Subagent Health Stream</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveCustomizeSection('agent-activity');
-                  setIsCustomizeOpen(true);
-                }}
-                className="inline-flex items-center gap-1 rounded-lg border border-border/60 bg-background/60 px-2.5 py-1 text-[10.5px] font-semibold text-muted-foreground transition hover:border-primary/40 hover:text-foreground"
-              >
-                <SlidersHorizontal className="h-3 w-3" />
-                <span>Activity Options</span>
-              </button>
-            </div>
-            <AgentActivity
-              steps={inventoryActivitySteps}
-              isActive={inventory.counts.runningCronJobs > 0 || inventory.counts.activeUiSessions > 0}
-              mode="inline-collapsible"
-              defaultOpen={inventoryActivitySteps.length > 0}
-              variant={activityVariant}
-              orbStyle={activityOrbStyle}
-              density={activityDensity}
-              maxHeight={activityMaxHeight}
-              showDetails={activityShowDetails}
-              title="Core Runtime & Scheduler Activity"
-              emptyLabel="No active TUI sessions, cron runs, or subagent errors reported right now."
-            />
-          </div>
 
           <div className="mt-6 flex flex-wrap gap-2 border-b border-border/50 pb-3">
             {tabs.map((tab) => {

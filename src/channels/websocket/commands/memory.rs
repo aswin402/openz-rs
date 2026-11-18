@@ -17,34 +17,72 @@ fn collect_graph_db_nodes_and_edges(
 
     match conn.prepare("SELECT name, entity_type, observations FROM graph_nodes") {
         Ok(mut statement) => match statement.query_map([], |row| {
-            Ok(serde_json::json!({
-                "name": row.get::<_, String>(0)?,
-                "entity_type": row.get::<_, String>(1)?,
-                "observations": row.get::<_, String>(2)?,
-            }))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
         }) {
-            Ok(rows) => *nodes = rows.filter_map(|row| row.ok()).collect(),
+            Ok(rows) => {
+                *nodes = rows
+                    .filter_map(|row| row.ok())
+                    .filter(|(name, entity_type, observations)| {
+                        let is_url = name.starts_with("http://") || name.starts_with("https://");
+                        let is_scraper = entity_type == "Entity"
+                            && observations.starts_with("[\"source: http");
+                        !is_url && !is_scraper
+                    })
+                    .map(|(name, entity_type, observations)| {
+                        serde_json::json!({
+                            "name": name,
+                            "entity_type": entity_type,
+                            "observations": observations,
+                        })
+                    })
+                    .collect();
+            }
             Err(_) => {}
         },
         Err(_) => {}
     }
+
+    let valid_node_names: std::collections::HashSet<String> = nodes
+        .iter()
+        .filter_map(|n| n.get("name").and_then(Value::as_str).map(str::to_string))
+        .collect();
 
     match conn.prepare(
         "SELECT from_name, to_name, relation_type, confidence, valid_from
          FROM graph_edges WHERE valid_until IS NULL",
     ) {
         Ok(mut statement) => match statement.query_map([], |row| {
-            Ok(serde_json::json!({
-                "from_name": row.get::<_, String>(0)?,
-                "to_name": row.get::<_, String>(1)?,
-                "relation_type": row.get::<_, String>(2)?,
-                "confidence": row.get::<_, f64>(3)?,
-                "valid_from": row.get::<_, String>(4)?,
-                "provenance": "extracted",
-                "source": "graph_memory.db",
-            }))
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, f64>(3)?,
+                row.get::<_, String>(4)?,
+            ))
         }) {
-            Ok(rows) => *edges = rows.filter_map(|row| row.ok()).collect(),
+            Ok(rows) => {
+                *edges = rows
+                    .filter_map(|row| row.ok())
+                    .filter(|(from_name, to_name, _, _, _)| {
+                        valid_node_names.contains(from_name) && valid_node_names.contains(to_name)
+                    })
+                    .map(|(from_name, to_name, relation_type, confidence, valid_from)| {
+                        serde_json::json!({
+                            "from_name": from_name,
+                            "to_name": to_name,
+                            "relation_type": relation_type,
+                            "confidence": confidence,
+                            "valid_from": valid_from,
+                            "provenance": "extracted",
+                            "source": "graph_memory.db",
+                        })
+                    })
+                    .collect();
+            }
             Err(_) => {}
         },
         Err(_) => {}
@@ -52,7 +90,7 @@ fn collect_graph_db_nodes_and_edges(
 
     match conn.prepare(
         "SELECT name, element_type, file_path, signature, start_line, end_line
-         FROM code_elements ORDER BY file_path, start_line",
+         FROM code_elements WHERE file_path NOT LIKE '/tmp/%' ORDER BY file_path, start_line",
     ) {
         Ok(mut statement) => match statement.query_map([], |row| {
             let name: String = row.get(0)?;

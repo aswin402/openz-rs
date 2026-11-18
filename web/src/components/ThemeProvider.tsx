@@ -19,6 +19,7 @@ export function ThemeProvider({
   const theme = useThemeStore((state) => state.theme);
   const resolvedSystemOrMode = useResolvedTheme(theme);
   const activeThemeId = useUiCustomizationStore((s) => s.activeThemeId);
+  const badgeStyle = useUiCustomizationStore((s) => s.badgeStyle);
 
   const isFirstMount = useRef(true);
   const prevModeRef = useRef<string | null>(null);
@@ -35,6 +36,7 @@ export function ThemeProvider({
       root.classList.add(resolvedSystemOrMode);
       root.setAttribute('data-theme', resolvedSystemOrMode);
       root.setAttribute('data-theme-family', palette.id);
+      root.setAttribute('data-badge-style', badgeStyle);
       root.style.colorScheme = resolvedSystemOrMode;
 
       const vars: Record<string, string> = {
@@ -147,7 +149,7 @@ export function ThemeProvider({
       }
       root.classList.remove('theme-transitioning');
     };
-  }, [resolvedSystemOrMode, activeThemeId]);
+  }, [resolvedSystemOrMode, activeThemeId, badgeStyle]);
 
   return (
     <div style={inlineTheme as React.CSSProperties}>

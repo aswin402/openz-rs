@@ -1,21 +1,16 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useOpenZStore } from '../../store/useOpenZStore';
-import { wsService } from '../../services/websocket';
 import {
   AlertCircle,
   ArrowLeft,
   BrainCircuit,
   Check,
-  CheckSquare,
   ChevronDown,
   ChevronUp,
-  Compass,
   Copy,
   Database,
   Download,
   ExternalLink,
   FileCode,
-  Filter,
   Focus,
   KeyRound,
   Layers,
@@ -25,20 +20,31 @@ import {
   Search,
   SlidersHorizontal,
   Sparkles,
-  Square,
   X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { Switch } from '../../components/ui/switch';
+import { TIMING_MS } from '../../config/runtime';
+import { cn } from '../../lib/utils';
+import { wsService } from '../../services/websocket';
+import { formatObservations } from '../../shared/lib/format';
+import { useOpenZStore } from '../../store/useOpenZStore';
+import type { CognitiveEdge, CognitiveNode } from '../../types/openz';
 import {
   DEFAULT_GRAPH_DISPLAY,
   ObsidianGraph,
   type ObsidianGraphHandle,
 } from './ObsidianGraph';
-import type { CognitiveEdge, CognitiveNode } from '../../types/openz';
-import { cn } from '../../lib/utils';
+import {
+  GRAPH_CATEGORY_CATALOG,
+  buildCoreUniverseGraph,
+  getCategoryDescriptor,
+  normalizeGraphCategory,
+  type CanonicalGraphCategory,
+} from './coreGraphBuilder';
 import type { GraphMode } from './graphLayout';
 import {
   buildGraphSemantics,
@@ -48,11 +54,7 @@ import {
   type EdgeSemantics,
   type NodeMetrics,
 } from './graphSemantics';
-import { formatGraphStats, type GraphStats } from './graphStats';
 import { getNodeColor, type GraphDisplayState } from './graph/graphCanvas';
-import { formatObservations } from '../../shared/lib/format';
-import { TIMING_MS } from '../../config/runtime';
-import { Switch } from '../../components/ui/switch';
 
 export const GraphVisualizer: React.FC<{ nodes: CognitiveNode[]; edges: CognitiveEdge[] }> = ({
   nodes,
@@ -74,25 +76,25 @@ function downloadTextFile(filename: string, content: string, mime: string) {
   URL.revokeObjectURL(url);
 }
 
-type ControlSection = 'filters' | 'display' | 'vault';
-type NodeSortOrder = 'degree' | 'name' | 'type';
+type ControlSection = 'explorer' | 'display' | 'vault';
 type VaultDrawerMode = 'none' | 'facts' | 'markdown';
+type GraphDataScope = 'universe' | 'graph-db';
 
 const DISPLAY_OPTIONS: ReadonlyArray<{
   key: keyof GraphDisplayState;
   label: string;
   hint: string;
 }> = [
-  { key: 'showLabels', label: 'Node labels', hint: 'Entity titles on zoom & hubs' },
-  { key: 'showGlow', label: 'Ambient glow', hint: 'Theme-derived node aura' },
-  { key: 'showParticles', label: 'Link particles', hint: 'Directional relation flow' },
-  { key: 'curvedLinks', label: 'Curved links', hint: 'Arc relation trajectories' },
-  { key: 'showSpaceField', label: 'Depth field', hint: 'Subtle ambient backdrop' },
-  { key: 'showGrid', label: 'Coordinate grid', hint: 'Spatial alignment lines' },
-  { key: 'showOrbits', label: 'Neighbor orbits', hint: 'Radial ring on active hub' },
+  { key: 'showLabels', label: 'Star labels', hint: 'Entity titles on hubs & zoom' },
+  { key: 'showGlow', label: 'Nebula & corona', hint: 'Category aura & hub glow' },
+  { key: 'curvedLinks', label: 'Curved filaments', hint: 'Smooth arc trajectories' },
+  { key: 'showParticles', label: 'Energy flow', hint: 'Directional link particles' },
+  { key: 'showSpaceField', label: 'Deep starfield', hint: 'Parallax cosmic backdrop' },
+  { key: 'showOrbits', label: 'Neighbor orbits', hint: '1-hop orbital ring on focus' },
+  { key: 'showGrid', label: 'Coordinate grid', hint: 'Spatial reference grid' },
 ];
 
-interface FloatingInspectorProps {
+interface EntityInspectorProps {
   node: CognitiveNode | null;
   nodeMetric: NodeMetrics | undefined;
   edges: CognitiveEdge[];
@@ -100,12 +102,7 @@ interface FloatingInspectorProps {
   edgeSemantics: Map<string, EdgeSemantics>;
   selectedEdge: CognitiveEdge | null;
   selectedEdgeKey: string | null;
-  isChecked: boolean;
   graphMode: GraphMode;
-  topHubNode: CognitiveNode | null;
-  collapsed: boolean;
-  onToggleCollapse: () => void;
-  onToggleChecked: (nodeName: string) => void;
   onSelectNode: (nodeName: string) => void;
   onSelectEdge: (key: string) => void;
   onToggleNeighborhood: () => void;
@@ -113,7 +110,7 @@ interface FloatingInspectorProps {
   onClear: () => void;
 }
 
-const FloatingEntityInspector: React.FC<FloatingInspectorProps> = ({
+const FloatingEntityInspector: React.FC<EntityInspectorProps> = ({
   node,
   nodeMetric,
   edges,
@@ -121,60 +118,35 @@ const FloatingEntityInspector: React.FC<FloatingInspectorProps> = ({
   edgeSemantics,
   selectedEdge,
   selectedEdgeKey,
-  isChecked,
   graphMode,
-  topHubNode,
-  collapsed,
-  onToggleCollapse,
-  onToggleChecked,
   onSelectNode,
   onSelectEdge,
   onToggleNeighborhood,
   onCenterNode,
   onClear,
 }) => {
-  if (!node && !selectedEdge) {
-    return (
-      <aside
-        aria-label="Entity inspector standby"
-        className="pointer-events-auto flex items-center gap-2 rounded-2xl border border-border/75 bg-card/88 px-3 py-2 text-xs shadow-lg backdrop-blur-md"
-      >
-        <Compass className="h-3.5 w-3.5 shrink-0 text-primary" />
-        <span className="truncate text-[11px] text-muted-foreground">
-          Select a node or relation to inspect
-        </span>
-        {topHubNode && (
-          <button
-            type="button"
-            onClick={() => onSelectNode(topHubNode.name)}
-            className="ml-1 shrink-0 rounded-lg border border-primary/25 bg-primary/10 px-2 py-1 text-[10px] font-semibold text-primary transition hover:bg-primary/20"
-          >
-            Focus hub
-          </button>
-        )}
-      </aside>
-    );
-  }
+  if (!node && !selectedEdge) return null;
 
+  const descriptor = node ? getCategoryDescriptor(node.entity_type) : undefined;
   const entityColor = node ? getNodeColor(node.entity_type).main : undefined;
   const importancePct = Math.round((nodeMetric?.importance ?? 0) * 100);
   const selectedEdgeSemantics = selectedEdgeKey ? edgeSemantics.get(selectedEdgeKey) : undefined;
 
   return (
     <aside
-      aria-label="Selected memory entity"
-      className="pointer-events-auto flex max-h-[calc(100vh-6.75rem)] w-full flex-col overflow-hidden rounded-2xl border border-border/75 bg-card/90 shadow-2xl backdrop-blur-md"
+      aria-label="Selected entity inspector"
+      className="pointer-events-auto flex max-h-[calc(100vh-5.5rem)] w-full flex-col overflow-hidden rounded-2xl border border-border/70 bg-card/86 shadow-2xl ring-1 ring-white/[0.05] backdrop-blur-2xl"
     >
-      <div className="flex items-start justify-between gap-2 border-b border-border/60 px-3.5 py-2.5">
+      <div className="flex items-start justify-between gap-2 border-b border-border/55 px-3.5 py-2.5">
         <div className="min-w-0 flex-1">
-          {node ? (
+          {node && descriptor ? (
             <>
               <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                 <span
-                  className="h-2.5 w-2.5 shrink-0 rounded-full"
+                  className="h-2.5 w-2.5 shrink-0 rounded-full shadow-xs"
                   style={{ backgroundColor: entityColor }}
                 />
-                <span className="truncate">{node.entity_type || 'entity'}</span>
+                <span className="truncate">{descriptor.label}</span>
               </div>
               <h2 className="mt-0.5 break-words text-sm font-bold leading-snug text-foreground">
                 {node.name}
@@ -192,201 +164,163 @@ const FloatingEntityInspector: React.FC<FloatingInspectorProps> = ({
           )}
         </div>
 
-        <div className="flex shrink-0 items-center gap-1">
-          {node && (
-            <button
-              type="button"
-              onClick={() => onToggleChecked(node.name)}
-              className={cn(
-                'rounded-lg p-1.5 transition',
-                isChecked
-                  ? 'bg-primary/15 text-primary'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-              )}
-              title={isChecked ? 'Uncheck node' : 'Check & highlight node'}
-              aria-label={isChecked ? 'Uncheck selected node' : 'Check selected node'}
-            >
-              {isChecked ? <CheckSquare className="h-3.5 w-3.5" /> : <Square className="h-3.5 w-3.5" />}
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={onToggleCollapse}
-            className="rounded-lg p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-            aria-label={collapsed ? 'Expand entity inspector' : 'Collapse entity inspector'}
-          >
-            {collapsed ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronUp className="h-3.5 w-3.5" />}
-          </button>
-          <button
-            type="button"
-            onClick={onClear}
-            className="rounded-lg p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-            aria-label="Clear selected entity"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={onClear}
+          className="rounded-lg p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+          aria-label="Close inspector"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
       </div>
 
-      {!collapsed && (
-        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3.5 scrollbar-thin">
-          {selectedEdge && (
-            <div className="rounded-xl border border-info/30 bg-info/10 p-2.5 text-[10px]">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-semibold text-info">Active Relation</span>
-                <span className="rounded bg-info/15 px-1.5 py-0.5 font-mono text-info">
-                  {selectedEdge.relation_type}
-                </span>
+      <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3.5 scrollbar-thin">
+        {selectedEdge && (
+          <div className="rounded-xl border border-info/30 bg-info/10 p-2.5 text-[10px]">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-semibold text-info">Active Relation</span>
+              <span className="rounded bg-info/15 px-1.5 py-0.5 font-mono text-info">
+                {selectedEdge.relation_type}
+              </span>
+            </div>
+            <div className="mt-1 font-mono text-[10px] text-foreground">
+              {selectedEdge.from_name} → {selectedEdge.to_name}
+            </div>
+            <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 font-mono text-[9px] text-muted-foreground">
+              <span>Confidence: {formatConfidence(selectedEdgeSemantics?.confidence ?? null)}</span>
+              <span>
+                Source:{' '}
+                {selectedEdge.source ||
+                  formatProvenance(selectedEdgeSemantics?.provenance ?? 'not_recorded')}
+              </span>
+            </div>
+          </div>
+        )}
+
+        {node && (
+          <>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={onToggleNeighborhood}
+                className={cn(
+                  'flex-1 rounded-xl border px-2.5 py-1.5 text-[11px] font-semibold transition',
+                  graphMode === 'neighborhood'
+                    ? 'border-primary/45 bg-primary/16 text-primary'
+                    : 'border-border/65 bg-muted/25 text-foreground hover:border-primary/35 hover:bg-primary/10',
+                )}
+              >
+                {graphMode === 'neighborhood' ? 'Show Full Universe' : 'Isolate 1-Hop Orbit'}
+              </button>
+              <button
+                type="button"
+                onClick={() => onCenterNode(node.name)}
+                className="inline-flex items-center gap-1 rounded-xl border border-border/65 bg-muted/25 px-2.5 py-1.5 text-[11px] font-semibold text-foreground transition hover:bg-muted"
+                title="Center camera on entity"
+              >
+                <Focus className="h-3 w-3 text-primary" />
+                Center
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 gap-1.5 text-center">
+              <div className="rounded-xl border border-border/50 bg-background/50 px-2 py-1.5">
+                <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
+                  Links
+                </div>
+                <div className="mt-0.5 font-mono text-sm font-bold text-foreground">
+                  {edges.length}
+                </div>
               </div>
-              <div className="mt-1 font-mono text-[10px] text-foreground">
-                {selectedEdge.from_name} → {selectedEdge.to_name}
+              <div className="rounded-xl border border-border/50 bg-background/50 px-2 py-1.5">
+                <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
+                  Neighbors
+                </div>
+                <div className="mt-0.5 font-mono text-sm font-bold text-foreground">
+                  {neighbors.length}
+                </div>
               </div>
-              <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 font-mono text-[9px] text-muted-foreground">
-                <span>Confidence: {formatConfidence(selectedEdgeSemantics?.confidence ?? null)}</span>
-                <span>
-                  Provenance: {formatProvenance(selectedEdgeSemantics?.provenance ?? 'not_recorded')}
-                </span>
+              <div className="rounded-xl border border-border/50 bg-background/50 px-2 py-1.5">
+                <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
+                  Centrality
+                </div>
+                <div className="mt-0.5 font-mono text-sm font-bold text-foreground">
+                  {importancePct}%
+                </div>
               </div>
             </div>
-          )}
 
-          {node && (
-            <>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={onToggleNeighborhood}
-                  className={cn(
-                    'flex-1 rounded-xl border px-2.5 py-1.5 text-[11px] font-semibold transition',
-                    graphMode === 'neighborhood'
-                      ? 'border-primary/40 bg-primary/18 text-primary'
-                      : 'border-border/70 bg-muted/30 text-foreground hover:border-primary/30 hover:bg-primary/10',
-                  )}
-                >
-                  {graphMode === 'neighborhood' ? 'Exit neighborhood' : 'Focus neighborhood'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onCenterNode(node.name)}
-                  className="inline-flex items-center gap-1 rounded-xl border border-border/70 bg-muted/30 px-2.5 py-1.5 text-[11px] font-semibold text-foreground transition hover:bg-muted"
-                  title="Center camera on entity"
-                >
-                  <Focus className="h-3 w-3 text-primary" />
-                  Center
-                </button>
+            <div className="rounded-xl border border-border/55 bg-background/55 p-2.5">
+              <div className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Details &amp; Observations
               </div>
+              <p className="mt-1.5 max-h-36 overflow-y-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed text-foreground/88 scrollbar-thin">
+                {formatObservations(node.observations)}
+              </p>
+            </div>
 
-              <div className="grid grid-cols-3 gap-1.5 text-center">
-                <div className="rounded-xl border border-border/50 bg-muted/30 px-2 py-1.5">
-                  <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
-                    Relations
-                  </div>
-                  <div className="mt-0.5 font-mono text-sm font-bold text-foreground">
-                    {edges.length}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-border/50 bg-muted/30 px-2 py-1.5">
-                  <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
-                    Neighbors
-                  </div>
-                  <div className="mt-0.5 font-mono text-sm font-bold text-foreground">
-                    {neighbors.length}
-                  </div>
-                </div>
-                <div className="rounded-xl border border-border/50 bg-muted/30 px-2 py-1.5">
-                  <div className="text-[9px] uppercase tracking-wider text-muted-foreground">
-                    Centrality
-                  </div>
-                  <div className="mt-0.5 font-mono text-sm font-bold text-foreground">
-                    {importancePct}%
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-xl border border-border/60 bg-background/55 p-2.5">
-                <div className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  Observations
-                </div>
-                <p className="mt-1.5 max-h-28 overflow-y-auto whitespace-pre-wrap break-words text-[11px] leading-relaxed text-foreground/85 scrollbar-thin">
-                  {formatObservations(node.observations)}
-                </p>
-              </div>
-
-              {neighbors.length > 0 && (
-                <div>
-                  <div className="mb-1.5 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    Linked Entities ({neighbors.length})
-                  </div>
-                  <div className="flex max-h-24 flex-wrap gap-1 overflow-y-auto scrollbar-thin">
-                    {neighbors.map((neighbor) => (
-                      <button
-                        key={neighbor.name}
-                        type="button"
-                        onClick={() => onSelectNode(neighbor.name)}
-                        className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border/60 bg-muted/25 px-2 py-1 text-[10px] font-medium text-foreground transition hover:border-primary/35 hover:bg-primary/10"
-                      >
-                        <span
-                          className="h-1.5 w-1.5 shrink-0 rounded-full"
-                          style={{ backgroundColor: getNodeColor(neighbor.entity_type).main }}
-                        />
-                        <span className="truncate">{neighbor.name}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
+            {neighbors.length > 0 && (
               <div>
                 <div className="mb-1.5 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  Persisted Relations ({edges.length})
+                  Connected Stars ({neighbors.length})
                 </div>
-                {edges.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-border/60 px-3 py-2 text-[11px] text-muted-foreground">
-                    No persisted relationships for this entity.
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    {edges.slice(0, 20).map((edge) => {
-                      const relationKey = edgeKey(edge);
-                      const detail = edgeSemantics.get(relationKey);
-                      const isSelected = selectedEdgeKey === relationKey;
-                      return (
-                        <button
-                          key={relationKey}
-                          type="button"
-                          onClick={() => onSelectEdge(relationKey)}
-                          className={cn(
-                            'w-full rounded-xl border px-2.5 py-2 text-left text-[10px] transition',
-                            isSelected
-                              ? 'border-info/45 bg-info/12'
-                              : 'border-border/55 bg-background/40 hover:border-primary/30 hover:bg-muted/35',
-                          )}
-                          aria-pressed={isSelected}
-                        >
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="min-w-0 truncate font-medium text-foreground">
-                              {edge.from_name} → {edge.to_name}
-                            </span>
-                            <span className="shrink-0 rounded bg-primary/12 px-1.5 py-0.5 font-mono text-[9px] text-primary">
-                              {edge.relation_type}
-                            </span>
-                          </div>
-                          <div className="mt-1 flex flex-wrap gap-x-2 gap-y-0.5 font-mono text-[9px] text-muted-foreground">
-                            <span>Conf: {formatConfidence(detail?.confidence ?? null)}</span>
-                            <span>
-                              Prov: {formatProvenance(detail?.provenance ?? 'not_recorded')}
-                            </span>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
+                <div className="flex max-h-28 flex-wrap gap-1 overflow-y-auto scrollbar-thin">
+                  {neighbors.map((neighbor) => (
+                    <button
+                      key={neighbor.name}
+                      type="button"
+                      onClick={() => onSelectNode(neighbor.name)}
+                      className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border/55 bg-background/50 px-2 py-1 text-[10px] font-medium text-foreground transition hover:border-primary/40 hover:bg-primary/10"
+                    >
+                      <span
+                        className="h-2 w-2 shrink-0 rounded-full"
+                        style={{ backgroundColor: getNodeColor(neighbor.entity_type).main }}
+                      />
+                      <span className="truncate">{neighbor.name}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
-            </>
-          )}
-        </div>
-      )}
+            )}
+
+            {edges.length > 0 && (
+              <div>
+                <div className="mb-1.5 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Relationships ({edges.length})
+                </div>
+                <div className="space-y-1">
+                  {edges.slice(0, 24).map((edge) => {
+                    const relationKey = edgeKey(edge);
+                    const isSelected = selectedEdgeKey === relationKey;
+                    return (
+                      <button
+                        key={relationKey}
+                        type="button"
+                        onClick={() => onSelectEdge(relationKey)}
+                        className={cn(
+                          'w-full rounded-xl border px-2.5 py-1.5 text-left text-[10px] transition',
+                          isSelected
+                            ? 'border-info/45 bg-info/12'
+                            : 'border-border/50 bg-background/45 hover:border-primary/30 hover:bg-muted/35',
+                        )}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="min-w-0 truncate font-medium text-foreground">
+                            {edge.from_name} → {edge.to_name}
+                          </span>
+                          <span className="shrink-0 rounded bg-primary/12 px-1.5 py-0.5 font-mono text-[9px] text-primary">
+                            {edge.relation_type}
+                          </span>
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
     </aside>
   );
 };
@@ -396,46 +330,35 @@ export const KnowledgeView: React.FC = () => {
   const setIsMemoryOpen = useOpenZStore((s) => s.setIsMemoryOpen);
   const setActiveView = useOpenZStore((s) => s.setActiveView);
   const runtimeInventory = useOpenZStore((s) => s.runtimeInventory);
+  const isActivityPanelOpen = useOpenZStore((s) => s.isActivityPanelOpen);
 
   const graphControlsRef = useRef<ObsidianGraphHandle | null>(null);
 
   const [controlCollapsed, setControlCollapsed] = useState(false);
-  const [nodesCardCollapsed, setNodesCardCollapsed] = useState(false);
-  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
-  const [showLegendPopover, setShowLegendPopover] = useState(false);
-  const [controlSection, setControlSection] = useState<ControlSection>('filters');
+  const [controlSection, setControlSection] = useState<ControlSection>('explorer');
   const [vaultDrawer, setVaultDrawer] = useState<VaultDrawerMode>('none');
+  const [dataScope, setDataScope] = useState<GraphDataScope>('universe');
+  const [includeLeafTools, setIncludeLeafTools] = useState(false);
 
   const [copied, setCopied] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
-  const [nodeListQuery, setNodeListQuery] = useState('');
-  const [nodeSortOrder, setNodeSortOrder] = useState<NodeSortOrder>('degree');
-  const [nodeTypeFilter, setNodeTypeFilter] = useState('all');
+  const [categoryFilter, setCategoryFilter] = useState<'all' | CanonicalGraphCategory>('all');
+  const [mostConnectedOnly, setMostConnectedOnly] = useState(false);
   const [factTagFilter, setFactTagFilter] = useState('all');
   const [sortMode, setSortMode] = useState<'importance' | 'newest'>('importance');
-  const [graphMode, setGraphMode] = useState<GraphMode>('overview');
+  const [graphMode, setGraphMode] = useState<GraphMode>('all');
   const [selectedNodeName, setSelectedNodeName] = useState<string | null>(null);
   const [selectedEdgeKey, setSelectedEdgeKey] = useState<string | null>(null);
-  const [communityFilter, setCommunityFilter] = useState('all');
-  const [relationTypeFilter, setRelationTypeFilter] = useState('all');
-  const [mostConnectedOnly, setMostConnectedOnly] = useState(false);
 
-  const [checkedNodes, setCheckedNodes] = useState<Set<string>>(() => new Set());
-  const [isolateChecked, setIsolateChecked] = useState(false);
-  const [includeCheckedNeighbors, setIncludeCheckedNeighbors] = useState(true);
-  const [display, setDisplay] = useState<GraphDisplayState>(() => ({ ...DEFAULT_GRAPH_DISPLAY }));
-
-  const [visibleGraphStats, setVisibleGraphStats] = useState<GraphStats>({
-    loaded: 0,
-    visible: 0,
-    edges: 0,
-    renderedNodes: 0,
-    renderedEdges: 0,
-  });
+  const [display, setDisplay] = useState<GraphDisplayState>(() => ({
+    ...DEFAULT_GRAPH_DISPLAY,
+    curvedLinks: true,
+  }));
 
   useEffect(() => {
     wsService.requestCognitiveMemory();
+    wsService.requestRuntimeInventory();
 
     const interval = setInterval(() => {
       wsService.requestCognitiveMemory();
@@ -447,61 +370,60 @@ export const KnowledgeView: React.FC = () => {
   const handleRefresh = useCallback(() => {
     setIsRefreshing(true);
     wsService.requestCognitiveMemory();
-    setTimeout(() => setIsRefreshing(false), 700);
+    wsService.requestRuntimeInventory();
+    setTimeout(() => setIsRefreshing(false), 650);
   }, []);
 
   const handleDisplayChange = useCallback((key: keyof GraphDisplayState, value: boolean) => {
     setDisplay((current) => ({ ...current, [key]: value }));
   }, []);
 
-  const allNodes = useMemo(() => cognitiveStats.nodes || [], [cognitiveStats.nodes]);
-  const allEdges = useMemo(() => cognitiveStats.edges || [], [cognitiveStats.edges]);
+  const coreUniverse = useMemo(
+    () =>
+      buildCoreUniverseGraph(
+        cognitiveStats.nodes ?? [],
+        cognitiveStats.edges ?? [],
+        cognitiveStats.facts ?? [],
+        runtimeInventory,
+        {
+          includeCoreArchitecture: dataScope === 'universe',
+          includeLeafTools,
+        },
+      ),
+    [
+      cognitiveStats.nodes,
+      cognitiveStats.edges,
+      cognitiveStats.facts,
+      runtimeInventory,
+      dataScope,
+      includeLeafTools,
+    ],
+  );
+
+  const allNodes = coreUniverse.nodes;
+  const allEdges = coreUniverse.edges;
+  const cleanFacts = coreUniverse.cleanFacts;
+
   const graphSemantics = useMemo(
     () => buildGraphSemantics(allNodes, allEdges),
     [allEdges, allNodes],
   );
 
-  const nodeTypeCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    allNodes.forEach((node) => {
-      const kind = node.entity_type.trim() || 'unknown';
-      counts.set(kind, (counts.get(kind) || 0) + 1);
-    });
+  const categoryCounts = useMemo(() => {
+    const counts = new Map<CanonicalGraphCategory, number>();
+    for (const node of allNodes) {
+      const cat = normalizeGraphCategory(node.entity_type);
+      counts.set(cat, (counts.get(cat) ?? 0) + 1);
+    }
     return counts;
   }, [allNodes]);
 
-  const nodeTypes = useMemo(
-    () => Array.from(nodeTypeCounts.keys()).sort(),
-    [nodeTypeCounts],
-  );
-
-  const factTags = useMemo(
+  const activeCategories = useMemo(
     () =>
-      Array.from(
-        new Set(
-          (cognitiveStats.facts || []).flatMap((fact) =>
-            fact.tags
-              .split(',')
-              .map((tag) => tag.trim())
-              .filter(Boolean),
-          ),
-        ),
-      ).sort(),
-    [cognitiveStats.facts],
-  );
-
-  const communityOptions = useMemo(
-    () =>
-      graphSemantics.clusterIds.map((id, index) => ({
-        id,
-        label: `Constellation ${String(index + 1).padStart(2, '0')}`,
-      })),
-    [graphSemantics.clusterIds],
-  );
-
-  const relationTypes = useMemo(
-    () => Array.from(new Set(allEdges.map((edge) => edge.relation_type).filter(Boolean))).sort(),
-    [allEdges],
+      Object.values(GRAPH_CATEGORY_CATALOG)
+        .filter((cat) => (categoryCounts.get(cat.id) ?? 0) > 0)
+        .sort((a, b) => a.order - b.order),
+    [categoryCounts],
   );
 
   const degreeThreshold = useMemo(() => {
@@ -527,8 +449,7 @@ export const KnowledgeView: React.FC = () => {
     return new Set(
       allEdges
         .filter((edge) =>
-          [edge.from_name, edge.to_name, edge.relation_type]
-            .join(' ')
+          `${edge.from_name} ${edge.to_name} ${edge.relation_type}`
             .toLowerCase()
             .includes(normalizedSearch),
         )
@@ -536,115 +457,94 @@ export const KnowledgeView: React.FC = () => {
     );
   }, [allEdges, normalizedSearch]);
 
-  const baseFilteredNodes = useMemo(
-    () =>
-      allNodes.filter((node) => {
-        const metric = graphSemantics.nodeMetrics.get(node.name);
-        const matchesType = nodeTypeFilter === 'all' || node.entity_type === nodeTypeFilter;
-        const matchesCommunity =
-          communityFilter === 'all' || metric?.clusterId === communityFilter;
-        const matchesConnected = !mostConnectedOnly || (metric?.degree || 0) >= degreeThreshold;
-        const haystack = [node.name, node.entity_type, formatObservations(node.observations)]
-          .join(' ')
-          .toLowerCase();
-        return (
-          matchesType &&
-          matchesCommunity &&
-          matchesConnected &&
-          (!normalizedSearch ||
-            haystack.includes(normalizedSearch) ||
-            matchingEdgeEndpoints.has(node.name))
-        );
-      }),
-    [
-      allNodes,
-      communityFilter,
-      degreeThreshold,
-      graphSemantics.nodeMetrics,
-      matchingEdgeEndpoints,
-      mostConnectedOnly,
-      nodeTypeFilter,
-      normalizedSearch,
-    ],
-  );
-
-  const checkedScopeNames = useMemo(() => {
-    if (!isolateChecked || checkedNodes.size === 0) return null;
-    const allowed = new Set<string>(checkedNodes);
-    if (includeCheckedNeighbors) {
-      allEdges.forEach((edge) => {
-        if (checkedNodes.has(edge.from_name)) allowed.add(edge.to_name);
-        if (checkedNodes.has(edge.to_name)) allowed.add(edge.from_name);
-      });
-    }
-    return allowed;
-  }, [allEdges, checkedNodes, includeCheckedNeighbors, isolateChecked]);
-
   const filteredNodes = useMemo(() => {
-    if (!checkedScopeNames) return baseFilteredNodes;
-    return baseFilteredNodes.filter((node) => checkedScopeNames.has(node.name));
-  }, [baseFilteredNodes, checkedScopeNames]);
+    const directMatches = new Set<string>();
+    for (const node of allNodes) {
+      const metric = graphSemantics.nodeMetrics.get(node.name);
+      const cat = normalizeGraphCategory(node.entity_type);
+      const matchesCat = categoryFilter === 'all' || cat === categoryFilter;
+      const matchesHub = !mostConnectedOnly || (metric?.degree ?? 0) >= degreeThreshold;
+      const haystack = `${node.name} ${cat} ${formatObservations(node.observations)}`.toLowerCase();
+      const matchesQuery =
+        !normalizedSearch ||
+        haystack.includes(normalizedSearch) ||
+        matchingEdgeEndpoints.has(node.name);
+      if (matchesCat && matchesHub && matchesQuery) {
+        directMatches.add(node.name);
+      }
+    }
+
+    // When filtering by a category, keep its 1-hop anchor hubs visible so stars remain connected!
+    if (categoryFilter !== 'all' && directMatches.size > 0) {
+      for (const edge of allEdges) {
+        if (directMatches.has(edge.from_name) && edge.to_name === 'OpenZ') {
+          directMatches.add(edge.to_name);
+        }
+        if (directMatches.has(edge.to_name) && edge.from_name === 'OpenZ') {
+          directMatches.add(edge.from_name);
+        }
+      }
+    }
+
+    return allNodes.filter((n) => directMatches.has(n.name));
+  }, [
+    allNodes,
+    allEdges,
+    categoryFilter,
+    mostConnectedOnly,
+    degreeThreshold,
+    graphSemantics.nodeMetrics,
+    normalizedSearch,
+    matchingEdgeEndpoints,
+  ]);
 
   const filteredNodeNames = useMemo(
-    () => new Set(filteredNodes.map((node) => node.name)),
+    () => new Set(filteredNodes.map((n) => n.name)),
     [filteredNodes],
   );
 
   const filteredEdges = useMemo(
     () =>
-      allEdges.filter((edge) => {
-        const endpointMatch = checkedScopeNames
-          ? filteredNodeNames.has(edge.from_name) && filteredNodeNames.has(edge.to_name)
-          : filteredNodeNames.has(edge.from_name) || filteredNodeNames.has(edge.to_name);
-        const matchesRelationType =
-          relationTypeFilter === 'all' || edge.relation_type === relationTypeFilter;
-        const haystack = [edge.from_name, edge.to_name, edge.relation_type]
-          .join(' ')
-          .toLowerCase();
-        const relationMatch = !normalizedSearch || haystack.includes(normalizedSearch);
-        const nodeMatch =
-          !normalizedSearch ||
-          filteredNodeNames.has(edge.from_name) ||
-          filteredNodeNames.has(edge.to_name);
-        return endpointMatch && matchesRelationType && (relationMatch || nodeMatch);
-      }),
-    [allEdges, checkedScopeNames, filteredNodeNames, normalizedSearch, relationTypeFilter],
+      allEdges.filter(
+        (edge) => filteredNodeNames.has(edge.from_name) && filteredNodeNames.has(edge.to_name),
+      ),
+    [allEdges, filteredNodeNames],
   );
 
-  const sortedChecklistNodes = useMemo(() => {
-    const query = nodeListQuery.trim().toLowerCase();
-    const candidates = baseFilteredNodes.filter((node) => {
-      if (!query) return true;
-      return [node.name, node.entity_type].join(' ').toLowerCase().includes(query);
+  const sortedExplorerNodes = useMemo(() => {
+    return [...filteredNodes].sort((a, b) => {
+      const degA = graphSemantics.nodeMetrics.get(a.name)?.degree ?? 0;
+      const degB = graphSemantics.nodeMetrics.get(b.name)?.degree ?? 0;
+      return degB - degA || a.name.localeCompare(b.name);
     });
-    return [...candidates].sort((left, right) => {
-      const leftChecked = checkedNodes.has(left.name) ? 1 : 0;
-      const rightChecked = checkedNodes.has(right.name) ? 1 : 0;
-      if (leftChecked !== rightChecked) return rightChecked - leftChecked;
-      if (nodeSortOrder === 'name') return left.name.localeCompare(right.name);
-      if (nodeSortOrder === 'type') {
-        const typeCmp = left.entity_type.localeCompare(right.entity_type);
-        return typeCmp !== 0 ? typeCmp : left.name.localeCompare(right.name);
-      }
-      const leftDeg = graphSemantics.nodeMetrics.get(left.name)?.degree ?? 0;
-      const rightDeg = graphSemantics.nodeMetrics.get(right.name)?.degree ?? 0;
-      return rightDeg !== leftDeg ? rightDeg - leftDeg : left.name.localeCompare(right.name);
-    });
-  }, [baseFilteredNodes, checkedNodes, graphSemantics.nodeMetrics, nodeListQuery, nodeSortOrder]);
+  }, [filteredNodes, graphSemantics.nodeMetrics]);
+
+  const factTags = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          cleanFacts.flatMap((fact) =>
+            fact.tags
+              .replace('[', '')
+              .replace(']', '')
+              .replaceAll('"', '')
+              .split(',')
+              .map((tag) => tag.trim())
+              .filter(Boolean),
+          ),
+        ),
+      ).sort(),
+    [cleanFacts],
+  );
 
   const filteredFacts = useMemo(
     () =>
-      (cognitiveStats.facts || [])
+      cleanFacts
         .filter((fact) => {
           const matchesTag =
             factTagFilter === 'all' ||
-            fact.tags
-              .split(',')
-              .map((tag) => tag.trim())
-              .includes(factTagFilter);
-          const haystack = [fact.text, fact.tags, fact.timestamp, String(fact.importance)]
-            .join(' ')
-            .toLowerCase();
+            fact.tags.toLowerCase().includes(factTagFilter.toLowerCase());
+          const haystack = `${fact.text} ${fact.tags} ${fact.timestamp}`.toLowerCase();
           return matchesTag && (!normalizedSearch || haystack.includes(normalizedSearch));
         })
         .sort((a, b) =>
@@ -652,28 +552,8 @@ export const KnowledgeView: React.FC = () => {
             ? b.importance - a.importance
             : new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
         ),
-    [cognitiveStats.facts, factTagFilter, normalizedSearch, sortMode],
+    [cleanFacts, factTagFilter, normalizedSearch, sortMode],
   );
-
-  const snapshotStats = {
-    entitiesCount: filteredNodes.length,
-    relationsCount: filteredEdges.length,
-    factsCount: filteredFacts.length,
-  };
-
-  const totalStats = {
-    entitiesCount: cognitiveStats.entitiesCount || allNodes.length,
-    relationsCount: cognitiveStats.relationsCount || allEdges.length,
-    factsCount: cognitiveStats.factsCount || (cognitiveStats.facts || []).length,
-  };
-
-  const graphCoverageLabel = formatGraphStats({
-    loaded: totalStats.entitiesCount,
-    visible: visibleGraphStats.visible,
-    edges: totalStats.relationsCount,
-    renderedNodes: visibleGraphStats.renderedNodes,
-    renderedEdges: visibleGraphStats.renderedEdges,
-  });
 
   const selectedNode = useMemo(
     () =>
@@ -723,22 +603,16 @@ export const KnowledgeView: React.FC = () => {
   const handleSelectNode = useCallback((nodeName: string | null) => {
     setSelectedNodeName(nodeName);
     setSelectedEdgeKey(null);
-    if (nodeName) {
-      setInspectorCollapsed(false);
-    }
   }, []);
 
   const focusNodeOnCanvas = useCallback(
     (nodeName: string) => {
       handleSelectNode(nodeName);
-      if (graphMode === 'overview') {
-        setGraphMode('all');
-      }
       requestAnimationFrame(() => {
         graphControlsRef.current?.focusNodeByName(nodeName);
       });
     },
-    [graphMode, handleSelectNode],
+    [handleSelectNode],
   );
 
   const handleSelectEdge = useCallback(
@@ -748,140 +622,48 @@ export const KnowledgeView: React.FC = () => {
       const edge = allEdges.find((candidate) => edgeKey(candidate) === key);
       if (edge) {
         setSelectedNodeName(edge.from_name);
-        setInspectorCollapsed(false);
       }
     },
     [allEdges],
   );
 
-  const toggleNodeChecked = useCallback((nodeName: string) => {
-    setCheckedNodes((previous) => {
-      const next = new Set(previous);
-      if (next.has(nodeName)) {
-        next.delete(nodeName);
-      } else {
-        next.add(nodeName);
-      }
-      if (next.size === 0) {
-        setIsolateChecked(false);
-      }
-      return next;
-    });
-  }, []);
-
-  const checkVisibleNodes = useCallback(() => {
-    setCheckedNodes((previous) => {
-      const next = new Set(previous);
-      sortedChecklistNodes.forEach((node) => next.add(node.name));
-      return next;
-    });
-  }, [sortedChecklistNodes]);
-
-  const clearCheckedNodes = useCallback(() => {
-    setCheckedNodes(new Set());
-    setIsolateChecked(false);
-  }, []);
-
-  const activeFilterCount =
-    (nodeTypeFilter !== 'all' ? 1 : 0) +
-    (communityFilter !== 'all' ? 1 : 0) +
-    (relationTypeFilter !== 'all' ? 1 : 0) +
-    (mostConnectedOnly ? 1 : 0) +
-    (isolateChecked && checkedNodes.size > 0 ? 1 : 0);
-
-  const hasAnyFilter = Boolean(searchQuery.trim()) || activeFilterCount > 0;
-
-  const resetAllFilters = useCallback(() => {
-    setSearchQuery('');
-    setNodeTypeFilter('all');
-    setCommunityFilter('all');
-    setRelationTypeFilter('all');
-    setMostConnectedOnly(false);
-    setIsolateChecked(false);
-    setFactTagFilter('all');
-  }, []);
-
-  const cycleNodeSortOrder = useCallback(() => {
-    setNodeSortOrder((current) =>
-      current === 'degree' ? 'name' : current === 'name' ? 'type' : 'degree',
-    );
-  }, []);
-
-  const graphDbExists =
-    runtimeInventory?.memory.graphDb.exists ?? Boolean(cognitiveStats.paths?.graphDb);
-  const memoryDbExists =
-    runtimeInventory?.memory.memoryDb.exists ?? Boolean(cognitiveStats.paths?.memoryDb);
-  const syncLabel = allNodes.length > 0 ? 'Live sync' : 'Awaiting records';
   const memoryDbPath =
     cognitiveStats.paths?.memoryDb ||
     runtimeInventory?.paths.memoryDb ||
-    'Runtime path unavailable';
+    '~/.openz/memory.db';
   const graphDbPath =
-    cognitiveStats.paths?.graphDb || runtimeInventory?.paths.graphDb || 'Runtime path unavailable';
+    cognitiveStats.paths?.graphDb ||
+    runtimeInventory?.paths.graphDb ||
+    '~/.openz/graph_memory.db';
 
   const generateMarkdownString = useCallback(() => {
-    let md = `# Knowledge Graph Memory Snapshot\n\n`;
-    md += `Generated at: \`${new Date().toLocaleString()}\`\n`;
-    md += `Memory DB: \`${memoryDbPath}\`\n`;
-    md += `Graph DB: \`${graphDbPath}\`\n\n`;
+    let md = `# OpenZ Core Knowledge Graph Snapshot\n\n`;
+    md += `- **Generated**: \`${new Date().toLocaleString()}\`\n`;
+    md += `- **Scope**: \`${dataScope}\`\n`;
+    md += `- **Memory DB**: \`${memoryDbPath}\`\n`;
+    md += `- **Graph DB**: \`${graphDbPath}\`\n\n`;
 
-    md += `## 1. Node Entities (${snapshotStats.entitiesCount})\n\n`;
-    if (filteredNodes.length > 0) {
-      filteredNodes.forEach((n) => {
-        md += `### [[${n.name}]] (${n.entity_type})\n`;
-        try {
-          const obs = JSON.parse(n.observations);
-          if (Array.isArray(obs) && obs.length > 0) {
-            obs.forEach((o) => {
-              md += `- ${o}\n`;
-            });
-          } else {
-            md += `- ${n.observations}\n`;
-          }
-        } catch {
-          md += `- ${n.observations || 'No observations'}\n`;
-        }
-        md += `\n`;
-      });
-    } else {
-      md += `*No nodes present in database.*\n\n`;
+    md += `## 1. Entities (${graphNodes.length})\n\n`;
+    for (const n of graphNodes) {
+      md += `### [[${n.name}]] (${n.entity_type})\n`;
+      md += `- ${formatObservations(n.observations)}\n\n`;
     }
 
-    md += `## 2. Relationships (${snapshotStats.relationsCount})\n\n`;
-    if (filteredEdges.length > 0) {
-      md += `| Source Entity | Target Entity | Relation Type |\n`;
-      md += `| :--- | :--- | :--- |\n`;
-      filteredEdges.forEach((e) => {
+    md += `## 2. Relationships (${graphEdges.length})\n\n`;
+    if (graphEdges.length > 0) {
+      md += `| Source | Target | Relation |\n| :--- | :--- | :--- |\n`;
+      for (const e of graphEdges) {
         md += `| [[${e.from_name}]] | [[${e.to_name}]] | \`${e.relation_type}\` |\n`;
-      });
+      }
       md += `\n`;
-    } else {
-      md += `*No edges present in database.*\n\n`;
     }
 
-    md += `## 3. Stored Cognitive Facts (${snapshotStats.factsCount})\n\n`;
-    if (filteredFacts.length > 0) {
-      filteredFacts.forEach((f) => {
-        md += `- **Fact**: ${f.text}\n`;
-        md += `  - *Importance*: ${f.importance} | *Timestamp*: ${f.timestamp}\n`;
-        if (f.tags) md += `  - *Tags*: \`${f.tags}\`\n`;
-        md += `\n`;
-      });
-    } else {
-      md += `*No long-term facts compiled yet by background curators.*\n\n`;
+    md += `## 3. Curated Cognitive Facts (${filteredFacts.length})\n\n`;
+    for (const f of filteredFacts) {
+      md += `- ${f.text} *(importance: ${f.importance.toFixed(2)})*\n`;
     }
-
     return md;
-  }, [
-    filteredEdges,
-    filteredFacts,
-    filteredNodes,
-    graphDbPath,
-    memoryDbPath,
-    snapshotStats.entitiesCount,
-    snapshotStats.factsCount,
-    snapshotStats.relationsCount,
-  ]);
+  }, [dataScope, filteredFacts, graphDbPath, graphEdges, graphNodes, memoryDbPath]);
 
   const handleCopyMarkdown = useCallback(() => {
     navigator.clipboard.writeText(generateMarkdownString());
@@ -891,57 +673,36 @@ export const KnowledgeView: React.FC = () => {
 
   const handleDownloadMarkdown = useCallback(() => {
     downloadTextFile(
-      'openz-knowledge-snapshot.md',
+      'openz-core-graph.md',
       generateMarkdownString(),
       'text/markdown;charset=utf-8',
     );
   }, [generateMarkdownString]);
 
   const handleDownloadJson = useCallback(() => {
-    const payload = {
-      generatedAt: new Date().toISOString(),
-      filters: {
-        searchQuery,
-        nodeTypeFilter,
-        communityFilter,
-        relationTypeFilter,
-        mostConnectedOnly,
-        checkedNodes: Array.from(checkedNodes),
-        isolateChecked,
-        factTagFilter,
-        sortMode,
-      },
-      stats: snapshotStats,
-      nodes: filteredNodes,
-      edges: filteredEdges,
-      facts: filteredFacts,
-      workingMemoryKeys: cognitiveStats.workingMemoryKeys,
-    };
     downloadTextFile(
-      'openz-knowledge-snapshot.json',
-      JSON.stringify(payload, null, 2),
+      'openz-core-graph.json',
+      JSON.stringify(
+        {
+          generatedAt: new Date().toISOString(),
+          scope: dataScope,
+          nodes: graphNodes,
+          edges: graphEdges,
+          facts: filteredFacts,
+          workingMemoryKeys: cognitiveStats.workingMemoryKeys,
+        },
+        null,
+        2,
+      ),
       'application/json;charset=utf-8',
     );
-  }, [
-    checkedNodes,
-    cognitiveStats.workingMemoryKeys,
-    communityFilter,
-    factTagFilter,
-    filteredEdges,
-    filteredFacts,
-    filteredNodes,
-    isolateChecked,
-    mostConnectedOnly,
-    nodeTypeFilter,
-    relationTypeFilter,
-    searchQuery,
-    snapshotStats,
-    sortMode,
-  ]);
+  }, [cognitiveStats.workingMemoryKeys, dataScope, filteredFacts, graphEdges, graphNodes]);
+
+  const rightOffsetClass = isActivityPanelOpen ? 'right-3' : 'right-14 md:right-16';
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-background select-none">
-      {/* Full-Viewport Obsidian Interactive Graph Canvas */}
+      {/* Full-Viewport Obsidian + Graphify Universe Canvas */}
       <ObsidianGraph
         nodes={graphNodes}
         edges={graphEdges}
@@ -950,29 +711,27 @@ export const KnowledgeView: React.FC = () => {
         searchQuery={searchQuery}
         selectedNodeName={selectedNodeName}
         selectedEdgeKey={selectedEdgeKey}
-        checkedNodeNames={checkedNodes}
         display={display}
         onDisplayChange={handleDisplayChange}
         onSelectNode={handleSelectNode}
         onSelectEdge={handleSelectEdge}
         onModeChange={setGraphMode}
-        onVisibleStatsChange={setVisibleGraphStats}
         controlsRef={graphControlsRef}
         fullBleed
         showBuiltInChrome={false}
         height="100%"
       />
 
-      {/* Top-Left Floating Card: Search, Mode, Filters, Display & Vault Controls */}
+      {/* Top-Left Compact Obsidian Control Pod */}
       <section
-        aria-label="Graph search and controls"
-        className="pointer-events-auto absolute left-14 top-3 z-20 flex max-h-[calc(55vh-0.75rem)] w-[min(340px,calc(100vw-5.25rem))] flex-col overflow-hidden rounded-2xl border border-border/75 bg-card/88 shadow-2xl backdrop-blur-md md:left-3"
+        aria-label="Universe graph controls"
+        className="pointer-events-auto absolute left-14 top-3 z-20 flex max-h-[calc(100vh-5.25rem)] w-[min(324px,calc(100vw-5.25rem))] flex-col overflow-hidden rounded-2xl border border-border/70 bg-card/84 shadow-2xl ring-1 ring-white/[0.05] backdrop-blur-2xl md:left-3"
       >
-        <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2.5">
+        <div className="flex items-center gap-2 border-b border-border/55 px-3 py-2.5">
           <button
             type="button"
             onClick={() => setActiveView('chats')}
-            className="rounded-lg border border-border/60 bg-muted/30 p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            className="rounded-lg border border-border/60 bg-background/60 p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
             title="Back to chat"
             aria-label="Back to chat"
           >
@@ -982,27 +741,20 @@ export const KnowledgeView: React.FC = () => {
           <div className="flex min-w-0 flex-1 items-center gap-1.5">
             <BrainCircuit className="h-4 w-4 shrink-0 text-primary" />
             <h1 className="truncate text-xs font-bold tracking-tight text-foreground">
-              Cognitive Graph
+              Cognitive Universe
             </h1>
-            <span
-              className={cn(
-                'h-2 w-2 shrink-0 rounded-full',
-                memoryDbExists && graphDbExists ? 'bg-success' : 'bg-warning',
-              )}
-              title={`${memoryDbExists && graphDbExists ? 'Stores ready' : 'Partial store'} · ${syncLabel}`}
-            />
           </div>
 
-          <span className="rounded-full bg-muted/70 px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
-            {graphNodes.length}/{totalStats.entitiesCount}
+          <span className="rounded-full bg-foreground/[0.06] px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+            {graphNodes.length} · {graphEdges.length}e
           </span>
 
           <button
             type="button"
             onClick={handleRefresh}
             className="rounded-lg p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-            title="Sync cognitive memory"
-            aria-label="Sync cognitive memory"
+            title="Sync core graph"
+            aria-label="Sync core graph"
           >
             <RefreshCw className={cn('h-3.5 w-3.5', isRefreshing && 'animate-spin text-primary')} />
           </button>
@@ -1011,7 +763,7 @@ export const KnowledgeView: React.FC = () => {
             type="button"
             onClick={() => setControlCollapsed((prev) => !prev)}
             className="rounded-lg p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-            aria-label={controlCollapsed ? 'Expand graph controls' : 'Collapse graph controls'}
+            aria-label={controlCollapsed ? 'Expand controls' : 'Collapse controls'}
           >
             {controlCollapsed ? (
               <ChevronDown className="h-3.5 w-3.5" />
@@ -1023,15 +775,15 @@ export const KnowledgeView: React.FC = () => {
 
         {!controlCollapsed && (
           <div className="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-3 scrollbar-thin">
-            {/* Search input */}
+            {/* Search */}
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-muted-foreground" />
               <input
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search entities, relations, facts..."
-                aria-label="Search cognitive graph"
-                className="h-8 w-full rounded-xl border border-border/70 bg-background/75 pl-8 pr-7 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+                placeholder="Search stars, skills, agents, facts…"
+                aria-label="Search cognitive universe"
+                className="h-8 w-full rounded-xl border border-border/65 bg-background/75 pl-8 pr-7 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
               />
               {searchQuery && (
                 <button
@@ -1045,147 +797,110 @@ export const KnowledgeView: React.FC = () => {
               )}
             </div>
 
-            {/* Graph Lens / View Mode */}
-            <div className="grid grid-cols-3 gap-1 rounded-xl border border-border/60 bg-muted/25 p-1 text-[10px]">
-              {(['overview', 'all', 'neighborhood'] as const).map((candidate) => {
-                const active = graphMode === candidate;
-                const label =
-                  candidate === 'overview'
-                    ? 'Clusters'
-                    : candidate === 'all'
-                      ? 'All Nodes'
-                      : 'Local';
+            {/* Data Source Scope: Core Universe vs Graph DB Only */}
+            <div className="grid grid-cols-2 gap-1 rounded-xl border border-border/55 bg-background/50 p-1 text-[10px]">
+              <button
+                type="button"
+                onClick={() => setDataScope('universe')}
+                className={cn(
+                  'rounded-lg px-2 py-1 font-semibold transition',
+                  dataScope === 'universe'
+                    ? 'bg-primary text-primary-foreground shadow-2xs'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                Core Universe
+              </button>
+              <button
+                type="button"
+                onClick={() => setDataScope('graph-db')}
+                className={cn(
+                  'rounded-lg px-2 py-1 font-semibold transition',
+                  dataScope === 'graph-db'
+                    ? 'bg-primary text-primary-foreground shadow-2xs'
+                    : 'text-muted-foreground hover:text-foreground',
+                )}
+              >
+                Memory DB Only
+              </button>
+            </div>
+
+            {/* Graph Lens */}
+            <div className="grid grid-cols-3 gap-1 rounded-xl border border-border/55 bg-muted/20 p-1 text-[10px]">
+              {(
+                [
+                  { id: 'all', label: 'Universe' },
+                  { id: 'overview', label: 'Nebulae' },
+                  { id: 'neighborhood', label: '1-Hop Orbit' },
+                ] as const
+              ).map((lens) => (
+                <button
+                  key={lens.id}
+                  type="button"
+                  onClick={() => {
+                    if (lens.id === 'neighborhood' && !selectedNodeName && topHubNode) {
+                      setSelectedNodeName(topHubNode.name);
+                    }
+                    setGraphMode(lens.id);
+                  }}
+                  className={cn(
+                    'rounded-lg px-2 py-1 font-semibold transition',
+                    graphMode === lens.id
+                      ? 'bg-foreground/12 text-foreground shadow-2xs'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {lens.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Sub-Tabs */}
+            <div className="flex items-center gap-1 border-b border-border/50 pb-2 text-[10px]">
+              {(
+                [
+                  { id: 'explorer', label: 'Stars', icon: Layers },
+                  { id: 'display', label: 'Visuals', icon: SlidersHorizontal },
+                  { id: 'vault', label: 'Vault', icon: Database },
+                ] as const
+              ).map((tab) => {
+                const Icon = tab.icon;
                 return (
                   <button
-                    key={candidate}
+                    key={tab.id}
                     type="button"
-                    onClick={() => {
-                      if (candidate === 'neighborhood' && !selectedNodeName && topHubNode) {
-                        setSelectedNodeName(topHubNode.name);
-                      }
-                      setGraphMode(candidate);
-                    }}
+                    onClick={() => setControlSection(tab.id)}
                     className={cn(
-                      'rounded-lg px-2 py-1 font-semibold transition',
-                      active
-                        ? 'bg-primary text-primary-foreground shadow-xs'
-                        : 'text-muted-foreground hover:text-foreground',
+                      'inline-flex items-center gap-1 rounded-lg px-2.5 py-1 font-semibold transition',
+                      controlSection === tab.id
+                        ? 'bg-primary/14 text-primary'
+                        : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
                     )}
-                    aria-pressed={active}
                   >
-                    {label}
+                    <Icon className="h-3 w-3" />
+                    <span>{tab.label}</span>
                   </button>
                 );
               })}
-            </div>
 
-            {/* Control Card Sub-Tabs: Filters | Display | Vault */}
-            <div className="flex items-center gap-1 border-b border-border/50 pb-2 text-[10px]">
-              <button
-                type="button"
-                onClick={() => setControlSection('filters')}
-                className={cn(
-                  'inline-flex items-center gap-1 rounded-lg px-2.5 py-1 font-semibold transition',
-                  controlSection === 'filters'
-                    ? 'bg-primary/14 text-primary'
-                    : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
-                )}
-              >
-                <Filter className="h-3 w-3" />
-                Filters
-                {activeFilterCount > 0 && (
-                  <span className="rounded-full bg-primary px-1.5 text-[9px] text-primary-foreground">
-                    {activeFilterCount}
-                  </span>
-                )}
-              </button>
-              <button
-                type="button"
-                onClick={() => setControlSection('display')}
-                className={cn(
-                  'inline-flex items-center gap-1 rounded-lg px-2.5 py-1 font-semibold transition',
-                  controlSection === 'display'
-                    ? 'bg-primary/14 text-primary'
-                    : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
-                )}
-              >
-                <SlidersHorizontal className="h-3 w-3" />
-                Display
-              </button>
-              <button
-                type="button"
-                onClick={() => setControlSection('vault')}
-                className={cn(
-                  'inline-flex items-center gap-1 rounded-lg px-2.5 py-1 font-semibold transition',
-                  controlSection === 'vault'
-                    ? 'bg-primary/14 text-primary'
-                    : 'text-muted-foreground hover:bg-muted/50 hover:text-foreground',
-                )}
-              >
-                <Database className="h-3 w-3" />
-                Vault
-              </button>
-
-              {hasAnyFilter && (
+              {(categoryFilter !== 'all' || mostConnectedOnly || Boolean(searchQuery)) && (
                 <button
                   type="button"
-                  onClick={resetAllFilters}
-                  className="ml-auto rounded-lg px-2 py-1 font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                  onClick={() => {
+                    setCategoryFilter('all');
+                    setMostConnectedOnly(false);
+                    setSearchQuery('');
+                  }}
+                  className="ml-auto rounded-lg px-2 py-1 font-semibold text-primary hover:underline"
                 >
                   Reset
                 </button>
               )}
             </div>
 
-            {controlSection === 'filters' && (
-              <div className="space-y-2 text-xs">
-                <div className="grid grid-cols-1 gap-1.5">
-                  <select
-                    value={nodeTypeFilter}
-                    onChange={(e) => setNodeTypeFilter(e.target.value)}
-                    aria-label="Filter by entity type"
-                    className="h-8 w-full rounded-xl border border-border/65 bg-background/70 px-2.5 text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
-                  >
-                    <option value="all">All entity types ({nodeTypes.length})</option>
-                    {nodeTypes.map((type) => (
-                      <option key={type} value={type}>
-                        {type} ({nodeTypeCounts.get(type) || 0})
-                      </option>
-                    ))}
-                  </select>
-
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <select
-                      value={communityFilter}
-                      onChange={(e) => setCommunityFilter(e.target.value)}
-                      aria-label="Filter by constellation"
-                      className="h-8 w-full rounded-xl border border-border/65 bg-background/70 px-2 text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
-                    >
-                      <option value="all">All clusters ({communityOptions.length})</option>
-                      {communityOptions.map((community) => (
-                        <option key={community.id} value={community.id}>
-                          {community.label}
-                        </option>
-                      ))}
-                    </select>
-
-                    <select
-                      value={relationTypeFilter}
-                      onChange={(e) => setRelationTypeFilter(e.target.value)}
-                      aria-label="Filter by relation type"
-                      className="h-8 w-full rounded-xl border border-border/65 bg-background/70 px-2 text-[11px] text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
-                    >
-                      <option value="all">All relations ({relationTypes.length})</option>
-                      {relationTypes.map((relation) => (
-                        <option key={relation} value={relation}>
-                          {relation}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-1.5 pt-0.5 text-[10px]">
+            {controlSection === 'explorer' && (
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
                   <button
                     type="button"
                     onClick={() => setMostConnectedOnly((prev) => !prev)}
@@ -1193,45 +908,58 @@ export const KnowledgeView: React.FC = () => {
                       'inline-flex items-center gap-1 rounded-lg border px-2 py-1 font-semibold transition',
                       mostConnectedOnly
                         ? 'border-primary/40 bg-primary/15 text-primary'
-                        : 'border-border/60 bg-muted/20 text-muted-foreground hover:text-foreground',
+                        : 'border-border/55 bg-background/50 text-muted-foreground hover:text-foreground',
                     )}
-                    aria-pressed={mostConnectedOnly}
                   >
                     <Sparkles className="h-3 w-3" />
-                    Hubs only
+                    <span>God Nodes Only</span>
                   </button>
 
-                  <button
-                    type="button"
-                    disabled={checkedNodes.size === 0}
-                    onClick={() => setIsolateChecked((prev) => !prev)}
-                    className={cn(
-                      'inline-flex items-center gap-1 rounded-lg border px-2 py-1 font-semibold transition disabled:cursor-not-allowed disabled:opacity-45',
-                      isolateChecked && checkedNodes.size > 0
-                        ? 'border-primary/40 bg-primary/15 text-primary'
-                        : 'border-border/60 bg-muted/20 text-muted-foreground hover:text-foreground',
-                    )}
-                    aria-pressed={isolateChecked && checkedNodes.size > 0}
-                  >
-                    <CheckSquare className="h-3 w-3" />
-                    Checked ({checkedNodes.size})
-                  </button>
-
-                  {isolateChecked && checkedNodes.size > 0 && (
+                  {dataScope === 'universe' && runtimeInventory && (
                     <button
                       type="button"
-                      onClick={() => setIncludeCheckedNeighbors((prev) => !prev)}
+                      onClick={() => setIncludeLeafTools((prev) => !prev)}
                       className={cn(
-                        'rounded-lg border px-2 py-1 font-semibold transition',
-                        includeCheckedNeighbors
-                          ? 'border-info/40 bg-info/12 text-info'
-                          : 'border-border/60 bg-muted/20 text-muted-foreground hover:text-foreground',
+                        'inline-flex items-center gap-1 rounded-lg border px-2 py-1 font-semibold transition',
+                        includeLeafTools
+                          ? 'border-primary/40 bg-primary/15 text-primary'
+                          : 'border-border/55 bg-background/50 text-muted-foreground hover:text-foreground',
                       )}
-                      title="Include direct 1-hop neighbors around checked nodes"
                     >
-                      + 1-hop
+                      <span>+ {runtimeInventory.counts.tools} Tools</span>
                     </button>
                   )}
+                </div>
+
+                <div className="max-h-56 space-y-0.5 overflow-y-auto pr-0.5 scrollbar-thin">
+                  {sortedExplorerNodes.slice(0, 120).map((node) => {
+                    const isSelected = selectedNodeName === node.name;
+                    const degree = graphSemantics.nodeMetrics.get(node.name)?.degree ?? 0;
+                    const cat = getCategoryDescriptor(node.entity_type);
+                    const dotColor = getNodeColor(node.entity_type).main;
+                    return (
+                      <button
+                        key={node.name}
+                        type="button"
+                        onClick={() => focusNodeOnCanvas(node.name)}
+                        className={cn(
+                          'flex w-full items-center gap-2 rounded-xl px-2 py-1.5 text-left text-[11px] transition',
+                          isSelected
+                            ? 'bg-primary/14 text-foreground ring-1 ring-primary/35'
+                            : 'text-foreground/85 hover:bg-muted/40',
+                        )}
+                      >
+                        <span
+                          className="h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: dotColor }}
+                        />
+                        <span className="min-w-0 flex-1 truncate font-medium">{node.name}</span>
+                        <span className="shrink-0 rounded bg-foreground/[0.05] px-1.5 py-0.5 font-mono text-[9px] text-muted-foreground">
+                          {cat.shortLabel} · {degree}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -1263,27 +991,6 @@ export const KnowledgeView: React.FC = () => {
 
             {controlSection === 'vault' && (
               <div className="space-y-2 text-[11px]">
-                <div className="grid grid-cols-3 gap-1.5 text-center">
-                  <div className="rounded-xl border border-border/55 bg-background/50 p-2">
-                    <div className="font-mono text-xs font-bold text-foreground">
-                      {totalStats.entitiesCount}
-                    </div>
-                    <div className="text-[9px] text-muted-foreground">Entities</div>
-                  </div>
-                  <div className="rounded-xl border border-border/55 bg-background/50 p-2">
-                    <div className="font-mono text-xs font-bold text-foreground">
-                      {totalStats.relationsCount}
-                    </div>
-                    <div className="text-[9px] text-muted-foreground">Relations</div>
-                  </div>
-                  <div className="rounded-xl border border-border/55 bg-background/50 p-2">
-                    <div className="font-mono text-xs font-bold text-foreground">
-                      {totalStats.factsCount}
-                    </div>
-                    <div className="text-[9px] text-muted-foreground">Facts</div>
-                  </div>
-                </div>
-
                 <div className="grid grid-cols-2 gap-1.5">
                   <button
                     type="button"
@@ -1340,7 +1047,7 @@ export const KnowledgeView: React.FC = () => {
                     }}
                     className="inline-flex items-center justify-center rounded-xl border border-border/65 bg-muted/25 p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
                     title="Inspect database paths & working memory scope"
-                    aria-label="Inspect database paths and working memory scope"
+                    aria-label="Inspect database paths"
                   >
                     <ExternalLink className="h-3.5 w-3.5" />
                   </button>
@@ -1370,169 +1077,59 @@ export const KnowledgeView: React.FC = () => {
         )}
       </section>
 
-      {/* Bottom-Left Floating Card: Check, Highlight & Browse Nodes */}
-      <section
-        aria-label="Check and browse graph nodes"
-        className="pointer-events-auto absolute bottom-3 left-3 z-20 flex max-h-[calc(42vh-0.75rem)] w-[min(340px,calc(100vw-4.5rem))] flex-col overflow-hidden rounded-2xl border border-border/75 bg-card/88 shadow-2xl backdrop-blur-md"
-      >
-        <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
-          <CheckSquare className="h-3.5 w-3.5 shrink-0 text-primary" />
-          <h2 className="text-xs font-bold text-foreground">Nodes</h2>
-          <span className="rounded-full bg-muted/70 px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
-            {checkedNodes.size > 0
-              ? `${checkedNodes.size} checked · ${sortedChecklistNodes.length}`
-              : sortedChecklistNodes.length}
-          </span>
-
-          <button
-            type="button"
-            onClick={cycleNodeSortOrder}
-            className="ml-auto rounded-lg border border-border/60 bg-muted/25 px-2 py-0.5 font-mono text-[9px] font-semibold uppercase text-muted-foreground transition hover:bg-muted hover:text-foreground"
-            title="Cycle sort order"
-          >
-            {nodeSortOrder === 'degree' ? 'Hubs' : nodeSortOrder === 'name' ? 'A–Z' : 'Type'}
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setNodesCardCollapsed((prev) => !prev)}
-            className="rounded-lg p-1 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-            aria-label={nodesCardCollapsed ? 'Expand node checklist' : 'Collapse node checklist'}
-          >
-            {nodesCardCollapsed ? (
-              <ChevronUp className="h-3.5 w-3.5" />
-            ) : (
-              <ChevronDown className="h-3.5 w-3.5" />
-            )}
-          </button>
-        </div>
-
-        {!nodesCardCollapsed && (
-          <div className="flex min-h-0 flex-1 flex-col p-2.5">
-            <div className="mb-2 flex items-center gap-1.5">
-              <div className="relative flex-1">
-                <Search className="pointer-events-none absolute left-2 top-1.5 h-3 w-3 text-muted-foreground" />
-                <input
-                  value={nodeListQuery}
-                  onChange={(e) => setNodeListQuery(e.target.value)}
-                  placeholder="Filter node checklist..."
-                  aria-label="Filter node checklist"
-                  className="h-6 w-full rounded-lg border border-border/65 bg-background/70 pl-6 pr-5 text-[11px] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
-                />
-                {nodeListQuery && (
-                  <button
-                    type="button"
-                    onClick={() => setNodeListQuery('')}
-                    className="absolute right-1.5 top-1 text-muted-foreground hover:text-foreground"
-                    aria-label="Clear checklist filter"
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                )}
-              </div>
-
-              <button
-                type="button"
-                onClick={checkVisibleNodes}
-                disabled={sortedChecklistNodes.length === 0}
-                className="rounded-lg border border-border/60 bg-muted/25 px-2 py-1 text-[10px] font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-40"
-                title="Check all listed nodes"
-              >
-                All
-              </button>
-
-              {checkedNodes.size > 0 && (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => setIsolateChecked((prev) => !prev)}
-                    className={cn(
-                      'rounded-lg border px-2 py-1 text-[10px] font-semibold transition',
-                      isolateChecked
-                        ? 'border-primary/40 bg-primary/15 text-primary'
-                        : 'border-border/60 bg-muted/25 text-muted-foreground hover:text-foreground',
-                    )}
-                    title="Show only checked nodes on graph"
-                  >
-                    Isolate
-                  </button>
-                  <button
-                    type="button"
-                    onClick={clearCheckedNodes}
-                    className="rounded-lg border border-border/60 bg-muted/25 px-2 py-1 text-[10px] font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground"
-                    title="Uncheck all nodes"
-                  >
-                    Clear
-                  </button>
-                </>
+      {/* Bottom-Center Interactive Category Constellation Legend */}
+      {activeCategories.length > 0 && (
+        <div className="pointer-events-none absolute bottom-3 left-1/2 z-20 flex max-w-[calc(100vw-15rem)] -translate-x-1/2 items-center">
+          <div className="pointer-events-auto flex items-center gap-1 overflow-x-auto rounded-full border border-border/70 bg-card/84 px-2 py-1 shadow-xl ring-1 ring-white/[0.05] backdrop-blur-2xl scrollbar-none">
+            <button
+              type="button"
+              onClick={() => setCategoryFilter('all')}
+              className={cn(
+                'shrink-0 rounded-full px-2.5 py-1 text-[10.5px] font-semibold transition',
+                categoryFilter === 'all'
+                  ? 'bg-foreground/12 text-foreground'
+                  : 'text-muted-foreground hover:text-foreground',
               )}
-            </div>
+            >
+              All ({allNodes.length})
+            </button>
 
-            {sortedChecklistNodes.length === 0 ? (
-              <div className="py-5 text-center text-[11px] text-muted-foreground">
-                {allNodes.length === 0 ? 'No entities stored yet.' : 'No matching entities.'}
-              </div>
-            ) : (
-              <div className="min-h-0 flex-1 space-y-0.5 overflow-y-auto pr-0.5 scrollbar-thin">
-                {sortedChecklistNodes.slice(0, 150).map((node) => {
-                  const isChecked = checkedNodes.has(node.name);
-                  const isSelected = selectedNodeName === node.name;
-                  const degree = graphSemantics.nodeMetrics.get(node.name)?.degree ?? 0;
-                  const dotColor = getNodeColor(node.entity_type).main;
-
-                  return (
-                    <div
-                      key={node.name}
-                      className={cn(
-                        'flex items-center gap-1.5 rounded-xl px-2 py-1 text-[11px] transition',
-                        isSelected
-                          ? 'bg-primary/14 text-foreground ring-1 ring-primary/35'
-                          : isChecked
-                            ? 'bg-muted/45 text-foreground'
-                            : 'text-foreground/85 hover:bg-muted/35',
-                      )}
-                    >
-                      <button
-                        type="button"
-                        role="checkbox"
-                        aria-checked={isChecked}
-                        aria-label={`Check ${node.name}`}
-                        onClick={() => toggleNodeChecked(node.name)}
-                        className={cn(
-                          'flex h-4 w-4 shrink-0 items-center justify-center rounded border transition',
-                          isChecked
-                            ? 'border-primary bg-primary text-primary-foreground'
-                            : 'border-border/80 bg-background/60 text-transparent hover:border-primary/60',
-                        )}
-                      >
-                        <Check className="h-2.5 w-2.5" />
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => focusNodeOnCanvas(node.name)}
-                        className="flex min-w-0 flex-1 items-center gap-2 text-left"
-                      >
-                        <span
-                          className="h-2 w-2 shrink-0 rounded-full"
-                          style={{ backgroundColor: dotColor }}
-                        />
-                        <span className="min-w-0 flex-1 truncate font-medium">{node.name}</span>
-                        <span className="shrink-0 truncate rounded bg-muted/60 px-1.5 py-0.5 font-mono text-[9px] text-muted-foreground">
-                          {node.entity_type || 'entity'} · {degree}
-                        </span>
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+            {activeCategories.map((cat) => {
+              const active = categoryFilter === cat.id;
+              const count = categoryCounts.get(cat.id) ?? 0;
+              const color = getNodeColor(cat.id).main;
+              return (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() => setCategoryFilter(active ? 'all' : cat.id)}
+                  className={cn(
+                    'inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[10.5px] font-medium transition',
+                    active
+                      ? 'bg-foreground/14 font-semibold text-foreground ring-1 ring-border'
+                      : 'text-muted-foreground hover:bg-foreground/[0.05] hover:text-foreground',
+                  )}
+                >
+                  <span
+                    className="h-2 w-2 rounded-full"
+                    style={{ backgroundColor: color }}
+                  />
+                  <span>{cat.shortLabel}</span>
+                  <span className="font-mono text-[9.5px] opacity-70">{count}</span>
+                </button>
+              );
+            })}
           </div>
-        )}
-      </section>
+        </div>
+      )}
 
-      {/* Top-Right Floating Card: Entity & Relation Inspector (offset left of WorkspaceQuickActions rail) */}
-      <div className="pointer-events-none absolute right-14 top-3 z-20 flex w-[min(350px,calc(100vw-4.75rem))] justify-end md:right-16">
+      {/* Top-Right Selected Entity & Relation Glass Inspector */}
+      <div
+        className={cn(
+          'pointer-events-none absolute top-3 z-20 flex w-[min(340px,calc(100vw-4.75rem))] justify-end',
+          rightOffsetClass,
+        )}
+      >
         <FloatingEntityInspector
           node={selectedNode}
           nodeMetric={
@@ -1543,12 +1140,7 @@ export const KnowledgeView: React.FC = () => {
           edgeSemantics={graphSemantics.edgeMetrics}
           selectedEdge={selectedEdge}
           selectedEdgeKey={selectedEdgeKey}
-          isChecked={selectedNode ? checkedNodes.has(selectedNode.name) : false}
           graphMode={graphMode}
-          topHubNode={topHubNode}
-          collapsed={inspectorCollapsed}
-          onToggleCollapse={() => setInspectorCollapsed((prev) => !prev)}
-          onToggleChecked={toggleNodeChecked}
           onSelectNode={focusNodeOnCanvas}
           onSelectEdge={handleSelectEdge}
           onToggleNeighborhood={() =>
@@ -1562,80 +1154,18 @@ export const KnowledgeView: React.FC = () => {
         />
       </div>
 
-      {/* Bottom-Right Floating Dock: Dynamic Entity Legend + Camera Controls */}
-      <div className="pointer-events-none absolute bottom-3 right-14 z-20 flex flex-col items-end gap-2 md:right-16">
-        {showLegendPopover && nodeTypes.length > 0 && (
-          <div className="pointer-events-auto max-h-56 w-60 overflow-y-auto rounded-2xl border border-border/75 bg-card/92 p-3 shadow-2xl backdrop-blur-md scrollbar-thin">
-            <div className="mb-2 flex items-center justify-between text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              <span>Entity Legend ({nodeTypes.length})</span>
-              {nodeTypeFilter !== 'all' && (
-                <button
-                  type="button"
-                  onClick={() => setNodeTypeFilter('all')}
-                  className="font-mono text-[9px] text-primary hover:underline"
-                >
-                  All
-                </button>
-              )}
-            </div>
-            <div className="space-y-1">
-              {nodeTypes.map((type) => {
-                const active = nodeTypeFilter === type;
-                return (
-                  <button
-                    key={type}
-                    type="button"
-                    onClick={() => setNodeTypeFilter(active ? 'all' : type)}
-                    className={cn(
-                      'flex w-full items-center gap-2 rounded-lg px-2 py-1 text-left text-[11px] transition',
-                      active
-                        ? 'bg-primary/15 font-semibold text-primary'
-                        : 'text-foreground/85 hover:bg-muted/50',
-                    )}
-                  >
-                    <span
-                      className="h-2.5 w-2.5 shrink-0 rounded-full"
-                      style={{ backgroundColor: getNodeColor(type).main }}
-                    />
-                    <span className="min-w-0 flex-1 truncate">{type}</span>
-                    <span className="font-mono text-[10px] text-muted-foreground">
-                      {nodeTypeCounts.get(type) || 0}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+      {/* Bottom-Right Camera Controls */}
+      <div
+        className={cn(
+          'pointer-events-none absolute bottom-3 z-20 flex items-center',
+          rightOffsetClass,
         )}
-
-        <div className="pointer-events-auto flex items-center gap-1 rounded-2xl border border-border/75 bg-card/88 px-2 py-1.5 shadow-xl backdrop-blur-md">
-          <span className="hidden max-w-[240px] truncate px-1.5 font-mono text-[10px] text-muted-foreground lg:inline">
-            {graphCoverageLabel}
-          </span>
-
-          {nodeTypes.length > 0 && (
-            <button
-              type="button"
-              onClick={() => setShowLegendPopover((prev) => !prev)}
-              className={cn(
-                'inline-flex items-center gap-1 rounded-xl px-2 py-1 text-[10px] font-semibold transition',
-                showLegendPopover || nodeTypeFilter !== 'all'
-                  ? 'bg-primary/15 text-primary'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground',
-              )}
-              title="Toggle dynamic entity legend"
-            >
-              <Layers className="h-3.5 w-3.5" />
-              <span className="hidden sm:inline">Types</span>
-            </button>
-          )}
-
-          <div className="mx-0.5 h-4 w-px bg-border/60" />
-
+      >
+        <div className="pointer-events-auto flex items-center gap-0.5 rounded-2xl border border-border/70 bg-card/84 p-1 shadow-xl ring-1 ring-white/[0.05] backdrop-blur-2xl">
           <button
             type="button"
             onClick={() => graphControlsRef.current?.zoomIn()}
-            className="rounded-lg p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            className="rounded-xl p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
             title="Zoom in (+)"
             aria-label="Zoom in"
           >
@@ -1644,7 +1174,7 @@ export const KnowledgeView: React.FC = () => {
           <button
             type="button"
             onClick={() => graphControlsRef.current?.zoomOut()}
-            className="rounded-lg p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            className="rounded-xl p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
             title="Zoom out (-)"
             aria-label="Zoom out"
           >
@@ -1653,8 +1183,8 @@ export const KnowledgeView: React.FC = () => {
           <button
             type="button"
             onClick={() => graphControlsRef.current?.fitToView()}
-            className="rounded-lg p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
-            title="Fit graph to view (0)"
+            className="rounded-xl p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            title="Fit universe to view (0)"
             aria-label="Fit graph to view"
           >
             <Maximize2 className="h-3.5 w-3.5" />
@@ -1662,7 +1192,7 @@ export const KnowledgeView: React.FC = () => {
           <button
             type="button"
             onClick={() => graphControlsRef.current?.resetLayout()}
-            className="rounded-lg p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
+            className="rounded-xl p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground"
             title="Unpin & reset layout"
             aria-label="Reset graph layout"
           >
@@ -1671,13 +1201,16 @@ export const KnowledgeView: React.FC = () => {
         </div>
       </div>
 
-      {/* Floating Slide-Over Vault Drawer (Stored Facts or Markdown Snapshot) */}
+      {/* Vault Drawer (Stored Facts or Markdown Snapshot) */}
       {vaultDrawer !== 'none' && (
         <aside
           aria-label={vaultDrawer === 'facts' ? 'Stored cognitive facts' : 'Markdown graph snapshot'}
-          className="pointer-events-auto absolute bottom-3 right-14 top-3 z-30 flex w-[min(480px,calc(100vw-4.5rem))] flex-col overflow-hidden rounded-2xl border border-border/80 bg-card/95 shadow-2xl backdrop-blur-lg md:right-16"
+          className={cn(
+            'pointer-events-auto absolute bottom-3 top-3 z-30 flex w-[min(460px,calc(100vw-4.5rem))] flex-col overflow-hidden rounded-2xl border border-border/75 bg-card/92 shadow-2xl ring-1 ring-white/[0.06] backdrop-blur-2xl',
+            rightOffsetClass,
+          )}
         >
-          <div className="flex items-center gap-2 border-b border-border/60 px-4 py-3">
+          <div className="flex items-center gap-2 border-b border-border/55 px-4 py-3">
             {vaultDrawer === 'facts' ? (
               <Database className="h-4 w-4 text-primary" />
             ) : (
@@ -1685,8 +1218,8 @@ export const KnowledgeView: React.FC = () => {
             )}
             <h2 className="text-xs font-bold text-foreground">
               {vaultDrawer === 'facts'
-                ? `Stored Cognitive Facts (${filteredFacts.length})`
-                : 'Knowledge Graph Markdown Snapshot'}
+                ? `Curated Core Facts (${filteredFacts.length})`
+                : 'Core Knowledge Snapshot (.md)'}
             </h2>
 
             <div className="ml-auto flex items-center gap-1.5">
@@ -1760,12 +1293,10 @@ export const KnowledgeView: React.FC = () => {
                     <div className="flex items-start gap-2.5">
                       <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
                       <div className="space-y-1.5">
-                        <div className="font-semibold text-warning">No stored facts matched</div>
+                        <div className="font-semibold text-warning">No curated facts matched</div>
                         <p className="text-[11px] text-muted-foreground">
-                          OpenZ compiles conversation learnings asynchronously into{' '}
-                          <code className="font-mono">{memoryDbPath}</code> or via native tools like{' '}
-                          <code className="font-mono">extract_and_store_facts</code> and{' '}
-                          <code className="font-mono">smart_store</code>.
+                          OpenZ stores durable learnings asynchronously into{' '}
+                          <code className="font-mono">{memoryDbPath}</code>.
                         </p>
                       </div>
                     </div>
@@ -1780,11 +1311,6 @@ export const KnowledgeView: React.FC = () => {
                         <span className="rounded border border-primary/25 bg-primary/12 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-primary">
                           Importance {fact.importance.toFixed(2)}
                         </span>
-                        {fact.tags && (
-                          <span className="max-w-[200px] truncate rounded bg-muted px-1.5 py-0.5 font-mono text-[9px] text-muted-foreground">
-                            {fact.tags}
-                          </span>
-                        )}
                         <span className="ml-auto font-mono text-[9px] text-muted-foreground">
                           {fact.timestamp}
                         </span>

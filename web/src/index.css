@@ -504,3 +504,30 @@ select optgroup {
   font-size: 0.75rem !important;
   padding: 0.5rem !important;
 }
+
+/* Global Badge & Chip Aesthetic Overrides */
+:root[data-badge-style="minimal"] .openz-badge[data-badge-variant="secondary"],
+:root[data-badge-style="minimal"] .openz-badge[data-badge-variant="outline"] {
+  background: transparent;
+  border-color: color-mix(in srgb, var(--border) 62%, transparent);
+  color: var(--muted-foreground);
+}
+
+:root[data-badge-style="subtle-pill"] .openz-badge {
+  border-radius: 9999px;
+  padding-inline: 0.5rem;
+}
+
+:root[data-badge-style="mono-tag"] .openz-badge {
+  border-radius: 0.28rem;
+  font-family: var(--font-mono);
+  font-size: 0.625rem;
+  letter-spacing: -0.015em;
+  background: color-mix(in srgb, var(--foreground) 4.5%, transparent);
+}
+
+:root[data-badge-style="tinted"] .openz-badge[data-badge-variant="default"] {
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  border-color: color-mix(in srgb, var(--primary) 35%, transparent);
+  color: var(--primary);
+}

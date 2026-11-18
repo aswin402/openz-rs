@@ -3,9 +3,27 @@ import { createJSONStorage, persist, type StateStorage } from "zustand/middlewar
 import {
   normalizeApprovalStyle,
   normalizeToolResultStyle,
+  type AgentHandoffStyleChoice,
   type ApprovalStyleChoice,
+  type ArtifactCardStyleChoice,
+  type BackgroundInboxStyleChoice,
+  type ErrorStateStyleChoice,
+  type FileTreeStyleChoice,
+  type MathBlockStyleChoice,
+  type RecommendationStyleChoice,
+  type ResearchReportStyleChoice,
+  type RetrievalChunksStyleChoice,
+  type SpecSheetStyleChoice,
+  type TimelineStyleChoice,
   type ToolResultStyleChoice,
+  type WebSearchStyleChoice,
 } from "../components/assistant-ui/elements";
+import type { GlobalBadgeStyle } from "../components/ui/badge";
+import type {
+  ComparisonStyleChoice,
+  DeleteButtonStyleChoice,
+  InlineCitationStyleChoice,
+} from "../components/registries/rareAndCommunity";
 import {
   normalizeAlertStyle,
   normalizeBeuiLoaderVariant,
@@ -42,6 +60,7 @@ import {
   type BeuiToastPosition,
   type BeuiToastVariant,
   type BeuiUserAvatarVariant,
+  type ImageGenVariant,
   type ScrollerBehaviorMode,
 } from "../components/beui";
 import {
@@ -125,7 +144,7 @@ export type AgentAvatarChoice = BeuiAgentAvatarVariant;
 export type UserAvatarChoice = BeuiUserAvatarVariant;
 export type BubbleStyleChoice = "beui-card" | "beui-full" | "editorial";
 export type { ApprovalStyleChoice, ToolResultStyleChoice };
-export type ImageGenStyleChoice = "beui-frame" | "minimal";
+export type ImageGenStyleChoice = ImageGenVariant;
 export type ActivityStyleChoice = BeuiActivityPlacement;
 export type AlertStyleChoice = BeuiAlertStyleVariant;
 export type ThinkingLoaderChoice = BeuiLoaderVariant;
@@ -134,38 +153,66 @@ export type GatewaySettingsSectionId = "agent" | "caveman" | "providers" | "chan
 
 export type CustomizeUiSectionId =
   | "theme"
+  | "badge-style"
   | "avatars"
+  | "user-avatars"
+  | "chat-width"
+  | "delete-button"
   | "prompt-input"
+  | "send-button"
   | "model-selector"
   | "prompt-suggestions"
+  | "recommendation-card"
   | "context-usage"
   | "message-scroller"
   | "message-card"
   | "message-actions"
   | "streaming-response"
+  | "thinking-loader"
   | "reasoning-text"
   | "agent-activity"
-  | "animated-toast-stack"
+  | "activity-orb"
+  | "activity-placement"
   | "plan-checklist"
   | "subagent-card"
+  | "agent-handoff"
+  | "timeline"
+  | "animated-toast-stack"
+  | "toast-placement"
+  | "telemetry-badges"
+  | "background-inbox"
+  | "alert-collapsible"
+  | "error-state"
+  | "collapsible"
   | "code-block"
   | "file-diff"
+  | "file-tree"
+  | "artifact-card"
   | "terminal-output"
   | "tool-result"
   | "tool-approval"
-  | "image-generation"
+  | "web-search"
+  | "retrieval-chunks"
+  | "research-report"
+  | "inline-citations"
   | "citations"
+  | "image-generation"
+  | "math-block"
+  | "spec-sheet"
+  | "comparison-card"
   | "data-table"
-  | "json-viewer"
-  | "alert-collapsible";
+  | "json-viewer";
 
 export interface UiCustomizationSnapshot {
   activeThemeId: string;
+  badgeStyle: GlobalBadgeStyle;
+  deleteButtonStyle: DeleteButtonStyleChoice;
   chatWidth: ChatWidthChoice;
   promptInputStyle: BeuiPromptInputVariant;
   sendButtonStyle: BeuiSendButtonVariant;
   modelSelectorStyle: BeuiModelSelectorVariant;
   promptSuggestionsStyle: BeuiPromptSuggestionsVariant;
+  recommendationStyle: RecommendationStyleChoice;
   contextUsageStyle: BeuiContextUsageVariant;
   scrollerBehavior: ScrollerBehaviorMode;
   agentAvatar: AgentAvatarChoice;
@@ -184,12 +231,15 @@ export interface UiCustomizationSnapshot {
   activityAutoCollapse: boolean;
   activityShowDetails: boolean;
   showDashboardActivity: boolean;
+  agentHandoffStyle: AgentHandoffStyleChoice;
+  timelineStyle: TimelineStyleChoice;
   toastEnabled: boolean;
   toastVariant: BeuiToastVariant;
   toastPosition: BeuiToastPosition;
   toastDuration: BeuiToastDurationPreset;
   toastMaxVisible: BeuiToastMaxVisible;
   inlineNoticeStyle: BeuiInlineNoticeStyle;
+  backgroundInboxStyle: BackgroundInboxStyleChoice;
   toastNotifyWorkflow: boolean;
   toastNotifySkill: boolean;
   toastNotifySelfImprovement: boolean;
@@ -200,24 +250,37 @@ export interface UiCustomizationSnapshot {
   subagentCardStyle: BeuiSubagentCardVariant;
   codeStyle: BeuiCodeBlockVariant;
   diffLayout: BeuiDiffViewMode;
+  fileTreeStyle: FileTreeStyleChoice;
+  artifactCardStyle: ArtifactCardStyleChoice;
   terminalStyle: BeuiTerminalVariant;
   toolResultStyle: ToolResultStyleChoice;
   approvalStyle: ApprovalStyleChoice;
+  webSearchStyle: WebSearchStyleChoice;
+  retrievalChunksStyle: RetrievalChunksStyleChoice;
+  researchReportStyle: ResearchReportStyleChoice;
+  inlineCitationStyle: InlineCitationStyleChoice;
   imageGenStyle: ImageGenStyleChoice;
   citationsStyle: BeuiCitationsVariant;
+  mathBlockStyle: MathBlockStyleChoice;
+  specSheetStyle: SpecSheetStyleChoice;
+  comparisonStyle: ComparisonStyleChoice;
   dataTableStyle: BeuiDataTableVariant;
   jsonViewerStyle: BeuiJsonViewerVariant;
   alertStyle: AlertStyleChoice;
+  errorStateStyle: ErrorStateStyleChoice;
   collapsibleStyle: BeuiCollapsibleVariant;
 }
 
 export const DEFAULT_CUSTOMIZATION: UiCustomizationSnapshot = {
   activeThemeId: "obsidian-ember",
+  badgeStyle: "minimal",
+  deleteButtonStyle: "rare-confirm",
   chatWidth: "standard",
   promptInputStyle: "elevated",
   sendButtonStyle: "icon-round",
   modelSelectorStyle: "command",
   promptSuggestionsStyle: "bento",
+  recommendationStyle: "assistant-rec",
   contextUsageStyle: "ring-pill",
   scrollerBehavior: "beui-smart",
   agentAvatar: "fox-classic",
@@ -236,12 +299,15 @@ export const DEFAULT_CUSTOMIZATION: UiCustomizationSnapshot = {
   activityAutoCollapse: true,
   activityShowDetails: true,
   showDashboardActivity: true,
+  agentHandoffStyle: "assistant-handoff",
+  timelineStyle: "assistant-timeline",
   toastEnabled: true,
   toastVariant: "beui-stack",
   toastPosition: "bottom-end",
   toastDuration: "standard",
   toastMaxVisible: 4,
-  inlineNoticeStyle: "pills",
+  inlineNoticeStyle: "minimal-whisper",
+  backgroundInboxStyle: "assistant-inbox",
   toastNotifyWorkflow: true,
   toastNotifySkill: true,
   toastNotifySelfImprovement: true,
@@ -252,14 +318,24 @@ export const DEFAULT_CUSTOMIZATION: UiCustomizationSnapshot = {
   subagentCardStyle: "card",
   codeStyle: "framed",
   diffLayout: "unified",
+  fileTreeStyle: "assistant-tree",
+  artifactCardStyle: "assistant-artifact",
   terminalStyle: "console",
   toolResultStyle: "beui-activity",
   approvalStyle: "assistant-default",
+  webSearchStyle: "assistant-web-search",
+  retrievalChunksStyle: "assistant-chunks",
+  researchReportStyle: "assistant-outline",
+  inlineCitationStyle: "aicss-pill",
   imageGenStyle: "beui-frame",
   citationsStyle: "pills",
+  mathBlockStyle: "assistant-math",
+  specSheetStyle: "assistant-spec",
+  comparisonStyle: "aicss-table",
   dataTableStyle: "interactive",
   jsonViewerStyle: "tree",
   alertStyle: "beui-alert",
+  errorStateStyle: "assistant-quiet",
   collapsibleStyle: "subtle",
 };
 
@@ -391,57 +467,11 @@ export interface UiCustomizationState extends UiCustomizationSnapshot {
 }
 
 export function extractSnapshot(state: UiCustomizationSnapshot): UiCustomizationSnapshot {
-  return {
-    activeThemeId: state.activeThemeId,
-    chatWidth: state.chatWidth,
-    promptInputStyle: state.promptInputStyle,
-    sendButtonStyle: state.sendButtonStyle,
-    modelSelectorStyle: state.modelSelectorStyle,
-    promptSuggestionsStyle: state.promptSuggestionsStyle,
-    contextUsageStyle: state.contextUsageStyle,
-    scrollerBehavior: state.scrollerBehavior,
-    agentAvatar: state.agentAvatar,
-    userAvatar: state.userAvatar,
-    bubbleStyle: state.bubbleStyle,
-    messageActionsStyle: state.messageActionsStyle,
-    showMessageActions: state.showMessageActions,
-    streamingAnimation: state.streamingAnimation,
-    thinkingAnimation: state.thinkingAnimation,
-    thinkingLoader: state.thinkingLoader,
-    activityStyle: state.activityStyle,
-    activityVariant: state.activityVariant,
-    activityOrbStyle: state.activityOrbStyle,
-    activityDensity: state.activityDensity,
-    activityMaxHeight: state.activityMaxHeight,
-    activityAutoCollapse: state.activityAutoCollapse,
-    activityShowDetails: state.activityShowDetails,
-    showDashboardActivity: state.showDashboardActivity,
-    toastEnabled: state.toastEnabled,
-    toastVariant: state.toastVariant,
-    toastPosition: state.toastPosition,
-    toastDuration: state.toastDuration,
-    toastMaxVisible: state.toastMaxVisible,
-    inlineNoticeStyle: state.inlineNoticeStyle,
-    toastNotifyWorkflow: state.toastNotifyWorkflow,
-    toastNotifySkill: state.toastNotifySkill,
-    toastNotifySelfImprovement: state.toastNotifySelfImprovement,
-    toastNotifyMemory: state.toastNotifyMemory,
-    toastNotifyResearch: state.toastNotifyResearch,
-    toastNotifyApproval: state.toastNotifyApproval,
-    planChecklistStyle: state.planChecklistStyle,
-    subagentCardStyle: state.subagentCardStyle,
-    codeStyle: state.codeStyle,
-    diffLayout: state.diffLayout,
-    terminalStyle: state.terminalStyle,
-    toolResultStyle: state.toolResultStyle,
-    approvalStyle: state.approvalStyle,
-    imageGenStyle: state.imageGenStyle,
-    citationsStyle: state.citationsStyle,
-    dataTableStyle: state.dataTableStyle,
-    jsonViewerStyle: state.jsonViewerStyle,
-    alertStyle: state.alertStyle,
-    collapsibleStyle: state.collapsibleStyle,
-  };
+  const out = {} as Record<keyof UiCustomizationSnapshot, unknown>;
+  for (const key of SNAPSHOT_KEYS) {
+    out[key] = state[key];
+  }
+  return out as UiCustomizationSnapshot;
 }
 
 export function resolveActivePalette(
@@ -574,13 +604,16 @@ export const useUiCustomizationStore = create<UiCustomizationState>()(
     }),
     {
       name: UI_CUSTOMIZATION_STORAGE_KEY,
-      version: 2,
+      version: 3,
       storage: createJSONStorage(() => safePersistStorage),
       partialize: (state) => extractSnapshot(state),
       migrate: (persistedState, version) => {
         const clean = sanitizeCustomizationSnapshot(persistedState);
         if (version < 2 && clean.toolResultStyle === "assistant-collapsed") {
           clean.toolResultStyle = "beui-activity";
+        }
+        if (version < 3 && clean.inlineNoticeStyle === "pills") {
+          clean.inlineNoticeStyle = "minimal-whisper";
         }
         return { ...DEFAULT_CUSTOMIZATION, ...clean };
       },

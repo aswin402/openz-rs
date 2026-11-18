@@ -7,6 +7,7 @@ import {
   type ApprovalState,
   type ApprovalStyleChoice,
 } from './assistant-ui/elements';
+import { KokonutApprovalCard } from './registries/rareAndCommunity';
 import { useUiCustomizationStore } from '../store/useUiCustomizationStore';
 import { cn } from '../lib/utils';
 
@@ -36,6 +37,24 @@ export const SecurityGuardPrompt: React.FC<SecurityGuardPromptProps> = ({
       }),
     [prompt, stateOverride, effectiveStyle],
   );
+
+  if (effectiveStyle === 'kokonut-approval') {
+    const kState =
+      mapped.state === 'request'
+        ? 'pending'
+        : mapped.state === 'denied'
+          ? 'denied'
+          : 'approved';
+    return (
+      <KokonutApprovalCard
+        prompt={prompt}
+        state={kState}
+        onAllow={() => onChoice('approve')}
+        onDeny={() => onChoice('deny')}
+        className={className}
+      />
+    );
+  }
 
   return (
     <ApprovalCard

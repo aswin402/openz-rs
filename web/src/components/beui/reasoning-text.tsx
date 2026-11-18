@@ -9,7 +9,13 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 
-export type BeuiReasoningVariant = "card" | "compact" | "timeline"
+export type BeuiReasoningVariant =
+  | "card"
+  | "compact"
+  | "timeline"
+  | "aicss-reasoning"
+  | "beautiful-thinking"
+  | "minimal-whisper"
 
 export interface ReasoningTextProps {
   text?: string
@@ -73,11 +79,13 @@ export const ReasoningText: React.FC<ReasoningTextProps> = ({
     )
   }
 
-  if (effectiveVariant === "compact") {
+  if (effectiveVariant === "compact" || effectiveVariant === "minimal-whisper") {
     return (
       <div
         className={cn(
-          "flex items-center gap-2 rounded-lg border border-border/55 bg-muted/25 px-2.5 py-1.5 text-xs text-muted-foreground",
+          effectiveVariant === "minimal-whisper"
+            ? "flex items-center gap-2 py-0.5 text-xs text-muted-foreground"
+            : "flex items-center gap-2 rounded-lg border border-border/55 bg-muted/25 px-2.5 py-1.5 text-xs text-muted-foreground",
           className
         )}
       >
@@ -88,12 +96,12 @@ export const ReasoningText: React.FC<ReasoningTextProps> = ({
             className="shrink-0 text-primary"
           />
         ) : (
-          <Brain className="size-3.5 shrink-0 text-primary" />
+          <Brain className="size-3.5 shrink-0 text-primary/80" />
         )}
         <span className="truncate">
           {isStreaming
             ? latestThoughtLine || label || "Reasoning…"
-            : `Reasoned across ${lines.length} ${lines.length === 1 ? "step" : "steps"}`}
+            : `Thought across ${lines.length} ${lines.length === 1 ? "step" : "steps"}`}
         </span>
       </div>
     )
@@ -105,7 +113,13 @@ export const ReasoningText: React.FC<ReasoningTextProps> = ({
     <BeuiCollapsible
       open={resolvedOpen}
       onOpenChange={(next) => setManualOpen(next)}
-      variant={effectiveVariant === "timeline" ? "ghost" : "subtle"}
+      variant={
+        effectiveVariant === "timeline" || effectiveVariant === "beautiful-thinking"
+          ? "ghost"
+          : effectiveVariant === "aicss-reasoning"
+            ? "bordered"
+            : "subtle"
+      }
       className={cn("my-1.5", className)}
       icon={
         isStreaming ? (

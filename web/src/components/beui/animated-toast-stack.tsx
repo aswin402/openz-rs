@@ -16,12 +16,20 @@ import {
   ShieldAlert,
   Sparkles,
   Terminal,
-  Trash2,
   X,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Switch } from "@/components/ui/switch"
+import {
+  BackgroundInboxElement,
+  type BackgroundInboxStyleChoice,
+  type BackgroundInboxTask,
+} from "@/components/assistant-ui/elements"
+import {
+  RareDeleteButton,
+  type DeleteButtonStyleChoice,
+} from "@/components/registries/rareAndCommunity"
 import {
   Alert as OfficialBeuiAlert,
   AlertAction,
@@ -73,6 +81,7 @@ export type BeuiToastVariant =
   | "soft-tinted"
   | "brutalist-outline"
   | "micro-badge"
+  | "rare-toast"
 
 export type BeuiCanonicalToastPosition =
   | "top-start"
@@ -96,7 +105,14 @@ export type BeuiToastDurationPreset =
 
 export type BeuiToastMaxVisible = 3 | 4 | 5
 
-export type BeuiInlineNoticeStyle = "pills" | "cards" | "toast-only"
+export type BeuiInlineNoticeStyle =
+  | "minimal-whisper"
+  | "memory-chips"
+  | "tool-chips"
+  | "ai-status"
+  | "pills"
+  | "cards"
+  | "toast-only"
 
 export interface BeuiToastOptionDescriptor<T extends string | number> {
   id: T
@@ -388,6 +404,13 @@ export const TOAST_VARIANT_OPTIONS: ReadonlyArray<
     description:
       "Featherweight single-line status chip with semantic indicator dot and minimal viewport footprint.",
   },
+  {
+    id: "rare-toast",
+    title: "Rare-UI Motion Capsule Toast",
+    shortLabel: "Rare UI",
+    description:
+      "swamimalode07/rare-ui/toast — Smooth monochrome hairline capsule with subtle primary dot and quiet dismiss.",
+  },
 ]
 
 const VALID_TOAST_VARIANTS: Readonly<Record<BeuiToastVariant, true>> = {
@@ -403,6 +426,7 @@ const VALID_TOAST_VARIANTS: Readonly<Record<BeuiToastVariant, true>> = {
   "soft-tinted": true,
   "brutalist-outline": true,
   "micro-badge": true,
+  "rare-toast": true,
 }
 
 export function normalizeToastVariant(raw: unknown): BeuiToastVariant {
@@ -535,26 +559,54 @@ export const INLINE_NOTICE_STYLE_OPTIONS: ReadonlyArray<
   BeuiToastOptionDescriptor<BeuiInlineNoticeStyle>
 > = [
   {
+    id: "minimal-whisper",
+    title: "Minimal Whisper Row (Default)",
+    shortLabel: "Minimal",
+    description:
+      "Borderless low-noise telemetry line with a subtle primary dot and hover jump — zero heavy pill borders.",
+    isDefault: true,
+  },
+  {
+    id: "memory-chips",
+    title: "Assistant-UI Memory Chips",
+    shortLabel: "Memory Chips",
+    description:
+      "assistant-ui/elements/memory-chips — Neutral hairline chips harmonized cleanly with your active theme.",
+  },
+  {
+    id: "tool-chips",
+    title: "BeautifulUI Tool Chips",
+    shortLabel: "Tool Chips",
+    description:
+      "beautifului.dev/r/tool-chips — Compact monospace capsule tags summarizing runtime actions.",
+  },
+  {
+    id: "ai-status",
+    title: "Rare-UI Inline AI Status",
+    shortLabel: "AI Status",
+    description:
+      "swamimalode07/rare-ui/ai-status — Soft status capsule with subtle live dot indicator.",
+  },
+  {
     id: "pills",
-    title: "Interactive Telemetry Pills",
+    title: "Theme Hairline Pills",
     shortLabel: "Pills",
     description:
-      "Renders Workflow matched, Skill used, and Self-improvement hits as crisp clickable badges above the assistant turn.",
-    isDefault: true,
+      "Refined rounded-full badges using your active theme surface without clashing neon borders.",
   },
   {
     id: "cards",
     title: "Structured Callout Cards",
     shortLabel: "Cards",
     description:
-      "Renders rich bordered telemetry rows with category tags, details, timestamps, and quick-jump buttons.",
+      "Bordered telemetry rows with category tags, details, and quick-jump buttons.",
   },
   {
     id: "toast-only",
-    title: "Toast & Drawer Only",
+    title: "Hidden Inline (Toast & Inbox Only)",
     shortLabel: "Toast Only",
     description:
-      "Keeps the chat message stream ultra-clean and routes telemetry exclusively to @beui/animated-toast-stack and the Activity Drawer.",
+      "Hides inline chat badges completely and routes telemetry exclusively to Toast Stack & Notifications.",
   },
 ]
 
@@ -717,6 +769,8 @@ function resolveToastVariantSurfaceClass(
       "w-[308px] max-w-[calc(100vw-2rem)] rounded-xl border bg-card/95 px-2.5 py-1.5 shadow-md backdrop-blur-md",
       meta.cardBorderClass
     ),
+    "rare-toast":
+      "w-[336px] max-w-[calc(100vw-2rem)] rounded-full border border-border/65 bg-card/95 px-3.5 py-2 shadow-xl backdrop-blur-xl",
   }
   return map[variant]
 }
@@ -727,6 +781,7 @@ const PROGRESS_DISABLED_VARIANTS: Readonly<Partial<Record<BeuiToastVariant, true
   "compact-pills": true,
   "dynamic-island": true,
   "micro-badge": true,
+  "rare-toast": true,
 }
 
 interface ToastVariantBodyProps {
@@ -1297,6 +1352,7 @@ const TOAST_VARIANT_RENDERERS: Record<
   "soft-tinted": (props) => <StandardCardBody {...props} tonalSurface />,
   "brutalist-outline": BrutalistOutlineBody,
   "micro-badge": MicroBadgeBody,
+  "rare-toast": CompactPillsBody,
 }
 
 export interface AnimatedToastStackProps {
@@ -1823,7 +1879,7 @@ export interface BeuiTelemetryNoticeStripProps {
  */
 export const BeuiTelemetryNoticeStrip: React.FC<BeuiTelemetryNoticeStripProps> = ({
   notices,
-  styleVariant = "pills",
+  styleVariant = "minimal-whisper",
   onInspectNotice,
   className,
 }) => {
@@ -1846,6 +1902,144 @@ export const BeuiTelemetryNoticeStrip: React.FC<BeuiTelemetryNoticeStripProps> =
 
   if (styleVariant === "toast-only" || dedupedNotices.length === 0) {
     return null
+  }
+
+  if (styleVariant === "minimal-whisper") {
+    return (
+      <div className={cn("my-1 flex flex-wrap items-center gap-x-3 gap-y-1 not-prose", className)}>
+        {dedupedNotices.map(({ notice, count }) => {
+          const category = mapNoticeKindToToastCategory(notice.kind)
+          const meta = TOAST_CATEGORY_META[category]
+          const Icon = meta.icon
+          const interactive = Boolean(onInspectNotice)
+          const Tag = interactive ? "button" : "div"
+          return (
+            <Tag
+              key={notice.id}
+              type={interactive ? "button" : undefined}
+              onClick={interactive ? () => onInspectNotice?.(notice) : undefined}
+              className={cn(
+                "group inline-flex max-w-full items-center gap-1.5 text-[11.5px] text-muted-foreground transition-colors",
+                interactive && "cursor-pointer hover:text-foreground"
+              )}
+            >
+              <Icon className="size-3 shrink-0 text-primary/80" />
+              <span className="font-medium text-foreground/85">{notice.title}</span>
+              {notice.detail && (
+                <span className="max-w-[240px] truncate text-muted-foreground">
+                  · {notice.detail}
+                </span>
+              )}
+              {count > 1 && (
+                <span className="font-mono text-[10px] text-muted-foreground">
+                  ×{count}
+                </span>
+              )}
+              {interactive && (
+                <ArrowUpRight className="size-2.5 shrink-0 opacity-0 transition-opacity group-hover:opacity-75" />
+              )}
+            </Tag>
+          )
+        })}
+      </div>
+    )
+  }
+
+  if (styleVariant === "memory-chips") {
+    return (
+      <div className={cn("my-1 flex flex-wrap items-center gap-1.5 not-prose", className)}>
+        {dedupedNotices.map(({ notice, count }) => {
+          const category = mapNoticeKindToToastCategory(notice.kind)
+          const meta = TOAST_CATEGORY_META[category]
+          const Icon = meta.icon
+          const interactive = Boolean(onInspectNotice)
+          const Tag = interactive ? "button" : "div"
+          return (
+            <Tag
+              key={notice.id}
+              type={interactive ? "button" : undefined}
+              onClick={interactive ? () => onInspectNotice?.(notice) : undefined}
+              className={cn(
+                "inline-flex max-w-full items-center gap-1.5 rounded-lg border border-border/55 bg-foreground/[0.038] px-2 py-0.5 text-[11px] text-foreground/85 transition-colors",
+                interactive && "cursor-pointer hover:border-border hover:bg-foreground/[0.065]"
+              )}
+            >
+              <Icon className="size-3 shrink-0 text-primary/80" />
+              <span className="font-medium">{notice.title}</span>
+              {notice.detail && (
+                <span className="max-w-[200px] truncate text-muted-foreground">
+                  · {notice.detail}
+                </span>
+              )}
+              {count > 1 && (
+                <span className="font-mono text-[9.5px] text-muted-foreground">
+                  ×{count}
+                </span>
+              )}
+            </Tag>
+          )
+        })}
+      </div>
+    )
+  }
+
+  if (styleVariant === "tool-chips") {
+    return (
+      <div className={cn("my-1 flex flex-wrap items-center gap-1.5 not-prose", className)}>
+        {dedupedNotices.map(({ notice, count }) => {
+          const interactive = Boolean(onInspectNotice)
+          const Tag = interactive ? "button" : "div"
+          return (
+            <Tag
+              key={notice.id}
+              type={interactive ? "button" : undefined}
+              onClick={interactive ? () => onInspectNotice?.(notice) : undefined}
+              className={cn(
+                "inline-flex max-w-full items-center gap-1.5 rounded-md border border-border/55 bg-card/70 px-2 py-0.5 font-mono text-[10.5px] text-foreground/85 transition-colors",
+                interactive && "cursor-pointer hover:border-primary/40 hover:text-primary"
+              )}
+            >
+              <span className="size-1.5 shrink-0 rounded-full bg-primary/80" />
+              <span className="truncate">{notice.detail || notice.title}</span>
+              {count > 1 && <span className="text-muted-foreground">×{count}</span>}
+            </Tag>
+          )
+        })}
+      </div>
+    )
+  }
+
+  if (styleVariant === "ai-status") {
+    return (
+      <div className={cn("my-1 flex flex-wrap items-center gap-1.5 not-prose", className)}>
+        {dedupedNotices.map(({ notice, count }) => {
+          const interactive = Boolean(onInspectNotice)
+          const Tag = interactive ? "button" : "div"
+          return (
+            <Tag
+              key={notice.id}
+              type={interactive ? "button" : undefined}
+              onClick={interactive ? () => onInspectNotice?.(notice) : undefined}
+              className={cn(
+                "inline-flex max-w-full items-center gap-2 rounded-full border border-border/55 bg-foreground/[0.03] px-2.5 py-0.5 text-[11px] text-foreground/85 transition-colors",
+                interactive && "cursor-pointer hover:border-border"
+              )}
+            >
+              <span className="size-1.5 shrink-0 rounded-full bg-primary" />
+              <span className="font-medium">{notice.title}</span>
+              {notice.detail && (
+                <span className="max-w-[200px] truncate text-muted-foreground">
+                  · {notice.detail}
+                </span>
+              )}
+              {count > 1 && (
+                <span className="font-mono text-[9.5px] text-muted-foreground">×{count}</span>
+              )}
+            </Tag>
+          )
+        })}
+      </div>
+    )
   }
 
   if (styleVariant === "cards") {
@@ -1873,25 +2067,19 @@ export const BeuiTelemetryNoticeStrip: React.FC<BeuiTelemetryNoticeStripProps> =
                   : undefined
               }
               className={cn(
-                "flex items-center gap-2.5 rounded-xl border bg-card/75 px-3 py-2 text-xs transition",
-                meta.cardBorderClass,
-                interactive && "cursor-pointer hover:bg-muted/45"
+                "flex items-center gap-2.5 rounded-xl border border-border/65 bg-card/75 px-3 py-2 text-xs transition",
+                interactive && "cursor-pointer hover:border-border hover:bg-muted/35"
               )}
             >
-              <span
-                className={cn(
-                  "inline-flex size-6 shrink-0 items-center justify-center rounded-lg border",
-                  meta.iconWrapClass
-                )}
-              >
+              <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-foreground/[0.04] text-primary">
                 <Icon className="size-3.5" />
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="rounded bg-muted/80 px-1.5 py-0.5 font-mono text-[9px] font-semibold tracking-wider text-muted-foreground">
+                  <span className="rounded bg-foreground/[0.05] px-1.5 py-0 font-mono text-[9px] font-medium tracking-wider text-muted-foreground">
                     {meta.shortTag}
                   </span>
-                  <span className="font-semibold text-foreground">{notice.title}</span>
+                  <span className="font-medium text-foreground">{notice.title}</span>
                   {count > 1 && (
                     <Badge variant="secondary" className="px-1.5 py-0 font-mono text-[9px]">
                       ×{count}
@@ -1931,23 +2119,23 @@ export const BeuiTelemetryNoticeStrip: React.FC<BeuiTelemetryNoticeStripProps> =
             type={interactive ? "button" : undefined}
             onClick={interactive ? () => onInspectNotice?.(notice) : undefined}
             className={cn(
-              "inline-flex max-w-full items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] leading-none transition",
-              meta.pillClass
+              "inline-flex max-w-full items-center gap-1.5 rounded-full border border-border/60 bg-foreground/[0.035] px-2.5 py-0.5 text-[11px] text-foreground/85 transition-colors",
+              interactive && "cursor-pointer hover:border-border hover:bg-foreground/[0.065]"
             )}
           >
-            <Icon className="size-3 shrink-0 opacity-90" />
-            <span className="font-semibold">{notice.title}</span>
+            <Icon className="size-3 shrink-0 text-primary/85" />
+            <span className="font-medium">{notice.title}</span>
             {notice.detail && (
               <span className="max-w-[220px] truncate text-muted-foreground">
                 · {notice.detail}
               </span>
             )}
             {count > 1 && (
-              <span className="rounded-full bg-background/70 px-1.5 py-0.5 font-mono text-[9px] font-semibold">
+              <span className="rounded-full bg-foreground/[0.06] px-1.5 py-0 font-mono text-[9.5px] text-muted-foreground">
                 ×{count}
               </span>
             )}
-            {interactive && <ArrowUpRight className="size-2.5 shrink-0 opacity-65" />}
+            {interactive && <ArrowUpRight className="size-2.5 shrink-0 opacity-60" />}
           </Tag>
         )
       })}
@@ -1959,6 +2147,9 @@ export interface BeuiNotificationCenterPopoverProps {
   open: boolean
   onClose: () => void
   history: ReadonlyArray<BeuiToastItem>
+  backgroundTasks?: ReadonlyArray<BackgroundInboxTask>
+  backgroundInboxStyle?: BackgroundInboxStyleChoice
+  deleteButtonStyle?: DeleteButtonStyleChoice
   toastEnabled: boolean
   toastVariant?: BeuiToastVariant
   toastPosition?: BeuiToastPosition
@@ -1978,6 +2169,9 @@ export const BeuiNotificationCenterPopover: React.FC<
   open,
   onClose,
   history,
+  backgroundTasks = [],
+  backgroundInboxStyle = "assistant-inbox",
+  deleteButtonStyle = "rare-confirm",
   toastEnabled,
   onToggleEnabled,
   onClearHistory,
@@ -2018,14 +2212,13 @@ export const BeuiNotificationCenterPopover: React.FC<
 
           <div className="flex shrink-0 items-center gap-2">
             {history.length > 0 && (
-              <button
-                type="button"
-                onClick={onClearHistory}
-                className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground transition hover:bg-muted/60 hover:text-foreground"
-              >
-                <Trash2 className="size-3" />
-                <span>Clear</span>
-              </button>
+              <RareDeleteButton
+                variant={deleteButtonStyle}
+                iconOnly={false}
+                label="Clear"
+                onDelete={onClearHistory}
+                ariaLabel="Clear notifications"
+              />
             )}
             <Switch
               checked={toastEnabled}
@@ -2035,7 +2228,13 @@ export const BeuiNotificationCenterPopover: React.FC<
           </div>
         </div>
 
-        <div className="flex-1 space-y-1.5 overflow-y-auto p-2.5">
+        <div className="flex-1 space-y-2 overflow-y-auto p-2.5">
+          {backgroundTasks.length > 0 && (
+            <BackgroundInboxElement
+              tasks={backgroundTasks}
+              variant={backgroundInboxStyle}
+            />
+          )}
           {history.length === 0 ? (
             <div className="flex flex-col items-center justify-center gap-1.5 py-7 text-center">
               <span className="inline-flex size-8 items-center justify-center rounded-xl border border-border/65 bg-muted/35 text-muted-foreground">

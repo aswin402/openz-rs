@@ -13,7 +13,29 @@ import {
 } from './toolVisibility';
 import { buildMessageActivitySteps } from '../activity/activityAdapters';
 import { SecurityGuardPrompt } from '../../components/SecurityGuardPrompt';
-import { pairSecurityPromptsWithToolCalls } from '../../components/assistant-ui/elements';
+import {
+  AgentHandoffElement,
+  ArtifactCardElement,
+  ErrorStateElement,
+  FileTreeElement,
+  MathBlockElement,
+  RetrievalChunksElement,
+  SpecSheetElement,
+  WebSearchElement,
+  extractTurnAgentHandoffs,
+  extractTurnArtifacts,
+  extractTurnFileTree,
+  extractTurnRetrievalChunks,
+  extractTurnWebSearches,
+  isSpecSheetTable,
+  pairSecurityPromptsWithToolCalls,
+} from '../../components/assistant-ui/elements';
+import {
+  BeautifulToolChips,
+  ComparisonTableElement,
+  InlineCitationLink,
+  isComparisonTableHeaders,
+} from '../../components/registries/rareAndCommunity';
 import { ChatTrackRow } from '../../components/ChatTrackRow';
 import {
   AgentActivity,
@@ -156,6 +178,16 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
   const toolResultStyle = useUiCustomizationStore((s) => s.toolResultStyle);
   const approvalStyle = useUiCustomizationStore((s) => s.approvalStyle);
   const alertStyle = useUiCustomizationStore((s) => s.alertStyle);
+  const errorStateStyle = useUiCustomizationStore((s) => s.errorStateStyle);
+  const inlineCitationStyle = useUiCustomizationStore((s) => s.inlineCitationStyle);
+  const comparisonStyle = useUiCustomizationStore((s) => s.comparisonStyle);
+  const specSheetStyle = useUiCustomizationStore((s) => s.specSheetStyle);
+  const mathBlockStyle = useUiCustomizationStore((s) => s.mathBlockStyle);
+  const fileTreeStyle = useUiCustomizationStore((s) => s.fileTreeStyle);
+  const artifactCardStyle = useUiCustomizationStore((s) => s.artifactCardStyle);
+  const webSearchStyle = useUiCustomizationStore((s) => s.webSearchStyle);
+  const retrievalChunksStyle = useUiCustomizationStore((s) => s.retrievalChunksStyle);
+  const agentHandoffStyle = useUiCustomizationStore((s) => s.agentHandoffStyle);
   const messageActionsStyle = useUiCustomizationStore((s) => s.messageActionsStyle);
   const showMessageActions = useUiCustomizationStore((s) => s.showMessageActions);
   const setQuotedReplyText = useUiCustomizationStore((s) => s.setQuotedReplyText);
@@ -167,6 +199,45 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
 
   const markdownComponents = useMemo<Components>(
     () => ({
+      a({ href, children }) {
+        if (
+          !isUser &&
+          href &&
+          (href.startsWith('https://') || href.startsWith('http://'))
+        ) {
+          return (
+            <InlineCitationLink href={href} variant={inlineCitationStyle}>
+              {children}
+            </InlineCitationLink>
+          );
+        }
+        return (
+          <a
+            href={href}
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-primary underline underline-offset-3"
+          >
+            {children}
+          </a>
+        );
+      },
+      span({ className, children, ...props }) {
+        if (typeof className === 'string' && className.includes('katex-display')) {
+          return (
+            <MathBlockElement variant={mathBlockStyle}>
+              <span className={className} {...props}>
+                {children}
+              </span>
+            </MathBlockElement>
+          );
+        }
+        return (
+          <span className={className} {...props}>
+            {children}
+          </span>
+        );
+      },
       code({ node, className, children, ...props }) {
         void node;
         const language = extractCodeLanguage(className);
@@ -176,12 +247,17 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
         if (!isBlock) {
           return (
             <code
-              className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs font-semibold text-primary"
+              className="rounded bg-foreground/[0.06] px-1.5 py-0.5 font-mono text-xs font-medium text-primary"
               {...props}
             >
               {children}
             </code>
           );
+        }
+
+        const lowerLang = (language ?? '').toLowerCase();
+        if (lowerLang === 'math' || lowerLang === 'latex' || lowerLang === 'katex') {
+          return <MathBlockElement latex={text.trim()} variant={mathBlockStyle} />;
         }
 
         if (looksLikeUnifiedDiffBlock(language, text)) {
@@ -219,6 +295,26 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
       table({ node, children }) {
         const parsed = extractHastTable(node);
         if (parsed) {
+          if (isComparisonTableHeaders(parsed.headers)) {
+            return (
+              <ComparisonTableElement
+                headers={parsed.headers}
+                rows={parsed.rows}
+                variant={comparisonStyle}
+              />
+            );
+          }
+          if (isSpecSheetTable(parsed.headers, parsed.rows)) {
+            return (
+              <SpecSheetElement
+                specs={parsed.rows.map((r) => ({
+                  label: r[0] ?? '',
+                  value: r[1] ?? '',
+                }))}
+                variant={specSheetStyle}
+              />
+            );
+          }
           return (
             <div className="my-3 w-full not-prose">
               <BeuiDataTable
@@ -238,7 +334,17 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
         );
       },
     }),
-    [codeStyle, diffLayout, imageGenStyle, dataTableStyle],
+    [
+      isUser,
+      inlineCitationStyle,
+      mathBlockStyle,
+      codeStyle,
+      diffLayout,
+      imageGenStyle,
+      comparisonStyle,
+      specSheetStyle,
+      dataTableStyle,
+    ],
   );
 
   const citationData = useMemo(() => {
@@ -322,6 +428,39 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
           entry !== null,
       );
   }, [isUser, showExpandedToolCards, visibleToolCalls]);
+
+  const turnFileTree = useMemo(
+    () => (isUser ? [] : extractTurnFileTree(visibleToolCalls)),
+    [isUser, visibleToolCalls],
+  );
+  const turnArtifacts = useMemo(
+    () => (isUser ? [] : extractTurnArtifacts(visibleToolCalls)),
+    [isUser, visibleToolCalls],
+  );
+  const turnWebSearches = useMemo(
+    () =>
+      isUser
+        ? []
+        : extractTurnWebSearches(visibleToolCalls).filter(
+            (ws) => ws.results.length > 0,
+          ),
+    [isUser, visibleToolCalls],
+  );
+  const turnRetrievalChunks = useMemo(
+    () => (isUser ? [] : extractTurnRetrievalChunks(visibleToolCalls)),
+    [isUser, visibleToolCalls],
+  );
+  const turnHandoffs = useMemo(
+    () => (isUser ? [] : extractTurnAgentHandoffs(visibleToolCalls)),
+    [isUser, visibleToolCalls],
+  );
+  const terminalFailedTool = useMemo(
+    () =>
+      !isUser && !isActivityWorking && !message.content.trim()
+        ? visibleToolCalls.find((tc) => tc.status === 'error')
+        : undefined,
+    [isUser, isActivityWorking, message.content, visibleToolCalls],
+  );
 
   const visibleTelemetryNotices = useMemo<ActivityNotice[]>(() => {
     if (isUser || !message.activityNotices || message.activityNotices.length === 0) {
@@ -551,10 +690,69 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
 
             {showExpandedToolCards && visibleToolCalls.length > 0 && (
               <div className="my-1.5 flex w-full min-w-0 flex-col gap-1 not-prose">
-                {visibleToolCalls.map((tool) => (
-                  <ToolExecutionCard key={tool.id} tool={tool} />
+                {toolResultStyle === 'beautiful-tool-chips' ? (
+                  <BeautifulToolChips tools={visibleToolCalls} />
+                ) : (
+                  visibleToolCalls.map((tool) => (
+                    <ToolExecutionCard key={tool.id} tool={tool} />
+                  ))
+                )}
+              </div>
+            )}
+
+            {showExpandedToolCards && turnHandoffs.length > 0 && (
+              <AgentHandoffElement
+                handoffs={turnHandoffs}
+                variant={agentHandoffStyle}
+              />
+            )}
+
+            {showExpandedToolCards && !isActivityWorking && turnFileTree.length >= 2 && (
+              <FileTreeElement
+                entries={turnFileTree}
+                variant={fileTreeStyle}
+              />
+            )}
+
+            {showExpandedToolCards && turnWebSearches.length > 0 && (
+              <div className="space-y-1">
+                {turnWebSearches.map((ws) => (
+                  <WebSearchElement
+                    key={ws.id}
+                    data={ws}
+                    variant={webSearchStyle}
+                  />
                 ))}
               </div>
+            )}
+
+            {showExpandedToolCards && turnRetrievalChunks.length > 0 && (
+              <RetrievalChunksElement
+                chunks={turnRetrievalChunks}
+                variant={retrievalChunksStyle}
+              />
+            )}
+
+            {showExpandedToolCards && turnArtifacts.length > 0 && (
+              <div className="space-y-1.5">
+                {turnArtifacts.map((art) => (
+                  <ArtifactCardElement
+                    key={art.id}
+                    artifact={art}
+                    variant={artifactCardStyle}
+                  />
+                ))}
+              </div>
+            )}
+
+            {terminalFailedTool && (
+              <ErrorStateElement
+                title={`${terminalFailedTool.name} failed`}
+                message={terminalFailedTool.output || 'Tool execution returned an error.'}
+                detail={terminalFailedTool.output}
+                onRetry={() => regenerateMessage(message.id)}
+                variant={errorStateStyle}
+              />
             )}
 
             {!showExpandedToolCards && collapsedGeneratedImages.length > 0 && (

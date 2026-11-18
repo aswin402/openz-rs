@@ -1,20 +1,13 @@
-import React, { useMemo, useState } from 'react';
+import React from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
 import { useUiCustomizationStore } from '../store/useUiCustomizationStore';
 import { wsService } from '../services/websocket';
 import { resolveProviderDescriptors } from '../config/providers';
 import { MetricCard } from '../shared/ui/MetricCard';
 import {
-  ACTIVITY_VARIANT_OPTIONS,
-  AgentActivity,
-  type BeuiActivityContentType,
-} from './beui';
-import { buildUnifiedDashboardActivitySteps } from '../features/activity/activityAdapters';
-import {
   formatCavemanSavingsBadge,
   getCavemanLevelOption,
 } from '../shared/lib/cavemanLevels';
-import { cn } from '../lib/utils';
 import type { JsonObject, JsonValue } from '../types';
 import {
   Activity,
@@ -24,7 +17,6 @@ import {
   Network,
   Plus,
   ScrollText,
-  SlidersHorizontal,
   Sparkles,
   Zap,
   Bot,
@@ -92,11 +84,6 @@ export const DashboardView: React.FC = () => {
   const runtimeInventory = useOpenZStore((s) => s.runtimeInventory);
   const sessions = useOpenZStore((s) => s.sessions);
   const activeChatId = useOpenZStore((s) => s.activeChatId);
-  const messagesByChat = useOpenZStore((s) => s.messages);
-  const orchestrationRunsByChat = useOpenZStore((s) => s.orchestrationRuns);
-  const cronLogs = useOpenZStore((s) => s.cronLogs);
-  const isStreaming = useOpenZStore((s) => s.isStreaming);
-  const activeTurnIds = useOpenZStore((s) => s.activeTurnIds);
   const mcpStats = useOpenZStore((s) => s.mcpStats);
   const cognitiveStats = useOpenZStore((s) => s.cognitiveStats);
   const logs = useOpenZStore((s) => s.logs);
@@ -112,36 +99,7 @@ export const DashboardView: React.FC = () => {
   const capabilities = useOpenZStore((s) => s.capabilities);
   const providerDescriptors = resolveProviderDescriptors(capabilities, providersConfig);
 
-  const activityVariant = useUiCustomizationStore((s) => s.activityVariant);
-  const activityOrbStyle = useUiCustomizationStore((s) => s.activityOrbStyle);
-  const activityDensity = useUiCustomizationStore((s) => s.activityDensity);
-  const activityMaxHeight = useUiCustomizationStore((s) => s.activityMaxHeight);
-  const activityShowDetails = useUiCustomizationStore((s) => s.activityShowDetails);
-  const showDashboardActivity = useUiCustomizationStore((s) => s.showDashboardActivity);
-  const applyCustomization = useUiCustomizationStore((s) => s.applyCustomization);
-  const setActiveCustomizeSection = useUiCustomizationStore((s) => s.setActiveCustomizeSection);
   const setActiveGatewaySection = useUiCustomizationStore((s) => s.setActiveGatewaySection);
-  const setIsCustomizeOpen = useUiCustomizationStore((s) => s.setIsCustomizeOpen);
-
-  const [dashboardContentType, setDashboardContentType] =
-    useState<BeuiActivityContentType>('mixed');
-
-  const unifiedActivitySteps = useMemo(
-    () =>
-      buildUnifiedDashboardActivitySteps({
-        messagesByChat,
-        activeChatId,
-        orchestrationRunsByChat,
-        logs,
-        inventory: runtimeInventory,
-        cronLogs,
-        limit: 20,
-      }),
-    [messagesByChat, activeChatId, orchestrationRunsByChat, logs, runtimeInventory, cronLogs],
-  );
-
-  const isAnySessionActive =
-    isStreaming || Object.keys(activeTurnIds).length > 0;
 
   const setActiveView = useOpenZStore((s) => s.setActiveView);
   const setIsMemoryOpen = useOpenZStore((s) => s.setIsMemoryOpen);
@@ -207,98 +165,6 @@ export const DashboardView: React.FC = () => {
           onClick={() => setActiveView('inventory')}
         />
       </div>
-
-      {/* Live Unified @beui/agent-activity Feed */}
-      {showDashboardActivity && (
-        <div className="mt-7 rounded-2xl border border-border/65 bg-card/45 p-5 backdrop-blur-md">
-          <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="flex items-center gap-2 text-sm font-bold text-foreground">
-                <Activity className="h-4 w-4 text-primary" />
-                <span>Live Agent &amp; Runtime Activity</span>
-              </h2>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                Unified @beui/agent-activity stream across chat turns, orchestrations, cron runs, and gateway traces.
-              </p>
-            </div>
-
-            <div className="flex flex-wrap items-center gap-1.5">
-              {(
-                [
-                  { id: 'mixed', label: 'All' },
-                  { id: 'tool', label: 'Tools' },
-                  { id: 'search', label: 'Search' },
-                  { id: 'reasoning', label: 'Think' },
-                  { id: 'trace', label: 'Trace' },
-                ] as const
-              ).map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setDashboardContentType(tab.id)}
-                  className={cn(
-                    'rounded-lg border px-2 py-1 text-[10.5px] font-semibold transition-colors',
-                    dashboardContentType === tab.id
-                      ? 'border-primary/45 bg-primary/12 text-primary'
-                      : 'border-border/55 bg-background/50 text-muted-foreground hover:text-foreground',
-                  )}
-                >
-                  {tab.label}
-                </button>
-              ))}
-
-              <select
-                aria-label="Dashboard activity visual variant"
-                value={activityVariant}
-                onChange={(e) =>
-                  applyCustomization({
-                    activityVariant: e.target.value as typeof activityVariant,
-                  })
-                }
-                className="rounded-lg border border-border/60 bg-background/60 px-2.5 py-1 text-[10.5px] font-semibold text-foreground"
-              >
-                {ACTIVITY_VARIANT_OPTIONS.map((opt) => (
-                  <option key={opt.id} value={opt.id}>
-                    {opt.shortLabel}
-                  </option>
-                ))}
-              </select>
-
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveCustomizeSection('agent-activity');
-                  setIsCustomizeOpen(true);
-                }}
-                className="inline-flex items-center gap-1 rounded-lg border border-border/60 bg-background/60 px-2.5 py-1 text-[10.5px] font-semibold text-muted-foreground transition hover:border-primary/40 hover:text-foreground"
-                title="Customize Agent Activity options"
-              >
-                <SlidersHorizontal className="h-3 w-3" />
-                <span>Options</span>
-              </button>
-            </div>
-          </div>
-
-          <AgentActivity
-            steps={unifiedActivitySteps}
-            isActive={isAnySessionActive}
-            mode="inline-collapsible"
-            defaultOpen
-            variant={activityVariant}
-            orbStyle={activityOrbStyle}
-            density={activityDensity}
-            maxHeight={activityMaxHeight}
-            contentType={dashboardContentType}
-            showDetails={activityShowDetails}
-            title={
-              isAnySessionActive
-                ? 'Agent executing across active session'
-                : 'Recent gateway & agent telemetry'
-            }
-            emptyLabel="Start a chat, trigger a subagent workflow, or open Gateway Logs to stream live steps here."
-          />
-        </div>
-      )}
 
       {/* Workspace Section */}
       <div className="mt-8">
@@ -395,7 +261,7 @@ export const DashboardView: React.FC = () => {
       </div>
 
       {/* Toggles */}
-      <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2">
         <ToggleRow
           label="Streaming Responses"
           desc="Deltas are broadcast as they are generated"
@@ -441,15 +307,6 @@ export const DashboardView: React.FC = () => {
             />
           </button>
         </div>
-        <ToggleRow
-          label="Dashboard Activity"
-          desc="Live @beui/agent-activity feed on overview"
-          on={showDashboardActivity}
-          onToggle={() =>
-            applyCustomization({ showDashboardActivity: !showDashboardActivity })
-          }
-          icon={SlidersHorizontal}
-        />
       </div>
 
       {/* Configuration Status Overview */}

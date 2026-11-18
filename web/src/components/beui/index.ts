@@ -68,6 +68,7 @@ export {
   ImageGeneration,
   extractToolImagePayload,
   type ImageGenerationProps,
+  type ImageGenVariant,
 } from "./image-generation"
 export {
   BeuiCitations,

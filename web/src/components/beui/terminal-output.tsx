@@ -5,7 +5,11 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
-export type BeuiTerminalVariant = "console" | "minimal" | "inline"
+export type BeuiTerminalVariant =
+  | "console"
+  | "minimal"
+  | "inline"
+  | "assistant-terminal-block"
 
 export interface BeuiTerminalOutputProps {
   command?: string
@@ -46,20 +50,36 @@ export const BeuiTerminalOutput: React.FC<BeuiTerminalOutputProps> = ({
     window.setTimeout(() => setCopied(false), 1600)
   }
 
-  if (variant === "inline") {
+  if (variant === "inline" || variant === "assistant-terminal-block") {
     return (
       <div
         className={cn(
-          "rounded-lg border border-border/65 bg-muted/45 px-3 py-2 font-mono text-[11px] text-foreground",
+          variant === "assistant-terminal-block"
+            ? "rounded-2xl border border-border/65 bg-foreground/[0.04] px-3.5 py-2.5 font-mono text-[11px] text-foreground"
+            : "rounded-lg border border-border/65 bg-muted/45 px-3 py-2 font-mono text-[11px] text-foreground",
           className
         )}
       >
-        {command && (
-          <div className="mb-1 flex items-center gap-1.5 text-primary">
-            <span>$</span>
-            <span className="truncate">{command}</span>
-          </div>
-        )}
+        <div className="mb-1 flex items-center justify-between gap-2">
+          {command ? (
+            <div className="flex min-w-0 items-center gap-1.5 text-primary">
+              <span>$</span>
+              <span className="truncate">{command}</span>
+            </div>
+          ) : (
+            <span className="text-muted-foreground">stdout</span>
+          )}
+          {typeof exitCode === "number" && (
+            <span
+              className={cn(
+                "shrink-0 text-[10px]",
+                exitCode === 0 ? "text-success" : "text-destructive"
+              )}
+            >
+              exit {exitCode}
+            </span>
+          )}
+        </div>
         <pre className="max-h-40 overflow-auto whitespace-pre-wrap text-foreground/90">
           {shownLines.join("\n") || (isRunning ? "Running command…" : "No stdout")}
         </pre>

@@ -16,7 +16,12 @@ import { cn } from "@/lib/utils"
 import { formatFileSize } from "@/shared/lib/format"
 import type { ChatAttachment } from "@/types"
 
-export type BeuiPromptInputVariant = "elevated" | "split" | "minimal"
+export type BeuiPromptInputVariant =
+  | "elevated"
+  | "split"
+  | "minimal"
+  | "rare-prompt-box"
+  | "kokonut-ai-prompt"
 export type BeuiSendButtonVariant = "icon-round" | "arrow-round" | "icon-square"
 
 export interface BeuiPromptInputProps {
@@ -87,7 +92,11 @@ export const BeuiPromptInput: React.FC<BeuiPromptInputProps> = ({
       ? "rounded-2xl border border-border bg-background/95 shadow-xs focus-within:border-primary/55"
       : variant === "minimal"
         ? "rounded-xl border border-border/75 bg-card/85 focus-within:border-primary/50"
-        : "rounded-2xl border border-border/85 bg-card shadow-xs focus-within:border-primary/55"
+        : variant === "rare-prompt-box"
+          ? "rounded-3xl border border-border/65 bg-card/90 shadow-lg backdrop-blur-xl focus-within:border-primary/45 focus-within:ring-2 focus-within:ring-primary/12"
+          : variant === "kokonut-ai-prompt"
+            ? "rounded-2xl border border-border/60 bg-foreground/[0.03] shadow-2xs focus-within:border-primary/45 focus-within:bg-card"
+            : "rounded-2xl border border-border/85 bg-card shadow-xs focus-within:border-primary/55"
 
   return (
     <div

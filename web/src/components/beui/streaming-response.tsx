@@ -6,6 +6,10 @@ export type BeuiStreamingCursorStyle =
   | "beui-pulse"
   | "smooth-caret"
   | "block-cursor"
+  | "rare-ink"
+  | "beautiful-stream"
+  | "aicss-stream"
+  | "assistant-stream"
   | "none"
 
 export interface StreamingResponseProps {
@@ -56,6 +60,33 @@ export const StreamingResponse: React.FC<StreamingResponseProps> = ({
           <span
             aria-hidden="true"
             className="ml-1 inline-block h-4 w-2 animate-pulse rounded-[2px] bg-primary align-middle"
+          />
+        )}
+
+        {isStreaming && cursorStyle === "rare-ink" && (
+          <span
+            aria-hidden="true"
+            className="ml-1 inline-flex items-center gap-0.5 align-middle"
+          >
+            <span className="h-3.5 w-[2.5px] animate-pulse rounded-full bg-primary shadow-[0_0_8px_var(--primary)]" />
+          </span>
+        )}
+
+        {isStreaming &&
+          (cursorStyle === "beautiful-stream" || cursorStyle === "aicss-stream") && (
+            <span
+              aria-hidden="true"
+              className="ml-1 inline-flex items-center gap-1 align-middle text-primary"
+            >
+              <span className="size-1.5 animate-ping rounded-full bg-current opacity-60" />
+              <span className="size-1.5 rounded-full bg-current" />
+            </span>
+          )}
+
+        {isStreaming && cursorStyle === "assistant-stream" && (
+          <span
+            aria-hidden="true"
+            className="ml-0.5 inline-block h-3.5 w-[1.5px] animate-pulse bg-foreground/65 align-middle"
           />
         )}
       </div>

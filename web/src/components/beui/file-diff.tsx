@@ -18,7 +18,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
-export type BeuiDiffViewMode = "unified" | "split" | "compact"
+export type BeuiDiffViewMode = "unified" | "split" | "compact" | "assistant-code-diff"
 
 export interface BeuiFileDiffProps {
   patch: string
@@ -113,7 +113,7 @@ export const BeuiFileDiff: React.FC<BeuiFileDiffProps> = ({
 
   const visibleRows = React.useMemo(
     () =>
-      view === "compact"
+      view === "compact" || view === "assistant-code-diff"
         ? parsed.rows.filter((r) => r.type !== "ctx")
         : parsed.rows,
     [parsed.rows, view]

@@ -613,6 +613,14 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
         transformRef.current.y = height / 2 - node.y * scale;
         transformRef.current.k = scale;
       }
+    } else if (previous.size === 0 && next.size > 0) {
+      const initialBounds = Array.from(next.values()).map((n) => ({
+        x: n.x,
+        y: n.y,
+        radius: n.radius + 18,
+      }));
+      const fitted = fitTransform(canvas, initialBounds);
+      transformRef.current = fitted ?? { x: 0, y: 0, k: 1 };
     } else if (previous.size === 0) {
       transformRef.current = { x: 0, y: 0, k: 1 };
     }
@@ -647,7 +655,14 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
         .filter((edge): edge is GraphEdge => Boolean(edge));
 
       context.setTransform(dpr, 0, 0, dpr, 0, 0);
-      drawBackground(context, canvasWidth, canvasHeight, display.showGrid, display.showSpaceField);
+      drawBackground(
+        context,
+        canvasWidth,
+        canvasHeight,
+        display.showGrid,
+        display.showSpaceField,
+        transform,
+      );
 
       const reducedMotion = prefersReducedMotion();
       if (reducedMotion) {
@@ -662,7 +677,7 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
       context.translate(transform.x, transform.y);
       context.scale(transform.k, transform.k);
 
-      if (activeMode === 'overview') {
+      if (activeMode === 'overview' || display.showGlow) {
         drawClusters(context, clustersRef.current, hoveredClusterRef.current, transform, canvasWidth, canvasHeight);
       }
 
@@ -703,19 +718,55 @@ export const ObsidianGraph: React.FC<ObsidianGraphProps> = ({
 
       needsRenderRef.current = false;
       if (settleFramesRef.current > 0) {
-        const clusterByNode = new Map<string, GraphCluster>();
-        clustersRef.current.forEach((cluster) => cluster.nodeIds.forEach((id) => clusterByNode.set(id, cluster)));
-        layoutRef.current.forEach((node) => {
-          if (node.isPinned) return;
-          const cluster = clusterByNode.get(node.id);
-          if (cluster) {
-            node.vx += (cluster.x - node.x) * 0.002;
-            node.vy += (cluster.y - node.y) * 0.002;
+        const nodesArr = Array.from(layoutRef.current.values());
+        if (isDraggingRef.current && nodesArr.length <= 360) {
+          // Interactive Obsidian spring physics while dragging a star
+          for (const edge of edgesRef.current) {
+            const dx = edge.target.x - edge.source.x;
+            const dy = edge.target.y - edge.source.y;
+            const dist = Math.hypot(dx, dy) || 1;
+            const ideal = 72 + Math.sqrt(edge.source.degree + edge.target.degree) * 10;
+            const pull = (dist - ideal) * 0.018;
+            const ux = (dx / dist) * pull;
+            const uy = (dy / dist) * pull;
+            if (!edge.source.isPinned) {
+              edge.source.vx += ux;
+              edge.source.vy += uy;
+            }
+            if (!edge.target.isPinned) {
+              edge.target.vx -= ux;
+              edge.target.vy -= uy;
+            }
           }
-          node.x += node.vx;
-          node.y += node.vy;
-          node.vx *= 0.82;
-          node.vy *= 0.82;
+          for (let i = 0; i < nodesArr.length; i += 1) {
+            const a = nodesArr[i];
+            for (let j = i + 1; j < nodesArr.length; j += 1) {
+              const b = nodesArr[j];
+              const dx = b.x - a.x;
+              const dy = b.y - a.y;
+              const dSq = dx * dx + dy * dy + 1;
+              if (dSq > 16_000) continue;
+              const d = Math.sqrt(dSq);
+              const rep = 160 / dSq;
+              const rx = (dx / d) * rep;
+              const ry = (dy / d) * rep;
+              if (!a.isPinned) {
+                a.vx -= rx;
+                a.vy -= ry;
+              }
+              if (!b.isPinned) {
+                b.vx += rx;
+                b.vy += ry;
+              }
+            }
+          }
+        }
+        nodesArr.forEach((node) => {
+          if (node.isPinned) return;
+          node.x += Math.max(-12, Math.min(12, node.vx));
+          node.y += Math.max(-12, Math.min(12, node.vy));
+          node.vx *= 0.78;
+          node.vy *= 0.78;
         });
         settleFramesRef.current -= 1;
         needsRenderRef.current = true;

@@ -155,7 +155,7 @@
     "package_manager": "cargo",
     "runtime": "rust",
     "stack": "rust-cli",
-    "version": "0.0.341"
+    "version": "0.0.345"
   },
   "scripts": {
     "build": "cargo build",

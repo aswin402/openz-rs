@@ -53,6 +53,7 @@ import {
   Plus,
   ScrollText,
   Settings,
+  Sparkles,
   Sun,
   SunMoon,
   User,
@@ -72,11 +73,13 @@ export const App: React.FC = () => {
   const setActiveView = useOpenZStore((s) => s.setActiveView);
   const setIsSidebarOpen = useOpenZStore((s) => s.setIsSidebarOpen);
   const setIsSettingsOpen = useOpenZStore((s) => s.setIsSettingsOpen);
+  const isLogsOpen = useOpenZStore((s) => s.isLogsOpen);
   const setIsLogsOpen = useOpenZStore((s) => s.setIsLogsOpen);
   const isActivityPanelOpen = useOpenZStore((s) => s.isActivityPanelOpen);
   const setIsActivityPanelOpen = useOpenZStore((s) => s.setIsActivityPanelOpen);
   const toggleActivityPanel = useOpenZStore((s) => s.toggleActivityPanel);
   const activeMessages = useOpenZStore((s) => s.messages[s.activeChatId] ?? EMPTY_MESSAGES);
+  const activeTurnIds = useOpenZStore((s) => s.activeTurnIds);
   const activeOrchestrationRuns = useOpenZStore(
     (s) => s.orchestrationRuns[s.activeChatId] ?? EMPTY_ORCHESTRATION_RUNS,
   );
@@ -91,6 +94,8 @@ export const App: React.FC = () => {
   const toastPosition = useUiCustomizationStore((s) => s.toastPosition);
   const toastDuration = useUiCustomizationStore((s) => s.toastDuration);
   const toastMaxVisible = useUiCustomizationStore((s) => s.toastMaxVisible);
+  const backgroundInboxStyle = useUiCustomizationStore((s) => s.backgroundInboxStyle);
+  const deleteButtonStyle = useUiCustomizationStore((s) => s.deleteButtonStyle);
   const applyCustomization = useUiCustomizationStore((s) => s.applyCustomization);
   const setIsCustomizeOpen = useUiCustomizationStore((s) => s.setIsCustomizeOpen);
   const setActiveCustomizeSection = useUiCustomizationStore((s) => s.setActiveCustomizeSection);
@@ -171,7 +176,7 @@ export const App: React.FC = () => {
         id: 'customize-activity',
         group: 'Customize UI (@beui)',
         label: 'Customize Agent Activity (@beui/agent-activity)',
-        subtitle: 'Configure Thought Orb, 4 stream variants, density, maxHeight & multi-surface feeds',
+        subtitle: 'Choose from 4 live stream styles, row density, and viewport height',
         icon: Activity,
         onSelect: () => {
           setActiveCustomizeSection('agent-activity');
@@ -181,11 +186,22 @@ export const App: React.FC = () => {
       {
         id: 'customize-toast-stack',
         group: 'Customize UI (@beui)',
-        label: 'Customize Toast Stack & Telemetry (@beui/animated-toast-stack)',
-        subtitle: 'Configure Workflow matched, Skill used & Self-improvement toast stack, position & filters',
+        label: 'Customize Toast Stack (@beui/animated-toast-stack)',
+        subtitle: 'Choose from 12 layered toast component styles with spring fan-out',
         icon: Bell,
         onSelect: () => {
           setActiveCustomizeSection('animated-toast-stack');
+          setIsCustomizeOpen(true);
+        },
+      },
+      {
+        id: 'customize-telemetry-badges',
+        group: 'Customize UI (@beui)',
+        label: 'Customize Telemetry Badges (@beui/telemetry-strip)',
+        subtitle: 'Configure inline chat telemetry pills and per-category toast triggers',
+        icon: Sparkles,
+        onSelect: () => {
+          setActiveCustomizeSection('telemetry-badges');
           setIsCustomizeOpen(true);
         },
       },
@@ -203,11 +219,10 @@ export const App: React.FC = () => {
       {
         id: 'toggle-activity-drawer',
         group: 'Actions',
-        label: isActivityPanelOpen ? 'Hide Agent Activity Drawer' : 'Open Agent Activity Drawer',
-        subtitle: 'Inspect live session tool calls, searches, approvals, and subagent runs',
+        label: isActivityPanelOpen ? 'Hide Activity Drawer' : 'Open Activity Drawer',
+        subtitle: 'Inspect background jobs (builds/servers), subagent runs, and live logs',
         icon: isActivityPanelOpen ? PanelRightClose : PanelRightOpen,
         onSelect: () => {
-          setActiveView('chats');
           toggleActivityPanel();
         },
       },
@@ -353,31 +368,26 @@ export const App: React.FC = () => {
           <Menu className="size-4" />
         </Button>
 
-        {/* Right-Side Minimal Icons Menu (Workspace Quick Actions) */}
-        <WorkspaceQuickActions
-          activeView={activeView}
-          activityOpen={isActivityPanelOpen}
-          notificationsOpen={isToastCenterOpen}
-          toastEnabled={toastEnabled}
-          unreadCount={toastUnreadCount}
-          onViewChange={setActiveView}
-          onCustomizeOpen={() => setIsCustomizeOpen(true)}
-          onNotificationsToggle={toggleToastCenter}
-          onThemeToggle={handleQuickThemeToggle}
-          themeLabel={palette.mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          themeIcon={palette.mode === 'dark' ? Sun : Moon}
-          onActivityToggle={() => {
-            if (activeView !== 'chats') {
-              setActiveView('chats');
-              setIsActivityPanelOpen(true);
-            } else {
-              toggleActivityPanel();
-            }
-          }}
-        />
+        {/* Right-Side Minimal Icons Dock — automatically hidden while Activity or Logs drawer is open */}
+        {!isActivityPanelOpen && !isLogsOpen && (
+          <WorkspaceQuickActions
+            activeView={activeView}
+            activityOpen={isActivityPanelOpen}
+            notificationsOpen={isToastCenterOpen}
+            toastEnabled={toastEnabled}
+            unreadCount={toastUnreadCount}
+            onViewChange={setActiveView}
+            onCustomizeOpen={() => setIsCustomizeOpen(true)}
+            onNotificationsToggle={toggleToastCenter}
+            onThemeToggle={handleQuickThemeToggle}
+            themeLabel={palette.mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            themeIcon={palette.mode === 'dark' ? Sun : Moon}
+            onActivityToggle={() => toggleActivityPanel()}
+          />
+        )}
 
-        {activeView === 'chats' ? (
-          <div className="relative flex flex-1 overflow-hidden">
+        <div className="relative flex flex-1 overflow-hidden">
+          {activeView === 'chats' ? (
             <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
               <MessageScroller
                 sessionKey={activeChatId}
@@ -397,26 +407,26 @@ export const App: React.FC = () => {
                 <ChatInput />
               </div>
             </div>
+          ) : (
+            <div
+              className={cn(
+                'min-w-0 flex-1',
+                activeView === 'knowledge' ? 'h-full overflow-hidden' : 'overflow-y-auto',
+              )}
+            >
+              {renderWorkspace()}
+            </div>
+          )}
 
-            {isActivityPanelOpen && (
-              <AgentActivityPanel
-                messages={activeMessages}
-                isStreaming={isAnyStreaming}
-                orchestrationRuns={activeOrchestrationRuns}
-                onClose={() => setIsActivityPanelOpen(false)}
-              />
-            )}
-          </div>
-        ) : (
-          <div
-            className={cn(
-              'flex-1',
-              activeView === 'knowledge' ? 'h-full overflow-hidden' : 'overflow-y-auto',
-            )}
-          >
-            {renderWorkspace()}
-          </div>
-        )}
+          {isActivityPanelOpen && (
+            <AgentActivityPanel
+              messages={activeMessages}
+              isStreaming={isAnyStreaming}
+              orchestrationRuns={activeOrchestrationRuns}
+              onClose={() => setIsActivityPanelOpen(false)}
+            />
+          )}
+        </div>
       </div>
 
       {/* BEUI Command Palette & Full-Screen Studios */}
@@ -437,6 +447,24 @@ export const App: React.FC = () => {
         open={isToastCenterOpen}
         onClose={() => setIsToastCenterOpen(false)}
         history={toastHistory}
+        backgroundTasks={Object.keys(activeTurnIds)
+          .filter((sid) => Boolean(activeTurnIds[sid]) && sid !== activeChatId)
+          .map((sid) => {
+            const match = sessions.find((s) => s.id === sid);
+            return {
+              id: `bg-${sid}`,
+              title: match?.title || sid,
+              detail: 'Running asynchronously in background',
+              status: 'running' as const,
+              onInspect: () => {
+                selectSession(sid);
+                setActiveView('chats');
+                setIsToastCenterOpen(false);
+              },
+            };
+          })}
+        backgroundInboxStyle={backgroundInboxStyle}
+        deleteButtonStyle={deleteButtonStyle}
         toastEnabled={toastEnabled}
         onToggleEnabled={(enabled) => applyCustomization({ toastEnabled: enabled })}
         onClearHistory={clearToastHistory}

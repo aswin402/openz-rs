@@ -14,7 +14,14 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
-export type BeuiCodeBlockVariant = "framed" | "minimal" | "compact"
+export type BeuiCodeBlockVariant =
+  | "framed"
+  | "minimal"
+  | "compact"
+  | "rare-code"
+  | "beautiful-code"
+  | "joly-code"
+  | "aicss-code"
 
 export interface BeuiCodeBlockProps {
   code: string
@@ -85,9 +92,15 @@ export const BeuiCodeBlock: React.FC<BeuiCodeBlockProps> = ({
     <div
       className={cn(
         "my-3 w-full overflow-hidden rounded-xl font-mono text-xs text-foreground",
-        variant === "minimal"
-          ? "border border-border/75 bg-card/85"
-          : "border border-border/90 bg-card shadow-xs",
+        variant === "minimal" || variant === "beautiful-code"
+          ? "border border-border/65 bg-card/75"
+          : variant === "rare-code"
+            ? "rounded-2xl border border-border/75 bg-card/95 shadow-sm"
+            : variant === "joly-code"
+              ? "border border-border/80 bg-background/85 shadow-2xs"
+              : variant === "aicss-code"
+                ? "border border-primary/20 bg-card/90 shadow-xs"
+                : "border border-border/90 bg-card shadow-xs",
         className
       )}
     >
@@ -95,14 +108,25 @@ export const BeuiCodeBlock: React.FC<BeuiCodeBlockProps> = ({
         className={cn(
           "flex select-none items-center justify-between gap-2 px-3",
           variant === "compact"
-            ? "border-b border-border/60 bg-card py-1"
-            : variant === "minimal"
-              ? "border-b border-border/60 bg-muted/35 py-1.5"
-              : "border-b border-border/80 bg-muted/55 py-1.5"
+            ? "border-b border-border/55 bg-card py-1"
+            : variant === "minimal" || variant === "beautiful-code"
+              ? "border-b border-border/55 bg-transparent py-1.5"
+              : variant === "joly-code"
+                ? "border-b border-border/70 bg-muted/45 py-1.5"
+                : "border-b border-border/75 bg-muted/40 py-1.5"
         )}
       >
         <div className="flex min-w-0 items-center gap-2">
-          {variant === "framed" && <FileCode2 className="size-3.5 shrink-0 text-primary" />}
+          {variant === "rare-code" && (
+            <span className="mr-0.5 inline-flex items-center gap-1" aria-hidden="true">
+              <span className="size-2 rounded-full bg-foreground/20" />
+              <span className="size-2 rounded-full bg-foreground/20" />
+              <span className="size-2 rounded-full bg-foreground/20" />
+            </span>
+          )}
+          {(variant === "framed" || variant === "aicss-code") && (
+            <FileCode2 className="size-3.5 shrink-0 text-primary" />
+          )}
           {filename ? (
             <span className="truncate text-[11px] font-medium text-foreground">
               {filename}

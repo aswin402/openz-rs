@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  Activity,
   Clock,
   Eye,
   Filter,
@@ -9,17 +8,10 @@ import {
   ScrollText,
   Search,
   Server,
-  SlidersHorizontal,
-  Terminal,
   X,
 } from 'lucide-react';
-import {
-  ACTIVITY_VARIANT_OPTIONS,
-  AgentActivity,
-} from './beui';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { buildLogActivitySteps } from '../features/activity/activityAdapters';
 import {
   classifyLogScope,
   normalizeWsSessionId,
@@ -29,11 +21,9 @@ import {
 import { cn } from '../lib/utils';
 import { wsService } from '../services/websocket';
 import { useOpenZStore } from '../store/useOpenZStore';
-import { useUiCustomizationStore } from '../store/useUiCustomizationStore';
 import type { LogEntry } from '../types';
 
 type LogsScopeTab = 'session' | 'background' | 'system';
-type LogsViewMode = 'activity' | 'raw';
 type LevelFilter = 'ALL' | LogEntry['level'];
 type CategoryFilter =
   | 'ALL'
@@ -102,25 +92,13 @@ export const LogsDrawer: React.FC = () => {
   const isLogsOpen = useOpenZStore((s) => s.isLogsOpen);
   const setIsLogsOpen = useOpenZStore((s) => s.setIsLogsOpen);
   const logs = useOpenZStore((s) => s.logs);
-  const isStreaming = useOpenZStore((s) => s.isStreaming);
   const activeChatId = useOpenZStore((s) => s.activeChatId);
   const sessions = useOpenZStore((s) => s.sessions);
-
-  const activityVariant = useUiCustomizationStore((s) => s.activityVariant);
-  const activityOrbStyle = useUiCustomizationStore((s) => s.activityOrbStyle);
-  const activityDensity = useUiCustomizationStore((s) => s.activityDensity);
-  const activityShowDetails = useUiCustomizationStore((s) => s.activityShowDetails);
-  const applyCustomization = useUiCustomizationStore((s) => s.applyCustomization);
-  const setActiveCustomizeSection = useUiCustomizationStore(
-    (s) => s.setActiveCustomizeSection,
-  );
-  const setIsCustomizeOpen = useUiCustomizationStore((s) => s.setIsCustomizeOpen);
 
   const [scopeTab, setScopeTab] = useState<LogsScopeTab>('session');
   const [essentialOnly, setEssentialOnly] = useState<boolean>(true);
   const [includeOtherSessions, setIncludeOtherSessions] = useState<boolean>(false);
   const [selectedCronJob, setSelectedCronJob] = useState<string>('ALL');
-  const [viewMode, setViewMode] = useState<LogsViewMode>('activity');
   const [levelFilter, setLevelFilter] = useState<LevelFilter>('ALL');
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('ALL');
   const [query, setQuery] = useState('');
@@ -252,17 +230,6 @@ export const LogsDrawer: React.FC = () => {
     return { preparedItems: filtered, hiddenBoilerplateCount: hiddenCount };
   }, [categoryScopedLogs, essentialOnly, levelFilter, query]);
 
-  const activitySteps = useMemo(
-    () =>
-      buildLogActivitySteps(categoryScopedLogs, {
-        levelFilter,
-        query,
-        limit: 100,
-        essentialOnly,
-      }),
-    [categoryScopedLogs, levelFilter, query, essentialOnly],
-  );
-
   const handleScopeChange = (nextScope: LogsScopeTab) => {
     setScopeTab(nextScope);
     const validCategories = CATEGORIES_BY_SCOPE[nextScope];
@@ -319,19 +286,6 @@ export const LogsDrawer: React.FC = () => {
             aria-label="Refresh logs"
           >
             <RefreshCw className="size-3.5" />
-          </Button>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => {
-              setActiveCustomizeSection('agent-activity');
-              setIsCustomizeOpen(true);
-            }}
-            title="Customize Agent Activity options"
-            aria-label="Customize Agent Activity options"
-          >
-            <SlidersHorizontal className="size-3.5" />
           </Button>
           <Button
             type="button"
@@ -512,57 +466,6 @@ export const LogsDrawer: React.FC = () => {
           </div>
         )}
 
-        {/* View Mode + Variant Row */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted/65 p-0.5">
-            <button
-              type="button"
-              onClick={() => setViewMode('activity')}
-              className={cn(
-                'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors',
-                viewMode === 'activity'
-                  ? 'bg-background text-foreground shadow-2xs'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              <Activity className="size-3 text-primary" />
-              <span>Activity</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode('raw')}
-              className={cn(
-                'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-[11px] font-semibold transition-colors',
-                viewMode === 'raw'
-                  ? 'bg-background text-foreground shadow-2xs'
-                  : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              <Terminal className="size-3" />
-              <span>Console</span>
-            </button>
-          </div>
-
-          {viewMode === 'activity' && (
-            <select
-              aria-label="Log stream variant"
-              value={activityVariant}
-              onChange={(e) =>
-                applyCustomization({
-                  activityVariant: e.target.value as typeof activityVariant,
-                })
-              }
-              className="rounded-lg border border-border/60 bg-background px-2 py-1 text-[10.5px] font-semibold text-foreground"
-            >
-              {ACTIVITY_VARIANT_OPTIONS.map((opt) => (
-                <option key={opt.id} value={opt.id}>
-                  {opt.shortLabel}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
-
         {/* Search Input */}
         <div className="flex items-center gap-2 rounded-lg border border-border/60 bg-background px-2.5 py-1.5">
           <Search className="size-3.5 text-muted-foreground" />
@@ -631,26 +534,7 @@ export const LogsDrawer: React.FC = () => {
 
       {/* Main Log Body */}
       <div className="flex-1 overflow-y-auto p-3">
-        {viewMode === 'activity' ? (
-          <AgentActivity
-            steps={activitySteps}
-            isActive={scopeTab === 'session' && isStreaming}
-            mode="timeline"
-            variant={activityVariant}
-            orbStyle={activityOrbStyle}
-            density={activityDensity}
-            maxHeight="unlimited"
-            showDetails={activityShowDetails}
-            title={
-              scopeTab === 'session'
-                ? 'Session Execution Trace'
-                : scopeTab === 'background'
-                  ? 'Background Cron & Curator Trace'
-                  : 'Gateway & System Trace'
-            }
-            emptyLabel={emptyMessage}
-          />
-        ) : preparedItems.length === 0 ? (
+        {preparedItems.length === 0 ? (
           <div className="py-12 text-center font-mono text-xs text-muted-foreground">
             {emptyMessage}
           </div>

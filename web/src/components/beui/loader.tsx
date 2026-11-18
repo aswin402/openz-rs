@@ -1,22 +1,60 @@
 import * as React from "react"
 import {
-  Loader,
+  Loader as MotionLoader,
   loaderMessages,
   type LoaderMessages,
-  type LoaderProps,
-  type LoaderVariant,
+  type LoaderProps as MotionLoaderProps,
+  type LoaderVariant as MotionLoaderVariant,
 } from "@/components/motion/loader"
+import {
+  AicssOrb,
+  BeautifulLoadingState,
+  KokonutAiLoading,
+  ThinkingOrbsCanvas,
+} from "@/components/registries/thinkingOrbs"
 
-export {
-  Loader as BeuiLoader,
-  loaderMessages,
-  type LoaderMessages,
-  type LoaderProps as BeuiLoaderProps,
-  type LoaderVariant as BeuiLoaderVariant,
+export { loaderMessages, type LoaderMessages }
+
+export type ExtendedLoaderVariant =
+  | MotionLoaderVariant
+  | "beautiful-loading"
+  | "beautiful-orbit"
+  | "kokonut-ai-loading"
+  | "aicss-orb-loader"
+  | "thinking-orbs-mini"
+
+export type BeuiLoaderVariant = ExtendedLoaderVariant
+
+export interface BeuiLoaderProps extends Omit<MotionLoaderProps, "variant"> {
+  variant?: BeuiLoaderVariant
+}
+
+export const BeuiLoader: React.FC<BeuiLoaderProps> = ({
+  variant = "dot-matrix",
+  size = 16,
+  className,
+  ...rest
+}) => {
+  if (variant === "beautiful-loading") {
+    return <BeautifulLoadingState variant="pixel-timer" size={size} showElapsed className={className} />
+  }
+  if (variant === "beautiful-orbit") {
+    return <BeautifulLoadingState variant="orbit" size={size} className={className} />
+  }
+  if (variant === "kokonut-ai-loading") {
+    return <KokonutAiLoading size={size} className={className} />
+  }
+  if (variant === "aicss-orb-loader") {
+    return <AicssOrb variant="morph" isActive size={size} className={className} />
+  }
+  if (variant === "thinking-orbs-mini") {
+    return <ThinkingOrbsCanvas phase="reasoning" isActive size={size} className={className} />
+  }
+  return <MotionLoader variant={variant} size={size} className={className} {...rest} />
 }
 
 export interface BeuiLoaderOptionDescriptor {
-  id: LoaderVariant
+  id: BeuiLoaderVariant
   title: string
   shortLabel: string
   category: "geometric" | "matrix" | "terminal" | "physics"
@@ -145,9 +183,44 @@ export const BEUI_LOADER_OPTIONS: ReadonlyArray<BeuiLoaderOptionDescriptor> = [
     category: "matrix",
     description: "Tabular monospace percentage counter paired with a micro progress track.",
   },
+  {
+    id: "beautiful-loading",
+    title: "BeautifulUI Pixel Timer",
+    shortLabel: "Pixel Timer",
+    category: "matrix",
+    description: "beautifului.dev/r/loading-state — Perimeter pixel shimmer with live elapsed seconds.",
+  },
+  {
+    id: "beautiful-orbit",
+    title: "BeautifulUI Satellite Orbit",
+    shortLabel: "Orbit",
+    category: "geometric",
+    description: "beautifului.dev/r/loading-state — Smooth satellite dot orbiting a central nucleus.",
+  },
+  {
+    id: "kokonut-ai-loading",
+    title: "KokonutUI Harmonic Bars",
+    shortLabel: "Kokonut",
+    category: "geometric",
+    description: "@kokonutui/ai-loading — Five-bar fluid harmonic wave equalizer.",
+  },
+  {
+    id: "aicss-orb-loader",
+    title: "AICSS Organic Morph Orb",
+    shortLabel: "AICSS Orb",
+    category: "physics",
+    description: "aicss.dev/r/orbs — Fluid organic contour morphing loader.",
+  },
+  {
+    id: "thinking-orbs-mini",
+    title: "Thinking-Orbs Canvas Wave",
+    shortLabel: "Canvas Orb",
+    category: "physics",
+    description: "thinking-orbs — 2D HTML5 Canvas multi-harmonic wave ring.",
+  },
 ]
 
-const VALID_LOADER_VARIANTS: Readonly<Record<LoaderVariant, true>> = {
+const VALID_LOADER_VARIANTS: Readonly<Record<BeuiLoaderVariant, true>> = {
   spinner: true,
   dots: true,
   bars: true,
@@ -165,19 +238,24 @@ const VALID_LOADER_VARIANTS: Readonly<Record<LoaderVariant, true>> = {
   newton: true,
   helix: true,
   percent: true,
+  "beautiful-loading": true,
+  "beautiful-orbit": true,
+  "kokonut-ai-loading": true,
+  "aicss-orb-loader": true,
+  "thinking-orbs-mini": true,
 }
 
-export function isBeuiLoaderVariant(raw: unknown): raw is LoaderVariant {
+export function isBeuiLoaderVariant(raw: unknown): raw is BeuiLoaderVariant {
   return typeof raw === "string" && raw in VALID_LOADER_VARIANTS
 }
 
-export function normalizeBeuiLoaderVariant(raw: unknown): LoaderVariant {
+export function normalizeBeuiLoaderVariant(raw: unknown): BeuiLoaderVariant {
   if (isBeuiLoaderVariant(raw)) return raw
   return "dot-matrix"
 }
 
 export const ThinkingLoaderBadge: React.FC<{
-  variant?: LoaderVariant
+  variant?: BeuiLoaderVariant
   size?: number
   className?: string
 }> = ({ variant = "dot-matrix", size = 16, className }) => {
@@ -186,7 +264,7 @@ export const ThinkingLoaderBadge: React.FC<{
       ? Math.max(22, size + 6)
       : size
   return (
-    <Loader
+    <BeuiLoader
       variant={variant}
       size={effectiveSize}
       label="Thinking"

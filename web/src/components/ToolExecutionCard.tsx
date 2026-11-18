@@ -10,6 +10,10 @@ import {
   ImageGeneration,
   extractToolImagePayload,
 } from './beui';
+import {
+  BeautifulToolChips,
+  KokonutToolCallCard,
+} from './registries/rareAndCommunity';
 import { useUiCustomizationStore } from '../store/useUiCustomizationStore';
 import { cn } from '../lib/utils';
 
@@ -40,18 +44,32 @@ export const ToolExecutionCard: React.FC<ToolExecutionCardProps> = ({
 
   return (
     <div className={cn('flex w-full min-w-0 flex-col gap-2', className)}>
-      <ToolCall
-        label={mapped.label}
-        activeLabel={mapped.activeLabel}
-        query={mapped.query}
-        request={mapped.request}
-        result={mapped.result}
-        running={mapped.running}
-        failed={mapped.failed}
-        open={isOpen}
-        onOpenChange={setUserOpen}
-        className="max-w-xl"
-      />
+      {effectiveStyle === 'beautiful-tool-chips' ? (
+        <BeautifulToolChips tools={[tool]} />
+      ) : effectiveStyle === 'kokonut-tool-calls' ? (
+        <KokonutToolCallCard
+          label={mapped.label}
+          query={mapped.query}
+          request={mapped.request}
+          result={mapped.result}
+          running={mapped.running}
+          failed={mapped.failed}
+          defaultOpen={false}
+        />
+      ) : (
+        <ToolCall
+          label={mapped.label}
+          activeLabel={mapped.activeLabel}
+          query={mapped.query}
+          request={mapped.request}
+          result={mapped.result}
+          running={mapped.running}
+          failed={mapped.failed}
+          open={isOpen}
+          onOpenChange={setUserOpen}
+          className="max-w-xl"
+        />
+      )}
       {imagePayload.isImageTool &&
         (imagePayload.src || mapped.running || mapped.failed) && (
           <ImageGeneration

@@ -14,7 +14,7 @@ pub use crawler::Crawler;
 pub use error::SearchXyzError;
 pub use evidence::build_evidence_summary;
 pub use extractor::{ExtractedContent, ExtractionPipeline};
-pub use graph::{extract_and_persist_relations, Edge, KnowledgeGraph, Node};
+pub use graph::{Edge, KnowledgeGraph, Node};
 pub use index::{IndexSearchResult, SearchIndex, SourceEntry};
 pub use pipeline::SearchAndReadPipeline;
 pub use search::{SearchBackend, SearchDispatcher, SearchQuery, SearchResult};

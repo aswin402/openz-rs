@@ -2,38 +2,60 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   AlertCircle,
+  AlertTriangle,
   ArrowLeft,
+  ArrowRightLeft,
   Bell,
   Bot,
   BookOpen,
   Braces,
   Brain,
   Check,
+  ChevronsUpDown,
+  CircleDot,
+  Clock,
   Code2,
+  Columns2,
   Cpu,
+  Database,
   Download,
   FileDiff as FileDiffIcon,
+  FilePlus2,
+  FileSpreadsheet,
+  FolderTree,
   Gauge,
+  Globe,
   Image as ImageIcon,
-  LayoutList,
+  Inbox,
+  Lightbulb,
+  Link2,
   ListChecks,
+  Loader,
+  MapPin,
   MessageSquare,
   Monitor,
   Moon,
   MousePointerClick,
   Palette,
+  PanelRight,
   RotateCcw,
+  Scale,
   ScrollText,
   Search,
   Send,
+  SendHorizontal,
   Settings,
   ShieldCheck,
+  Sigma,
   Sparkles,
   Sun,
   Table2,
+  Tag,
   Terminal,
+  Trash2,
   Upload,
   User,
+  UserCheck,
   Wrench,
   X,
 } from 'lucide-react';
@@ -91,7 +113,6 @@ import {
   BeuiSubagentCard,
   BeuiTelemetryNoticeStrip,
   BeuiTerminalOutput,
-  BeuiToastStylePreview,
   BeuiUserAvatar,
   INLINE_NOTICE_STYLE_OPTIONS,
   ImageGeneration,
@@ -111,10 +132,19 @@ import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { Switch } from '../../components/ui/switch';
 import { cn } from '../../lib/utils';
+import { ExtendedElementsGalleries } from './ExtendedElementsGalleries';
+import { VariantPreviewCard } from './VariantPreviewCard';
 
-interface StudioMenuEntry {
+export type StudioMenuGroup =
+  | 'Appearance'
+  | 'Composer & Chat'
+  | 'Agent & Reasoning'
+  | 'Notifications & Alerts'
+  | 'Code, Tools & Data';
+
+export interface StudioMenuEntry {
   id: CustomizeUiSectionId;
-  group: 'Appearance' | 'Composer & Chat' | 'Agent & Reasoning' | 'Code, Tools & Data';
+  group: StudioMenuGroup;
   label: string;
   pkg: string;
   description: string;
@@ -123,30 +153,70 @@ interface StudioMenuEntry {
 
 const STUDIO_PREVIEW_ANCHOR_TS = 1_763_150_000_000;
 
-const MENU_ITEMS: StudioMenuEntry[] = [
+export const STUDIO_MENU_ITEMS: StudioMenuEntry[] = [
   {
     id: 'theme',
     group: 'Appearance',
     label: 'Global Theme',
     pkg: '@beui/theme',
-    description: 'Select a dual-mode global color theme (with both Light & Dark palettes) across OpenZ.',
+    description: 'Select from 19 curated dual-mode color themes (both Light & Dark palettes) across OpenZ.',
     icon: Palette,
+  },
+  {
+    id: 'badge-style',
+    group: 'Appearance',
+    label: 'Badge Style',
+    pkg: '@openz/badge',
+    description: 'Global badge aesthetic across Minimal Hairline, Soft Capsule, Monospace Tag, and Tinted.',
+    icon: Tag,
   },
   {
     id: 'avatars',
     group: 'Appearance',
-    label: 'Avatars & Fox Icon',
-    pkg: '@beui/avatar',
-    description: 'Choose from 13 Agent & Fox avatars (defaulting to our solid Fox silhouette) and 6 User avatars.',
+    label: 'Agent Avatars',
+    pkg: '@beui/agent-avatar',
+    description: 'Choose from 13 OpenZ Fox & BEUI agent emblems displayed next to assistant responses.',
     icon: User,
+  },
+  {
+    id: 'user-avatars',
+    group: 'Appearance',
+    label: 'User Avatars',
+    pkg: '@beui/user-avatar',
+    description: 'Choose from 6 outer-right user avatar emblems displayed next to your prompts.',
+    icon: UserCheck,
+  },
+  {
+    id: 'chat-width',
+    group: 'Appearance',
+    label: 'Chat Track Width',
+    pkg: '@beui/chat-layout',
+    description: 'Conversation column width across Balanced (820px), Wide Studio (1080px), and Full Edge-to-Edge.',
+    icon: Columns2,
+  },
+  {
+    id: 'delete-button',
+    group: 'Appearance',
+    label: 'Delete Button',
+    pkg: 'rare-ui/delete-button',
+    description: 'Destructive action confirmation style across Sessions, Notifications, and workspace items.',
+    icon: Trash2,
   },
   {
     id: 'prompt-input',
     group: 'Composer & Chat',
     label: 'Prompt Input',
     pkg: '@beui/prompt-input',
-    description: 'Bottom chat composer surface and icon-only submit button variants.',
+    description: 'Composer surface across @beui, Rare-UI Prompt Box, and KokonutUI AI Prompt.',
     icon: Send,
+  },
+  {
+    id: 'send-button',
+    group: 'Composer & Chat',
+    label: 'Send Button',
+    pkg: '@beui/send-button',
+    description: 'Icon-only composer submit button shape and glyph style.',
+    icon: SendHorizontal,
   },
   {
     id: 'model-selector',
@@ -165,6 +235,14 @@ const MENU_ITEMS: StudioMenuEntry[] = [
     icon: Sparkles,
   },
   {
+    id: 'recommendation-card',
+    group: 'Composer & Chat',
+    label: 'Recommendation Card',
+    pkg: 'assistant-ui/recommendation-card',
+    description: 'Actionable next-step suggestion cards and follow-up action chips.',
+    icon: Lightbulb,
+  },
+  {
     id: 'context-usage',
     group: 'Composer & Chat',
     label: 'Context Meter',
@@ -177,7 +255,7 @@ const MENU_ITEMS: StudioMenuEntry[] = [
     group: 'Composer & Chat',
     label: 'Message Scroller',
     pkg: '@beui/message-scroller',
-    description: 'Auto-stick scroll behavior during token streaming and conversation track width.',
+    description: 'Auto-stick scroll behavior while streaming tokens and reading long sessions.',
     icon: ScrollText,
   },
   {
@@ -201,15 +279,23 @@ const MENU_ITEMS: StudioMenuEntry[] = [
     group: 'Agent & Reasoning',
     label: 'Streaming Response',
     pkg: '@beui/streaming-response',
-    description: 'Live token-streaming cursor and markdown response surface.',
+    description: 'Live token-streaming cursor across @beui, Rare-UI, BeautifulUI, AICSS, and assistant-ui.',
     icon: Sparkles,
+  },
+  {
+    id: 'thinking-loader',
+    group: 'Agent & Reasoning',
+    label: 'Thinking Loader',
+    pkg: '@beui/loader',
+    description: '22 animated loader indicators across @beui/loader, BeautifulUI, KokonutUI, AICSS, and thinking-orbs.',
+    icon: Loader,
   },
   {
     id: 'reasoning-text',
     group: 'Agent & Reasoning',
     label: 'Reasoning Text',
     pkg: '@beui/reasoning-text',
-    description: 'Expandable chain-of-thought reasoning trace and thinking state.',
+    description: 'Chain-of-thought disclosure across @beui, AICSS Thinking-Reasoning, and BeautifulUI Thinking State.',
     icon: Brain,
   },
   {
@@ -217,18 +303,24 @@ const MENU_ITEMS: StudioMenuEntry[] = [
     group: 'Agent & Reasoning',
     label: 'Agent Activity',
     pkg: '@beui/agent-activity',
-    description:
-      'Adaptive beui.dev stream with reactive Thought Orb, 4 variants, density, viewport clamp, and multi-surface feeds.',
+    description: 'Multi-step activity stream across @beui, assistant-ui Run Activity, and Tool Timeline.',
     icon: Activity,
   },
   {
-    id: 'animated-toast-stack',
+    id: 'activity-orb',
     group: 'Agent & Reasoning',
-    label: 'Toast Stack & Telemetry',
-    pkg: '@beui/animated-toast-stack',
-    description:
-      'Layered 3D spring toast stack & inline telemetry pills for Workflow matched, Skill used, Self-improvement, Memory, and Guard approvals.',
-    icon: Bell,
+    label: 'Activity Orb',
+    pkg: 'aicss/orbs',
+    description: '10 reactive phase orbs across @beui, thinking-orbs 2D Canvas, AICSS Orbs, and Rare-UI Status.',
+    icon: CircleDot,
+  },
+  {
+    id: 'activity-placement',
+    group: 'Agent & Reasoning',
+    label: 'Activity Placement',
+    pkg: '@beui/activity-placement',
+    description: 'Control where Agent Activity streams appear across inline chat turns, the right Drawer, and Dashboard.',
+    icon: PanelRight,
   },
   {
     id: 'plan-checklist',
@@ -247,60 +339,204 @@ const MENU_ITEMS: StudioMenuEntry[] = [
     icon: Bot,
   },
   {
+    id: 'agent-handoff',
+    group: 'Agent & Reasoning',
+    label: 'Agent Handoff',
+    pkg: 'assistant-ui/agent-handoff',
+    description: 'Specialist delegation transfer cards when OpenZ forks or delegates tasks.',
+    icon: ArrowRightLeft,
+  },
+  {
+    id: 'timeline',
+    group: 'Agent & Reasoning',
+    label: 'Event Timeline',
+    pkg: 'assistant-ui/timeline',
+    description: 'Chronological milestone timeline for completed, active, and upcoming workflow stages.',
+    icon: Clock,
+  },
+  {
+    id: 'animated-toast-stack',
+    group: 'Notifications & Alerts',
+    label: 'Toast Stack',
+    pkg: '@beui/animated-toast-stack',
+    description: '13 layered spring notification styles across @beui and Rare-UI Toast.',
+    icon: Bell,
+  },
+  {
+    id: 'toast-placement',
+    group: 'Notifications & Alerts',
+    label: 'Toast Placement',
+    pkg: '@beui/toast-placement',
+    description: 'Screen corner/edge anchor placement, auto-dismiss timing, and maximum visible stack depth.',
+    icon: MapPin,
+  },
+  {
+    id: 'telemetry-badges',
+    group: 'Notifications & Alerts',
+    label: 'Telemetry Badges',
+    pkg: 'assistant-ui/memory-chips',
+    description: 'Minimal whisper rows, Memory Chips, BeautifulUI Tool Chips, and Rare-UI AI Status badges.',
+    icon: Tag,
+  },
+  {
+    id: 'background-inbox',
+    group: 'Notifications & Alerts',
+    label: 'Background Inbox',
+    pkg: 'assistant-ui/background-inbox',
+    description: 'Async task tray tracking background Curator, Cron, and multi-session runs.',
+    icon: Inbox,
+  },
+  {
+    id: 'alert-collapsible',
+    group: 'Notifications & Alerts',
+    label: 'Animated Alert',
+    pkg: '@beui/alert',
+    description: 'Spring-animated status callouts with icon transitions and smooth dismiss.',
+    icon: AlertCircle,
+  },
+  {
+    id: 'error-state',
+    group: 'Notifications & Alerts',
+    label: 'Error State',
+    pkg: 'assistant-ui/error-state',
+    description: 'Quiet failure banners with integrated one-click Retry and diagnostic traces.',
+    icon: AlertTriangle,
+  },
+  {
+    id: 'collapsible',
+    group: 'Notifications & Alerts',
+    label: 'Collapsible',
+    pkg: '@beui/collapsible',
+    description: 'Expandable disclosure container styles for runtime metadata and nested details.',
+    icon: ChevronsUpDown,
+  },
+  {
     id: 'code-block',
     group: 'Code, Tools & Data',
     label: 'Code Block',
     pkg: '@beui/code-block',
-    description: 'Syntax-highlighted code blocks with line numbers, wrap toggle, download, and copy.',
+    description: '7 syntax-highlighted code styles across @beui, Rare-UI, BeautifulUI, JolyUI, and AICSS.',
     icon: Code2,
   },
   {
     id: 'file-diff',
     group: 'Code, Tools & Data',
     label: 'File Diff',
-    pkg: '@beui/file-diff',
-    description: 'Unified, split side-by-side, and compact hunk patch viewers.',
+    pkg: 'assistant-ui/code-diff',
+    description: 'Unified, split side-by-side, compact, and assistant-ui Code Diff viewers.',
     icon: FileDiffIcon,
+  },
+  {
+    id: 'file-tree',
+    group: 'Code, Tools & Data',
+    label: 'File Tree',
+    pkg: 'assistant-ui/file-tree',
+    description: 'Hierarchical folder tree summarizing created, modified, and inspected workspace files.',
+    icon: FolderTree,
+  },
+  {
+    id: 'artifact-card',
+    group: 'Code, Tools & Data',
+    label: 'Artifact Card',
+    pkg: 'assistant-ui/artifact-card',
+    description: 'Interactive cards for generated files, reports, and downloadable artifacts.',
+    icon: FilePlus2,
   },
   {
     id: 'terminal-output',
     group: 'Code, Tools & Data',
     label: 'Terminal Output',
-    pkg: '@beui/terminal-output',
-    description: 'Streaming shell & cargo command console output cards with exit status badges.',
+    pkg: 'assistant-ui/terminal-block',
+    description: 'Streaming shell console cards across @beui and assistant-ui Terminal Block.',
     icon: Terminal,
   },
   {
     id: 'tool-result',
     group: 'Code, Tools & Data',
     label: 'Tool Call',
-    pkg: '@assistant-ui/elements-tool-call',
-    description: 'Inline collapsible tool invocations with live shimmer status and Request/Result inspection.',
+    pkg: 'beautifului/tool-chips',
+    description: '6 tool displays across @beui, BeautifulUI Tool Chips, KokonutUI, and assistant-ui.',
     icon: Wrench,
   },
   {
     id: 'tool-approval',
     group: 'Code, Tools & Data',
     label: 'Approval Card',
-    pkg: '@assistant-ui/elements-approval-card',
-    description: 'SecurityGuard human-in-the-loop approval cards with command preview and live receipts.',
+    pkg: '@kokonutui/ai-tool-approval',
+    description: 'SecurityGuard human-in-the-loop cards across assistant-ui and KokonutUI.',
     icon: ShieldCheck,
   },
   {
-    id: 'image-generation',
+    id: 'web-search',
     group: 'Code, Tools & Data',
-    label: 'Image Generation',
-    pkg: '@beui/image-generation',
-    description: 'Rendered PNG/SVG media frames with prompt metadata, lightbox zoom, and download.',
-    icon: ImageIcon,
+    label: 'Web Search',
+    pkg: 'assistant-ui/web-search',
+    description: 'Live web search query & domain result cards across assistant-ui and Rare-UI.',
+    icon: Globe,
+  },
+  {
+    id: 'retrieval-chunks',
+    group: 'Code, Tools & Data',
+    label: 'Retrieval Chunks',
+    pkg: 'assistant-ui/retrieval-chunks',
+    description: 'Collapsible RAG & semantic search context passages with match scores.',
+    icon: Database,
+  },
+  {
+    id: 'research-report',
+    group: 'Code, Tools & Data',
+    label: 'Research Report',
+    pkg: 'assistant-ui/research-report',
+    description: 'Sectioned deep-research outlines with per-section source attribution.',
+    icon: BookOpen,
+  },
+  {
+    id: 'inline-citations',
+    group: 'Code, Tools & Data',
+    label: 'Inline Citations',
+    pkg: 'aicss/inline-citations',
+    description: 'Hoverable inline prose citation pills across AICSS, KokonutUI, and Minimal Superscript.',
+    icon: Link2,
   },
   {
     id: 'citations',
     group: 'Code, Tools & Data',
     label: 'Citations',
-    pkg: '@beui/citations',
-    description: 'Interactive web source badges, hover cards, expandable source decks, and footnotes.',
+    pkg: '@kokonutui/ai-citations',
+    description: 'Footer source decks across @beui, KokonutUI Citations, and Minimal Inline.',
     icon: BookOpen,
+  },
+  {
+    id: 'image-generation',
+    group: 'Code, Tools & Data',
+    label: 'Image Generation',
+    pkg: 'assistant-ui/image-generation',
+    description: 'Rendered PNG/SVG media frames across @beui and assistant-ui Image Generation.',
+    icon: ImageIcon,
+  },
+  {
+    id: 'math-block',
+    group: 'Code, Tools & Data',
+    label: 'Math Block',
+    pkg: 'assistant-ui/math-block',
+    description: 'Display KaTeX equation framing with one-click LaTeX copy.',
+    icon: Sigma,
+  },
+  {
+    id: 'spec-sheet',
+    group: 'Code, Tools & Data',
+    label: 'Spec Sheet',
+    pkg: 'assistant-ui/spec-sheet',
+    description: 'Structured 2-column specification displays for runtime and model properties.',
+    icon: FileSpreadsheet,
+  },
+  {
+    id: 'comparison-card',
+    group: 'Code, Tools & Data',
+    label: 'Comparison Table',
+    pkg: 'aicss/comparison-table',
+    description: 'Side-by-side matrices & option cards across AICSS Comparison Table and assistant-ui.',
+    icon: Scale,
   },
   {
     id: 'data-table',
@@ -318,22 +554,19 @@ const MENU_ITEMS: StudioMenuEntry[] = [
     description: 'Interactive collapsible JSON tree inspector for tool arguments and structured outputs.',
     icon: Braces,
   },
-  {
-    id: 'alert-collapsible',
-    group: 'Code, Tools & Data',
-    label: 'Alert & Collapsible',
-    pkg: '@beui/alert',
-    description: 'Semantic status callouts and expandable disclosure containers.',
-    icon: AlertCircle,
-  },
 ];
 
-const MENU_GROUPS: Array<StudioMenuEntry['group']> = [
+const MENU_ITEMS = STUDIO_MENU_ITEMS;
+
+export const STUDIO_MENU_GROUPS: StudioMenuGroup[] = [
   'Appearance',
   'Composer & Chat',
   'Agent & Reasoning',
+  'Notifications & Alerts',
   'Code, Tools & Data',
 ];
+
+const MENU_GROUPS = STUDIO_MENU_GROUPS;
 
 const SAMPLE_RUST_CODE = [
   'pub async fn run_turn(ctx: &mut TurnContext) -> Result<TurnOutcome> {',
@@ -357,86 +590,6 @@ const SAMPLE_CITATIONS = [
   { n: 2, label: 'shadcn/ui Documentation', host: 'ui.shadcn.com', url: 'https://ui.shadcn.com' },
   { n: 3, label: 'Tokio Async Runtime', host: 'tokio.rs', url: 'https://tokio.rs' },
 ];
-
-interface VariantPreviewCardProps {
-  title: string;
-  description: string;
-  selected: boolean;
-  isDefault?: boolean;
-  onSelect: () => void;
-  children: React.ReactNode;
-}
-
-/**
- * shadcn/ui-style Component Variant Preview Card:
- * - Top: Variant title + Default / Selected badges
- * - Center: Live interactive @beui/* component preview stage
- * - Bottom ("in down"): Description + Select / Selected button
- */
-const VariantPreviewCard: React.FC<VariantPreviewCardProps> = ({
-  title,
-  description,
-  selected,
-  isDefault = false,
-  onSelect,
-  children,
-}) => {
-  return (
-    <div
-      className={cn(
-        'flex flex-col overflow-hidden rounded-xl border bg-card transition-colors',
-        selected ? 'border-primary ring-1 ring-primary/35' : 'border-border/80 hover:border-border',
-      )}
-    >
-      {/* Card Top Header */}
-      <div className="flex items-center justify-between gap-2 border-b border-border/60 bg-muted/25 px-4 py-2.5">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-semibold text-foreground">{title}</span>
-          {isDefault && (
-            <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
-              Default
-            </Badge>
-          )}
-        </div>
-        {selected && (
-          <Badge variant="success" className="gap-1 px-2 py-0 text-[10px]">
-            <Check className="size-2.5" />
-            <span>Active</span>
-          </Badge>
-        )}
-      </div>
-
-      {/* Live Component Preview Canvas */}
-      <div className="flex min-h-[185px] flex-1 items-center justify-center bg-background/90 p-5">
-        <div className="w-full max-w-2xl">{children}</div>
-      </div>
-
-      {/* Bottom Bar with Select Button ("in down give select button") */}
-      <div className="flex items-center justify-between gap-3 border-t border-border/60 bg-card px-4 py-3">
-        <p className="min-w-0 flex-1 text-xs text-muted-foreground">{description}</p>
-        <Button
-          type="button"
-          size="sm"
-          variant={selected ? 'secondary' : 'default'}
-          onClick={onSelect}
-          className={cn(
-            'shrink-0 min-w-[96px]',
-            selected && 'border border-primary/45 bg-primary/15 text-primary hover:bg-primary/20',
-          )}
-        >
-          {selected ? (
-            <>
-              <Check className="size-3.5" />
-              <span>Selected</span>
-            </>
-          ) : (
-            <span>Select</span>
-          )}
-        </Button>
-      </div>
-    </div>
-  );
-};
 
 export const UiStudioModal: React.FC = () => {
   const isOpen = useUiCustomizationStore((s) => s.isCustomizeOpen);
@@ -904,105 +1057,113 @@ export const UiStudioModal: React.FC = () => {
 
             {/* 2. PROMPT INPUT (@beui/prompt-input) */}
             {activeSection === 'prompt-input' && (
-              <div className="space-y-8">
-                <div className="grid grid-cols-1 gap-6">
-                  {(
-                    [
-                      {
-                        id: 'elevated',
-                        title: 'Elevated Card Composer',
-                        desc: 'Crisp bordered card surface with integrated single-row @beui toolbar.',
-                        isDefault: true,
-                      },
-                      {
-                        id: 'split',
-                        title: 'Split Footer Composer',
-                        desc: 'Distinct input canvas above a tinted footer toolbar strip.',
-                        isDefault: false,
-                      },
-                      {
-                        id: 'minimal',
-                        title: 'Minimal Compact Composer',
-                        desc: 'Low-profile compact bar with reduced vertical padding.',
-                        isDefault: false,
-                      },
-                    ] as const
-                  ).map((opt) => (
-                    <VariantPreviewCard
-                      key={opt.id}
-                      title={opt.title}
-                      description={opt.desc}
-                      selected={state.promptInputStyle === opt.id}
-                      isDefault={opt.isDefault}
-                      onSelect={() => applyCustomization({ promptInputStyle: opt.id })}
-                    >
-                      <BeuiPromptInput
-                        value={demoPrompt}
-                        onChange={(e) => setDemoPrompt(e.target.value)}
-                        onSubmit={() => setDemoPrompt('')}
-                        canSend={demoPrompt.trim().length > 0 || true}
-                        variant={opt.id}
-                        sendButtonVariant={state.sendButtonStyle}
-                        onAttachClick={() => {}}
-                        leftToolbar={
-                          <Badge variant="secondary" className="font-mono text-[10px]">
-                            {previewModelLabel}
-                          </Badge>
-                        }
-                      />
-                    </VariantPreviewCard>
-                  ))}
-                </div>
+              <div className="grid grid-cols-1 gap-6">
+                {(
+                  [
+                    {
+                      id: 'elevated',
+                      title: 'Elevated Card Composer',
+                      desc: 'Crisp bordered card surface with integrated single-row @beui toolbar.',
+                      isDefault: true,
+                    },
+                    {
+                      id: 'split',
+                      title: 'Split Footer Composer',
+                      desc: 'Distinct input canvas above a tinted footer toolbar strip.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'minimal',
+                      title: 'Minimal Compact Composer',
+                      desc: 'Low-profile compact bar with reduced vertical padding.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'rare-prompt-box',
+                      title: 'Rare-UI Floating Prompt Box',
+                      desc: 'swamimalode07/rare-ui/prompt-box — Frosted glass rounded composer with soft focus ring.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'kokonut-ai-prompt',
+                      title: 'KokonutUI Studio Prompt',
+                      desc: '@kokonutui/ai-prompt — Low-noise hairline studio bar that elevates on focus.',
+                      isDefault: false,
+                    },
+                  ] as const
+                ).map((opt) => (
+                  <VariantPreviewCard
+                    key={opt.id}
+                    title={opt.title}
+                    description={opt.desc}
+                    selected={state.promptInputStyle === opt.id}
+                    isDefault={opt.isDefault}
+                    onSelect={() => applyCustomization({ promptInputStyle: opt.id })}
+                  >
+                    <BeuiPromptInput
+                      value={demoPrompt}
+                      onChange={(e) => setDemoPrompt(e.target.value)}
+                      onSubmit={() => setDemoPrompt('')}
+                      canSend={demoPrompt.trim().length > 0 || true}
+                      variant={opt.id}
+                      sendButtonVariant={state.sendButtonStyle}
+                      onAttachClick={() => {}}
+                      leftToolbar={
+                        <Badge variant="secondary" className="font-mono text-[10px]">
+                          {previewModelLabel}
+                        </Badge>
+                      }
+                    />
+                  </VariantPreviewCard>
+                ))}
+              </div>
+            )}
 
-                <div>
-                  <h2 className="mb-3 text-sm font-semibold text-foreground">
-                    Icon-Only Send Button Style
-                  </h2>
-                  <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
-                    {(
-                      [
-                        {
-                          id: 'icon-round',
-                          title: 'Round Paper Plane',
-                          desc: 'Circular icon-only Send button without text.',
-                          isDefault: true,
-                        },
-                        {
-                          id: 'arrow-round',
-                          title: 'Round Up-Arrow',
-                          desc: 'Circular upward arrow submit icon.',
-                          isDefault: false,
-                        },
-                        {
-                          id: 'icon-square',
-                          title: 'Rounded Square Icon',
-                          desc: 'Compact squircle icon-only Send button.',
-                          isDefault: false,
-                        },
-                      ] as const
-                    ).map((opt) => (
-                      <VariantPreviewCard
-                        key={opt.id}
-                        title={opt.title}
-                        description={opt.desc}
-                        selected={state.sendButtonStyle === opt.id}
-                        isDefault={opt.isDefault}
-                        onSelect={() => applyCustomization({ sendButtonStyle: opt.id })}
-                      >
-                        <div className="flex justify-center">
-                          <BeuiPromptInput
-                            value="Run focused check"
-                            onChange={() => {}}
-                            onSubmit={() => {}}
-                            canSend
-                            variant="minimal"
-                            sendButtonVariant={opt.id}
-                          />
-                        </div>
-                      </VariantPreviewCard>
-                    ))}
-                  </div>
-                </div>
+            {/* 2B. SEND BUTTON (@beui/send-button) */}
+            {activeSection === 'send-button' && (
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+                {(
+                  [
+                    {
+                      id: 'icon-round',
+                      title: 'Round Paper Plane',
+                      desc: 'Circular icon-only Send button without text.',
+                      isDefault: true,
+                    },
+                    {
+                      id: 'arrow-round',
+                      title: 'Round Up-Arrow',
+                      desc: 'Circular upward arrow submit icon.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'icon-square',
+                      title: 'Rounded Square Icon',
+                      desc: 'Compact squircle icon-only Send button.',
+                      isDefault: false,
+                    },
+                  ] as const
+                ).map((opt) => (
+                  <VariantPreviewCard
+                    key={opt.id}
+                    title={opt.title}
+                    description={opt.desc}
+                    selected={state.sendButtonStyle === opt.id}
+                    isDefault={opt.isDefault}
+                    onSelect={() => applyCustomization({ sendButtonStyle: opt.id })}
+                  >
+                    <div className="flex justify-center">
+                      <BeuiPromptInput
+                        value="Run focused check"
+                        onChange={() => {}}
+                        onSubmit={() => {}}
+                        canSend
+                        variant={state.promptInputStyle}
+                        sendButtonVariant={opt.id}
+                      />
+                    </div>
+                  </VariantPreviewCard>
+                ))}
               </div>
             )}
 
@@ -1176,190 +1337,177 @@ export const UiStudioModal: React.FC = () => {
 
             {/* 6. MESSAGE SCROLLER (@beui/message-scroller) */}
             {activeSection === 'message-scroller' && (
-              <div className="space-y-8">
-                <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-                  {(
-                    [
-                      {
-                        id: 'beui-smart',
-                        title: 'BEUI Smart Stick',
-                        desc: 'Auto-scrolls at bottom; pauses cleanly if you scroll up to read.',
-                        isDefault: true,
-                      },
-                      {
-                        id: 'always-follow',
-                        title: 'Always Follow Stream',
-                        desc: 'Continuously locks onto every incoming streamed token.',
-                        isDefault: false,
-                      },
-                      {
-                        id: 'manual',
-                        title: 'Manual Reader',
-                        desc: 'Never jumps automatically; shows floating Jump-to-latest pill.',
-                        isDefault: false,
-                      },
-                    ] as const
-                  ).map((opt) => (
-                    <VariantPreviewCard
-                      key={opt.id}
-                      title={opt.title}
-                      description={opt.desc}
-                      selected={state.scrollerBehavior === opt.id}
-                      isDefault={opt.isDefault}
-                      onSelect={() => applyCustomization({ scrollerBehavior: opt.id })}
-                    >
-                      <div className="h-36 overflow-hidden rounded-xl border border-border/75 bg-card/60">
-                        <MessageScroller
-                          itemCount={3}
-                          isStreaming={opt.id !== 'manual'}
-                          behaviorMode={opt.id}
-                          contentClassName="p-3 space-y-2 text-xs"
-                        >
-                          <div className="rounded-lg bg-muted/50 px-3 py-1.5">
-                            User prompt aligned to right edge
-                          </div>
-                          <div className="rounded-lg border border-border/60 bg-background px-3 py-1.5">
-                            Streaming @beui/message-scroller…
-                          </div>
-                        </MessageScroller>
-                      </div>
-                    </VariantPreviewCard>
-                  ))}
-                </div>
-
-                <div>
-                  <h2 className="mb-3 text-sm font-semibold text-foreground">
-                    Conversation &amp; ChatBox Track Width
-                  </h2>
-                  <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
-                    {(
-                      [
-                        {
-                          id: 'standard',
-                          title: 'Balanced (Default)',
-                          desc: 'Optimal 820px reading column with outer Fox & User gutters.',
-                          isDefault: true,
-                        },
-                        {
-                          id: 'wide',
-                          title: 'Wide Studio',
-                          desc: 'Expanded 1080px track ideal for split diffs & wide tables.',
-                          isDefault: false,
-                        },
-                        {
-                          id: 'full',
-                          title: 'Full Edge-to-Edge',
-                          desc: 'Spans full available viewport width.',
-                          isDefault: false,
-                        },
-                      ] as const
-                    ).map((opt) => (
-                      <VariantPreviewCard
-                        key={opt.id}
-                        title={opt.title}
-                        description={opt.desc}
-                        selected={state.chatWidth === opt.id}
-                        isDefault={opt.isDefault}
-                        onSelect={() => applyCustomization({ chatWidth: opt.id })}
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+                {(
+                  [
+                    {
+                      id: 'beui-smart',
+                      title: 'BEUI Smart Stick',
+                      desc: 'Auto-scrolls at bottom; pauses cleanly if you scroll up to read.',
+                      isDefault: true,
+                    },
+                    {
+                      id: 'always-follow',
+                      title: 'Always Follow Stream',
+                      desc: 'Continuously locks onto every incoming streamed token.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'manual',
+                      title: 'Manual Reader',
+                      desc: 'Never jumps automatically; shows floating Jump-to-latest pill.',
+                      isDefault: false,
+                    },
+                  ] as const
+                ).map((opt) => (
+                  <VariantPreviewCard
+                    key={opt.id}
+                    title={opt.title}
+                    description={opt.desc}
+                    selected={state.scrollerBehavior === opt.id}
+                    isDefault={opt.isDefault}
+                    onSelect={() => applyCustomization({ scrollerBehavior: opt.id })}
+                  >
+                    <div className="h-36 overflow-hidden rounded-xl border border-border/75 bg-card/60">
+                      <MessageScroller
+                        itemCount={3}
+                        isStreaming={opt.id !== 'manual'}
+                        behaviorMode={opt.id}
+                        contentClassName="p-3 space-y-2 text-xs"
                       >
-                        <div className="flex items-center justify-center py-4">
-                          <div
-                            className={cn(
-                              'rounded-lg border border-primary/40 bg-primary/10 py-3 text-center font-mono text-xs text-primary',
-                              opt.id === 'standard'
-                                ? 'w-3/5'
-                                : opt.id === 'wide'
-                                  ? 'w-4/5'
-                                  : 'w-full',
-                            )}
-                          >
-                            <LayoutList className="mx-auto mb-1 size-4" />
-                            <span>{opt.title}</span>
-                          </div>
+                        <div className="rounded-lg bg-muted/50 px-3 py-1.5">
+                          User prompt aligned to right edge
                         </div>
-                      </VariantPreviewCard>
-                    ))}
-                  </div>
-                </div>
+                        <div className="rounded-lg border border-border/60 bg-background px-3 py-1.5">
+                          Streaming @beui/message-scroller…
+                        </div>
+                      </MessageScroller>
+                    </div>
+                  </VariantPreviewCard>
+                ))}
               </div>
             )}
 
-            {/* AVATARS & FOX ICON (@beui/avatar) */}
-            {activeSection === 'avatars' && (
-              <div className="space-y-8">
-                <div>
-                  <h2 className="mb-1 text-sm font-semibold text-foreground">
-                    Agent &amp; Fox Avatars (13 Options)
-                  </h2>
-                  <p className="mb-4 text-xs text-muted-foreground">
-                    Includes our signature solid OpenZ Fox silhouette, sculpted Fox avatars, and minimal BEUI agent emblems.
-                  </p>
-                  <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                    {AGENT_AVATAR_OPTIONS.map((opt) => (
-                      <VariantPreviewCard
-                        key={opt.id}
-                        title={opt.title}
-                        description={opt.description}
-                        selected={state.agentAvatar === opt.id}
-                        isDefault={Boolean(opt.isDefault)}
-                        onSelect={() => applyCustomization({ agentAvatar: opt.id })}
+            {/* 6B. CHAT TRACK WIDTH (@beui/chat-layout) */}
+            {activeSection === 'chat-width' && (
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+                {(
+                  [
+                    {
+                      id: 'standard',
+                      title: 'Balanced (820px)',
+                      desc: 'Optimal 820px reading column with outer Fox & User gutters.',
+                      widthClass: 'w-3/5',
+                      specLabel: '820px column',
+                      isDefault: true,
+                    },
+                    {
+                      id: 'wide',
+                      title: 'Wide Studio (1080px)',
+                      desc: 'Expanded 1080px track ideal for split diffs & wide tables.',
+                      widthClass: 'w-4/5',
+                      specLabel: '1080px column',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'full',
+                      title: 'Full Edge-to-Edge',
+                      desc: 'Spans full available viewport width across ultra-wide monitors.',
+                      widthClass: 'w-full',
+                      specLabel: '100% viewport',
+                      isDefault: false,
+                    },
+                  ] as const
+                ).map((opt) => (
+                  <VariantPreviewCard
+                    key={opt.id}
+                    title={opt.title}
+                    description={opt.desc}
+                    selected={state.chatWidth === opt.id}
+                    isDefault={opt.isDefault}
+                    onSelect={() => applyCustomization({ chatWidth: opt.id })}
+                  >
+                    <div className="flex w-full items-center justify-center rounded-xl border border-border/65 bg-card/55 p-3">
+                      <div
+                        className={cn(
+                          'space-y-2 rounded-lg border border-primary/40 bg-primary/8 p-2.5 transition-all',
+                          opt.widthClass,
+                        )}
                       >
-                        <div className="flex flex-col items-center gap-3 py-2">
-                          {opt.id === 'none' ? (
-                            <div className="flex h-11 items-center justify-center rounded-full border border-dashed border-border px-4 text-xs text-muted-foreground">
-                              Hidden Avatar
-                            </div>
-                          ) : (
-                            <BeuiAgentAvatar variant={opt.id} size="lg" />
-                          )}
-                          <div className="flex w-full items-center gap-2 rounded-xl border border-border/70 bg-card px-3 py-2 text-xs">
-                            <BeuiAgentAvatar variant={opt.id} size="sm" />
-                            <span className="truncate text-foreground/90">
-                              OpenZ Agent ready.
-                            </span>
-                          </div>
+                        <div className="flex items-center justify-between text-[10px] font-mono text-primary">
+                          <Columns2 className="size-3.5" />
+                          <span>{opt.specLabel}</span>
                         </div>
-                      </VariantPreviewCard>
-                    ))}
-                  </div>
-                </div>
+                        <div className="h-2 w-4/5 rounded-full bg-foreground/20" />
+                        <div className="ml-auto h-2 w-1/2 rounded-full bg-primary/45" />
+                      </div>
+                    </div>
+                  </VariantPreviewCard>
+                ))}
+              </div>
+            )}
 
-                <div>
-                  <h2 className="mb-1 text-sm font-semibold text-foreground">
-                    User (&ldquo;Ours&rdquo;) Outer-Right Avatars (6 Options)
-                  </h2>
-                  <p className="mb-4 text-xs text-muted-foreground">
-                    Displayed in the outer-right gutter next to your prompts.
-                  </p>
-                  <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                    {USER_AVATAR_OPTIONS.map((opt) => (
-                      <VariantPreviewCard
-                        key={opt.id}
-                        title={opt.title}
-                        description={opt.description}
-                        selected={state.userAvatar === opt.id}
-                        isDefault={Boolean(opt.isDefault)}
-                        onSelect={() => applyCustomization({ userAvatar: opt.id })}
-                      >
-                        <div className="flex flex-col items-center gap-3 py-2">
-                          {opt.id === 'none' ? (
-                            <div className="flex h-11 items-center justify-center rounded-full border border-dashed border-border px-4 text-xs text-muted-foreground">
-                              Hidden User Avatar
-                            </div>
-                          ) : (
-                            <BeuiUserAvatar variant={opt.id} size="lg" />
-                          )}
-                          <div className="flex w-full items-center justify-end gap-2">
-                            <span className="rounded-2xl bg-primary px-3 py-1.5 text-xs text-primary-foreground">
-                              Run check
-                            </span>
-                            <BeuiUserAvatar variant={opt.id} size="sm" />
-                          </div>
+            {/* AGENT AVATARS (@beui/agent-avatar) */}
+            {activeSection === 'avatars' && (
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                {AGENT_AVATAR_OPTIONS.map((opt) => (
+                  <VariantPreviewCard
+                    key={opt.id}
+                    title={opt.title}
+                    description={opt.description}
+                    selected={state.agentAvatar === opt.id}
+                    isDefault={Boolean(opt.isDefault)}
+                    onSelect={() => applyCustomization({ agentAvatar: opt.id })}
+                  >
+                    <div className="flex flex-col items-center gap-3 py-2">
+                      {opt.id === 'none' ? (
+                        <div className="flex h-11 items-center justify-center rounded-full border border-dashed border-border px-4 text-xs text-muted-foreground">
+                          Hidden Avatar
                         </div>
-                      </VariantPreviewCard>
-                    ))}
-                  </div>
-                </div>
+                      ) : (
+                        <BeuiAgentAvatar variant={opt.id} size="lg" />
+                      )}
+                      <div className="flex w-full items-center gap-2 rounded-xl border border-border/70 bg-card px-3 py-2 text-xs">
+                        <BeuiAgentAvatar variant={opt.id} size="sm" />
+                        <span className="truncate text-foreground/90">
+                          OpenZ Agent ready.
+                        </span>
+                      </div>
+                    </div>
+                  </VariantPreviewCard>
+                ))}
+              </div>
+            )}
+
+            {/* USER AVATARS (@beui/user-avatar) */}
+            {activeSection === 'user-avatars' && (
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                {USER_AVATAR_OPTIONS.map((opt) => (
+                  <VariantPreviewCard
+                    key={opt.id}
+                    title={opt.title}
+                    description={opt.description}
+                    selected={state.userAvatar === opt.id}
+                    isDefault={Boolean(opt.isDefault)}
+                    onSelect={() => applyCustomization({ userAvatar: opt.id })}
+                  >
+                    <div className="flex flex-col items-center gap-3 py-2">
+                      {opt.id === 'none' ? (
+                        <div className="flex h-11 items-center justify-center rounded-full border border-dashed border-border px-4 text-xs text-muted-foreground">
+                          Hidden User Avatar
+                        </div>
+                      ) : (
+                        <BeuiUserAvatar variant={opt.id} size="lg" />
+                      )}
+                      <div className="flex w-full items-center justify-end gap-2">
+                        <span className="rounded-2xl bg-primary px-3 py-1.5 text-xs text-primary-foreground">
+                          Run check
+                        </span>
+                        <BeuiUserAvatar variant={opt.id} size="sm" />
+                      </div>
+                    </div>
+                  </VariantPreviewCard>
+                ))}
               </div>
             )}
 
@@ -1516,6 +1664,30 @@ export const UiStudioModal: React.FC = () => {
                       isDefault: false,
                     },
                     {
+                      id: 'rare-ink',
+                      title: 'Rare-UI Luminous Ink Caret',
+                      desc: 'swamimalode07/rare-ui/streaming-response — Soft glowing ink caret along the live token edge.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'beautiful-stream',
+                      title: 'BeautifulUI Streaming Cadence',
+                      desc: 'beautifului.dev/r/streaming-text — Concentric live pulse dot for streaming output.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'aicss-stream',
+                      title: 'AICSS Streaming Text',
+                      desc: 'aicss.dev/r/streaming-text — Smooth live streaming indicator with zero layout shift.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'assistant-stream',
+                      title: 'Assistant-UI Streaming Text',
+                      desc: 'assistant-ui/elements/streaming-text — Minimal monochrome hairline caret.',
+                      isDefault: false,
+                    },
+                    {
                       id: 'none',
                       title: 'Clean Instant',
                       desc: 'Stream text cleanly with no trailing cursor indicator.',
@@ -1543,310 +1715,314 @@ export const UiStudioModal: React.FC = () => {
               </div>
             )}
 
-            {/* 10. REASONING TEXT & THINKING LOADER (@beui/reasoning-text & @beui/loader) */}
-            {activeSection === 'reasoning-text' && (
-              <div className="space-y-8">
-                <div>
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <div>
-                      <h2 className="text-sm font-semibold text-foreground">
-                        1. Thinking Loader Animation (@beui/loader — {BEUI_LOADER_OPTIONS.length} Styles)
-                      </h2>
-                      <p className="text-xs text-muted-foreground">
-                        Animates active Thinking, Searching, and Running Tools headers across Chat and Agent Activity.
-                      </p>
+            {/* 10A. THINKING LOADER (@beui/loader) */}
+            {activeSection === 'thinking-loader' && (
+              <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                {BEUI_LOADER_OPTIONS.map((loaderOpt) => (
+                  <VariantPreviewCard
+                    key={loaderOpt.id}
+                    title={loaderOpt.title}
+                    description={loaderOpt.description}
+                    selected={state.thinkingLoader === loaderOpt.id}
+                    isDefault={Boolean(loaderOpt.isDefault)}
+                    onSelect={() => applyCustomization({ thinkingLoader: loaderOpt.id })}
+                  >
+                    <div className="flex flex-col items-center gap-3 py-1">
+                      <span className="inline-flex h-12 min-w-12 items-center justify-center rounded-2xl border border-border/65 bg-card px-3.5 text-primary shadow-2xs">
+                        <BeuiLoader
+                          variant={loaderOpt.id}
+                          size={
+                            loaderOpt.id === 'scramble' || loaderOpt.id === 'percent'
+                              ? 22
+                              : 20
+                          }
+                          labels={{ label: 'Thinking', scramble: 'THINKING' }}
+                        />
+                      </span>
+                      <div className="flex w-full items-center justify-between gap-2 rounded-xl border border-border/65 bg-card/75 px-3 py-2 text-xs">
+                        <div className="flex min-w-0 items-center gap-2 text-foreground/90">
+                          <span className="inline-flex shrink-0 items-center text-primary">
+                            <BeuiLoader
+                              variant={loaderOpt.id}
+                              size={14}
+                              labels={{ label: 'Thinking', scramble: 'THINK' }}
+                            />
+                          </span>
+                          <span className="truncate font-medium">Working through it…</span>
+                        </div>
+                        <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                          live
+                        </span>
+                      </div>
                     </div>
-                    <Badge variant="secondary" className="font-mono text-[10px]">
-                      {state.thinkingLoader}
-                    </Badge>
+                  </VariantPreviewCard>
+                ))}
+              </div>
+            )}
+
+            {/* 10B. REASONING TEXT (@beui/reasoning-text) */}
+            {activeSection === 'reasoning-text' && (
+              <div className="grid grid-cols-1 gap-6">
+                {(
+                  [
+                    {
+                      id: 'card',
+                      title: 'BEUI Collapsible Reasoning Card',
+                      desc: 'Expandable chain-of-thought block with step count badge and monospace trace.',
+                      isDefault: true,
+                    },
+                    {
+                      id: 'timeline',
+                      title: 'BEUI Numbered Reasoning Timeline',
+                      desc: 'Clean numbered reasoning steps along a left accent rail.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'compact',
+                      title: 'BEUI Compact Status Pill',
+                      desc: 'Single-line live thinking summary pill without expanding height.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'aicss-reasoning',
+                      title: 'AICSS Thinking & Reasoning Frame',
+                      desc: 'aicss.dev/r/thinking-reasoning — Bordered inner-monologue disclosure with step counter.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'beautiful-thinking',
+                      title: 'BeautifulUI Thinking State',
+                      desc: 'beautifului.dev/r/thinking-state — Ghost borderless reasoning trace for clean prose.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'minimal-whisper',
+                      title: 'Minimal Whisper Line',
+                      desc: 'Unboxed single-line thought summary with zero border.',
+                      isDefault: false,
+                    },
+                  ] as const
+                ).map((opt) => (
+                  <VariantPreviewCard
+                    key={opt.id}
+                    title={opt.title}
+                    description={opt.desc}
+                    selected={state.thinkingAnimation === opt.id}
+                    isDefault={opt.isDefault}
+                    onSelect={() => applyCustomization({ thinkingAnimation: opt.id })}
+                  >
+                    <ReasoningText
+                      variant={opt.id}
+                      loaderVariant={state.thinkingLoader}
+                      isStreaming
+                      defaultOpen
+                      text={
+                        '1. Inspecting Cargo.toml & WebUI component tree\n2. Verifying zero-regex guard invariants\n3. Preparing concise response'
+                      }
+                    />
+                  </VariantPreviewCard>
+                ))}
+              </div>
+            )}
+
+            {/* 11A. AGENT ACTIVITY (@beui/agent-activity) */}
+            {activeSection === 'agent-activity' && (
+              <div className="space-y-6">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/80 bg-card p-3.5">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-medium text-muted-foreground">Density</span>
+                      <div className="inline-flex rounded-lg border border-border bg-muted/40 p-0.5 text-xs">
+                        {ACTIVITY_DENSITY_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => applyCustomization({ activityDensity: opt.id })}
+                            className={cn(
+                              'rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors',
+                              state.activityDensity === opt.id
+                                ? 'bg-card text-foreground shadow-2xs'
+                                : 'text-muted-foreground hover:text-foreground',
+                            )}
+                          >
+                            {opt.title}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-medium text-muted-foreground">Viewport</span>
+                      <div className="inline-flex rounded-lg border border-border bg-muted/40 p-0.5 text-xs">
+                        {ACTIVITY_MAX_HEIGHT_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => applyCustomization({ activityMaxHeight: opt.id })}
+                            className={cn(
+                              'rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors',
+                              state.activityMaxHeight === opt.id
+                                ? 'bg-card text-foreground shadow-2xs'
+                                : 'text-muted-foreground hover:text-foreground',
+                            )}
+                          >
+                            {opt.shortLabel}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                    {BEUI_LOADER_OPTIONS.map((loaderOpt) => {
-                      const activeLoader = state.thinkingLoader === loaderOpt.id;
-                      return (
-                        <button
-                          key={loaderOpt.id}
-                          type="button"
-                          onClick={() => applyCustomization({ thinkingLoader: loaderOpt.id })}
-                          className={cn(
-                            'flex flex-col items-start justify-between gap-3 rounded-2xl border p-3.5 text-left transition-colors',
-                            activeLoader
-                              ? 'border-primary/60 bg-primary/10 text-foreground ring-1 ring-primary/30'
-                              : 'border-border/65 bg-card/60 text-muted-foreground hover:border-border hover:bg-card hover:text-foreground',
-                          )}
-                        >
-                          <div className="flex h-10 w-full items-center justify-between">
-                            <span className="inline-flex h-9 min-w-9 items-center justify-center rounded-xl border border-border/55 bg-background/70 px-2 text-primary">
-                              <BeuiLoader
-                                variant={loaderOpt.id}
-                                size={
-                                  loaderOpt.id === 'scramble' || loaderOpt.id === 'percent'
-                                    ? 20
-                                    : 18
-                                }
-                                labels={{ label: 'Thinking', scramble: 'THINKING' }}
-                              />
-                            </span>
-                            {loaderOpt.isDefault && (
-                              <Badge variant="outline" className="px-1.5 py-0 text-[9px]">
-                                Default
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="min-w-0 w-full">
-                            <div className="truncate text-xs font-semibold text-foreground">
-                              {loaderOpt.title}
-                            </div>
-                            <div className="mt-0.5 line-clamp-2 text-[10.5px] text-muted-foreground">
-                              {loaderOpt.description}
-                            </div>
-                          </div>
-                        </button>
-                      );
-                    })}
+                  <div className="flex flex-wrap items-center gap-4 text-xs">
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <span className="text-[11px] font-medium text-muted-foreground">
+                        Auto-collapse
+                      </span>
+                      <Switch
+                        checked={state.activityAutoCollapse}
+                        onCheckedChange={(checked) =>
+                          applyCustomization({ activityAutoCollapse: Boolean(checked) })
+                        }
+                      />
+                    </label>
+                    <label className="flex cursor-pointer items-center gap-2">
+                      <span className="text-[11px] font-medium text-muted-foreground">
+                        Step details
+                      </span>
+                      <Switch
+                        checked={state.activityShowDetails}
+                        onCheckedChange={(checked) =>
+                          applyCustomization({ activityShowDetails: Boolean(checked) })
+                        }
+                      />
+                    </label>
                   </div>
                 </div>
 
-                <div>
-                  <h2 className="mb-3 text-sm font-semibold text-foreground">
-                    2. Reasoning Disclosure Layout (@beui/reasoning-text)
-                  </h2>
-                  <div className="grid grid-cols-1 gap-6">
-                    {(
-                      [
-                        {
-                          id: 'card',
-                          title: 'BEUI Collapsible Reasoning Card',
-                          desc: 'Expandable chain-of-thought block with step count badge and monospace trace.',
-                          isDefault: true,
-                        },
-                        {
-                          id: 'timeline',
-                          title: 'BEUI Numbered Reasoning Timeline',
-                          desc: 'Clean numbered reasoning steps along a left accent rail.',
-                          isDefault: false,
-                        },
-                        {
-                          id: 'compact',
-                          title: 'BEUI Compact Status Pill',
-                          desc: 'Single-line live thinking summary pill without expanding height.',
-                          isDefault: false,
-                        },
-                      ] as const
-                    ).map((opt) => (
-                      <VariantPreviewCard
-                        key={opt.id}
-                        title={opt.title}
-                        description={opt.desc}
-                        selected={state.thinkingAnimation === opt.id}
-                        isDefault={opt.isDefault}
-                        onSelect={() => applyCustomization({ thinkingAnimation: opt.id })}
-                      >
-                        <ReasoningText
-                          variant={opt.id}
-                          loaderVariant={state.thinkingLoader}
-                          isStreaming
-                          defaultOpen
-                          text={
-                            '1. Inspecting Cargo.toml & WebUI component tree\n2. Verifying zero-regex guard invariants\n3. Preparing concise response'
-                          }
-                        />
-                      </VariantPreviewCard>
-                    ))}
-                  </div>
+                <div className="grid grid-cols-1 gap-6">
+                  {ACTIVITY_VARIANT_OPTIONS.map((opt) => (
+                    <VariantPreviewCard
+                      key={opt.id}
+                      title={opt.title}
+                      description={opt.description}
+                      selected={state.activityVariant === opt.id}
+                      isDefault={Boolean(opt.isDefault)}
+                      onSelect={() => applyCustomization({ activityVariant: opt.id })}
+                    >
+                      <AgentActivity
+                        isActive
+                        mode={opt.id === 'orb-card' ? 'inline-collapsible' : 'timeline'}
+                        defaultOpen
+                        variant={opt.id}
+                        orbStyle={state.activityOrbStyle}
+                        density={state.activityDensity}
+                        maxHeight="unlimited"
+                        showDetails={state.activityShowDetails}
+                        steps={[
+                          {
+                            id: `${opt.id}-1`,
+                            kind: 'reasoning',
+                            contentType: 'reasoning',
+                            title: 'Evaluating workspace changes',
+                            detail: 'Checking registered tools and active skill bundle',
+                            status: 'info',
+                            timestamp: STUDIO_PREVIEW_ANCHOR_TS - 2400,
+                          },
+                          {
+                            id: `${opt.id}-2`,
+                            kind: 'search',
+                            contentType: 'search',
+                            title: 'semantic_search',
+                            detail: 'Matched 18 memory & codebase nodes',
+                            status: 'success',
+                            durationMs: 64,
+                            durationLabel: '64ms',
+                            timestamp: STUDIO_PREVIEW_ANCHOR_TS - 1400,
+                          },
+                          {
+                            id: `${opt.id}-3`,
+                            kind: 'tool',
+                            contentType: 'tool',
+                            title: 'cargo_check',
+                            detail: 'Type-checking workspace crates',
+                            actor: 'builder',
+                            status: 'running',
+                            durationMs: 420,
+                            durationLabel: '420ms',
+                            timestamp: STUDIO_PREVIEW_ANCHOR_TS - 400,
+                          },
+                        ]}
+                      />
+                    </VariantPreviewCard>
+                  ))}
                 </div>
               </div>
             )}
 
-            {/* 11. AGENT ACTIVITY (@beui/agent-activity) */}
-            {activeSection === 'agent-activity' && (
-              <div className="space-y-8">
-                {/* Live Interactive Configuration Preview */}
-                <div className="rounded-2xl border border-primary/30 bg-card/65 p-4 shadow-2xs">
-                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
-                      <Activity className="size-3.5 text-primary" />
-                      <span>Live Preview — Active Configuration Across WebUI Surfaces</span>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <Badge variant="secondary" className="font-mono text-[10px]">
-                        {state.activityVariant}
-                      </Badge>
-                      <Badge variant="outline" className="font-mono text-[10px]">
-                        {state.activityOrbStyle}
-                      </Badge>
-                      <Badge variant="outline" className="font-mono text-[10px]">
-                        {state.activityDensity}
-                      </Badge>
-                      <Badge variant="outline" className="font-mono text-[10px]">
-                        {state.activityMaxHeight}
-                      </Badge>
-                    </div>
-                  </div>
-                  <AgentActivity
-                    isActive
-                    mode="inline-collapsible"
-                    defaultOpen
-                    variant={state.activityVariant}
-                    orbStyle={state.activityOrbStyle}
-                    density={state.activityDensity}
-                    maxHeight={state.activityMaxHeight}
-                    autoCollapse={state.activityAutoCollapse}
-                    showDetails={state.activityShowDetails}
-                    steps={[
-                      {
-                        id: 'preview-think',
-                        kind: 'reasoning',
-                        contentType: 'reasoning',
-                        title: 'Synthesizing multi-surface execution plan',
-                        detail: 'Mapping @beui/agent-activity options across Chat, Drawer, Dashboard, Subagents, Inventory & Logs.',
-                        payload:
-                          '1. Evaluate active turn tool calls and subagent delegations\n2. Stream live elapsed durations\n3. Apply configured variant, orb indicator, and viewport clamp',
-                        actor: 'openz-core',
-                        status: 'info',
-                        timestamp: STUDIO_PREVIEW_ANCHOR_TS - 4200,
-                      },
-                      {
-                        id: 'preview-search',
-                        kind: 'search',
-                        contentType: 'search',
-                        title: 'ast_grep',
-                        detail: 'Scanned 260 registered tools and verified 0 regex invariants',
-                        payload: 'Arguments:\n{\n  "pattern": "ToolRegistry",\n  "lang": "rust"\n}\n\nOutput:\nMatched 14 modules in 92ms',
-                        meta: 'workspace',
-                        status: 'success',
-                        durationMs: 92,
-                        durationLabel: '92ms',
-                        timestamp: STUDIO_PREVIEW_ANCHOR_TS - 2800,
-                      },
-                      {
-                        id: 'preview-subagent',
-                        kind: 'tool',
-                        contentType: 'tool',
-                        title: 'delegate_task',
-                        detail: 'Running parallel architecture verification across WebUI views',
-                        actor: 'reviewer',
-                        meta: 'parallel',
-                        status: 'running',
-                        durationMs: 640,
-                        durationLabel: '640ms',
-                        timestamp: STUDIO_PREVIEW_ANCHOR_TS - 900,
-                      },
-                    ]}
-                  />
-                </div>
-
-                {/* 1. Visual Stream Variant */}
-                <div>
-                  <h2 className="mb-1 text-sm font-semibold text-foreground">
-                    1. Activity Stream Visual Variant
-                  </h2>
-                  <p className="mb-4 text-xs text-muted-foreground">
-                    Applies across Chat turns, the Activity Drawer, Dashboard feed, Subagents, Inventory, and Structured Logs.
-                  </p>
-                  <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-                    {ACTIVITY_VARIANT_OPTIONS.map((opt) => (
-                      <VariantPreviewCard
-                        key={opt.id}
-                        title={opt.title}
-                        description={opt.description}
-                        selected={state.activityVariant === opt.id}
-                        isDefault={Boolean(opt.isDefault)}
-                        onSelect={() => applyCustomization({ activityVariant: opt.id })}
-                      >
-                        <AgentActivity
-                          isActive={opt.id === 'orb-card'}
-                          mode={opt.id === 'orb-card' ? 'inline-collapsible' : 'timeline'}
-                          defaultOpen
-                          variant={opt.id}
-                          orbStyle={state.activityOrbStyle}
-                          density="compact"
-                          maxHeight="compact"
-                          showDetails={state.activityShowDetails}
-                          steps={[
-                            {
-                              id: `${opt.id}-1`,
-                              kind: 'search',
-                              title: 'semantic_search',
-                              detail: 'Indexed 18 memory nodes',
-                              status: 'success',
-                              durationLabel: '64ms',
-                              timestamp: STUDIO_PREVIEW_ANCHOR_TS - 1800,
-                            },
-                            {
-                              id: `${opt.id}-2`,
-                              kind: 'tool',
-                              title: 'cargo_check',
-                              detail: 'Type-checking workspace crates',
-                              actor: 'builder',
-                              status: 'running',
-                              durationLabel: '420ms',
-                              timestamp: STUDIO_PREVIEW_ANCHOR_TS - 400,
-                            },
-                          ]}
-                        />
-                      </VariantPreviewCard>
-                    ))}
-                  </div>
-                </div>
-
-                {/* 2. Reactive Thought-Orb Indicator */}
-                <div>
-                  <h2 className="mb-1 text-sm font-semibold text-foreground">
-                    2. Reactive Thought-Orb Indicator
-                  </h2>
-                  <p className="mb-4 text-xs text-muted-foreground">
-                    Choose how active thinking, search, tool, security, and completion phases animate in headers.
-                  </p>
-                  <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
-                    {ACTIVITY_ORB_OPTIONS.map((opt) => (
-                      <VariantPreviewCard
-                        key={opt.id}
-                        title={opt.title}
-                        description={opt.description}
-                        selected={state.activityOrbStyle === opt.id}
-                        isDefault={Boolean(opt.isDefault)}
-                        onSelect={() => applyCustomization({ activityOrbStyle: opt.id })}
-                      >
-                        <div className="flex items-center justify-around rounded-xl border border-border/60 bg-background/60 px-3 py-3">
-                          {(
-                            [
-                              { phase: 'reasoning', label: 'Think', active: true },
-                              { phase: 'search', label: 'Search', active: true },
-                              { phase: 'tool', label: 'Tool', active: true },
-                              { phase: 'complete', label: 'Done', active: false },
-                            ] as const
-                          ).map((sample) => (
-                            <div
-                              key={sample.phase}
-                              className="flex flex-col items-center gap-1.5 text-[10px] text-muted-foreground"
-                            >
-                              <BeuiActivityOrb
-                                phase={sample.phase}
-                                isActive={sample.active}
-                                styleVariant={opt.id}
-                                size="md"
-                              />
-                              <span>{sample.label}</span>
-                            </div>
-                          ))}
+            {/* 11B. ACTIVITY ORB (@beui/activity-orb) */}
+            {activeSection === 'activity-orb' && (
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+                {ACTIVITY_ORB_OPTIONS.map((opt) => (
+                  <VariantPreviewCard
+                    key={opt.id}
+                    title={opt.title}
+                    description={opt.description}
+                    selected={state.activityOrbStyle === opt.id}
+                    isDefault={Boolean(opt.isDefault)}
+                    onSelect={() => applyCustomization({ activityOrbStyle: opt.id })}
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between gap-2 rounded-xl border border-border/65 bg-card px-3.5 py-2.5 text-xs">
+                        <div className="flex items-center gap-2 font-medium text-foreground">
+                          <BeuiActivityOrb
+                            phase="tool"
+                            isActive
+                            styleVariant={opt.id}
+                            size="sm"
+                          />
+                          <span>Working through it…</span>
                         </div>
-                      </VariantPreviewCard>
-                    ))}
-                  </div>
-                </div>
+                        <span className="font-mono text-[10px] text-muted-foreground">3 steps</span>
+                      </div>
 
-                {/* 3. Inline vs Drawer Placement */}
-                <div>
-                  <h2 className="mb-1 text-sm font-semibold text-foreground">
-                    3. Chat Turn Placement &amp; Visibility
-                  </h2>
-                  <p className="mb-4 text-xs text-muted-foreground">
-                    Control when @beui/agent-activity renders inline inside chat turns versus the right-hand Activity Drawer.
-                  </p>
-                  <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-                    {ACTIVITY_PLACEMENT_OPTIONS.map((opt) => (
+                      <div className="flex items-center justify-around rounded-xl border border-border/60 bg-card/55 px-3 py-3">
+                        {(
+                          [
+                            { phase: 'reasoning', label: 'Think', active: true },
+                            { phase: 'search', label: 'Search', active: true },
+                            { phase: 'tool', label: 'Tool', active: true },
+                            { phase: 'complete', label: 'Done', active: false },
+                          ] as const
+                        ).map((sample) => (
+                          <div
+                            key={sample.phase}
+                            className="flex flex-col items-center gap-1.5 text-[10px] text-muted-foreground"
+                          >
+                            <BeuiActivityOrb
+                              phase={sample.phase}
+                              isActive={sample.active}
+                              styleVariant={opt.id}
+                              size="md"
+                            />
+                            <span>{sample.label}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </VariantPreviewCard>
+                ))}
+              </div>
+            )}
+
+            {/* 11C. ACTIVITY PLACEMENT (@beui/activity-placement) */}
+            {activeSection === 'activity-placement' && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                  {ACTIVITY_PLACEMENT_OPTIONS.map((opt) => {
+                    const showInline = opt.id !== 'panel-only';
+                    const collapsesOnDone =
+                      opt.id === 'beui-timeline' || opt.id === 'streaming-only';
+                    return (
                       <VariantPreviewCard
                         key={opt.id}
                         title={opt.title}
@@ -1855,168 +2031,80 @@ export const UiStudioModal: React.FC = () => {
                         isDefault={Boolean(opt.isDefault)}
                         onSelect={() => applyCustomization({ activityStyle: opt.id })}
                       >
-                        <div className="flex items-center justify-between rounded-lg border border-border/60 bg-background/60 px-3 py-2 text-xs">
-                          <span className="font-medium text-foreground">{opt.shortLabel} Mode</span>
-                          <Badge variant={opt.id === 'panel-only' ? 'outline' : 'secondary'}>
-                            {opt.id === 'panel-only' ? 'Drawer Only' : 'Inline + Drawer'}
-                          </Badge>
+                        <div className="grid grid-cols-[1fr_104px] gap-2.5 rounded-xl border border-border/70 bg-card/55 p-3 text-[11px]">
+                          <div className="space-y-2 rounded-lg border border-border/60 bg-background/80 p-2.5">
+                            <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                              <span className="font-medium text-foreground">Chat Turn</span>
+                              <span>
+                                {opt.id === 'panel-only'
+                                  ? 'Prose only'
+                                  : opt.id === 'streaming-only'
+                                    ? 'Live only'
+                                    : collapsesOnDone
+                                      ? 'Auto-folds'
+                                      : 'Pinned'}
+                              </span>
+                            </div>
+                            {showInline ? (
+                              <div className="flex items-center justify-between rounded-md border border-primary/35 bg-primary/10 px-2 py-1 text-[10px] text-primary">
+                                <span className="truncate font-medium">
+                                  {opt.id === 'streaming-only'
+                                    ? 'Live Activity (hides on reply)'
+                                    : opt.id === 'beui-timeline'
+                                      ? 'Completed 3 steps ▾'
+                                      : 'Expanded Activity Card'}
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="rounded-md border border-dashed border-border/60 px-2 py-1 text-[10px] text-muted-foreground">
+                                No inline activity block
+                              </div>
+                            )}
+                            <div className="h-2 w-4/5 rounded-full bg-foreground/20" />
+                            <div className="h-2 w-3/5 rounded-full bg-foreground/15" />
+                          </div>
+
+                          <div
+                            className={cn(
+                              'flex flex-col justify-between rounded-lg border p-2.5',
+                              opt.id === 'panel-only'
+                                ? 'border-primary/45 bg-primary/10 text-primary'
+                                : 'border-border/60 bg-background/65 text-muted-foreground',
+                            )}
+                          >
+                            <div className="flex items-center gap-1 text-[10px] font-semibold">
+                              <PanelRight className="size-3 shrink-0" />
+                              <span className="truncate">Drawer</span>
+                            </div>
+                            <div className="space-y-1">
+                              <div className="h-1.5 w-full rounded-full bg-current opacity-35" />
+                              <div className="h-1.5 w-4/5 rounded-full bg-current opacity-25" />
+                              <div className="h-1.5 w-3/5 rounded-full bg-current opacity-20" />
+                            </div>
+                            <span className="font-mono text-[9.5px]">Always live</span>
+                          </div>
                         </div>
                       </VariantPreviewCard>
-                    ))}
-                  </div>
-                </div>
-
-                {/* 4. Density & Scroll Viewport Height */}
-                <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                  <div className="rounded-2xl border border-border/70 bg-card/55 p-4">
-                    <h3 className="mb-1 text-xs font-semibold text-foreground">
-                      Row Spacing Density
-                    </h3>
-                    <p className="mb-3 text-[11px] text-muted-foreground">
-                      Adjust vertical rhythm and excerpt clamping inside activity lists.
-                    </p>
-                    <div className="grid grid-cols-2 gap-2">
-                      {ACTIVITY_DENSITY_OPTIONS.map((opt) => (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          onClick={() => applyCustomization({ activityDensity: opt.id })}
-                          className={cn(
-                            'rounded-xl border px-3 py-2.5 text-left transition-colors',
-                            state.activityDensity === opt.id
-                              ? 'border-primary/50 bg-primary/10 text-foreground'
-                              : 'border-border/60 bg-background/50 text-muted-foreground hover:border-border hover:text-foreground',
-                          )}
-                        >
-                          <div className="text-xs font-semibold">{opt.title}</div>
-                          <div className="mt-0.5 text-[10.5px] opacity-80">{opt.description}</div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-border/70 bg-card/55 p-4">
-                    <h3 className="mb-1 text-xs font-semibold text-foreground">
-                      Scrollable Viewport Max-Height
-                    </h3>
-                    <p className="mb-3 text-[11px] text-muted-foreground">
-                      Clamp long tool/log runs inside an internal scroll container.
-                    </p>
-                    <div className="grid grid-cols-2 gap-2">
-                      {ACTIVITY_MAX_HEIGHT_OPTIONS.map((opt) => (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          onClick={() => applyCustomization({ activityMaxHeight: opt.id })}
-                          className={cn(
-                            'rounded-xl border px-3 py-2 text-left transition-colors',
-                            state.activityMaxHeight === opt.id
-                              ? 'border-primary/50 bg-primary/10 text-foreground'
-                              : 'border-border/60 bg-background/50 text-muted-foreground hover:border-border hover:text-foreground',
-                          )}
-                        >
-                          <div className="flex items-center justify-between gap-1 text-xs font-semibold">
-                            <span>{opt.shortLabel}</span>
-                            {opt.isDefault && (
-                              <span className="text-[9px] font-mono text-primary">default</span>
-                            )}
-                          </div>
-                          <div className="mt-0.5 line-clamp-1 text-[10px] opacity-80">
-                            {opt.title}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                {/* 5. Behavior & Workspace Surface Toggles */}
-                <div className="rounded-2xl border border-border/70 bg-card/55 p-4">
-                  <h3 className="mb-3 text-xs font-semibold text-foreground">
-                    Stream Behavior &amp; Multi-Surface Visibility
-                  </h3>
-                  <div className="space-y-3">
-                    {(
-                      [
-                        {
-                          key: 'activityAutoCollapse',
-                          label: 'Auto-Collapse Inline Card on Completion',
-                          desc: 'Automatically folds inline chat activity into a summary bar once a turn finishes without errors.',
-                          checked: state.activityAutoCollapse,
-                        },
-                        {
-                          key: 'activityShowDetails',
-                          label: 'Show Step Excerpts, Durations & Expandable Payloads',
-                          desc: 'Displays argument/output snippets, live duration badges, and click-to-expand payload inspection.',
-                          checked: state.activityShowDetails,
-                        },
-                        {
-                          key: 'showDashboardActivity',
-                          label: 'Show Live Agent Activity Stream on Dashboard',
-                          desc: 'Embeds a unified @beui/agent-activity feed across active sessions, orchestrations, cron jobs, and logs on the Dashboard.',
-                          checked: state.showDashboardActivity,
-                        },
-                      ] as const
-                    ).map((toggle) => (
-                      <label
-                        key={toggle.key}
-                        className="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-border/55 bg-background/45 px-3.5 py-2.5"
-                      >
-                        <div>
-                          <div className="text-xs font-semibold text-foreground">
-                            {toggle.label}
-                          </div>
-                          <div className="text-[11px] text-muted-foreground">{toggle.desc}</div>
-                        </div>
-                        <Switch
-                          checked={toggle.checked}
-                          onCheckedChange={(checked) =>
-                            applyCustomization({ [toggle.key]: Boolean(checked) })
-                          }
-                        />
-                      </label>
-                    ))}
-                  </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
 
-            {/* 11B. ANIMATED TOAST STACK (@beui/animated-toast-stack) */}
+            {/* 11D. ANIMATED TOAST STACK (@beui/animated-toast-stack) */}
             {activeSection === 'animated-toast-stack' && (
-              <div className="space-y-8">
-                {/* Master Enable & Live Trigger Playground */}
-                <div className="rounded-2xl border border-primary/30 bg-card/65 p-4 shadow-2xs">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="space-y-0.5">
-                      <div className="flex items-center gap-2 text-xs font-semibold text-foreground">
-                        <Bell className="size-3.5 text-primary" />
-                        <span>Live Telemetry Toast Stack (@beui/animated-toast-stack)</span>
-                        <Badge variant="secondary" className="font-mono text-[10px]">
-                          {state.toastVariant}
-                        </Badge>
-                        <Badge variant="outline" className="font-mono text-[10px]">
-                          {normalizeToastPosition(state.toastPosition)}
-                        </Badge>
-                      </div>
-                      <p className="text-[11px] text-muted-foreground">
-                        Hover the live stack to fan out cards and pause countdowns, or swipe horizontally to dismiss.
-                      </p>
+              <div className="space-y-6">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/80 bg-card p-3.5">
+                  <div>
+                    <div className="text-xs font-semibold text-foreground">
+                      Live Popup Toasts
                     </div>
-
-                    <div className="flex items-center gap-2.5">
-                      <span className="text-xs font-medium text-muted-foreground">
-                        {state.toastEnabled ? 'Enabled' : 'Muted'}
-                      </span>
-                      <Switch
-                        checked={state.toastEnabled}
-                        onCheckedChange={(checked) =>
-                          applyCustomization({ toastEnabled: Boolean(checked) })
-                        }
-                      />
-                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Hover any preview stack below to fan out layered cards, or trigger a live toast on screen.
+                    </p>
                   </div>
 
-                  <div className="mt-3.5 flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     <Button
                       type="button"
                       size="sm"
@@ -2026,33 +2114,11 @@ export const UiStudioModal: React.FC = () => {
                           applyCustomization({ toastEnabled: true });
                         }
                         useToastStore.getState().pushToast({
-                          dedupeKey: `demo-workflow-${Date.now()}`,
-                          category: 'workflow',
-                          status: 'info',
-                          title: 'Workflow matched',
-                          detail: 'ship-pr-until-green · verified preconditions & steps',
-                          actionLabel: 'Inspect Activity',
-                          onAction: () => setIsOpen(false),
-                        });
-                      }}
-                    >
-                      <span>Test Workflow Matched</span>
-                    </Button>
-
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => {
-                        if (!state.toastEnabled) {
-                          applyCustomization({ toastEnabled: true });
-                        }
-                        useToastStore.getState().pushToast({
-                          dedupeKey: `demo-skill-${Date.now()}`,
+                          dedupeKey: `demo-toast-${Date.now()}`,
                           category: 'skill',
                           status: 'info',
                           title: 'Skill used',
-                          detail: 'openz_fullstack_playbook, rust_pro',
+                          detail: 'openz_fullstack_playbook · matched active task',
                           actionLabel: 'Open Skills',
                           onAction: () => {
                             useOpenZStore.getState().setActiveView('skills');
@@ -2061,54 +2127,18 @@ export const UiStudioModal: React.FC = () => {
                         });
                       }}
                     >
-                      <span>Test Skill Used</span>
+                      <span>Send Test Toast</span>
                     </Button>
 
                     <Button
                       type="button"
                       size="sm"
-                      variant="secondary"
-                      onClick={() => {
-                        if (!state.toastEnabled) {
-                          applyCustomization({ toastEnabled: true });
-                        }
-                        useToastStore.getState().pushToast({
-                          dedupeKey: `demo-curator-${Date.now()}`,
-                          category: 'self_improvement',
-                          status: 'success',
-                          title: 'Self-improvement skill synthesized',
-                          detail: 'Curator updated ~/.openz/skills/cargo_low_mem.md',
-                          actionLabel: 'Open Skills',
-                          onAction: () => {
-                            useOpenZStore.getState().setActiveView('skills');
-                            setIsOpen(false);
-                          },
-                        });
-                      }}
-                    >
-                      <span>Test Self-Improvement</span>
-                    </Button>
-
-                    <Button
-                      type="button"
-                      size="sm"
+                      variant="outline"
                       onClick={() => {
                         if (!state.toastEnabled) {
                           applyCustomization({ toastEnabled: true });
                         }
                         const samples = [
-                          {
-                            category: 'research' as const,
-                            status: 'info' as const,
-                            title: 'Research brief matched',
-                            detail: 'beui animated-toast-stack architecture (fresh)',
-                          },
-                          {
-                            category: 'skill' as const,
-                            status: 'info' as const,
-                            title: 'Skill used',
-                            detail: 'openz_orchestration_handbook',
-                          },
                           {
                             category: 'workflow' as const,
                             status: 'info' as const,
@@ -2116,10 +2146,16 @@ export const UiStudioModal: React.FC = () => {
                             detail: 'verified-webui-release',
                           },
                           {
+                            category: 'skill' as const,
+                            status: 'info' as const,
+                            title: 'Skill used',
+                            detail: 'rust_pro',
+                          },
+                          {
                             category: 'self_improvement' as const,
                             status: 'success' as const,
-                            title: 'Self-improvement memory updated',
-                            detail: 'Saved reusable session telemetry patterns',
+                            title: 'Self-improvement updated',
+                            detail: 'Consolidated learnings into MEMORY.md',
                           },
                         ];
                         samples.forEach((sample, idx) => {
@@ -2132,7 +2168,7 @@ export const UiStudioModal: React.FC = () => {
                         });
                       }}
                     >
-                      <span>Trigger 4-Card Stack Burst</span>
+                      <span>Test 3-Card Stack</span>
                     </Button>
 
                     <Button
@@ -2141,198 +2177,211 @@ export const UiStudioModal: React.FC = () => {
                       variant="ghost"
                       onClick={() => useToastStore.getState().clearActiveToasts()}
                     >
-                      <span>Clear Live Stack</span>
+                      <span>Clear</span>
                     </Button>
-                  </div>
 
-                  {/* Interactive Static Deck Preview (Hover to Fan Out!) */}
-                  <div className="mt-4 rounded-xl border border-border/60 bg-background/60 px-4 py-3">
-                    <div className="mb-1 text-center text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
-                      Hover deck below to preview spring fan-out geometry
+                    <div className="ml-1 flex items-center gap-2 border-l border-border/65 pl-3">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        {state.toastEnabled ? 'Enabled' : 'Muted'}
+                      </span>
+                      <Switch
+                        checked={state.toastEnabled}
+                        onCheckedChange={(checked) =>
+                          applyCustomization({ toastEnabled: Boolean(checked) })
+                        }
+                      />
                     </div>
-                    <AnimatedToastStack
-                      previewStatic
-                      variant={state.toastVariant}
-                      maxVisible={state.toastMaxVisible}
-                      onDismiss={() => {}}
-                      toasts={[
-                        {
-                          id: 'studio-toast-1',
-                          category: 'workflow',
-                          status: 'info',
-                          title: 'Workflow matched',
-                          detail: 'release-verification-pipeline (score 9.4)',
-                          createdAt: 1_763_150_144_000,
-                          actionLabel: 'Inspect Activity',
-                          onAction: () => {},
-                        },
-                        {
-                          id: 'studio-toast-2',
-                          category: 'skill',
-                          status: 'info',
-                          title: 'Skill used',
-                          detail: 'openz_fullstack_playbook',
-                          createdAt: 1_763_150_141_000,
-                          actionLabel: 'Open Skills',
-                          onAction: () => {},
-                        },
-                        {
-                          id: 'studio-toast-3',
-                          category: 'self_improvement',
-                          status: 'success',
-                          title: 'Self-improvement memory updated',
-                          detail: 'Recent conversation learnings were saved',
-                          createdAt: 1_763_150_138_000,
-                        },
-                      ]}
-                    />
                   </div>
                 </div>
 
-                {/* 1. 10 Toast Stack UI Component Styles */}
-                <div>
-                  <h2 className="mb-1 text-sm font-semibold text-foreground">
-                    1. Toast UI Component Styles ({TOAST_VARIANT_OPTIONS.length} Components)
-                  </h2>
-                  <p className="mb-4 text-xs text-muted-foreground">
-                    Choose from {TOAST_VARIANT_OPTIONS.length} distinct @beui/animated-toast-stack UI component styles across Light and Dark themes.
-                  </p>
-                  <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
-                    {TOAST_VARIANT_OPTIONS.map((opt) => (
-                      <VariantPreviewCard
-                        key={opt.id}
-                        title={opt.title}
-                        description={opt.description}
-                        selected={state.toastVariant === opt.id}
-                        isDefault={Boolean(opt.isDefault)}
-                        onSelect={() => applyCustomization({ toastVariant: opt.id })}
-                      >
-                        <div className="space-y-2 rounded-xl border border-border/60 bg-background/55 p-3">
-                          <div className="flex items-center justify-between text-[11px]">
-                            <span className="font-semibold text-foreground">{opt.shortLabel} Component</span>
-                            <Badge variant={state.toastVariant === opt.id ? 'default' : 'outline'}>
-                              {opt.id}
-                            </Badge>
-                          </div>
-                          <BeuiToastStylePreview variant={opt.id} />
-                        </div>
-                      </VariantPreviewCard>
-                    ))}
-                  </div>
+                <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                  {TOAST_VARIANT_OPTIONS.map((opt) => (
+                    <VariantPreviewCard
+                      key={opt.id}
+                      title={opt.title}
+                      description={opt.description}
+                      selected={state.toastVariant === opt.id}
+                      isDefault={Boolean(opt.isDefault)}
+                      onSelect={() => applyCustomization({ toastVariant: opt.id })}
+                    >
+                      <AnimatedToastStack
+                        previewStatic
+                        variant={opt.id}
+                        maxVisible={3}
+                        onDismiss={() => {}}
+                        className="min-h-[136px] py-1"
+                        toasts={[
+                          {
+                            id: `${opt.id}-preview-1`,
+                            category: 'skill',
+                            status: 'info',
+                            title: 'Skill used',
+                            detail: 'openz_fullstack_playbook',
+                            createdAt: STUDIO_PREVIEW_ANCHOR_TS - 1000,
+                            actionLabel: 'Open Skills',
+                            onAction: () => {},
+                          },
+                          {
+                            id: `${opt.id}-preview-2`,
+                            category: 'self_improvement',
+                            status: 'success',
+                            title: 'Self-improvement updated',
+                            detail: 'Consolidated session memory',
+                            createdAt: STUDIO_PREVIEW_ANCHOR_TS - 4000,
+                          },
+                        ]}
+                      />
+                    </VariantPreviewCard>
+                  ))}
                 </div>
+              </div>
+            )}
 
-                {/* 2. Screen Position, Auto-Dismiss Duration & Stack Depth */}
-                <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-                  <div className="rounded-2xl border border-border/70 bg-card/55 p-4">
-                    <h3 className="mb-1 text-xs font-semibold text-foreground">
-                      2. Viewport Anchor Placement
-                    </h3>
-                    <p className="mb-3 text-[11px] text-muted-foreground">
-                      Place live toast decks at Top Start / Center / End or Bottom Start / Center / End.
-                    </p>
-                    <div className="grid grid-cols-3 gap-2">
-                      {TOAST_POSITION_OPTIONS.map((opt) => {
-                        const activePos = normalizeToastPosition(state.toastPosition) === opt.id;
-                        return (
+            {/* 11E. TOAST PLACEMENT (@beui/toast-placement) */}
+            {activeSection === 'toast-placement' && (
+              <div className="space-y-6">
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/80 bg-card p-3.5">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-medium text-muted-foreground">
+                        Auto-Dismiss
+                      </span>
+                      <div className="inline-flex rounded-lg border border-border bg-muted/40 p-0.5 text-xs">
+                        {TOAST_DURATION_OPTIONS.map((opt) => (
                           <button
                             key={opt.id}
                             type="button"
-                            onClick={() => applyCustomization({ toastPosition: opt.id })}
+                            onClick={() => applyCustomization({ toastDuration: opt.id })}
                             className={cn(
-                              'rounded-xl border px-2.5 py-2 text-left transition-colors',
-                              activePos
-                                ? 'border-primary/50 bg-primary/10 text-foreground'
-                                : 'border-border/60 bg-background/50 text-muted-foreground hover:border-border hover:text-foreground',
+                              'rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors',
+                              state.toastDuration === opt.id
+                                ? 'bg-card text-foreground shadow-2xs'
+                                : 'text-muted-foreground hover:text-foreground',
                             )}
                           >
-                            <div className="text-[11px] font-semibold leading-tight">{opt.shortLabel}</div>
-                            <div className="mt-0.5 line-clamp-1 font-mono text-[9.5px] opacity-80">
-                              {opt.isDefault ? 'default' : opt.id}
-                            </div>
+                            {opt.shortLabel}
                           </button>
-                        );
-                      })}
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-[11px] font-medium text-muted-foreground">
+                        Max Stack
+                      </span>
+                      <div className="inline-flex rounded-lg border border-border bg-muted/40 p-0.5 text-xs">
+                        {TOAST_MAX_VISIBLE_OPTIONS.map((opt) => (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            onClick={() => applyCustomization({ toastMaxVisible: opt.id })}
+                            className={cn(
+                              'rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors',
+                              state.toastMaxVisible === opt.id
+                                ? 'bg-card text-foreground shadow-2xs'
+                                : 'text-muted-foreground hover:text-foreground',
+                            )}
+                          >
+                            {opt.shortLabel} cards
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
 
-                  <div className="rounded-2xl border border-border/70 bg-card/55 p-4">
-                    <h3 className="mb-1 text-xs font-semibold text-foreground">
-                      3. Auto-Dismiss Timing
-                    </h3>
-                    <p className="mb-3 text-[11px] text-muted-foreground">
-                      Countdowns automatically pause while hovering the stack.
-                    </p>
-                    <div className="grid grid-cols-2 gap-2">
-                      {TOAST_DURATION_OPTIONS.map((opt) => (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          onClick={() => applyCustomization({ toastDuration: opt.id })}
-                          className={cn(
-                            'rounded-xl border px-3 py-2 text-left transition-colors',
-                            state.toastDuration === opt.id
-                              ? 'border-primary/50 bg-primary/10 text-foreground'
-                              : 'border-border/60 bg-background/50 text-muted-foreground hover:border-border hover:text-foreground',
-                          )}
-                        >
-                          <div className="text-xs font-semibold">{opt.shortLabel}</div>
-                          <div className="mt-0.5 line-clamp-1 text-[10px] opacity-80">
-                            {opt.title}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="rounded-2xl border border-border/70 bg-card/55 p-4">
-                    <h3 className="mb-1 text-xs font-semibold text-foreground">
-                      4. Max Visible Stack Depth
-                    </h3>
-                    <p className="mb-3 text-[11px] text-muted-foreground">
-                      Number of layered cards visible simultaneously in the stack.
-                    </p>
-                    <div className="grid grid-cols-3 gap-2">
-                      {TOAST_MAX_VISIBLE_OPTIONS.map((opt) => (
-                        <button
-                          key={opt.id}
-                          type="button"
-                          onClick={() => applyCustomization({ toastMaxVisible: opt.id })}
-                          className={cn(
-                            'rounded-xl border px-3 py-2.5 text-center transition-colors',
-                            state.toastMaxVisible === opt.id
-                              ? 'border-primary/50 bg-primary/10 text-foreground'
-                              : 'border-border/60 bg-background/50 text-muted-foreground hover:border-border hover:text-foreground',
-                          )}
-                        >
-                          <div className="text-sm font-bold">{opt.shortLabel}</div>
-                          <div className="text-[10px] opacity-80">cards</div>
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      if (!state.toastEnabled) {
+                        applyCustomization({ toastEnabled: true });
+                      }
+                      useToastStore.getState().pushToast({
+                        dedupeKey: `demo-pos-${Date.now()}`,
+                        category: 'workflow',
+                        status: 'info',
+                        title: `Anchored at ${normalizeToastPosition(state.toastPosition)}`,
+                        detail: 'Live toast stack placement preview',
+                      });
+                    }}
+                  >
+                    <span>Test Active Anchor</span>
+                  </Button>
                 </div>
 
-                {/* 5. Inline Chat Telemetry Notice Style */}
-                <div>
-                  <h2 className="mb-1 text-sm font-semibold text-foreground">
-                    5. Inline Chat Telemetry Display
-                  </h2>
-                  <p className="mb-4 text-xs text-muted-foreground">
-                    Control how Workflow matched, Skill used, and Self-improvement notices appear inside chat messages alongside live toasts.
-                  </p>
-                  <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
-                    {INLINE_NOTICE_STYLE_OPTIONS.map((opt) => (
+                <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                  {TOAST_POSITION_OPTIONS.map((opt) => {
+                    const activePos = normalizeToastPosition(state.toastPosition) === opt.id;
+                    const anchorPosClass =
+                      opt.id === 'top-start'
+                        ? 'top-2.5 left-2.5'
+                        : opt.id === 'top-center'
+                          ? 'top-2.5 left-1/2 -translate-x-1/2'
+                          : opt.id === 'top-end'
+                            ? 'top-2.5 right-2.5'
+                            : opt.id === 'bottom-start'
+                              ? 'bottom-2.5 left-2.5'
+                              : opt.id === 'bottom-center'
+                                ? 'bottom-2.5 left-1/2 -translate-x-1/2'
+                                : 'bottom-2.5 right-2.5';
+                    return (
                       <VariantPreviewCard
                         key={opt.id}
                         title={opt.title}
                         description={opt.description}
-                        selected={state.inlineNoticeStyle === opt.id}
+                        selected={activePos}
                         isDefault={Boolean(opt.isDefault)}
-                        onSelect={() => applyCustomization({ inlineNoticeStyle: opt.id })}
+                        onSelect={() => applyCustomization({ toastPosition: opt.id })}
                       >
+                        <div className="relative h-28 w-full overflow-hidden rounded-xl border border-border/75 bg-card/65 p-3">
+                          <div className="flex h-full items-center justify-center gap-2 opacity-35">
+                            <div className="h-full w-8 rounded-md border border-border/60 bg-muted/40" />
+                            <div className="flex h-full flex-1 flex-col justify-end gap-1.5 rounded-md border border-border/50 bg-background/50 p-2">
+                              <div className="h-1.5 w-3/5 rounded-full bg-foreground/25" />
+                              <div className="h-4 w-full rounded border border-border/60 bg-card/70" />
+                            </div>
+                          </div>
+
+                          <div
+                            className={cn(
+                              'absolute flex w-28 flex-col gap-1 rounded-lg border border-primary/55 bg-primary/15 px-2.5 py-1.5 shadow-md backdrop-blur-xs',
+                              anchorPosClass,
+                            )}
+                          >
+                            <div className="flex items-center gap-1.5">
+                              <span className="size-1.5 rounded-full bg-primary" />
+                              <span className="truncate text-[10px] font-semibold text-foreground">
+                                {opt.shortLabel}
+                              </span>
+                            </div>
+                            <div className="h-1 w-3/4 rounded-full bg-primary/45" />
+                          </div>
+                        </div>
+                      </VariantPreviewCard>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* 11F. TELEMETRY BADGES (@beui/telemetry-strip) */}
+            {activeSection === 'telemetry-badges' && (
+              <div className="space-y-6">
+                <div className="grid grid-cols-1 gap-6">
+                  {INLINE_NOTICE_STYLE_OPTIONS.map((opt) => (
+                    <VariantPreviewCard
+                      key={opt.id}
+                      title={opt.title}
+                      description={opt.description}
+                      selected={state.inlineNoticeStyle === opt.id}
+                      isDefault={Boolean(opt.isDefault)}
+                      onSelect={() => applyCustomization({ inlineNoticeStyle: opt.id })}
+                    >
+                      <div className="space-y-2.5 rounded-xl border border-border/65 bg-card/65 p-3.5 text-xs">
                         {opt.id === 'toast-only' ? (
-                          <div className="rounded-xl border border-dashed border-border/70 px-3 py-2.5 text-center text-[11px] text-muted-foreground">
-                            Clean chat bubble — routed to Toast Stack &amp; Drawer only
+                          <div className="rounded-lg border border-dashed border-border/70 px-3 py-2 text-center text-[11px] text-muted-foreground">
+                            Inline badges hidden — telemetry routed exclusively to Toast Stack &amp; Activity Drawer
                           </div>
                         ) : (
                           <BeuiTelemetryNoticeStrip
@@ -2351,29 +2400,40 @@ export const UiStudioModal: React.FC = () => {
                                 kind: 'skill',
                                 title: 'Skill used',
                                 detail: 'rust_pro',
-                                timestamp: STUDIO_PREVIEW_ANCHOR_TS - 1000,
+                                timestamp: STUDIO_PREVIEW_ANCHOR_TS - 1500,
+                              },
+                              {
+                                id: `preview-inline-si-${opt.id}`,
+                                kind: 'self_improvement',
+                                title: 'Self-improvement',
+                                detail: 'Consolidated learnings into MEMORY.md',
+                                timestamp: STUDIO_PREVIEW_ANCHOR_TS - 800,
                               },
                             ]}
                           />
                         )}
-                      </VariantPreviewCard>
-                    ))}
-                  </div>
+                        <div className="text-foreground/90">
+                          Verified workspace checks and updated skill guidance cleanly.
+                        </div>
+                      </div>
+                    </VariantPreviewCard>
+                  ))}
                 </div>
 
-                {/* 6. Granular Event Category Routing Switches */}
-                <div className="rounded-2xl border border-border/70 bg-card/55 p-4">
-                  <h3 className="mb-1 text-xs font-semibold text-foreground">
-                    6. Per-Category Toast Triggers
-                  </h3>
-                  <p className="mb-3 text-[11px] text-muted-foreground">
-                    Choose exactly which agent runtime events trigger popup toasts. Muted categories are still logged quietly in the Bell Notification Center.
-                  </p>
-                  <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                <div className="rounded-xl border border-border/80 bg-card p-4">
+                  <div className="mb-3">
+                    <div className="text-xs font-semibold text-foreground">
+                      Event Category Triggers
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Choose which runtime events emit popup toasts. Muted categories still log quietly in Notifications.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 gap-2.5 md:grid-cols-2">
                     {TOAST_CATEGORY_TOGGLE_OPTIONS.map((toggle) => (
                       <label
                         key={toggle.key}
-                        className="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-border/55 bg-background/45 px-3.5 py-2.5"
+                        className="flex cursor-pointer items-center justify-between gap-4 rounded-xl border border-border/60 bg-background/50 px-3.5 py-2.5"
                       >
                         <div>
                           <div className="text-xs font-semibold text-foreground">
@@ -2519,6 +2579,30 @@ export const UiStudioModal: React.FC = () => {
                       desc: 'Dense gutterless code snippet for crisp inline technical answers.',
                       isDefault: false,
                     },
+                    {
+                      id: 'rare-code',
+                      title: 'Rare-UI Window Code Block',
+                      desc: 'swamimalode07/rare-ui/code-block — Rounded studio window chrome with subtle header dots.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'beautiful-code',
+                      title: 'BeautifulUI Streaming Code Block',
+                      desc: 'beautifului.dev/r/code-block — Clean hairline code surface optimized for live token streaming.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'joly-code',
+                      title: 'JolyUI Tabbed Code Block',
+                      desc: 'jolyui.dev/r/code-block — High-contrast background surface with tinted header strip.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'aicss-code',
+                      title: 'AICSS Agent Code Block',
+                      desc: 'aicss.dev/r/code-block — Subtle primary-accented code frame for agentic coding.',
+                      isDefault: false,
+                    },
                   ] as const
                 ).map((opt) => (
                   <VariantPreviewCard
@@ -2564,6 +2648,12 @@ export const UiStudioModal: React.FC = () => {
                       desc: 'Filters out unchanged context rows to focus strictly on +/- edits.',
                       isDefault: false,
                     },
+                    {
+                      id: 'assistant-code-diff',
+                      title: 'Assistant-UI Code Diff',
+                      desc: 'assistant-ui/elements/code-diff — Chat-optimized tinted additions & removals.',
+                      isDefault: false,
+                    },
                   ] as const
                 ).map((opt) => (
                   <VariantPreviewCard
@@ -2606,6 +2696,12 @@ export const UiStudioModal: React.FC = () => {
                       id: 'inline',
                       title: 'BEUI Compact Inline Stdout',
                       desc: 'Headerless compact stdout block for fast command checks.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'assistant-terminal-block',
+                      title: 'Assistant-UI Terminal Block',
+                      desc: 'assistant-ui/elements/terminal-block — Streaming line-by-line shell block with exit status.',
                       isDefault: false,
                     },
                   ] as const
@@ -2790,6 +2886,12 @@ export const UiStudioModal: React.FC = () => {
                       desc: 'Clean rounded visual with floating hover zoom & download actions.',
                       isDefault: false,
                     },
+                    {
+                      id: 'assistant-image-gen',
+                      title: 'Assistant-UI Image Generation',
+                      desc: 'assistant-ui/elements/image-generation — Framed gallery surface with caption footer.',
+                      isDefault: false,
+                    },
                   ] as const
                 ).map((opt) => (
                   <VariantPreviewCard
@@ -2833,6 +2935,18 @@ export const UiStudioModal: React.FC = () => {
                       id: 'footnotes',
                       title: 'BEUI Numbered Footnote List',
                       desc: 'Clean editorial `[1]` reference list below assistant answers.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'kokonut-citations',
+                      title: 'KokonutUI Citation Chips',
+                      desc: '@kokonutui/ai-citations — Monochrome hairline host chips with numbered indices.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'minimal-inline',
+                      title: 'Minimal Domain Links',
+                      desc: 'Borderless single-row domain references.',
                       isDefault: false,
                     },
                   ] as const
@@ -2952,99 +3066,93 @@ export const UiStudioModal: React.FC = () => {
               </div>
             )}
 
-            {/* 23. ALERT & COLLAPSIBLE (@beui/alert & @beui/collapsible) */}
+            {/* 23A. ANIMATED ALERT (@beui/alert) */}
             {activeSection === 'alert-collapsible' && (
-              <div className="space-y-8">
-                <div>
-                  <h2 className="mb-1 text-sm font-semibold text-foreground">
-                    1. Animated Alert Surface (@beui/alert — {BEUI_ALERT_STYLE_OPTIONS.length} Styles)
-                  </h2>
-                  <p className="mb-4 text-xs text-muted-foreground">
-                    Powered by official @beui/alert with spring layout transitions, icon morphing, and animated dismiss.
-                  </p>
-                  <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-                    {BEUI_ALERT_STYLE_OPTIONS.map((opt) => (
-                      <VariantPreviewCard
-                        key={opt.id}
-                        title={opt.title}
-                        description={opt.description}
-                        selected={state.alertStyle === opt.id}
-                        isDefault={Boolean(opt.isDefault)}
-                        onSelect={() => applyCustomization({ alertStyle: opt.id })}
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                {BEUI_ALERT_STYLE_OPTIONS.map((opt) => (
+                  <VariantPreviewCard
+                    key={opt.id}
+                    title={opt.title}
+                    description={opt.description}
+                    selected={state.alertStyle === opt.id}
+                    isDefault={Boolean(opt.isDefault)}
+                    onSelect={() => applyCustomization({ alertStyle: opt.id })}
+                  >
+                    <div className="space-y-2.5">
+                      <BeuiAlert
+                        tone="info"
+                        styleVariant={opt.id}
+                        title="Session Restored"
                       >
-                        <div className="space-y-2.5">
-                          <BeuiAlert
-                            tone="info"
-                            styleVariant={opt.id}
-                            title="Session Restored"
-                          >
-                            Connected to OpenZ Gateway at {gatewayEndpoint}.
-                          </BeuiAlert>
-                          {opt.id !== 'compact-pill' && (
-                            <BeuiAlert
-                              tone="success"
-                              styleVariant={opt.id}
-                              title="Self-improvement consolidated"
-                            >
-                              Updated skill bundle on disk with zero conflicts.
-                            </BeuiAlert>
-                          )}
-                        </div>
-                      </VariantPreviewCard>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <h2 className="mb-3 text-sm font-semibold text-foreground">
-                    Collapsible Container Style (@beui/collapsible)
-                  </h2>
-                  <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
-                    {(
-                      [
-                        {
-                          id: 'subtle',
-                          title: 'Subtle Tinted Drawer',
-                          desc: 'Soft muted surface for expandable disclosures.',
-                          isDefault: true,
-                        },
-                        {
-                          id: 'bordered',
-                          title: 'Bordered Card Drawer',
-                          desc: 'Crisp card border around header and content.',
-                          isDefault: false,
-                        },
-                        {
-                          id: 'ghost',
-                          title: 'Minimal Ghost Disclosure',
-                          desc: 'Borderless toggle row with clean left content.',
-                          isDefault: false,
-                        },
-                      ] as const
-                    ).map((opt) => (
-                      <VariantPreviewCard
-                        key={opt.id}
-                        title={opt.title}
-                        description={opt.desc}
-                        selected={state.collapsibleStyle === opt.id}
-                        isDefault={opt.isDefault}
-                        onSelect={() => applyCustomization({ collapsibleStyle: opt.id })}
-                      >
-                        <BeuiCollapsible
-                          title="Inspect runtime details"
-                          variant={opt.id}
-                          defaultOpen
+                        Connected to OpenZ Gateway at {gatewayEndpoint}.
+                      </BeuiAlert>
+                      {opt.id !== 'compact-pill' && (
+                        <BeuiAlert
+                          tone="success"
+                          styleVariant={opt.id}
+                          title="Self-improvement consolidated"
                         >
-                          <div className="text-xs text-muted-foreground">
-                            {nativeToolCount} native Rust tools registered in-process.
-                          </div>
-                        </BeuiCollapsible>
-                      </VariantPreviewCard>
-                    ))}
-                  </div>
-                </div>
+                          Updated skill bundle on disk with zero conflicts.
+                        </BeuiAlert>
+                      )}
+                    </div>
+                  </VariantPreviewCard>
+                ))}
               </div>
             )}
+
+            {/* 23B. COLLAPSIBLE (@beui/collapsible) */}
+            {activeSection === 'collapsible' && (
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+                {(
+                  [
+                    {
+                      id: 'subtle',
+                      title: 'Subtle Tinted Drawer',
+                      desc: 'Soft muted surface for expandable disclosures.',
+                      isDefault: true,
+                    },
+                    {
+                      id: 'bordered',
+                      title: 'Bordered Card Drawer',
+                      desc: 'Crisp card border around header and content.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'ghost',
+                      title: 'Minimal Ghost Disclosure',
+                      desc: 'Borderless toggle row with clean left content.',
+                      isDefault: false,
+                    },
+                  ] as const
+                ).map((opt) => (
+                  <VariantPreviewCard
+                    key={opt.id}
+                    title={opt.title}
+                    description={opt.desc}
+                    selected={state.collapsibleStyle === opt.id}
+                    isDefault={opt.isDefault}
+                    onSelect={() => applyCustomization({ collapsibleStyle: opt.id })}
+                  >
+                    <BeuiCollapsible
+                      title="Inspect runtime details"
+                      variant={opt.id}
+                      defaultOpen
+                    >
+                      <div className="text-xs text-muted-foreground">
+                        {nativeToolCount} native Rust tools registered in-process.
+                      </div>
+                    </BeuiCollapsible>
+                  </VariantPreviewCard>
+                ))}
+              </div>
+            )}
+
+            <ExtendedElementsGalleries
+              activeSection={activeSection}
+              state={state}
+              applyCustomization={applyCustomization}
+            />
           </div>
         </main>
       </div>

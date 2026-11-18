@@ -26,6 +26,11 @@ import {
 } from "@/components/agents/agent-activity"
 import { ThinkingShimmer } from "@/components/agents/loading-states/thinking-shimmer"
 import { FOX_SILHOUETTE_PATH } from "@/components/OpenZFoxIcon"
+import {
+  AicssOrb,
+  ThinkingOrbsCanvas,
+  type OrbPhase,
+} from "@/components/registries/thinkingOrbs"
 import { cn } from "@/lib/utils"
 import { ThinkingLoaderBadge, type BeuiLoaderVariant } from "./loader"
 
@@ -43,11 +48,20 @@ export type BeuiActivityVariant =
   | "rail-timeline"
   | "compact-pills"
   | "trace-log"
+  | "assistant-run-activity"
+  | "assistant-tool-timeline"
 
 export type BeuiActivityOrbStyle =
   | "dotted-orb"
   | "fox-pulse"
   | "minimal-spinner"
+  | "thinking-orbs-canvas"
+  | "aicss-orb-morph"
+  | "aicss-orb-helix"
+  | "aicss-orb-ring"
+  | "aicss-orb-lens"
+  | "rare-ai-status"
+  | "minimal-dot"
 
 export type BeuiActivityDensity = "comfortable" | "compact"
 
@@ -181,6 +195,20 @@ export const ACTIVITY_VARIANT_OPTIONS: ReadonlyArray<
     description:
       "Official @beui/agent-activity 3-column execution trace with kind icons, labels, and monospace detail pills.",
   },
+  {
+    id: "assistant-run-activity",
+    title: "Assistant-UI Run Activity",
+    shortLabel: "Run Activity",
+    description:
+      "assistant-ui/elements/run-activity — Minimal verb + target working summary with quiet collapsible receipt.",
+  },
+  {
+    id: "assistant-tool-timeline",
+    title: "Assistant-UI Tool Timeline",
+    shortLabel: "Tool Timeline",
+    description:
+      "assistant-ui/elements/tool-timeline — Connected chronological tool steps with verb badges and millisecond timings.",
+  },
 ]
 
 export const ACTIVITY_ORB_OPTIONS: ReadonlyArray<
@@ -195,6 +223,41 @@ export const ACTIVITY_ORB_OPTIONS: ReadonlyArray<
     isDefault: true,
   },
   {
+    id: "thinking-orbs-canvas",
+    title: "Thinking-Orbs 2D Canvas",
+    shortLabel: "Canvas Orb",
+    description:
+      "thinking-orbs — Multi-harmonic 2D HTML5 Canvas wave orb reacting dynamically to reasoning, search, and tool phases.",
+  },
+  {
+    id: "aicss-orb-morph",
+    title: "AICSS Orbs Morph",
+    shortLabel: "Morph Orb",
+    description:
+      "aicss.dev/r/orbs — Fluid organic contour morphing orb for active thinking and synthesis.",
+  },
+  {
+    id: "aicss-orb-helix",
+    title: "AICSS Orbs Helix",
+    shortLabel: "Helix Orb",
+    description:
+      "aicss.dev/r/orbs — Counter-oscillating DNA wave particles.",
+  },
+  {
+    id: "aicss-orb-ring",
+    title: "AICSS Orbs Ring",
+    shortLabel: "Ring Orb",
+    description:
+      "aicss.dev/r/orbs — Orbital arc ring around a breathing core nucleus.",
+  },
+  {
+    id: "aicss-orb-lens",
+    title: "AICSS Orbs Lens",
+    shortLabel: "Lens Orb",
+    description:
+      "aicss.dev/r/orbs — Translucent focal lens sweep inside a hairline glass circle.",
+  },
+  {
     id: "fox-pulse",
     title: "OpenZ Fox + Shimmer",
     shortLabel: "Fox Pulse",
@@ -202,11 +265,25 @@ export const ACTIVITY_ORB_OPTIONS: ReadonlyArray<
       "Pairs a subtle OpenZ Fox emblem pulse beside @beui/agent-activity's ThinkingShimmer.",
   },
   {
+    id: "rare-ai-status",
+    title: "Rare-UI Status Pulse",
+    shortLabel: "Rare Pulse",
+    description:
+      "swamimalode07/rare-ui/ai-status — Concentric live radar ping around a crisp primary dot.",
+  },
+  {
+    id: "minimal-dot",
+    title: "Minimal Hairline Dot",
+    shortLabel: "Minimal Dot",
+    description:
+      "Whisper-quiet static/breathing 6px status dot for distraction-free layouts.",
+  },
+  {
     id: "minimal-spinner",
     title: "Pure ThinkingShimmer",
     shortLabel: "Shimmer",
     description:
-      "Unadorned @beui/agent-activity ThinkingShimmer text sweep without an leading icon.",
+      "Unadorned @beui/agent-activity ThinkingShimmer text sweep without a leading icon.",
   },
 ]
 
@@ -497,7 +574,7 @@ export function toBeuiOfficialActivityItems(
   variant: BeuiActivityVariant = "orb-card",
   showDetails = true
 ): BeuiOfficialActivityItem[] {
-  if (variant === "trace-log") {
+  if (variant === "trace-log" || variant === "assistant-tool-timeline") {
     return steps.map((step) => ({
       id: step.id,
       type: "trace",
@@ -509,7 +586,7 @@ export function toBeuiOfficialActivityItems(
     }))
   }
 
-  if (variant === "rail-timeline") {
+  if (variant === "rail-timeline" || variant === "assistant-run-activity") {
     return steps.map((step) => {
       const targetText = step.toolTarget ?? step.searchQuery ?? step.detail
       return {
@@ -654,6 +731,95 @@ export const BeuiActivityOrb: React.FC<BeuiActivityOrbProps> = ({
   const sizeClass = ORB_DIMENSIONS[size]
   const animate = isActive || phase === "security"
   const framed = size === "lg"
+  const pixelSize = size === "lg" ? 22 : size === "md" ? 18 : 15
+
+  const mappedOrbPhase: OrbPhase =
+    phase === "search"
+      ? "search"
+      : phase === "tool" || phase === "workflow"
+        ? "tool"
+        : phase === "security"
+          ? "security"
+          : phase === "complete"
+            ? "complete"
+            : phase === "error"
+              ? "error"
+              : "reasoning"
+
+  if (styleVariant === "thinking-orbs-canvas") {
+    return (
+      <ThinkingOrbsCanvas
+        phase={mappedOrbPhase}
+        isActive={animate}
+        size={pixelSize}
+        className={cn(colorClass, className)}
+      />
+    )
+  }
+
+  if (
+    styleVariant === "aicss-orb-morph" ||
+    styleVariant === "aicss-orb-helix" ||
+    styleVariant === "aicss-orb-ring" ||
+    styleVariant === "aicss-orb-lens"
+  ) {
+    const subVariant =
+      styleVariant === "aicss-orb-helix"
+        ? "helix"
+        : styleVariant === "aicss-orb-ring"
+          ? "ring"
+          : styleVariant === "aicss-orb-lens"
+            ? "lens"
+            : "morph"
+    return (
+      <AicssOrb
+        variant={subVariant}
+        isActive={animate}
+        size={pixelSize}
+        className={cn(colorClass, className)}
+      />
+    )
+  }
+
+  if (styleVariant === "rare-ai-status") {
+    return (
+      <span
+        aria-hidden="true"
+        className={cn(
+          "relative inline-flex shrink-0 items-center justify-center",
+          sizeClass,
+          colorClass,
+          className
+        )}
+      >
+        {animate && (
+          <span className="absolute size-3 animate-ping rounded-full bg-current opacity-45" />
+        )}
+        <span className="relative size-2 rounded-full bg-current" />
+      </span>
+    )
+  }
+
+  if (styleVariant === "minimal-dot") {
+    return (
+      <span
+        aria-hidden="true"
+        className={cn(
+          "inline-flex shrink-0 items-center justify-center",
+          sizeClass,
+          colorClass,
+          className
+        )}
+      >
+        <span
+          className={cn(
+            "size-1.5 rounded-full bg-current",
+            animate && "animate-pulse"
+          )}
+        />
+      </span>
+    )
+  }
 
   if (styleVariant === "fox-pulse") {
     return (

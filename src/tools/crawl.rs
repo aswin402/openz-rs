@@ -450,18 +450,6 @@ impl Tool for CrawlSiteTool {
         match tokio::time::timeout(Duration::from_secs(timeout_secs), crawl_future).await {
             Err(_) => {
                 let results = pages.lock().await.clone();
-                for page in &results {
-                    let page_url = page.get("url").and_then(Value::as_str).unwrap_or(url_str);
-                    let title = page.get("title").and_then(Value::as_str).unwrap_or(page_url);
-                    let body = page
-                        .get("markdown")
-                        .and_then(Value::as_str)
-                        .or_else(|| page.get("snippet").and_then(Value::as_str))
-                        .unwrap_or("");
-                    let _ = crate::tools::searchxyz::core::graph::extract_and_persist_relations(
-                        page_url, title, body,
-                    );
-                }
                 Ok(crawl_timeout_response(
                     results,
                     timeout_secs,
@@ -488,9 +476,6 @@ impl Tool for CrawlSiteTool {
                                 .and_then(Value::as_str)
                                 .or_else(|| page.get("snippet").and_then(Value::as_str))
                                 .unwrap_or("");
-                            let _ = crate::tools::searchxyz::core::graph::extract_and_persist_relations(
-                        page_url, title, body,
-                    );
                             let _ =
                                 crate::tools::shared_memory::archive_research_entry_with_meta(
                                     page_url,

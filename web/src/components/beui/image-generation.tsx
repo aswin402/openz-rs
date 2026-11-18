@@ -12,12 +12,14 @@ import {
 } from "@/components/ui/dialog"
 import { cn } from "@/lib/utils"
 
+export type ImageGenVariant = "beui-frame" | "minimal" | "assistant-image-gen"
+
 export interface ImageGenerationProps {
   src?: string
   prompt?: string
   status?: "generating" | "completed" | "failed"
   aspectLabel?: string
-  variant?: "beui-frame" | "minimal"
+  variant?: ImageGenVariant
   className?: string
 }
 
@@ -93,17 +95,24 @@ export const ImageGeneration: React.FC<ImageGenerationProps> = ({
 }) => {
   const [zoomOpen, setZoomOpen] = React.useState(false)
 
-  if (variant === "minimal" && src) {
+  if ((variant === "minimal" || variant === "assistant-image-gen") && src) {
     return (
-      <figure className={cn("my-2.5 inline-block max-w-full", className)}>
+      <figure
+        className={cn(
+          "my-2.5 inline-block max-w-full",
+          variant === "assistant-image-gen" &&
+            "overflow-hidden rounded-2xl border border-border/65 bg-card/75 p-2 shadow-2xs",
+          className
+        )}
+      >
         <img
           src={src}
           alt={prompt || "Generated visual"}
           onClick={() => setZoomOpen(true)}
-          className="max-h-80 cursor-zoom-in rounded-xl border border-border/70 object-contain shadow-xs"
+          className="max-h-80 cursor-zoom-in rounded-xl border border-border/60 object-contain"
         />
         {prompt && (
-          <figcaption className="mt-1 text-[11px] text-muted-foreground">
+          <figcaption className="mt-1.5 px-1 text-[11px] text-muted-foreground">
             {prompt}
           </figcaption>
         )}

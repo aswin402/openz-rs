@@ -1,6 +1,8 @@
 import React from 'react';
 import { useOpenZStore } from '../store/useOpenZStore';
+import { useUiCustomizationStore } from '../store/useUiCustomizationStore';
 import { OpenZBrandLogo } from './OpenZFoxIcon';
+import { RareDeleteButton } from './registries/rareAndCommunity';
 import { cn } from '../lib/utils';
 import {
   MessageSquare,
@@ -30,6 +32,7 @@ export const Sidebar: React.FC = () => {
   const collapsed = useOpenZStore((s) => s.isSidebarCollapsed);
   const setSidebarCollapsed = useOpenZStore((s) => s.setSidebarCollapsed);
   const setIsSettingsOpen = useOpenZStore((s) => s.setIsSettingsOpen);
+  const deleteButtonStyle = useUiCustomizationStore((s) => s.deleteButtonStyle);
 
   const go = (fn: () => void) => {
     fn();
@@ -147,18 +150,13 @@ export const Sidebar: React.FC = () => {
                       <span className="truncate">{session.title}</span>
                     </div>
                     {!session.isDraft && (
-                      <button
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteSession(session.id);
-                        }}
-                        className="shrink-0 rounded p-0.5 opacity-0 transition hover:text-destructive group-hover:opacity-100"
-                        title="Delete session"
-                        aria-label={`Delete ${session.title}`}
-                      >
-                        <Trash2 className="size-3" />
-                      </button>
+                      <div className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+                        <RareDeleteButton
+                          variant={deleteButtonStyle}
+                          onDelete={() => deleteSession(session.id)}
+                          ariaLabel={`Delete ${session.title}`}
+                        />
+                      </div>
                     )}
                   </div>
                 );

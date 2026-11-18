@@ -8,12 +8,15 @@ export type ToolResultStyleChoice =
   | "beui-activity"
   | "assistant-collapsed"
   | "assistant-error-open"
-  | "assistant-expanded";
+  | "assistant-expanded"
+  | "beautiful-tool-chips"
+  | "kokonut-tool-calls";
 
 export type ApprovalStyleChoice =
   | "assistant-default"
   | "assistant-receipt"
-  | "assistant-destructive";
+  | "assistant-destructive"
+  | "kokonut-approval";
 
 export interface AssistantUiStyleOption<T extends string> {
   id: T;
@@ -31,6 +34,20 @@ export const TOOL_CALL_STYLE_OPTIONS: ReadonlyArray<
     description:
       "Clean single-line Read / Wrote / Ran activity row inside Completed N steps without duplicate standalone tool cards.",
     isDefault: true,
+  },
+  {
+    id: "beautiful-tool-chips",
+    title: "BeautifulUI Tool Chips (beautifului.dev/r/tool-chips)",
+    description:
+      "Glanceable horizontal capsule chips summarizing tool executions with click-to-inspect output.",
+    isDefault: false,
+  },
+  {
+    id: "kokonut-tool-calls",
+    title: "KokonutUI Tool Call Cards (@kokonutui/ai-tool-calls)",
+    description:
+      "Compact monospace tool traces with inline parameter pills and expandable output inspection.",
+    isDefault: false,
   },
   {
     id: "assistant-collapsed",
@@ -66,6 +83,13 @@ export const APPROVAL_CARD_STYLE_OPTIONS: ReadonlyArray<
     isDefault: true,
   },
   {
+    id: "kokonut-approval",
+    title: "KokonutUI Security Approval (@kokonutui/ai-tool-approval)",
+    description:
+      "High-craft SecurityGuard card with command parameter block and crisp Allow / Deny actions.",
+    isDefault: false,
+  },
+  {
     id: "assistant-receipt",
     title: "Persistent Approval Receipt (@assistant-ui/elements-approval-card)",
     description:
@@ -83,6 +107,8 @@ export const APPROVAL_CARD_STYLE_OPTIONS: ReadonlyArray<
 
 const TOOL_STYLE_NORMALIZATION: Record<string, ToolResultStyleChoice> = {
   "beui-activity": "beui-activity",
+  "beautiful-tool-chips": "beautiful-tool-chips",
+  "kokonut-tool-calls": "kokonut-tool-calls",
   "assistant-collapsed": "assistant-collapsed",
   "assistant-error-open": "assistant-error-open",
   "assistant-expanded": "assistant-expanded",
@@ -94,6 +120,7 @@ const TOOL_STYLE_NORMALIZATION: Record<string, ToolResultStyleChoice> = {
 
 const APPROVAL_STYLE_NORMALIZATION: Record<string, ApprovalStyleChoice> = {
   "assistant-default": "assistant-default",
+  "kokonut-approval": "kokonut-approval",
   "assistant-receipt": "assistant-receipt",
   "assistant-destructive": "assistant-destructive",
   // Legacy @beui values migrated seamlessly

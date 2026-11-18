@@ -6,7 +6,6 @@ use tokio::process::Command;
 
 use crate::tools::searchxyz::core::error::SearchXyzError;
 use crate::tools::searchxyz::core::extractor::ExtractedContent;
-use crate::tools::searchxyz::core::graph::extract_and_persist_relations;
 use crate::tools::searchxyz::core::index::SearchIndex;
 use crate::tools::shared_memory::searchxyz_repos_dir;
 
@@ -575,8 +574,6 @@ pub async fn clone_and_index_repo(
                 tracing::warn!(url = %file_url, error = %e, "Failed to index GitHub file");
             }
         }
-
-        let _ = extract_and_persist_relations(&file_url, &file_title, &file_content);
 
         let file_name_lower = Path::new(rel_path_str)
             .file_name()

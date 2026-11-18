@@ -4,23 +4,66 @@ import { Slot } from "radix-ui"
 
 import { cn } from "@/lib/utils"
 
+export type GlobalBadgeStyle = "minimal" | "subtle-pill" | "tinted" | "mono-tag"
+
+export interface BadgeStyleDescriptor {
+  id: GlobalBadgeStyle
+  title: string
+  description: string
+  isDefault?: boolean
+}
+
+export const GLOBAL_BADGE_STYLE_OPTIONS: ReadonlyArray<BadgeStyleDescriptor> = [
+  {
+    id: "minimal",
+    title: "Minimal Hairline (Default)",
+    description:
+      "Ultra-clean low-contrast hairline surface with subtle typography and zero heavy fills.",
+    isDefault: true,
+  },
+  {
+    id: "subtle-pill",
+    title: "Soft Rounded Capsule",
+    description:
+      "Smooth rounded-full capsule pills harmonized with your active theme surface.",
+  },
+  {
+    id: "mono-tag",
+    title: "Precision Monospace Tag",
+    description:
+      "Compact architectural monospace tags inspired by Linear and Vercel Geist.",
+  },
+  {
+    id: "tinted",
+    title: "Tinted Accent Surface",
+    description:
+      "Soft primary-tinted badges for higher visual contrast across status labels.",
+  },
+]
+
 const badgeVariants = cva(
-  "inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border px-2 py-0.5 text-[11px] font-medium whitespace-nowrap transition-colors [&>svg]:pointer-events-none [&>svg]:size-3",
+  "openz-badge inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-md border px-1.5 py-0.5 text-[10.5px] font-medium tracking-tight whitespace-nowrap transition-colors [&>svg]:pointer-events-none [&>svg]:size-3",
   {
     variants: {
       variant: {
         default:
-          "border-transparent bg-primary text-primary-foreground",
+          "border-primary/25 bg-primary/14 text-primary",
         secondary:
-          "border-transparent bg-secondary text-secondary-foreground",
+          "border-border/50 bg-foreground/[0.045] text-muted-foreground",
         destructive:
-          "border-destructive/30 bg-destructive/15 text-destructive",
+          "border-destructive/25 bg-destructive/10 text-destructive",
         outline:
-          "border-border text-foreground bg-background/60",
+          "border-border/60 bg-transparent text-muted-foreground",
+        minimal:
+          "border-border/45 bg-transparent text-muted-foreground",
+        ghost:
+          "border-transparent bg-foreground/[0.045] text-muted-foreground",
+        pill:
+          "rounded-full border-border/55 bg-foreground/[0.04] px-2 text-foreground/85",
         success:
-          "border-success/30 bg-success/12 text-success",
+          "border-success/25 bg-success/10 text-success",
         warning:
-          "border-warning/30 bg-warning/12 text-warning",
+          "border-warning/25 bg-warning/10 text-warning",
       },
     },
     defaultVariants: {
@@ -41,6 +84,7 @@ function Badge({
   return (
     <Comp
       data-slot="badge"
+      data-badge-variant={variant ?? "default"}
       className={cn(badgeVariants({ variant }), className)}
       {...props}
     />

@@ -31,7 +31,16 @@ import {
   normalizeToolResultStyle,
   pairSecurityPromptsWithToolCalls,
   summarizeApprovalInline,
+  extractTurnAgentHandoffs,
+  extractTurnArtifacts,
+  extractTurnFileTree,
+  extractTurnRetrievalChunks,
+  extractTurnWebSearches,
+  isSpecSheetTable,
 } from '../components/assistant-ui/elements';
+import {
+  isComparisonTableHeaders,
+} from '../components/registries/rareAndCommunity';
 import {
   ACTIVITY_DENSITY_OPTIONS,
   ACTIVITY_MAX_HEIGHT_OPTIONS,
@@ -88,6 +97,10 @@ import {
 } from '../features/activity/activityAdapters';
 import { interpolateTemplate } from '../lib/i18n';
 import { FOX_SILHOUETTE_PATH, buildFoxFaviconDataUri } from '../components/OpenZFoxIcon';
+import {
+  STUDIO_MENU_GROUPS,
+  STUDIO_MENU_ITEMS,
+} from '../features/customize/UiStudioModal';
 
 describe('useUiCustomizationStore (@beui + shadcn/ui v5)', () => {
   beforeEach(() => {
@@ -142,7 +155,23 @@ describe('useUiCustomizationStore (@beui + shadcn/ui v5)', () => {
     expect(state.toastPosition).toBe('bottom-end');
     expect(state.toastDuration).toBe('standard');
     expect(state.toastMaxVisible).toBe(4);
-    expect(state.inlineNoticeStyle).toBe('pills');
+    expect(state.inlineNoticeStyle).toBe('minimal-whisper');
+    expect(state.badgeStyle).toBe('minimal');
+    expect(state.deleteButtonStyle).toBe('rare-confirm');
+    expect(state.inlineCitationStyle).toBe('aicss-pill');
+    expect(state.comparisonStyle).toBe('aicss-table');
+    expect(state.fileTreeStyle).toBe('assistant-tree');
+    expect(state.artifactCardStyle).toBe('assistant-artifact');
+    expect(state.errorStateStyle).toBe('assistant-quiet');
+    expect(state.webSearchStyle).toBe('assistant-web-search');
+    expect(state.retrievalChunksStyle).toBe('assistant-chunks');
+    expect(state.researchReportStyle).toBe('assistant-outline');
+    expect(state.mathBlockStyle).toBe('assistant-math');
+    expect(state.specSheetStyle).toBe('assistant-spec');
+    expect(state.timelineStyle).toBe('assistant-timeline');
+    expect(state.recommendationStyle).toBe('assistant-rec');
+    expect(state.agentHandoffStyle).toBe('assistant-handoff');
+    expect(state.backgroundInboxStyle).toBe('assistant-inbox');
     expect(state.toastNotifyWorkflow).toBe(true);
     expect(state.toastNotifySkill).toBe(true);
     expect(state.toastNotifySelfImprovement).toBe(true);
@@ -151,8 +180,8 @@ describe('useUiCustomizationStore (@beui + shadcn/ui v5)', () => {
     expect(state.toastNotifyApproval).toBe(true);
   });
 
-  test('ships 13 dual-mode theme families where every theme supports both Light and Dark modes with WCAG contrast', () => {
-    expect(PREBUILT_THEMES.length).toBe(13);
+  test('ships 19 dual-mode theme families where every theme supports both Light and Dark modes with WCAG contrast', () => {
+    expect(PREBUILT_THEMES.length).toBe(19);
     for (const family of PREBUILT_THEMES) {
       expect(family.dark.mode).toBe('dark');
       expect(family.light.mode).toBe('light');
@@ -472,10 +501,10 @@ describe('zero-regex @beui parsers & adapters', () => {
   });
 
   test('maps SecurityGuard prompts and ToolExecution calls to @assistant-ui elements cleanly without duplicate rows', () => {
-    expect(TOOL_CALL_STYLE_OPTIONS.length).toBe(4);
+    expect(TOOL_CALL_STYLE_OPTIONS.length).toBe(6);
     expect(TOOL_CALL_STYLE_OPTIONS[0]?.id).toBe('beui-activity');
-    expect(APPROVAL_CARD_STYLE_OPTIONS.length).toBe(3);
-    expect(BEUI_LOADER_OPTIONS.length).toBe(17);
+    expect(APPROVAL_CARD_STYLE_OPTIONS.length).toBe(4);
+    expect(BEUI_LOADER_OPTIONS.length).toBe(22);
     expect(BEUI_ALERT_STYLE_OPTIONS.length).toBe(4);
     expect(normalizeBeuiLoaderVariant('helix')).toBe('helix');
     expect(normalizeBeuiLoaderVariant('unknown')).toBe('dot-matrix');
@@ -574,8 +603,8 @@ describe('zero-regex @beui parsers & adapters', () => {
 
   test('resolves @beui/agent-activity phases, options, and multi-surface streams without regex', () => {
     expect(ACTIVITY_PLACEMENT_OPTIONS.length).toBe(4);
-    expect(ACTIVITY_VARIANT_OPTIONS.length).toBe(4);
-    expect(ACTIVITY_ORB_OPTIONS.length).toBe(3);
+    expect(ACTIVITY_VARIANT_OPTIONS.length).toBe(6);
+    expect(ACTIVITY_ORB_OPTIONS.length).toBe(10);
     expect(ACTIVITY_DENSITY_OPTIONS.length).toBe(2);
     expect(ACTIVITY_MAX_HEIGHT_OPTIONS.length).toBe(4);
 
@@ -715,7 +744,7 @@ describe('zero-regex @beui parsers & adapters', () => {
     useToastStore.getState().resetToastStore();
     useUiCustomizationStore.getState().resetAllCustomization();
 
-    expect(TOAST_VARIANT_OPTIONS.length).toBe(12);
+    expect(TOAST_VARIANT_OPTIONS.length).toBe(13);
     expect(TOAST_VARIANT_OPTIONS.map((opt) => opt.id)).toEqual([
       'beui-stack',
       'beui-motion',
@@ -729,6 +758,7 @@ describe('zero-regex @beui parsers & adapters', () => {
       'soft-tinted',
       'brutalist-outline',
       'micro-badge',
+      'rare-toast',
     ]);
     expect(TOAST_POSITION_OPTIONS.length).toBe(6);
     expect(TOAST_POSITION_OPTIONS.map((opt) => opt.id)).toEqual([
@@ -754,7 +784,7 @@ describe('zero-regex @beui parsers & adapters', () => {
 
     expect(TOAST_DURATION_OPTIONS.length).toBe(4);
     expect(TOAST_MAX_VISIBLE_OPTIONS.length).toBe(3);
-    expect(INLINE_NOTICE_STYLE_OPTIONS.length).toBe(3);
+    expect(INLINE_NOTICE_STYLE_OPTIONS.length).toBe(7);
     expect(TOAST_CATEGORY_TOGGLE_OPTIONS.length).toBe(6);
 
     expect(resolveToastDurationMs('fast')).toBe(3200);
@@ -1000,5 +1030,125 @@ describe('zero-regex @beui parsers & adapters', () => {
 
     const traceItems = toBeuiOfficialActivityItems(steps, 'trace-log', true);
     expect(traceItems.every((i) => i.type === 'trace')).toBe(true);
+  });
+
+  test('separates every Customize UI component into its own dedicated left-menu entry without bundled pages', () => {
+    expect(STUDIO_MENU_GROUPS).toEqual([
+      'Appearance',
+      'Composer & Chat',
+      'Agent & Reasoning',
+      'Notifications & Alerts',
+      'Code, Tools & Data',
+    ]);
+    expect(STUDIO_MENU_ITEMS.length).toBe(50);
+
+    const uniqueIds = new Set(STUDIO_MENU_ITEMS.map((item) => item.id));
+    expect(uniqueIds.size).toBe(STUDIO_MENU_ITEMS.length);
+
+    // Every menu label must represent a single component (no bundled "X & Y" multi-component labels)
+    for (const entry of STUDIO_MENU_ITEMS) {
+      expect(entry.label.includes('&')).toBe(false);
+      expect(STUDIO_MENU_GROUPS.includes(entry.group)).toBe(true);
+    }
+
+    const separatedIds = [
+      'badge-style',
+      'delete-button',
+      'avatars',
+      'user-avatars',
+      'chat-width',
+      'prompt-input',
+      'send-button',
+      'recommendation-card',
+      'thinking-loader',
+      'reasoning-text',
+      'agent-activity',
+      'activity-orb',
+      'activity-placement',
+      'agent-handoff',
+      'timeline',
+      'animated-toast-stack',
+      'toast-placement',
+      'telemetry-badges',
+      'background-inbox',
+      'alert-collapsible',
+      'error-state',
+      'collapsible',
+      'file-tree',
+      'artifact-card',
+      'web-search',
+      'retrieval-chunks',
+      'research-report',
+      'inline-citations',
+      'math-block',
+      'spec-sheet',
+      'comparison-card',
+    ] as const;
+
+    const store = useUiCustomizationStore.getState();
+    for (const sectionId of separatedIds) {
+      expect(uniqueIds.has(sectionId)).toBe(true);
+      store.setActiveCustomizeSection(sectionId);
+      expect(useUiCustomizationStore.getState().activeCustomizeSection).toBe(sectionId);
+    }
+
+    expect(BEUI_LOADER_OPTIONS.length).toBe(22);
+    expect(ACTIVITY_ORB_OPTIONS.length).toBe(10);
+    expect(ACTIVITY_VARIANT_OPTIONS.length).toBe(6);
+    expect(TOAST_VARIANT_OPTIONS.length).toBe(13);
+    expect(INLINE_NOTICE_STYLE_OPTIONS.length).toBe(7);
+    expect(TOOL_CALL_STYLE_OPTIONS.length).toBe(6);
+    expect(APPROVAL_CARD_STYLE_OPTIONS.length).toBe(4);
+  });
+
+  test('extracts file trees, artifacts, web searches, retrieval chunks, handoffs, spec sheets, and comparison tables without regex', () => {
+    const sampleTools = [
+      {
+        id: 't-write',
+        name: 'write_file',
+        status: 'success' as const,
+        args: { path: 'docs/report.md', content: '# Report\nLine 2' },
+      },
+      {
+        id: 't-patch',
+        name: 'patch_file',
+        status: 'success' as const,
+        args: { path: 'src/lib.rs' },
+      },
+      {
+        id: 't-web',
+        name: 'web_search',
+        status: 'success' as const,
+        args: { query: 'tokio scheduler' },
+        output: JSON.stringify({
+          results: [{ title: 'Tokio', url: 'https://tokio.rs', snippet: 'Async runtime' }],
+        }),
+      },
+      {
+        id: 't-rag',
+        name: 'semantic_search',
+        status: 'success' as const,
+        args: { query: 'TurnState' },
+        output: JSON.stringify({
+          results: [{ path: 'src/agent/mod.rs', snippet: 'enum TurnState', score: 0.91 }],
+        }),
+      },
+      {
+        id: 't-fork',
+        name: 'curate_skill',
+        status: 'success' as const,
+        args: { action: 'fork', name: 'code_auditor', task: 'Audit crate' },
+      },
+    ];
+
+    expect(extractTurnFileTree(sampleTools).length).toBe(2);
+    expect(extractTurnArtifacts(sampleTools).length).toBe(1);
+    expect(extractTurnWebSearches(sampleTools).length).toBe(1);
+    expect(extractTurnRetrievalChunks(sampleTools).length).toBe(1);
+    expect(extractTurnAgentHandoffs(sampleTools).length).toBe(1);
+
+    expect(isComparisonTableHeaders(['Feature', 'Option A', 'Option B'])).toBe(true);
+    expect(isComparisonTableHeaders(['Name', 'Latency', 'Status'])).toBe(false);
+    expect(isSpecSheetTable(['Property', 'Value'], [['Runtime', 'Tokio'], ['Tools', '229']])).toBe(true);
   });
 });
