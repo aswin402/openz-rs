@@ -15,7 +15,7 @@ mod response;
 mod shell_http_rewrite;
 #[cfg(test)]
 mod tests;
-mod tool_pipeline;
+pub(crate) mod tool_pipeline;
 pub(crate) mod turn;
 
 use self::artifacts::{
@@ -1076,7 +1076,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     );
                 match pressured {
                     true => {
-                        ctx.session.messages = ctx.messages.clone();
+                        ctx.mutated_skill_in_turn = run.curated_skill_in_turn;
+    ctx.session.messages = ctx.messages.clone();
                         let _ = super::compact::compact_session_history(loop_ref, ctx, false).await;
                     }
                     false => {}
@@ -1169,7 +1170,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                             learned_limit = ?learned,
                             "Provider reported context overflow; self-healing via emergency compaction"
                         );
-                        ctx.session.messages = ctx.messages.clone();
+                        ctx.mutated_skill_in_turn = run.curated_skill_in_turn;
+    ctx.session.messages = ctx.messages.clone();
                         let _ = super::compact::compact_session_history(loop_ref, ctx, true).await;
                         continue;
                     }
@@ -1237,7 +1239,15 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                     false => {}
                 }
 
+                let used_research_tool = ctx
+                    .tools_used
+                    .iter()
+                    .any(|name| is_research_lookup_tool(name));
+                let completed_purely_local = !ctx.tools_used.is_empty()
+                    && !used_research_tool
+                    && !super::research_policy::text_has_http_url(ctx.user_content);
                 let should_append_caveat = config.research.require_sources_for_current_claims
+                    && !completed_purely_local
                     && super::research_policy::has_live_research_intent(ctx.user_content);
                 let pre_caveat_len = content.len();
                 let content = match should_append_caveat {
@@ -1683,7 +1693,8 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
 
         super::transcript::append_tool_results(&mut ctx.messages, &config, tool_results).await;
 
-        ctx.session.messages = ctx.messages.clone();
+        ctx.mutated_skill_in_turn = run.curated_skill_in_turn;
+    ctx.session.messages = ctx.messages.clone();
         match run.iterations.is_multiple_of(5) {
             true => {
                 let _ = loop_ref.session_manager.save(&ctx.session).await.map_err(|e| {
@@ -1716,6 +1727,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         &run.turn_capture_summaries,
     );
 
+    ctx.mutated_skill_in_turn = run.curated_skill_in_turn;
     ctx.session.messages = ctx.messages.clone();
     let _ = loop_ref.session_manager.save(&ctx.session).await.map_err(|e| {
         tracing::warn!(

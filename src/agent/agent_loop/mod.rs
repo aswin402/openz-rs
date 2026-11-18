@@ -97,6 +97,7 @@ pub struct TurnContext<'a> {
     pub config: Config,
     pub workflow_notice_names: std::collections::HashSet<String>,
     pub skill_notice_names: std::collections::HashSet<String>,
+    pub mutated_skill_in_turn: bool,
 }
 
 struct ActivityGuard<'a> {
@@ -748,6 +749,7 @@ impl AgentLoop {
             config: self.config.clone(),
             workflow_notice_names: std::collections::HashSet::new(),
             skill_notice_names: std::collections::HashSet::new(),
+            mutated_skill_in_turn: false,
         };
 
         let mut state = TurnState::Restore;

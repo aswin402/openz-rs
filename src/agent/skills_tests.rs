@@ -488,3 +488,128 @@ async fn test_list_and_restore_archived_skill() {
 
     let _ = std::fs::remove_dir_all(&temp_dir);
 }
+
+#[tokio::test]
+async fn deleting_skill_folder_on_disk_never_resurrects_zombie_from_sqlite() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_skills_no_zombie_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    crate::config::loader::CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            save_skill(
+                "ephemeral_disk_skill",
+                "---\nname: ephemeral_disk_skill\ndescription: Disk-authoritative skill\n---\n# Disk Skill\nStep 1.",
+            )
+            .unwrap();
+            record_skill_activation("ephemeral_disk_skill", None);
+            record_skill_outcome("ephemeral_disk_skill", None, true);
+
+            assert!(load_skills()
+                .unwrap()
+                .iter()
+                .any(|s| s.name == "ephemeral_disk_skill"));
+
+            // Simulate user deleting the folder directly in Finder / terminal / git
+            std::fs::remove_dir_all(get_skills_dir().join("ephemeral_disk_skill")).unwrap();
+
+            assert!(
+                !load_skills()
+                    .unwrap()
+                    .iter()
+                    .any(|s| s.name == "ephemeral_disk_skill"),
+                "deleted disk skill must never resurrect from SQLite"
+            );
+            let (catalog, _) = load_native_skill_catalog(None).unwrap();
+            assert!(!catalog.iter().any(|c| c.name == "ephemeral_disk_skill"));
+            assert!(!load_skill_views()
+                .unwrap()
+                .iter()
+                .any(|v| v.name == "ephemeral_disk_skill"));
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn declarative_frontmatter_platforms_requires_allowed_tools_and_fork_context() {
+    let raw = "---\n\
+name: security_pr_audit\n\
+description: Deep PR security audit\n\
+context: fork\n\
+agent: Explore\n\
+platforms: [linux, darwin]\n\
+allowed-tools:\n\
+  - Bash(git diff)\n\
+  - Read\n\
+  - web_fetch\n\
+---\n\
+# Audit\n\
+Run python3 ${CLAUDE_SKILL_DIR}/scripts/check.py --base {baseDir} --target $ARGUMENTS";
+
+    let skill = Skill {
+        name: "security_pr_audit".to_string(),
+        content: raw.to_string(),
+    };
+
+    assert_eq!(skill.execution_context(), "fork");
+    assert_eq!(skill.fork_agent().as_deref(), Some("researcher"));
+    assert_eq!(
+        skill.platforms(),
+        vec!["linux".to_string(), "macos".to_string()]
+    );
+    assert_eq!(
+        skill.allowed_tools(),
+        vec![
+            "exec_command".to_string(),
+            "read_file".to_string(),
+            "web_fetch".to_string()
+        ]
+    );
+
+    let fake_incompatible = Skill {
+        name: "missing_bin_skill".to_string(),
+        content: "---\nrequires: [definitely_nonexistent_openz_binary_xyz_999]\n---\n# No\n".to_string(),
+    };
+    assert!(!fake_incompatible.is_compatible_with_host());
+
+    let rendered = render_skill_content_with_vars(
+        &skill.content,
+        Some(std::path::Path::new("/tmp/skills/security_pr_audit")),
+        Some("main..HEAD"),
+    );
+    assert!(rendered.contains("/tmp/skills/security_pr_audit/scripts/check.py"));
+    assert!(rendered.contains("--base /tmp/skills/security_pr_audit"));
+    assert!(rendered.contains("--target main..HEAD"));
+}
+
+#[tokio::test]
+async fn soul_profile_mutations_support_replace_remove_and_dedupe() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_soul_mutations_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    crate::config::loader::CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            crate::agent::core_memory::update_soul_profile(
+                "- Persona: Formal enterprise assistant\n- Tone: Concise",
+            )
+            .unwrap();
+            crate::agent::core_memory::update_soul_profile(
+                "- replace: Formal enterprise assistant => Persona: Mivi — warm, candid friend\n- Never use emojis",
+            )
+            .unwrap();
+            let soul = crate::agent::core_memory::load_soul_profile();
+            assert!(soul.contains("Persona: Mivi"));
+            assert!(!soul.contains("Formal enterprise"));
+            assert!(soul.contains("Never use emojis"));
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}

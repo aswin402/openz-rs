@@ -92,6 +92,112 @@ impl Skill {
                 extract_frontmatter_field(&self.content, "category").filter(|v| !v.is_empty())
             })
     }
+
+    pub fn platforms(&self) -> Vec<String> {
+        extract_frontmatter_list(&self.content, "platforms")
+            .into_iter()
+            .map(|p| match p.as_str() {
+                "darwin" | "mac" | "osx" => "macos".to_string(),
+                "win32" | "win" => "windows".to_string(),
+                _ => p,
+            })
+            .collect()
+    }
+
+    pub fn requires(&self) -> Vec<String> {
+        extract_frontmatter_list(&self.content, "requires")
+    }
+
+    pub fn allowed_tools(&self) -> Vec<String> {
+        let mut combined = extract_frontmatter_list(&self.content, "allowed-tools");
+        combined.extend(extract_frontmatter_list(&self.content, "allowed_tools"));
+        let mut out = Vec::new();
+        for raw in combined {
+            let base = raw
+                .split('(')
+                .next()
+                .unwrap_or(raw.as_str())
+                .trim()
+                .to_ascii_lowercase();
+            let mapped = match base.as_str() {
+                "" => continue,
+                "bash" | "shell" => "exec_command".to_string(),
+                "read" => "read_file".to_string(),
+                "write" => "write_file".to_string(),
+                "edit" => "patch_file".to_string(),
+                "grep" => "grep_search".to_string(),
+                "glob" => "find_files".to_string(),
+                "webfetch" => "web_fetch".to_string(),
+                "websearch" => "web_search".to_string(),
+                other => other.to_string(),
+            };
+            let _ = (!out.contains(&mapped)).then(|| out.push(mapped));
+        }
+        out
+    }
+
+    pub fn execution_context(&self) -> &'static str {
+        let is_fork = extract_frontmatter_field(&self.content, "context")
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case("fork"));
+        match is_fork {
+            true => "fork",
+            false => "inline",
+        }
+    }
+
+    pub fn fork_agent(&self) -> Option<String> {
+        extract_frontmatter_field(&self.content, "agent")
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .map(|raw| match raw.to_ascii_lowercase().as_str() {
+                "explore" => "researcher".to_string(),
+                "plan" => "planner".to_string(),
+                "general-purpose" | "general" => "coding_agent".to_string(),
+                _ => raw,
+            })
+    }
+
+    pub fn is_compatible_with_host(&self) -> bool {
+        let plats = self.platforms();
+        let os_ok = plats.is_empty() || plats.iter().any(|p| p == std::env::consts::OS);
+        let reqs = self.requires();
+        let bins_ok = reqs.is_empty() || reqs.iter().all(|bin| binary_exists_on_path(bin));
+        os_ok && bins_ok
+    }
+}
+
+fn binary_exists_on_path(bin_name: &str) -> bool {
+    let clean = bin_name.trim();
+    match (clean.is_empty(), std::env::var_os("PATH")) {
+        (true, _) => true,
+        (false, None) => false,
+        (false, Some(paths)) => std::env::split_paths(&paths).any(|dir| {
+            let candidate = dir.join(clean);
+            candidate.is_file()
+        }),
+    }
+}
+
+pub fn render_skill_content_with_vars(
+    content: &str,
+    skill_dir: Option<&std::path::Path>,
+    arguments: Option<&str>,
+) -> String {
+    let with_dir = match skill_dir {
+        Some(dir) => {
+            let dir_str = dir.display().to_string();
+            content
+                .replace("${SKILL_DIR}", &dir_str)
+                .replace("${OPENZ_SKILL_DIR}", &dir_str)
+                .replace("${CLAUDE_SKILL_DIR}", &dir_str)
+                .replace("{baseDir}", &dir_str)
+        }
+        None => content.to_string(),
+    };
+    let args_val = arguments.map(str::trim).unwrap_or("");
+    with_dir
+        .replace("${ARGUMENTS}", args_val)
+        .replace("$ARGUMENTS", args_val)
 }
 
 fn frontmatter_block(content: &str) -> Option<&str> {
@@ -536,65 +642,56 @@ fn migrate_old_skills_to_db(conn: &Connection) -> Result<()> {
 }
 
 
-fn initialize_default_subagent_skills(conn: &Connection) -> Result<()> {
-    let now = chrono::Utc::now().to_rfc3339();
-    let default_skills = vec![
+fn builtin_default_subagent_skills() -> &'static [(&'static str, &'static str, &'static str)] {
+    &[
         ("planner", "milestone_decomposition", "# Skill: Milestone Decomposition
 
 Decompose high-level tasks into discrete, sequential milestones:
 1. Define clear criteria of done (CoD) for each milestone.
 2. Maintain a PLAN.md tracking the execution path.
 3. List dependencies between tasks to avoid build blockages."),
-
         ("researcher", "context_hydration", "# Skill: Context Hydration
 
 Compile precise reference contexts from local research archives and external sources:
 1. ALWAYS check the local research archive first using `search_research` to see if the page, path, or output is already cached.
 2. If not found in the local cache or if the data is stale, run targeted web searches or scrape contents.
 3. Consolidate search facts into reference sheets for the parent agent."),
-
         ("architect", "schema_design", "# Skill: Schema Design
 
 Design clean systems, DB tables, and interface contracts:
 1. Draft structured schemas with clear data types and relationships.
 2. Outline system hierarchies using Mermaid diagram flows.
 3. Document API endpoints with requests/responses format."),
-
         ("git_ops_agent", "git_hygiene", "# Skill: Git Hygiene
 
 Maintain clean, atomic, and structured version control history:
 1. Review staged changes using git status and diff.
 2. Create feature branches detached from active branch for testing.
 3. Author descriptive, atomic commit messages with clear summaries."),
-
         ("ast_searcher", "ast_structural_grep", "# Skill: AST Structural Grep
 
 Find codebase structures rapidly using syntax trees:
 1. Query function, struct, or class definitions using structural patterns.
 2. Compile file outlines to identify entrypoints and dependencies.
 3. Locate exact symbol references instead of relying on loose regex text searches."),
-
         ("database_specialist", "db_query_audit", "# Skill: DB Query Audit
 
 Inspect database health, design performant queries, and audit schemas:
 1. Query SQLite tables safely without risking schema corruption.
 2. Read system schema metadata to verify index placement.
 3. Ensure large queries use indexed fields to prevent slow table scans."),
-
         ("browser_operator", "browser_testing", "# Skill: Browser Testing
 
 Run web browser automation and crawling tasks:
 1. Automate UI regression test flows via OpenZ's native browser tool (ui_tree, click, type, eval_js, screenshot).
 2. Crawl site maps to verify link routing and response codes.
 3. Extract dynamically rendered DOM layouts and tabular data from pages."),
-
         ("dependency_manager", "stack_package_onpkg", "# Skill: Stack Package Management
 
 Manage project templates, stack configurations, and dependencies:
 1. Scaffold project folders using approved template directories.
 2. Audit package configurations to maintain clean dependency trees.
 3. Add and update packages safely with correct lockfile synchronization."),
-
         ("reviewer", "code_diff_audit", "# Skill: Code Diff Audit
 
 Audit modified code for bugs, complexity, and performance:
@@ -827,19 +924,16 @@ Iteratively write, refactor, and verify code blocks inside compilation harnesses
 2. Invoke cargo commands (build, check, test) to audit Rust compilation and type check correctness.
 3. Read compiler warnings and test outputs, isolate lines containing errors, and fix them iteratively.
 4. Refactor complexity hotspots and write robust unit tests for new modules.")
-    ];
+    ]
+}
 
-    for (profile, name, content) in default_skills {
+fn initialize_default_subagent_skills(conn: &Connection) -> Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    for &(profile, name, content) in builtin_default_subagent_skills() {
         let _ = conn.execute(
             "INSERT OR IGNORE INTO skills (name, content, profile, created_at, last_used)
              VALUES (?1, ?2, ?3, ?4, ?4)",
             params![name, content, profile, now],
-        );
-        let _ = conn.execute(
-            "UPDATE skills SET content = ?2
-             WHERE name = ?1 AND profile = ?3
-               AND (content LIKE '%view_file%' OR content LIKE '%replace_file_content%')",
-            params![name, content, profile],
         );
     }
     Ok(())
@@ -914,164 +1008,186 @@ fn add_file_skill_views(
     Ok(())
 }
 
-fn reconcile_global_disk_skill_views(
-    dir: &std::path::Path,
-    views: &mut std::collections::HashMap<String, SkillView>,
-) {
-    let entries = match discover_skill_files_in_dir(dir) {
-        Ok(items) => items,
-        Err(_) => return,
+type SkillTelemetryRecord = (i64, i64, i64, usize, Option<String>, Option<String>);
+
+fn load_sqlite_telemetry_map(
+) -> std::collections::HashMap<(String, String), SkillTelemetryRecord> {
+    let mut map = std::collections::HashMap::new();
+    let conn = match get_connection() {
+        Ok(c) => c,
+        Err(_) => return map,
     };
-    let conn_opt = get_connection().ok();
-    for (name, skill_path) in entries {
-        let content = match fs::read_to_string(&skill_path) {
-            Ok(c) => c,
-            Err(_) => continue,
-        };
-        let path_display = skill_path.display().to_string();
-        let skill_ref = Skill {
-            name: name.clone(),
-            content: content.clone(),
-        };
-        match views.get_mut(&name) {
-            Some(existing_view) => {
-                existing_view.path = Some(path_display);
-                let changed = existing_view.content != content;
-                let _ = changed.then(|| {
-                    let prev = existing_view.content.clone();
-                    existing_view.description = skill_ref.description();
-                    existing_view.triggers = skill_ref.triggers();
-                    existing_view.validation_errors = validate_skill_metadata(&name, &content);
-                    existing_view.content = content.clone();
-                    let _ = conn_opt.as_ref().map(|conn| {
-                        let _ = record_skill_revision_snapshot(conn, &name, None, &prev);
-                        let _ = conn.execute(
-                            "UPDATE skills SET content = ?1 WHERE name = ?2 AND COALESCE(profile, '') = ''",
-                            params![content, name],
-                        );
-                    });
-                });
+
+    let mut rev_counts = std::collections::HashMap::<(String, String), usize>::new();
+    let _ = conn
+        .prepare("SELECT name, profile, COUNT(*) FROM skill_revisions GROUP BY name, profile")
+        .and_then(|mut rev_stmt| {
+            let rows = rev_stmt.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, i64>(2).unwrap_or(0) as usize,
+                ))
+            })?;
+            for (rname, rprof, rcnt) in rows.flatten() {
+                rev_counts.insert((rname, rprof), rcnt);
             }
-            None => {
-                let now = chrono::Utc::now().to_rfc3339();
-                let _ = conn_opt.as_ref().map(|conn| {
-                    let _ = conn.execute(
-                        "INSERT OR IGNORE INTO skills (name, content, profile, created_at, last_used)
-                         VALUES (?1, ?2, '', ?3, ?3)",
-                        params![name, content, now],
-                    );
-                });
-                views.insert(
-                    name.clone(),
-                    SkillView {
-                        description: skill_ref.description(),
-                        triggers: skill_ref.triggers(),
-                        validation_errors: validate_skill_metadata(&name, &content),
-                        name,
-                        content,
-                        scope: "global".to_string(),
-                        profile: None,
-                        source: "global".to_string(),
-                        path: Some(path_display),
-                        enabled: true,
-                        is_protected: false,
-                        use_count: 0,
-                        success_count: 0,
-                        revision_count: 0,
-                        created_at: None,
-                        last_used: None,
-                    },
-                );
-            }
-        }
-    }
-}
+            Ok(())
+        });
 
-pub fn load_skill_views() -> Result<Vec<SkillView>> {
-    let mut views = std::collections::HashMap::<String, SkillView>::new();
-
-    match get_connection() {
-        Ok(conn) => {
-            let mut rev_counts = std::collections::HashMap::<(String, String), usize>::new();
-            let _ = conn
-                .prepare("SELECT name, profile, COUNT(*) FROM skill_revisions GROUP BY name, profile")
-                .and_then(|mut rev_stmt| {
-                    let rows = rev_stmt.query_map([], |r| {
-                        Ok((
-                            r.get::<_, String>(0)?,
-                            r.get::<_, String>(1)?,
-                            r.get::<_, i64>(2).unwrap_or(0) as usize,
-                        ))
-                    })?;
-                    for (rname, rprof, rcnt) in rows.flatten() {
-                        rev_counts.insert((rname, rprof), rcnt);
-                    }
-                    Ok(())
-                });
-
-            let mut stmt = conn.prepare(
-                "SELECT name, content, COALESCE(profile, ''), use_count, COALESCE(success_count, 0), created_at, last_used FROM skills",
-            )?;
+    let _ = conn
+        .prepare(
+            "SELECT name, COALESCE(profile, ''), COALESCE(use_count, 0), COALESCE(success_count, 0), COALESCE(failure_count, 0), created_at, last_used FROM skills",
+        )
+        .and_then(|mut stmt| {
             let rows = stmt.query_map([], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
+                    row.get::<_, i64>(2).unwrap_or(0),
                     row.get::<_, i64>(3).unwrap_or(0),
                     row.get::<_, i64>(4).unwrap_or(0),
                     row.get::<_, Option<String>>(5).unwrap_or(None),
                     row.get::<_, Option<String>>(6).unwrap_or(None),
                 ))
             })?;
-
-            let db_path = get_db_path().display().to_string();
-            for row in rows.flatten() {
-                let (name, content, raw_prof, use_count, success_count, created_at, last_used) = row;
-                let profile = (!raw_prof.is_empty()).then_some(raw_prof.clone());
-                let scope = profile
-                    .as_ref()
-                    .map(|p| format!("subagent:{p}"))
-                    .unwrap_or_else(|| "global".to_string());
-                let key = profile
-                    .as_ref()
-                    .map(|p| format!("{p}/{name}"))
-                    .unwrap_or_else(|| name.clone());
-                let is_protected = profile.is_some();
-                let revision_count = rev_counts
-                    .get(&(name.clone(), raw_prof))
-                    .copied()
-                    .unwrap_or(0);
-                let skill_ref = Skill {
-                    name: name.clone(),
-                    content: content.clone(),
-                };
-                views.insert(
-                    key,
-                    SkillView {
-                        description: skill_ref.description(),
-                        triggers: skill_ref.triggers(),
-                        validation_errors: validate_skill_metadata(&name, &content),
-                        name,
-                        content,
-                        scope,
-                        profile,
-                        source: "database".to_string(),
-                        path: Some(db_path.clone()),
-                        enabled: true,
-                        is_protected,
-                        use_count,
-                        success_count,
-                        revision_count,
-                        created_at,
-                        last_used,
-                    },
+            for (name, prof, uses, successes, failures, created_at, last_used) in rows.flatten() {
+                let revs = rev_counts.get(&(name.clone(), prof.clone())).copied().unwrap_or(0);
+                map.insert(
+                    (name, prof),
+                    (uses, successes, failures, revs, created_at, last_used),
                 );
             }
-        }
-        Err(_) => {}
+            Ok(())
+        });
+
+    map
+}
+
+pub fn load_skill_views() -> Result<Vec<SkillView>> {
+    let mut views = std::collections::HashMap::<String, SkillView>::new();
+    let telemetry = load_sqlite_telemetry_map();
+
+    for &(prof, name, default_content) in builtin_default_subagent_skills() {
+        let key = format!("{prof}/{name}");
+        let (use_count, success_count, _, revision_count, created_at, last_used) = telemetry
+            .get(&(name.to_string(), prof.to_string()))
+            .cloned()
+            .unwrap_or((0, 0, 0, 0, None, None));
+        let skill_ref = Skill {
+            name: name.to_string(),
+            content: default_content.to_string(),
+        };
+        views.insert(
+            key,
+            SkillView {
+                description: skill_ref.description(),
+                triggers: skill_ref.triggers(),
+                validation_errors: validate_skill_metadata(name, default_content),
+                name: name.to_string(),
+                content: default_content.to_string(),
+                scope: format!("subagent:{prof}"),
+                profile: Some(prof.to_string()),
+                source: "builtin".to_string(),
+                path: Some(format!("builtin://subagents/{prof}/{name}")),
+                enabled: true,
+                is_protected: true,
+                use_count,
+                success_count,
+                revision_count,
+                created_at,
+                last_used,
+            },
+        );
     }
 
-    reconcile_global_disk_skill_views(&get_skills_dir(), &mut views);
+    let subagents_root = crate::config::runtime_data_dir().join("subagents");
+    match (subagents_root.is_dir(), fs::read_dir(&subagents_root)) {
+        (true, Ok(entries)) => {
+            for entry in entries.flatten() {
+                let prof_path = entry.path();
+                let prof_name = match prof_path.file_name().and_then(|s| s.to_str()) {
+                    Some(p) => p.to_string(),
+                    None => continue,
+                };
+                let prof_skills_dir = prof_path.join("skills");
+                let discovered = discover_skill_files_in_dir(&prof_skills_dir).unwrap_or_default();
+                for (name, skill_path) in discovered {
+                    let content = match fs::read_to_string(&skill_path) {
+                        Ok(c) => c,
+                        Err(_) => continue,
+                    };
+                    let (use_count, success_count, _, revision_count, created_at, last_used) =
+                        telemetry
+                            .get(&(name.clone(), prof_name.clone()))
+                            .cloned()
+                            .unwrap_or((0, 0, 0, 0, None, None));
+                    let skill_ref = Skill {
+                        name: name.clone(),
+                        content: content.clone(),
+                    };
+                    views.insert(
+                        format!("{prof_name}/{name}"),
+                        SkillView {
+                            description: skill_ref.description(),
+                            triggers: skill_ref.triggers(),
+                            validation_errors: validate_skill_metadata(&name, &content),
+                            name,
+                            content,
+                            scope: format!("subagent:{prof_name}"),
+                            profile: Some(prof_name.clone()),
+                            source: "subagent".to_string(),
+                            path: Some(skill_path.display().to_string()),
+                            enabled: true,
+                            is_protected: false,
+                            use_count,
+                            success_count,
+                            revision_count,
+                            created_at,
+                            last_used,
+                        },
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+
+    for (name, skill_path) in discover_skill_files_in_dir(&get_skills_dir()).unwrap_or_default() {
+        let content = match fs::read_to_string(&skill_path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let (use_count, success_count, _, revision_count, created_at, last_used) = telemetry
+            .get(&(name.clone(), String::new()))
+            .cloned()
+            .unwrap_or((0, 0, 0, 0, None, None));
+        let skill_ref = Skill {
+            name: name.clone(),
+            content: content.clone(),
+        };
+        views.insert(
+            name.clone(),
+            SkillView {
+                description: skill_ref.description(),
+                triggers: skill_ref.triggers(),
+                validation_errors: validate_skill_metadata(&name, &content),
+                name,
+                content,
+                scope: "global".to_string(),
+                profile: None,
+                source: "global".to_string(),
+                path: Some(skill_path.display().to_string()),
+                enabled: true,
+                is_protected: false,
+                use_count,
+                success_count,
+                revision_count,
+                created_at,
+                last_used,
+            },
+        );
+    }
 
     let skills_config = crate::config::loader::load_config()
         .map(|config| config.skills)
@@ -1115,28 +1231,22 @@ pub fn load_skill_views() -> Result<Vec<SkillView>> {
 pub fn load_skills_with_profile(profile_name: Option<&str>) -> Result<Vec<Skill>> {
     let mut skills_map = std::collections::HashMap::new();
 
-    match get_connection() {
-        Ok(conn) => {
-            let mut stmt = conn.prepare(
-                "SELECT name, content FROM skills WHERE COALESCE(profile, '') = '' OR profile = ?1",
-            )?;
-            let profile_str = profile_name.unwrap_or("");
-            let rows = stmt.query_map(params![profile_str], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })?;
-
-            for (name, content) in rows.flatten() {
-                skills_map.insert(name.clone(), Skill { name, content });
-            }
-        }
-        Err(_) => {}
-    }
-
     let global_skills_dir = get_skills_dir();
     let _ = load_skill_files_from_dir(&global_skills_dir, &mut skills_map);
 
     match profile_name {
         Some(prof) => {
+            for &(default_prof, name, content) in builtin_default_subagent_skills() {
+                let _ = (default_prof == prof).then(|| {
+                    skills_map.insert(
+                        name.to_string(),
+                        Skill {
+                            name: name.to_string(),
+                            content: content.to_string(),
+                        },
+                    );
+                });
+            }
             let profile_skills_dir = crate::config::runtime_data_dir()
                 .join("subagents")
                 .join(prof)
@@ -1167,13 +1277,18 @@ pub fn load_skills_with_profile(profile_name: Option<&str>) -> Result<Vec<Skill>
         false => {}
     }
 
-    Ok(skills_map.into_values().collect())
+    Ok(skills_map
+        .into_values()
+        .filter(Skill::is_compatible_with_host)
+        .collect())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CatalogSkillSummary {
     pub name: String,
     pub scope: String,
+    pub context: String,
+    pub agent: Option<String>,
     pub description: String,
 }
 
@@ -1181,30 +1296,6 @@ pub fn load_native_skill_catalog(
     profile_name: Option<&str>,
 ) -> Result<(Vec<CatalogSkillSummary>, usize)> {
     let mut native_map = std::collections::BTreeMap::<String, (String, Skill)>::new();
-
-    match get_connection() {
-        Ok(conn) => {
-            let mut stmt = conn.prepare(
-                "SELECT name, content, COALESCE(profile, '') FROM skills WHERE COALESCE(profile, '') = '' OR profile = ?1",
-            )?;
-            let profile_str = profile_name.unwrap_or("");
-            let rows = stmt.query_map(params![profile_str], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, String>(2)?,
-                ))
-            })?;
-            for (name, content, raw_prof) in rows.flatten() {
-                let scope = match raw_prof.is_empty() {
-                    true => "global".to_string(),
-                    false => format!("subagent:{raw_prof}"),
-                };
-                native_map.insert(name.clone(), (scope, Skill { name, content }));
-            }
-        }
-        Err(_) => {}
-    }
 
     let mut global_disk = std::collections::HashMap::new();
     let _ = load_skill_files_from_dir(&get_skills_dir(), &mut global_disk);
@@ -1214,6 +1305,20 @@ pub fn load_native_skill_catalog(
 
     match profile_name {
         Some(prof) => {
+            for &(default_prof, name, content) in builtin_default_subagent_skills() {
+                let _ = (default_prof == prof).then(|| {
+                    native_map.insert(
+                        name.to_string(),
+                        (
+                            format!("subagent:{prof}"),
+                            Skill {
+                                name: name.to_string(),
+                                content: content.to_string(),
+                            },
+                        ),
+                    );
+                });
+            }
             let profile_skills_dir = crate::config::runtime_data_dir()
                 .join("subagents")
                 .join(prof)
@@ -1241,8 +1346,11 @@ pub fn load_native_skill_catalog(
                 }
             }
             _ => {
-                for name in dir_skills.into_keys() {
-                    let _ = (!native_map.contains_key(&name)).then(|| external_names.insert(name));
+                for (name, skill) in dir_skills {
+                    let keep = !native_map.contains_key(&name)
+                        && !skill.disable_model_invocation()
+                        && skill.is_compatible_with_host();
+                    let _ = keep.then(|| external_names.insert(name));
                 }
             }
         }
@@ -1269,15 +1377,18 @@ pub fn load_native_skill_catalog(
 
     let mut catalog = Vec::new();
     for (name, (scope, skill)) in native_map {
-        match skill.disable_model_invocation() {
-            true => {}
-            false => {
+        let include = !skill.disable_model_invocation() && skill.is_compatible_with_host();
+        match include {
+            false => {}
+            true => {
                 let raw_desc = skill.description();
                 let one_line = raw_desc.split_whitespace().collect::<Vec<_>>().join(" ");
                 let bounded: String = one_line.chars().take(180).collect();
                 catalog.push(CatalogSkillSummary {
                     name,
                     scope,
+                    context: skill.execution_context().to_string(),
+                    agent: skill.fork_agent(),
                     description: bounded,
                 });
             }
@@ -1343,37 +1454,30 @@ fn skill_signature_tokens(skill: &Skill) -> std::collections::HashSet<String> {
 
 pub fn consolidate_learned_skills() -> Result<usize> {
     let conn = get_connection()?;
-    let mut stmt = conn.prepare(
-        "SELECT name, content, COALESCE(use_count, 0), COALESCE(success_count, 0), COALESCE(failure_count, 0)
-         FROM skills
-         WHERE COALESCE(profile, '') = ''",
-    )?;
-    let rows = stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, i64>(2).unwrap_or(0),
-            row.get::<_, i64>(3).unwrap_or(0),
-            row.get::<_, i64>(4).unwrap_or(0),
-        ))
-    })?;
+    let telemetry = load_sqlite_telemetry_map();
+    let mut disk_skills = std::collections::HashMap::new();
+    let _ = load_skill_files_from_dir(&get_skills_dir(), &mut disk_skills);
 
     let mut active_rows = Vec::new();
     let mut actions_taken = 0usize;
 
-    for (name, content, uses, successes, failures) in rows.flatten() {
+    for (name, skill) in disk_skills {
+        let (uses, successes, failures, _, _, _) = telemetry
+            .get(&(name.clone(), String::new()))
+            .cloned()
+            .unwrap_or((0, 0, 0, 0, None, None));
         let low_efficacy = failures >= 5 && successes == 0;
         match low_efficacy {
             true => {
-                let _ = record_skill_revision_snapshot(&conn, &name, None, &content);
-                let _ = archive_skill_artifacts_on_disk(&name, &content);
+                let _ = record_skill_revision_snapshot(&conn, &name, None, &skill.content);
+                let _ = archive_skill_artifacts_on_disk(&name, &skill.content);
                 let _ = conn.execute(
                     "DELETE FROM skills WHERE name = ?1 AND COALESCE(profile, '') = ''",
                     params![name],
                 );
                 actions_taken += 1;
             }
-            false => active_rows.push((name, content, uses, successes, failures)),
+            false => active_rows.push((name, skill.content, uses, successes, failures)),
         }
     }
 
@@ -1459,42 +1563,35 @@ pub fn archive_stale_skills() -> Result<()> {
         Ok(conn) => {
             let now = chrono::Utc::now();
             let stale_duration = chrono::Duration::days(30);
-
-            let mut stmt = conn.prepare(
-                "SELECT name, COALESCE(profile, ''), last_used, content FROM skills",
-            )?;
-            let rows = stmt.query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, String>(3)?,
-                ))
-            })?;
+            let telemetry = load_sqlite_telemetry_map();
+            let mut disk_skills = std::collections::HashMap::new();
+            let _ = load_skill_files_from_dir(&get_skills_dir(), &mut disk_skills);
 
             let mut to_delete = Vec::new();
-            for (name, profile_key, last_used_opt, content) in rows.flatten() {
-                let is_stale = profile_key.is_empty()
-                    && last_used_opt
-                        .as_deref()
-                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                        .is_some_and(|last_used_date| {
-                            let last_used_utc = last_used_date.with_timezone(&chrono::Utc);
-                            now.signed_duration_since(last_used_utc) > stale_duration
-                        });
+            for (name, skill) in disk_skills {
+                let last_used_opt = telemetry
+                    .get(&(name.clone(), String::new()))
+                    .and_then(|t| t.5.clone());
+                let is_stale = last_used_opt
+                    .as_deref()
+                    .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                    .is_some_and(|last_used_date| {
+                        let last_used_utc = last_used_date.with_timezone(&chrono::Utc);
+                        now.signed_duration_since(last_used_utc) > stale_duration
+                    });
                 match is_stale {
                     true => {
-                        archive_skill_artifacts_on_disk(&name, &content)?;
-                        to_delete.push((name, profile_key));
+                        archive_skill_artifacts_on_disk(&name, &skill.content)?;
+                        to_delete.push(name);
                     }
                     false => {}
                 }
             }
 
-            for (name, profile_key) in to_delete {
+            for name in to_delete {
                 let _ = conn.execute(
-                    "DELETE FROM skills WHERE name = ?1 AND COALESCE(profile, '') = ?2",
-                    params![name, profile_key],
+                    "DELETE FROM skills WHERE name = ?1 AND COALESCE(profile, '') = ''",
+                    params![name],
                 );
 
                 let aura_blue = "\x1b[38;2;96;165;250m";
@@ -1640,21 +1737,36 @@ fn load_skill_usage_stats(
 
 pub fn record_skill_activation(name: &str, profile_name: Option<&str>) {
     let safe_name = sanitize_skill_name(name);
+    match safe_name.is_empty() {
+        true => return,
+        false => {}
+    }
     let profile_key = profile_name.unwrap_or("");
     let now = chrono::Utc::now().to_rfc3339();
     let _ = get_connection().map(|conn| {
         let updated = conn
             .execute(
-                "UPDATE skills SET use_count = use_count + 1, last_used = ?1
+                "UPDATE skills SET use_count = COALESCE(use_count, 0) + 1, last_used = ?1
                  WHERE name = ?2 AND COALESCE(profile, '') = ?3",
                 params![now, safe_name, profile_key],
             )
             .unwrap_or(0);
-        let _ = (updated == 0 && !profile_key.is_empty()).then(|| {
+        let fallback_updated = match updated == 0 && !profile_key.is_empty() {
+            true => conn
+                .execute(
+                    "UPDATE skills SET use_count = COALESCE(use_count, 0) + 1, last_used = ?1
+                     WHERE name = ?2 AND COALESCE(profile, '') = ''",
+                    params![now, safe_name],
+                )
+                .unwrap_or(0),
+            false => updated,
+        };
+        let _ = (fallback_updated == 0).then(|| {
             let _ = conn.execute(
-                "UPDATE skills SET use_count = use_count + 1, last_used = ?1
-                 WHERE name = ?2 AND COALESCE(profile, '') = ''",
-                params![now, safe_name],
+                "INSERT INTO skills (name, content, profile, use_count, success_count, failure_count, created_at, last_used)
+                 VALUES (?1, '', ?2, 1, 0, 0, ?3, ?3)
+                 ON CONFLICT(name, profile) DO UPDATE SET use_count = COALESCE(use_count, 0) + 1, last_used = ?3",
+                params![safe_name, profile_key, now],
             );
         });
     });
@@ -1662,21 +1774,42 @@ pub fn record_skill_activation(name: &str, profile_name: Option<&str>) {
 
 pub fn record_skill_outcome(name: &str, profile_name: Option<&str>, succeeded: bool) {
     let safe_name = sanitize_skill_name(name);
+    match safe_name.is_empty() {
+        true => return,
+        false => {}
+    }
     let profile_key = profile_name.unwrap_or("");
+    let now = chrono::Utc::now().to_rfc3339();
     let sql_scoped = match succeeded {
-        true => "UPDATE skills SET success_count = COALESCE(success_count, 0) + 1 WHERE name = ?1 AND COALESCE(profile, '') = ?2",
-        false => "UPDATE skills SET failure_count = COALESCE(failure_count, 0) + 1 WHERE name = ?1 AND COALESCE(profile, '') = ?2",
+        true => "UPDATE skills SET success_count = COALESCE(success_count, 0) + 1, last_used = ?3 WHERE name = ?1 AND COALESCE(profile, '') = ?2",
+        false => "UPDATE skills SET failure_count = COALESCE(failure_count, 0) + 1, last_used = ?3 WHERE name = ?1 AND COALESCE(profile, '') = ?2",
     };
     let sql_global = match succeeded {
-        true => "UPDATE skills SET success_count = COALESCE(success_count, 0) + 1 WHERE name = ?1 AND COALESCE(profile, '') = ''",
-        false => "UPDATE skills SET failure_count = COALESCE(failure_count, 0) + 1 WHERE name = ?1 AND COALESCE(profile, '') = ''",
+        true => "UPDATE skills SET success_count = COALESCE(success_count, 0) + 1, last_used = ?2 WHERE name = ?1 AND COALESCE(profile, '') = ''",
+        false => "UPDATE skills SET failure_count = COALESCE(failure_count, 0) + 1, last_used = ?2 WHERE name = ?1 AND COALESCE(profile, '') = ''",
+    };
+    let (init_succ, init_fail) = match succeeded {
+        true => (1i64, 0i64),
+        false => (0i64, 1i64),
     };
     let _ = get_connection().map(|conn| {
         let updated = conn
-            .execute(sql_scoped, params![safe_name, profile_key])
+            .execute(sql_scoped, params![safe_name, profile_key, now])
             .unwrap_or(0);
-        let _ = (updated == 0 && !profile_key.is_empty()).then(|| {
-            let _ = conn.execute(sql_global, params![safe_name]);
+        let fallback_updated = match updated == 0 && !profile_key.is_empty() {
+            true => conn.execute(sql_global, params![safe_name, now]).unwrap_or(0),
+            false => updated,
+        };
+        let _ = (fallback_updated == 0).then(|| {
+            let _ = conn.execute(
+                "INSERT INTO skills (name, content, profile, use_count, success_count, failure_count, created_at, last_used)
+                 VALUES (?1, '', ?2, 1, ?3, ?4, ?5, ?5)
+                 ON CONFLICT(name, profile) DO UPDATE SET
+                   success_count = COALESCE(success_count, 0) + ?3,
+                   failure_count = COALESCE(failure_count, 0) + ?4,
+                   last_used = ?5",
+                params![safe_name, profile_key, init_succ, init_fail, now],
+            );
         });
     });
 }
@@ -1776,6 +1909,7 @@ fn list_relative_files_under(pkg_dir: &std::path::Path, subdir: &str) -> Vec<Str
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SkillBundleInspection {
     pub skill: Skill,
+    pub skill_dir: Option<PathBuf>,
     pub references: Vec<String>,
     pub scripts: Vec<String>,
     pub templates: Vec<String>,
@@ -1792,18 +1926,20 @@ pub fn inspect_skill_bundle(
         .into_iter()
         .find(|s| s.name == safe_name || sanitize_skill_name(&s.name) == safe_name);
     Ok(found.map(|skill| {
-        let (references, scripts, templates, assets) =
-            match locate_skill_package_dir(&skill.name, profile) {
-                Some(pkg_dir) => (
-                    list_relative_files_under(&pkg_dir, "references"),
-                    list_relative_files_under(&pkg_dir, "scripts"),
-                    list_relative_files_under(&pkg_dir, "templates"),
-                    list_relative_files_under(&pkg_dir, "assets"),
-                ),
-                None => (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
-            };
+        let pkg_dir_opt = locate_skill_package_dir(&skill.name, profile);
+        let (references, scripts, templates, assets) = match pkg_dir_opt.as_ref() {
+            Some(pkg_dir) => (
+                list_relative_files_under(pkg_dir, "references"),
+                list_relative_files_under(pkg_dir, "scripts"),
+                list_relative_files_under(pkg_dir, "templates"),
+                list_relative_files_under(pkg_dir, "assets"),
+            ),
+            None => (Vec::new(), Vec::new(), Vec::new(), Vec::new()),
+        };
+        let canonical_dir = pkg_dir_opt.and_then(|d| d.canonicalize().ok().or(Some(d)));
         SkillBundleInspection {
             skill,
+            skill_dir: canonical_dir,
             references,
             scripts,
             templates,
@@ -1966,16 +2102,51 @@ pub fn patch_skill(
         .find(|s| s.name == safe_name || sanitize_skill_name(&s.name) == safe_name)
         .ok_or_else(|| anyhow::anyhow!("Skill '{}' not found for patch", name))?;
 
+    let pkg_dir_str = locate_skill_package_dir(&safe_name, profile)
+        .and_then(|d| d.canonicalize().ok().or(Some(d)))
+        .map(|d| d.display().to_string());
+
+    let normalize_to_placeholder = |text: &str, placeholder: &str| -> String {
+        match pkg_dir_str.as_deref() {
+            Some(dir_s) => text.replace(dir_s, placeholder),
+            None => text.to_string(),
+        }
+    };
+
+    let active_placeholder = [
+        "${SKILL_DIR}",
+        "${OPENZ_SKILL_DIR}",
+        "${CLAUDE_SKILL_DIR}",
+        "{baseDir}",
+    ]
+    .into_iter()
+    .find(|ph| existing.content.contains(ph));
+
+    let portable_new = match active_placeholder {
+        Some(ph) => normalize_to_placeholder(new_text, ph),
+        None => new_text.to_string(),
+    };
+
     let updated_content = match old_text.map(str::trim).filter(|s| !s.is_empty()) {
         Some(needle) => match existing.content.contains(needle) {
-            true => existing.content.replacen(needle, new_text, 1),
-            false => anyhow::bail!(
-                "old_text snippet was not found in skill '{}'; call curate_skill(action='view', skill_name='{}') first",
-                safe_name,
-                safe_name
-            ),
+            true => existing.content.replacen(needle, &portable_new, 1),
+            false => {
+                let candidate = active_placeholder
+                    .map(|ph| normalize_to_placeholder(needle, ph))
+                    .filter(|unrendered| existing.content.contains(unrendered.as_str()));
+                match candidate {
+                    Some(unrendered) => {
+                        existing.content.replacen(unrendered.as_str(), &portable_new, 1)
+                    }
+                    None => anyhow::bail!(
+                        "old_text snippet was not found in skill '{}'; call curate_skill(action='view', skill_name='{}') first",
+                        safe_name,
+                        safe_name
+                    ),
+                }
+            }
         },
-        None => format!("{}\n\n{}\n", existing.content.trim_end(), new_text.trim()),
+        None => format!("{}\n\n{}\n", existing.content.trim_end(), portable_new.trim()),
     };
 
     match profile {
@@ -2047,7 +2218,7 @@ pub fn scan_skill_content(content: &str) -> Result<bool> {
     Ok(!content.lines().any(line_has_unsafe_skill_pattern))
 }
 
-fn sanitize_skill_name(name: &str) -> String {
+pub(crate) fn sanitize_skill_name(name: &str) -> String {
     name.trim()
         .to_lowercase()
         .replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_")
@@ -2075,34 +2246,34 @@ fn current_skill_content_in_db(
     safe_name: &str,
     profile: Option<&str>,
 ) -> Option<String> {
-    let profile_key = profile.unwrap_or("");
-    conn.query_row(
-        "SELECT content FROM skills WHERE name = ?1 AND COALESCE(profile, '') = ?2 ORDER BY rowid DESC LIMIT 1",
-        params![safe_name, profile_key],
-        |row| row.get::<_, String>(0),
-    )
-    .ok()
-    .or_else(|| {
-        let base_dir = match profile {
-            Some(prof) => crate::config::runtime_data_dir()
-                .join("subagents")
-                .join(prof)
-                .join("skills"),
-            None => get_skills_dir(),
-        };
-        let pkg_md = base_dir.join(safe_name).join("SKILL.md");
-        let flat_md = base_dir.join(format!("{}.md", safe_name));
-        pkg_md
-            .is_file()
-            .then(|| fs::read_to_string(pkg_md).ok())
-            .flatten()
-            .or_else(|| {
-                flat_md
-                    .is_file()
-                    .then(|| fs::read_to_string(flat_md).ok())
-                    .flatten()
-            })
-    })
+    let base_dir = match profile {
+        Some(prof) => crate::config::runtime_data_dir()
+            .join("subagents")
+            .join(prof)
+            .join("skills"),
+        None => get_skills_dir(),
+    };
+    let pkg_md = base_dir.join(safe_name).join("SKILL.md");
+    let flat_md = base_dir.join(format!("{}.md", safe_name));
+    pkg_md
+        .is_file()
+        .then(|| fs::read_to_string(pkg_md).ok())
+        .flatten()
+        .or_else(|| {
+            flat_md
+                .is_file()
+                .then(|| fs::read_to_string(flat_md).ok())
+                .flatten()
+        })
+        .or_else(|| {
+            let profile_key = profile.unwrap_or("");
+            conn.query_row(
+                "SELECT content FROM skills WHERE name = ?1 AND COALESCE(profile, '') = ?2 ORDER BY rowid DESC LIMIT 1",
+                params![safe_name, profile_key],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+        })
 }
 
 fn record_skill_revision_snapshot(

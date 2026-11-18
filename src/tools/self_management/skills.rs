@@ -3,9 +3,33 @@ use crate::tools::Tool;
 use anyhow::Result;
 use serde_json::Value;
 
-pub struct CurateSkillTool;
+#[derive(Default)]
+pub struct CurateSkillTool {
+    pub registry: Option<crate::tools::ToolRegistry>,
+    pub orchestrator: Option<crate::tools::orchestrator::OrchestrateWorkflowTool>,
+}
+
+impl CurateSkillTool {
+    pub fn new(registry: crate::tools::ToolRegistry) -> Self {
+        Self {
+            registry: Some(registry),
+            orchestrator: None,
+        }
+    }
+
+    pub fn with_orchestrator(
+        registry: crate::tools::ToolRegistry,
+        orchestrator: crate::tools::orchestrator::OrchestrateWorkflowTool,
+    ) -> Self {
+        Self {
+            registry: Some(registry),
+            orchestrator: Some(orchestrator),
+        }
+    }
+}
 
 const SKILL_NAME_KEYS: &[&str] = &["skill_name", "skillName", "name", "skill", "id"];
+const TASK_ARG_KEYS: &[&str] = &["task", "goal", "arguments", "args", "prompt"];
 const SKILL_CONTENT_KEYS: &[&str] = &[
     "file_content",
     "fileContent",
@@ -39,7 +63,7 @@ impl Tool for CurateSkillTool {
     }
 
     fn description(&self) -> &str {
-        "Progressive AgentSkills bundle manager: list compact catalog, view full SKILL.md on demand, read/write/remove bundled references/scripts/templates/assets, add, patch, consolidate, delete, inspect history, or roll back procedural skills."
+        "Progressive AgentSkills bundle & orchestrator manager: list compact catalog, view SKILL.md on demand (resolving ${SKILL_DIR}/{baseDir}/$ARGUMENTS and auto-mounting allowed-tools), execute heavy or `context: fork` skills inside an isolated Orchestrator subagent (`action='fork'`), read/write/remove bundled references/scripts/templates/assets, add, patch, consolidate, delete, inspect history, or roll back procedural skills."
     }
 
     fn parameters(&self) -> Value {
@@ -48,8 +72,8 @@ impl Tool for CurateSkillTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["list", "search", "list_archive", "view", "read_ref", "write_file", "remove_file", "add", "patch", "delete", "consolidate", "history", "rollback", "restore"],
-                    "description": "Skill action: 'view' loads one SKILL.md + bundle manifest; 'search' ranks native + external ~/.agents/skills packages by query; 'read_ref'/'write_file'/'remove_file' manage files under references/, scripts/, templates/, or assets/; 'patch' applies surgical edits; 'consolidate' deduplicates and quarantines broken skills; 'list_archive' and 'restore' inspect and recover skills from ~/.openz/skills/archive/."
+                    "enum": ["list", "search", "list_archive", "view", "fork", "read_ref", "write_file", "remove_file", "add", "patch", "delete", "consolidate", "history", "rollback", "restore"],
+                    "description": "Skill action: 'view' loads SKILL.md + resolved skill_dir + bundle manifest (and auto-mounts allowed-tools); 'fork' executes a skill inside an isolated Orchestrator subagent workflow so intermediate tool steps stay out of the main context; 'search' ranks native + external ~/.agents/skills packages; 'read_ref'/'write_file'/'remove_file' manage files under references/, scripts/, templates/, or assets/; 'patch' applies surgical edits; 'consolidate' deduplicates and quarantines broken skills; 'list_archive' and 'restore' inspect and recover skills from ~/.openz/skills/archive/."
                 },
                 "query": {
                     "type": "string",
@@ -58,6 +82,10 @@ impl Tool for CurateSkillTool {
                 "skill_name": {
                     "type": "string",
                     "description": "Name/identifier of the skill (e.g. 'rust_compilation_tricks')."
+                },
+                "task": {
+                    "type": "string",
+                    "description": "Task goal / runtime arguments ($ARGUMENTS) when executing a forked skill (`action='fork'`) or viewing a parameterized skill."
                 },
                 "content": {
                     "type": "string",
@@ -118,6 +146,7 @@ impl Tool for CurateSkillTool {
             ("search" | "find" | "query", _) => "search",
             ("view" | "inspect" | "get" | "read", false) => "list",
             ("view" | "inspect" | "get" | "read", true) => "view",
+            ("fork" | "execute" | "run", _) => "fork",
             ("read_ref" | "read_reference" | "ref", _) => "read_ref",
             ("write_file" | "save_file" | "put_file" | "write_ref", _) => "write_file",
             ("remove_file" | "delete_file" | "rm_file", _) => "remove_file",
@@ -190,27 +219,118 @@ impl Tool for CurateSkillTool {
                     "matches": hits
                 }))
             }
-            "view" => {
+            "view" | "fork" => {
                 let skill_name = extract_trimmed_str(arguments, SKILL_NAME_KEYS)
-                    .ok_or_else(|| anyhow::anyhow!("Missing skill_name for action 'view'"))?;
+                    .ok_or_else(|| anyhow::anyhow!("Missing skill_name for action '{}'", action))?;
+                let task_arg = extract_trimmed_str(arguments, TASK_ARG_KEYS);
                 match crate::agent::skills::inspect_skill_bundle(&skill_name, profile.as_deref())? {
                     Some(bundle) => {
                         crate::agent::skills::record_skill_activation(
                             &bundle.skill.name,
                             profile.as_deref(),
                         );
-                        notify_skill_curation("Skill used", &bundle.skill.name);
-                        Ok(serde_json::json!({
-                            "success": true,
-                            "skill_name": bundle.skill.name,
-                            "description": bundle.skill.description(),
-                            "triggers": bundle.skill.triggers(),
-                            "content": bundle.skill.content,
-                            "references": bundle.references,
-                            "scripts": bundle.scripts,
-                            "templates": bundle.templates,
-                            "assets": bundle.assets
-                        }))
+                        let allowed_tools = bundle.skill.allowed_tools();
+                        let _ = (!allowed_tools.is_empty()).then(|| {
+                            let _ = self.registry.as_ref().map(|reg| {
+                                reg.request_tool_scope(allowed_tools.clone(), Vec::<String>::new());
+                            });
+                        });
+                        let skill_dir_str = bundle
+                            .skill_dir
+                            .as_ref()
+                            .map(|p| p.display().to_string());
+                        let rendered_content = crate::agent::skills::render_skill_content_with_vars(
+                            &bundle.skill.content,
+                            bundle.skill_dir.as_deref(),
+                            task_arg.as_deref(),
+                        );
+                        let exec_context = bundle.skill.execution_context();
+                        let target_agent = profile
+                            .clone()
+                            .or_else(|| bundle.skill.fork_agent())
+                            .unwrap_or_else(|| "openz".to_string());
+
+                        let should_fork = (action == "fork"
+                            || (exec_context == "fork" && task_arg.is_some()))
+                            && self.orchestrator.is_some();
+
+                        match (should_fork, self.orchestrator.as_ref()) {
+                            (true, Some(orch)) => {
+                                let goal_text = task_arg.unwrap_or_else(|| {
+                                    format!("Execute skill '{}'", bundle.skill.name)
+                                });
+                                notify_skill_curation(
+                                    "Skill forked",
+                                    &format!("{} -> {}", bundle.skill.name, target_agent),
+                                );
+                                let dir_note = skill_dir_str
+                                    .as_deref()
+                                    .map(|d| format!("Skill Directory: {d}\n"))
+                                    .unwrap_or_default();
+                                let step_goal = format!(
+                                    "[Active Forked Skill: {}]\n{}\nTask:\n{}\n\nFollow these procedural instructions and return a concise, verified result:\n{}",
+                                    bundle.skill.name, dir_note, goal_text, rendered_content
+                                );
+                                let wf_spec = match allowed_tools.is_empty() {
+                                    true => serde_json::json!({
+                                        "goal": format!("Skill '{}' ({})", bundle.skill.name, goal_text),
+                                        "mode": "sequential",
+                                        "steps": [
+                                            {
+                                                "id": format!("skill_{}", bundle.skill.name),
+                                                "agent": target_agent,
+                                                "goal": step_goal
+                                            }
+                                        ]
+                                    }),
+                                    false => serde_json::json!({
+                                        "goal": format!("Skill '{}' ({})", bundle.skill.name, goal_text),
+                                        "mode": "sequential",
+                                        "agents": [
+                                            {
+                                                "name": target_agent,
+                                                "tools": allowed_tools
+                                            }
+                                        ],
+                                        "steps": [
+                                            {
+                                                "id": format!("skill_{}", bundle.skill.name),
+                                                "agent": target_agent,
+                                                "goal": step_goal
+                                            }
+                                        ]
+                                    }),
+                                };
+                                let wf_result = orch.call(&wf_spec).await?;
+                                Ok(serde_json::json!({
+                                    "success": true,
+                                    "forked": true,
+                                    "skill_name": bundle.skill.name,
+                                    "agent": target_agent,
+                                    "skill_dir": skill_dir_str,
+                                    "allowed_tools": allowed_tools,
+                                    "workflow_result": wf_result
+                                }))
+                            }
+                            _ => {
+                                notify_skill_curation("Skill used", &bundle.skill.name);
+                                Ok(serde_json::json!({
+                                    "success": true,
+                                    "skill_name": bundle.skill.name,
+                                    "description": bundle.skill.description(),
+                                    "triggers": bundle.skill.triggers(),
+                                    "context": exec_context,
+                                    "agent": bundle.skill.fork_agent(),
+                                    "allowed_tools": allowed_tools,
+                                    "skill_dir": skill_dir_str,
+                                    "content": rendered_content,
+                                    "references": bundle.references,
+                                    "scripts": bundle.scripts,
+                                    "templates": bundle.templates,
+                                    "assets": bundle.assets
+                                }))
+                            }
+                        }
                     }
                     None => Err(anyhow::anyhow!("Skill '{}' not found", skill_name)),
                 }

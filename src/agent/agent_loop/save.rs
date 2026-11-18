@@ -18,6 +18,9 @@ struct CuratorJobPayload {
     provider: Arc<dyn crate::providers::LLMProvider>,
     messages: Vec<crate::session::Message>,
     tools_used: Vec<String>,
+    activated_skills: Vec<String>,
+    mutated_skill_in_turn: bool,
+    had_turn_errors: bool,
     turn_succeeded_cleanly: bool,
     turn_recovered: bool,
 }
@@ -64,34 +67,36 @@ fn finish_or_pop_coalesced_curator_job(session_key: &str) -> Option<CuratorJobPa
 }
 
 fn self_improvement_review_prompt() -> &'static str {
-    "You are a specialized Self-Improvement Curator for OpenZ. Your job is to review the conversation between the User and the AI Agent and consolidate five types of learnings:\n\n\
-1. USER PREFERENCES (USER.md): Durable user preferences, aesthetic styling choices, favorite design themes, color palettes, fonts, preferred programming languages, frameworks, or persona constraints. Use '- replace: <old> => <new>' when updating an outdated preference or '- remove: <stale>' when a preference is retracted.\n\
-2. DELIVERABLE & PROCEDURAL SKILL BUNDLES (<name>/SKILL.md): Whenever the agent creates, modifies, or inspects deliverables (websites, scripts, scrapers, data pipelines, media animations in openz_vault/ or project folders) or solves complex multi-step technical challenges:\n\
-   - Extract a clean, reusable procedural skill package.\n\
+    "You are a specialized Self-Improvement Curator for OpenZ. Your job is to review the completed turn between the User and the AI Agent and route durable learnings into the exact right memory tier:\n\n\
+1. AGENT SOUL & PERSONA (`SOUL.md` via `soul_persona`): Durable agent identity, tone, communication style, or persona rules (e.g. 'Speak as Mivi with warm, concise candor'). Supports '- replace: <old> => <new>' and '- remove: <stale>'. NEVER save agent persona or tone instructions as a skill.\n\
+2. USER PREFERENCES (`USER.md` via `user_preferences`): Durable user preferences, aesthetic styling choices, color palettes, fonts, preferred languages, frameworks, or workflow conventions. Supports '- replace: <old> => <new>' and '- remove: <stale>'.\n\
+3. GLOBAL MEMORY (`MEMORY.md` via `memory_content`): Concise project facts, environment paths, build flags, or single-rule invariants (e.g. 'Always run cargo check with -j 1 before bumping version'). NEVER create a tiny 1-2 sentence skill for a simple fact that belongs in MEMORY.md.\n\
+4. PROCEDURAL SKILL BUNDLES (`<name>/SKILL.md` via `skills_to_save`): Multi-step reusable procedures, complex error-recovery workarounds, or deliverable playbooks:\n\
    - Include standard YAML frontmatter with:\n\
      ---\n\
      name: <name_lowercase_with_underscores>\n\
-     description: <what this skill accomplishes>\n\
-     triggers: [\"<intent keyword 1>\", \"<intent keyword 2>\"]\n\
-     vault_category: <websites|scripts|images|videos|documents|presentations|data|diagrams|templates|exports>\n\
+     description: <precise one-line summary of when the LLM should load or fork this skill>\n\
+     triggers: [\"<intent phrase 1>\", \"<intent phrase 2>\"]\n\
+     context: <inline|fork — set 'fork' for heavy multi-step research/audit workflows that should run in an isolated Orchestrator subagent>\n\
+     agent: <optional subagent profile when context='fork', e.g. researcher|reviewer|debugger|coding_agent>\n\
+     allowed-tools: [\"<optional tool names needed by this skill>\"]\n\
+     vault_category: <optional: websites|scripts|images|videos|documents|presentations|data|diagrams|templates|exports>\n\
      ---\n\
-   - Under the frontmatter, provide Markdown instructions with Design System / Tech Rules, File Locations (e.g. openz_vault/websites/...), and Step-by-Step Reproduction/Extension Steps.\n\
-   - Optionally include reusable helper scripts, templates, or deep reference docs in `supporting_files` (`scripts/...`, `templates/...`, `references/...`).\n\
-3. GENERAL GUIDELINE SKILLS & ACTIVE SKILL SELF-HEALING: Task-specific coding workarounds, bug fixes, or library quirks (e.g. 'cargo_build_fix', 'sqlite_lock_workaround'). When an existing skill had an outdated flag/step, use operation='patch' to heal it.\n\
-4. SOURCES: High-trust reusable URLs or documentation links.\n\
-5. WORKFLOWS: Reusable multi-step procedures with triggers, steps, preconditions, verification, risk, and status.\n\n\
-CRITICAL: Pay special attention to tool execution outcomes. If a tool call failed with an error, look at how the agent resolved it (or what workaround succeeded). Extract this learning into a reusable skill or workflow.\n\n\
+   - Keep `SKILL.md` crisp, timeless, and procedural (< 2,500 chars): When to Use, Core Rules, Step-by-Step Procedure, Verification. NEVER write dated session bug logs or anecdotal war stories into `SKILL.md`.\n\
+   - Put reusable helper scripts (`${SKILL_DIR}/scripts/...`), templates, or large reference tables into `supporting_files` (`scripts/...`, `references/...`, `templates/...`).\n\
+   - TRAJECTORY SELF-HEALING: When `[Active Skills Loaded During This Turn]` is present and an earlier step failed or required a better flag/path, prefer `operation='patch'` (`old_text` -> `new_text`) on that active skill instead of creating a duplicate.\n\
+5. SOURCES: High-trust reusable canonical URLs or documentation links.\n\n\
 Specific workflow patterns to preserve when observed:\n\
 - Large static website or generated source creation: split writes into safe chunks instead of one huge tool payload; verify the file exists; open only after successful verification.\n\
 - HTML/video generation longer than roughly 20 seconds: render in shorter segments, concatenate with ffmpeg, verify duration, then open.\n\
 - Dev servers: when exec_command returns server_registered=true, record the server id and use manage_servers to stop it automatically when the preview/verification task is finished.\n\
 - Feature/tool inventory answers: use openz_inventory/tool_catalog instead of answering exact counts from memory.\n\n\
-REASONING BUDGET: Keep internal thinking under 120 words and emit the raw JSON object immediately. When the agent already called curate_skill during this turn to add or patch a skill, leave skills_to_save empty [] so you never overwrite in-turn edits.\n\n\
-You MUST return your response as a raw JSON object with the following structure. Do not wrap it in conversational text. Return empty arrays when there is nothing to save.\n\n\
+REASONING BUDGET: Keep internal thinking under 120 words and emit the raw JSON object immediately. Return empty strings/arrays when nothing genuinely durable and reusable was learned.\n\n\
 JSON Format:\n\
 {\n\
    \"memory_updated\": true/false,\n\
    \"memory_content\": \"<bullet points of durable cross-session environment/project facts for MEMORY.md (supports '- replace: old => new' and '- remove: stale'); empty when memory_updated is false>\",\n\
+   \"soul_persona\": \"<bullet points of durable agent identity/tone/persona traits for SOUL.md (supports '- replace: old => new' and '- remove: stale'); empty when unchanged>\",\n\
    \"user_preferences\": \"<bullet points of durable user preferences, design choices, styling tastes, or conventions to record in USER.md>\",\n\
    \"skills_to_save\": [\n\
      {\n\
@@ -102,8 +107,8 @@ JSON Format:\n\
        \"vault_category\": \"websites|scripts|images|videos|documents|presentations|data|diagrams|templates|exports\",\n\
        \"old_text\": \"<optional exact snippet from existing skill when operation='patch'>\",\n\
        \"new_text\": \"<optional replacement or appended section when operation='patch'>\",\n\
-       \"content\": \"<complete markdown content for operation='create' including YAML frontmatter with name, description, triggers, vault_category, followed by headers, rules, and steps.>\",\n\
-       \"supporting_files\": [{\"path\": \"scripts/helper.py\", \"content\": \"<optional reusable script, template, or reference file>\"}]\n\
+       \"content\": \"<concise procedural markdown content for operation='create' including YAML frontmatter>\",\n\
+       \"supporting_files\": [{\"path\": \"scripts/helper.py\", \"content\": \"<optional reusable script, template, or reference doc>\"}]\n\
      }\n\
    ],\n\
    \"sources_to_save\": [\n\
@@ -117,31 +122,22 @@ JSON Format:\n\
        \"stale_after_secs\": 604800\n\
      }\n\
    ],\n\
-   \"workflows_to_save\": [\n\
-     {\n\
-       \"name\": \"<workflow name, lowercase_with_underscores>\",\n\
-       \"triggers\": [\"<phrases that should match this workflow>\"],\n\
-       \"summary\": \"<one sentence summary>\",\n\
-       \"steps\": [{\"step\": \"<action>\", \"tool\": \"<optional tool name>\"}],\n\
-       \"preconditions\": [\"<required setup>\"],\n\
-       \"verification\": [\"<how to verify success>\"],\n\
-       \"risk\": \"low|normal|high\",\n\
-       \"status\": \"active|draft\"\n\
-     }\n\
-   ]\n\
+   \"workflows_to_save\": []\n\
 }"
 }
 
 fn memory_only_review_prompt() -> &'static str {
-    "You are OpenZ's fast Memory & Preference Curator. Review the latest turn and extract ONLY durable cross-session facts or user preferences that are NOT already in Existing Memory or USER.md.\n\n\
+    "You are OpenZ's fast Memory, Soul & Preference Curator. Review the latest turn and extract ONLY durable cross-session facts, agent persona updates, or user preferences that are NOT already recorded.\n\n\
 Rules:\n\
+- SOUL.md (`soul_persona`): Explicit durable changes to the agent's own persona, name, tone, or communication style. Supports '- replace: <old> => <new>' and '- remove: <stale>'. Leave `\"\"` when unchanged.\n\
 - MEMORY.md (`memory_content`): Durable project/architecture facts, verified environment paths, or persistent operational truths. Supports '- replace: <old> => <new>' and '- remove: <stale>'. Leave `memory_updated: false` and `memory_content: \"\"` when nothing new and durable was learned.\n\
-- USER.md (`user_preferences`): Explicit durable user tastes, coding conventions, persona rules, or workflow preferences. Supports '- replace: <old> => <new>' and '- remove: <stale>'. Leave `\"\"` when no user preference was stated.\n\
+- USER.md (`user_preferences`): Explicit durable user tastes, coding conventions, or workflow preferences. Supports '- replace: <old> => <new>' and '- remove: <stale>'. Leave `\"\"` when no user preference was stated.\n\
 - Keep internal thinking under 60 words and output raw JSON immediately.\n\n\
 JSON Format:\n\
 {\n\
   \"memory_updated\": true/false,\n\
   \"memory_content\": \"- <concise durable fact bullet>\",\n\
+  \"soul_persona\": \"- <concise durable persona bullet>\",\n\
   \"user_preferences\": \"- <concise durable preference bullet>\",\n\
   \"skills_to_save\": [],\n\
   \"sources_to_save\": [],\n\
@@ -295,6 +291,8 @@ pub(crate) struct ReviewResponse {
     #[serde(default)]
     pub(crate) memory_content: String,
     #[serde(default)]
+    pub(crate) soul_persona: String,
+    #[serde(default)]
     pub(crate) user_preferences: String,
     #[serde(default)]
     pub(crate) skills_to_save: Vec<ReviewSkill>,
@@ -423,6 +421,11 @@ pub(crate) fn fallback_parse_curator(raw: &str) -> Option<ReviewResponse> {
 
     let _ = salvage_string_field(raw, "\"user_preferences\"").map(|prefs| {
         resp.user_preferences = prefs;
+        any_salvaged = true;
+    });
+
+    let _ = salvage_string_field(raw, "\"soul_persona\"").map(|soul| {
+        resp.soul_persona = soul;
         any_salvaged = true;
     });
 
@@ -768,14 +771,13 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         }
     }
 
-    let is_routine_cron = ctx.session_key.starts_with("cron:")
-        && !turn_recovered
-        && !ctx.session_key.contains("curator")
-        && !has_explicit_skill_intent(&ctx.messages);
+    let is_cron_session = ctx.session_key.starts_with("cron:");
 
-    match ctx.user_content.starts_with('/') || is_routine_cron {
+    match ctx.user_content.starts_with('/') || is_cron_session {
         true => Ok(TurnState::Done),
         false => {
+            let mut activated_vec: Vec<String> = ctx.skill_notice_names.iter().cloned().collect();
+            activated_vec.sort();
             let initial_job = CuratorJobPayload {
                 session_manager: loop_ref.session_manager.clone(),
                 session_key: ctx.session_key.to_string(),
@@ -783,6 +785,9 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 provider: ctx.active_provider.clone(),
                 messages: ctx.messages.clone(),
                 tools_used: ctx.tools_used.clone(),
+                activated_skills: activated_vec,
+                mutated_skill_in_turn: ctx.mutated_skill_in_turn,
+                had_turn_errors: !ctx.turn_errors.is_empty(),
                 turn_succeeded_cleanly,
                 turn_recovered,
             };
@@ -852,6 +857,9 @@ async fn run_single_curator_job(job: CuratorJobPayload) {
                         provider,
                         messages,
                         tools_used,
+                        activated_skills,
+                        mutated_skill_in_turn,
+                        had_turn_errors,
                         turn_succeeded_cleanly,
                         turn_recovered,
                     } = job;
@@ -910,14 +918,10 @@ async fn run_single_curator_job(job: CuratorJobPayload) {
                     let _ = crate::agent::skills::archive_stale_skills();
 
                     let existing_memory = crate::agent::core_memory::load_global_memory();
+                    let existing_soul = crate::agent::core_memory::load_soul_profile();
                     let tool_count = messages.iter().filter(|m| m.role == "tool").count();
                     let explicit_skill_intent = has_explicit_skill_intent(&messages);
-                    let agent_curated_skill_in_turn = tools_used.iter().any(|t| {
-                        matches!(
-                            t.as_str(),
-                            "curate_skill" | "skill_manage" | "manage_skills"
-                        )
-                    });
+                    let agent_curated_skill_in_turn = mutated_skill_in_turn;
 
                     let created_vault_deliverable = turn_succeeded_cleanly
                         && messages.iter().any(|m| {
@@ -954,10 +958,14 @@ async fn run_single_curator_job(job: CuratorJobPayload) {
                                 })
                         });
 
+                    let active_skill_had_friction =
+                        !activated_skills.is_empty() && (had_turn_errors || turn_recovered);
+
                     let allow_skill_synthesis = explicit_skill_intent
                         || (!agent_curated_skill_in_turn
                             && turn_succeeded_cleanly
                             && (turn_recovered
+                                || active_skill_had_friction
                                 || created_vault_deliverable
                                 || tool_count >= 5));
 
@@ -1014,6 +1022,13 @@ async fn run_single_curator_job(job: CuratorJobPayload) {
                         );
                     });
 
+                    let _ = (!existing_soul.is_empty()).then(|| {
+                        prompt_content.push_str(&format!(
+                            "Existing Agent Soul & Persona (SOUL.md):\n{}\n\n",
+                            existing_soul
+                        ));
+                    });
+
                     let existing_user_profile = crate::agent::skills::load_user_profile();
                     let _ = (!existing_user_profile.is_empty()).then(|| {
                         prompt_content.push_str(&format!(
@@ -1025,6 +1040,31 @@ async fn run_single_curator_job(job: CuratorJobPayload) {
                     let _ = (!existing_memory.is_empty()).then(|| {
                         prompt_content
                             .push_str(&format!("Existing Memory:\n{}\n\n", existing_memory));
+                    });
+
+                    let _ = (allow_skill_synthesis && !activated_skills.is_empty()).then(|| {
+                        let mut active_block = String::new();
+                        for sname in &activated_skills {
+                            let _ = crate::agent::skills::find_skill_by_exact_name(
+                                sname,
+                                profile_name.as_deref(),
+                            )
+                            .ok()
+                            .flatten()
+                            .map(|sk| {
+                                let clipped: String = sk.content.chars().take(2400).collect();
+                                active_block.push_str(&format!(
+                                    "--- Active Skill: {} ---\n{}\n\n",
+                                    sk.name, clipped
+                                ));
+                            });
+                        }
+                        let _ = (!active_block.is_empty()).then(|| {
+                            prompt_content.push_str(&format!(
+                                "[Active Skills Loaded During This Turn (use operation='patch' with exact old_text when refining an outdated step)]:\n{}\n",
+                                active_block
+                            ));
+                        });
                     });
 
                     let existing_skills_desc = match allow_skill_synthesis {
@@ -1179,6 +1219,31 @@ async fn run_single_curator_job(job: CuratorJobPayload) {
                                         let _ = was_salvaged.then(|| {
                                             tracing::info!(session = %session_key, "Successfully salvaged curator learnings via fallback parser");
                                         });
+
+                                        let _ = (!review.soul_persona.trim().is_empty()).then(
+                                            || match crate::agent::core_memory::apply_soul_mutations(
+                                                &review.soul_persona,
+                                                &[],
+                                            ) {
+                                                Err(e) => {
+                                                    tracing::warn!(session = %session_key, error = %e, "Failed to update SOUL.md persona");
+                                                }
+                                                Ok(evicted) => {
+                                                    archive_facts_to_semantic_graph(
+                                                        &session_key,
+                                                        &evicted,
+                                                    );
+                                                    tracing::info!(session = %session_key, "Self-improvement curator: updated SOUL.md persona.");
+                                                    crate::channels::send_session_notice(
+                                                        &session_key,
+                                                        &format!(
+                                                            "{}◇ [Self-Improvement] Agent persona updated (~/.openz/SOUL.md).{}",
+                                                            AURA_BLUE, COLOR_RESET
+                                                        ),
+                                                    );
+                                                }
+                                            },
+                                        );
 
                                         let _ = (!review.user_preferences.trim().is_empty()).then(
                                             || match crate::agent::core_memory::apply_user_profile_mutations(

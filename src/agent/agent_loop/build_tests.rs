@@ -189,13 +189,8 @@ fn workflow_notice_is_emitted_once_per_turn() {
 }
 
 #[test]
-fn skill_notice_is_emitted_once_per_turn_and_thresholded() {
-    let mut seen = std::collections::HashSet::new();
-
+fn skill_notice_threshold_constant_is_high_confidence() {
     assert!(MIN_SKILL_NOTICE_SCORE >= 3.0);
-    assert!(should_emit_skill_notice(&mut seen, "rust-pro"));
-    assert!(!should_emit_skill_notice(&mut seen, "rust-pro"));
-    assert!(should_emit_skill_notice(&mut seen, "frontend-design"));
 }
 
 #[test]
@@ -608,31 +603,28 @@ async fn normal_prompts_never_word_match_pin_skills_while_explicit_slash_skill_p
             )
             .unwrap();
 
-            let mut notices = std::collections::HashSet::new();
-            let hii_part = format_explicit_skill_part("ws:test", "hii", None, &mut notices);
-            assert!(hii_part.is_empty(), "'hii' must never auto-pin any skill");
-            assert!(notices.is_empty());
-
-            let whats_new_part =
-                format_explicit_skill_part("ws:test", "so whats new", None, &mut notices);
-            assert!(
-                whats_new_part.is_empty(),
-                "'so whats new' must never auto-pin any skill"
-            );
-            assert!(notices.is_empty());
-
             let catalog = build_static_available_skills_catalog(None);
             assert!(catalog.contains("<available_skills>"));
             assert!(catalog.contains("name=\"desktop_notify_demo\""));
+            assert!(catalog.contains("action=\"fork\""));
 
-            let explicit_part = format_explicit_skill_part(
-                "ws:test",
-                "/skill:desktop_notify_demo alert build done",
-                None,
-                &mut notices,
+            let pinned_turn_1 =
+                build_session_pinned_available_skills_catalog("ws:kv_pin_test", None);
+            crate::agent::skills::save_skill(
+                "mid_session_new_skill",
+                "---\nname: mid_session_new_skill\ndescription: Added mid session\n---\n# New\nSteps.",
+            )
+            .unwrap();
+            let pinned_turn_2 =
+                build_session_pinned_available_skills_catalog("ws:kv_pin_test", None);
+            assert_eq!(
+                pinned_turn_1, pinned_turn_2,
+                "session-pinned <available_skills> must stay byte-identical across turns for KV-cache stability"
             );
-            assert!(explicit_part.contains("=== Active Skill: desktop_notify_demo ==="));
-            assert!(notices.contains("desktop_notify_demo"));
+
+            invalidate_session_skill_catalog("ws:kv_pin_test");
+            let refreshed = build_session_pinned_available_skills_catalog("ws:kv_pin_test", None);
+            assert!(refreshed.contains("name=\"mid_session_new_skill\""));
         })
         .await;
 

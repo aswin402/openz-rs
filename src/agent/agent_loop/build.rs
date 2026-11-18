@@ -52,8 +52,17 @@ pub(super) fn subagent_profile_name(session_key: &str) -> Option<&str> {
     }
 }
 
-fn should_emit_skill_notice(seen: &mut HashSet<String>, skill_name: &str) -> bool {
-    seen.insert(skill_name.to_string())
+static SESSION_SKILL_CATALOG_CACHE: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::HashMap<String, String>>,
+> = std::sync::OnceLock::new();
+
+pub(crate) fn invalidate_session_skill_catalog(session_key: &str) {
+    let prefix = format!("{session_key}::");
+    let _ = SESSION_SKILL_CATALOG_CACHE.get().map(|mutex| {
+        let _ = mutex.lock().map(|mut map| {
+            map.retain(|k, _| !k.starts_with(&prefix));
+        });
+    });
 }
 
 pub(crate) fn build_static_available_skills_catalog(profile_name: Option<&str>) -> String {
@@ -64,18 +73,22 @@ pub(crate) fn build_static_available_skills_catalog(profile_name: Option<&str>) 
         _ => {
             let mut out = String::from(
                 "\n\n[Available Procedural Skills — LLM-Native Progressive Disclosure]\n\
-                 Inspect <available_skills> below using semantic intent reasoning (never rigid word matching). \
-                 When — and ONLY when — the user's current task genuinely matches a skill's description, \
-                 call `curate_skill(action=\"view\", skill_name=\"<name>\")` (or alias `skill_view`) BEFORE executing \
-                 the task to load its full SKILL.md instructions and bundled `scripts/` or `references/`. \
-                 NEVER load skills for greetings (\"hi\", \"hello\"), acknowledgments (\"ok\", \"thanks\"), \
-                 status checks (\"what's new\"), or unrelated questions.\n\
+                 Inspect <available_skills> below using semantic reasoning (never rigid word matching). \
+                 When — and ONLY when — the user's current task genuinely matches a skill's description:\n\
+                 - For standard inline skills, call `curate_skill(action=\"view\", skill_name=\"<name>\")` to load SKILL.md, resolved `skill_dir`, and bundled `scripts/` or `references/` (auto-mounting `allowed-tools`).\n\
+                 - For skills tagged `context=\"fork\"` (or any heavy multi-step research/audit skill), call `curate_skill(action=\"fork\", skill_name=\"<name>\", task=\"<concrete goal>\")` FIRST (instead of running those read/search steps inline) so OpenZ's Orchestrator runs the skill inside its isolated subagent and returns only the distilled result.\n\
+                 NEVER load skills for greetings, acknowledgments, status checks, or unrelated questions.\n\
                  <available_skills>\n",
             );
             for item in &catalog {
+                let fork_attrs = match (item.context == "fork", item.agent.as_deref()) {
+                    (true, Some(ag)) => format!(" context=\"fork\" agent=\"{ag}\""),
+                    (true, None) => " context=\"fork\"".to_string(),
+                    (false, _) => String::new(),
+                };
                 out.push_str(&format!(
-                    "  <skill name=\"{}\" scope=\"{}\">{}</skill>\n",
-                    item.name, item.scope, item.description
+                    "  <skill name=\"{}\" scope=\"{}\"{}>{}</skill>\n",
+                    item.name, item.scope, fork_attrs, item.description
                 ));
             }
             let _ = (external_count > 0).then(|| {
@@ -89,40 +102,34 @@ pub(crate) fn build_static_available_skills_catalog(profile_name: Option<&str>) 
     }
 }
 
-pub(crate) fn format_explicit_skill_part(
+pub(crate) fn build_session_pinned_available_skills_catalog(
     session_key: &str,
-    user_content: &str,
     profile_name: Option<&str>,
-    seen_skill_notices: &mut HashSet<String>,
 ) -> String {
-    let explicit_name = match crate::agent::skills::ranker::extract_explicit_skill_invocation(user_content) {
-        Some(name) => name,
-        None => return String::new(),
-    };
-    let skill = match crate::agent::skills::find_skill_by_exact_name(&explicit_name, profile_name)
-        .ok()
-        .flatten()
-    {
-        Some(found) => found,
-        None => return String::new(),
-    };
-
-    crate::agent::skills::record_skill_activation(&skill.name, profile_name);
-    let _ = should_emit_skill_notice(seen_skill_notices, &skill.name).then(|| {
-        let notice = format!("◇ Skill used: {}", skill.name);
-        crate::channels::send_session_notice(session_key, &notice);
-        crate::channels::websocket::publish_activity_notice(
-            session_key,
-            "skill",
-            "Skill used",
-            skill.name.clone(),
-        );
-    });
-
-    format!(
-        "\n\nHere is the explicitly requested procedural skill for this turn:\n=== Active Skill: {} ===\n{}\n\n",
-        skill.name, skill.content
-    )
+    let clean_session = session_key.trim();
+    match clean_session.is_empty() {
+        true => build_static_available_skills_catalog(profile_name),
+        false => {
+            let cache_key = format!("{}::{}", clean_session, profile_name.unwrap_or(""));
+            let cache = SESSION_SKILL_CATALOG_CACHE
+                .get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+            let existing = cache
+                .lock()
+                .ok()
+                .and_then(|map| map.get(&cache_key).cloned());
+            match existing {
+                Some(pinned) => pinned,
+                None => {
+                    let rendered = build_static_available_skills_catalog(profile_name);
+                    let _ = cache.lock().map(|mut map| {
+                        let _ = (map.len() >= 128).then(|| map.clear());
+                        map.insert(cache_key, rendered.clone());
+                    });
+                    rendered
+                }
+            }
+        }
+    }
 }
 
 pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<TurnState> {
@@ -138,13 +145,9 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         "Here is the long-term memory of key facts, preferences, and decisions from this session:",
     );
     let profile_name = subagent_profile_name(ctx.session_key);
-    let available_skills_catalog = build_static_available_skills_catalog(profile_name);
-    let skills_part = format_explicit_skill_part(
-        ctx.session_key,
-        ctx.user_content,
-        profile_name,
-        &mut ctx.skill_notice_names,
-    );
+    let available_skills_catalog =
+        build_session_pinned_available_skills_catalog(ctx.session_key, profile_name);
+    let skills_part = String::new();
     let vision_instruction = (!crate::providers::model_supports_vision(&config.agents.defaults.model))
         .then_some(" If a message contains a markdown image link (e.g. ![](file://...)) and you need to analyze or describe the image, you MUST call the direct 'vision_agent' tool to see and report on the image contents. Do not route image analysis through generic 'delegate_task' when the specialized 'vision_agent' tool is available; generic delegation may select a non-vision model.")
         .unwrap_or("");

@@ -174,18 +174,19 @@ pub(crate) fn evaluate_in_loop_skill_nudge(
             .unwrap_or("")
             .trim()
             .to_ascii_lowercase();
-        let target_skill = ["skill_name", "skillName", "name", "skill"]
+        let target_skill = ["skill_name", "skillName", "name", "skill", "id"]
             .iter()
             .find_map(|k| tool_args.get(*k).and_then(|v| v.as_str()))
-            .map(str::trim)
+            .map(crate::agent::skills::sanitize_skill_name)
             .filter(|s| !s.is_empty());
         match act.as_str() {
-            "view" | "inspect" | "get" | "read" | "read_ref" | "" => {
+            "view" | "inspect" | "get" | "read" | "read_ref" | "fork" | "execute" | "run" | "" => {
                 let _ = target_skill.map(|name| {
-                    active_skill_names.insert(name.to_string());
+                    active_skill_names.insert(name);
                 });
             }
-            "add" | "save" | "create" | "patch" | "edit" | "write_file" => {
+            "add" | "save" | "create" | "patch" | "edit" | "write_file" | "remove_file"
+            | "delete" | "rollback" | "restore" => {
                 run.curated_skill_in_turn = true;
             }
             _ => {}

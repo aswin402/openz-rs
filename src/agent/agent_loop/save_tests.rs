@@ -135,6 +135,9 @@ fn coalescing_curator_queue_retains_latest_concurrent_snapshot() {
         provider: provider.clone(),
         messages: Vec::new(),
         tools_used: Vec::new(),
+        activated_skills: Vec::new(),
+        mutated_skill_in_turn: false,
+        had_turn_errors: false,
         turn_succeeded_cleanly: true,
         turn_recovered: false,
     };
@@ -173,6 +176,7 @@ fn in_loop_skill_nudge_fires_on_active_skill_recovery_and_milestone() {
         config,
         workflow_notice_names: std::collections::HashSet::new(),
         skill_notice_names: std::collections::HashSet::new(),
+        mutated_skill_in_turn: false,
     };
     let mut run = super::super::run::turn::RunContext::new(&ctx);
     let mut active_skills = std::collections::HashSet::new();

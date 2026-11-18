@@ -71,8 +71,65 @@ pub(crate) fn leaf_tool_concurrency_gate() -> &'static tokio::sync::RwLock<()> {
     LEAF_TOOL_CONCURRENCY_GATE.get_or_init(|| tokio::sync::RwLock::new(()))
 }
 
-fn is_delegating_or_batch_tool(tool_name: &str, metadata: &crate::tools::ToolMetadata) -> bool {
-    metadata.domain == "subagent" || tool_name == "tool_catalog"
+fn is_non_mutating_curate_skill_call(arguments: &serde_json::Value) -> bool {
+    let action = ["action", "command", "operation", "subcommand", "mode"]
+        .iter()
+        .find_map(|key| arguments.get(*key).and_then(serde_json::Value::as_str))
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let has_content_payload = [
+        "file_content",
+        "fileContent",
+        "content",
+        "instructions",
+        "body",
+        "text",
+        "new_text",
+        "new_string",
+    ]
+    .iter()
+    .any(|key| arguments.get(*key).is_some());
+
+    match action.as_str() {
+        "" => !has_content_payload,
+        "list"
+        | "ls"
+        | "show"
+        | "search"
+        | "find"
+        | "query"
+        | "view"
+        | "inspect"
+        | "get"
+        | "read"
+        | "fork"
+        | "execute"
+        | "run"
+        | "read_ref"
+        | "read_reference"
+        | "ref"
+        | "list_archive"
+        | "archive_list"
+        | "archived"
+        | "archive"
+        | "history"
+        | "revisions"
+        | "versions"
+        | "snapshots" => true,
+        _ => false,
+    }
+}
+
+pub(crate) fn is_delegating_or_batch_tool(
+    tool_name: &str,
+    metadata: &crate::tools::ToolMetadata,
+    arguments: &serde_json::Value,
+) -> bool {
+    let canonical = crate::tools::canonical_tool_name(tool_name);
+    metadata.domain == "subagent"
+        || canonical == "tool_catalog"
+        || (canonical == "curate_skill" && is_non_mutating_curate_skill_call(arguments))
 }
 
 pub(crate) fn is_parallel_safe_tool_call(
@@ -253,8 +310,11 @@ impl<'a> ToolExecutionPipeline<'a> {
     async fn run_with_spinner(&self, timeout_secs: u64) -> anyhow::Result<serde_json::Value> {
         let tool_timeout = std::time::Duration::from_secs(timeout_secs);
         let normalized = crate::tools::normalize_tool_args(&self.params.call.arguments);
-        let skip_gate =
-            is_delegating_or_batch_tool(&self.params.call.name, self.params.metadata);
+        let skip_gate = is_delegating_or_batch_tool(
+            &self.params.call.name,
+            self.params.metadata,
+            &normalized,
+        );
         let requires_exclusive_gate = self.params.metadata.writes_disk
             || crate::tools::metadata::is_state_changing_tool_call(
                 &self.params.call.name,

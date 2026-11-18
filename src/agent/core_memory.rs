@@ -365,3 +365,65 @@ pub fn apply_global_memory_mutations(
 pub fn update_global_memory(new_facts: &str) -> Result<Vec<String>> {
     apply_global_memory_mutations(new_facts, &[])
 }
+
+fn parse_existing_soul_lines(raw: &str) -> Vec<String> {
+    let mut bullets: Vec<String> = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        let extracted = match (trimmed.is_empty(), trimmed.starts_with('#')) {
+            (true, _) | (_, true) => None,
+            (false, false) => Some(clean_bullet_line(trimmed).unwrap_or(trimmed)),
+        };
+        let _ = extracted
+            .filter(|t| !t.is_empty() && *t != "Durable agent identity, tone, communication style, and persona invariants.")
+            .filter(|t| !bullets.iter().any(|b| b.eq_ignore_ascii_case(t)))
+            .map(|t| bullets.push(t.to_string()));
+    }
+    bullets
+}
+
+pub fn apply_soul_mutations(
+    inline_traits: &str,
+    structured_ops: &[MemoryBulletMutation],
+) -> Result<Vec<String>> {
+    let has_inline = !inline_traits.trim().is_empty();
+    let has_ops = !structured_ops.is_empty();
+    match has_inline || has_ops {
+        false => return Ok(Vec::new()),
+        true => {}
+    }
+
+    let lock = CORE_MEMORY_WRITE_LOCK.get_or_init(|| Mutex::new(()));
+    let _guard = lock.lock().ok();
+
+    let path = get_soul_path();
+    let _ = path.parent().map(fs::create_dir_all);
+    let existing = path
+        .is_file()
+        .then(|| fs::read_to_string(&path).ok())
+        .flatten()
+        .unwrap_or_default();
+    let mut bullets = parse_existing_soul_lines(&existing);
+
+    for line in inline_traits.trim().lines() {
+        let trimmed = line.trim();
+        let _ = (!trimmed.is_empty()).then(|| {
+            let mut_op = parse_inline_line_as_mutation(trimmed);
+            apply_single_mutation(&mut bullets, &mut_op);
+        });
+    }
+    for op in structured_ops {
+        apply_single_mutation(&mut bullets, op);
+    }
+
+    let header = "# Core Agent Soul & Persona\n\nDurable agent identity, tone, communication style, and persona invariants.\n\n## Persona\n";
+    let (rendered, evicted) =
+        render_bounded_markdown_section(header, &bullets, MAX_SOUL_CHARS);
+    fs::write(path, rendered)?;
+    Ok(evicted)
+}
+
+pub fn update_soul_profile(new_traits: &str) -> Result<()> {
+    let _ = apply_soul_mutations(new_traits, &[])?;
+    Ok(())
+}

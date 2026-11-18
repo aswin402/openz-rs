@@ -178,7 +178,7 @@ pub(crate) fn register_core_tools(
         crate::tools::self_management::RequestToolScopeTool::new(registry.clone()),
     ));
     registry.register(std::sync::Arc::new(
-        crate::tools::self_management::CurateSkillTool,
+        crate::tools::self_management::CurateSkillTool::new(registry.clone()),
     ));
     registry.register(std::sync::Arc::new(
         crate::tools::self_management::OptimizeToolScopeTool::new(registry.clone()),

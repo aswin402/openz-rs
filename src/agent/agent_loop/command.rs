@@ -2,8 +2,6 @@ use super::{AgentLoop, TurnContext, TurnState};
 use crate::tools::subagent::{CancellationToken, DelegateTaskTool};
 use anyhow::Result;
 
-use super::build::subagent_profile_name;
-
 fn handle_audit(ctx: &mut TurnContext<'_>) {
     ctx.final_content = match ctx.session.verify_hash_chain() {
         Ok(_) => {
@@ -77,70 +75,6 @@ async fn handle_memory(
     Ok(())
 }
 
-fn handle_skills(ctx: &mut TurnContext<'_>, parts: &[&str], profile_name: Option<&str>) {
-    ctx.final_content = match parts.get(1).copied() {
-        Some("clear") => match crate::agent::skills::clear_skills() {
-            Err(e) => format!("Error clearing skills: {}", e),
-            Ok(()) => "All agent skills have been cleared.".to_string(),
-        },
-        _ => match crate::agent::skills::load_skills_with_profile(profile_name) {
-            Ok(skills) => match skills.is_empty() {
-                true => "No active skills recorded yet.".to_string(),
-                false => {
-                    let list: Vec<String> =
-                        skills.iter().map(|s| format!("* {}", s.name)).collect();
-                    format!("=== Agent Skills ===\n{}", list.join("\n"))
-                }
-            },
-            Err(e) => format!("Error loading skills: {}", e),
-        },
-    };
-}
-
-fn handle_skill(ctx: &mut TurnContext<'_>, parts: &[&str], profile_name: Option<&str>) {
-    ctx.final_content = match parts.get(1).copied() {
-        None => "Usage: /skill view <name>, /skill add <name> <content>, /skill delete <name>"
-            .to_string(),
-        Some("view") => match parts.get(2).copied() {
-            None => "Usage: /skill view <name>".to_string(),
-            Some(name) => match crate::agent::skills::load_skills_with_profile(profile_name) {
-                Ok(skills) => match skills.iter().find(|s| s.name == name) {
-                    Some(skill) => format!("=== Skill: {} ===\n{}", skill.name, skill.content),
-                    None => format!("Skill '{}' not found.", name),
-                },
-                Err(e) => format!("Error: {}", e),
-            },
-        },
-        Some("add" | "set") => match parts.len() >= 4 {
-            false => "Usage: /skill add <name> <content>".to_string(),
-            true => {
-                let name = parts[2];
-                let content = parts[3..].join(" ");
-                let res = match profile_name {
-                    Some(prof) => crate::agent::skills::save_subagent_skill(prof, name, &content),
-                    None => crate::agent::skills::save_skill(name, &content),
-                };
-                match res {
-                    Err(e) => format!("Error saving skill: {}", e),
-                    Ok(()) => format!("Skill '{}' added/updated successfully.", name),
-                }
-            }
-        },
-        Some("delete" | "remove") => match parts.get(2).copied() {
-            None => "Usage: /skill delete <name>".to_string(),
-            Some(name) => match crate::agent::skills::delete_skill_with_profile(name, profile_name)
-            {
-                Err(e) => format!("Error deleting skill: {}", e),
-                Ok(()) => format!("Skill '{}' deleted successfully.", name),
-            },
-        },
-        Some(_) => {
-            "Unknown skill command. Options: /skill view <name>, /skill add <name> <content>, /skill delete <name>"
-                .to_string()
-        }
-    };
-}
-
 async fn handle_delegate(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>, parts: &[&str]) {
     match parts.len() >= 2 {
         false => {
@@ -184,11 +118,10 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
         crate::config::schema::Config::ui_surface_for_session_key(ctx.session_key) == "webui";
     match (!is_webui, ctx.user_content.starts_with('/')) {
         (true, true) => {
-            let profile_name = subagent_profile_name(ctx.session_key);
             let parts: Vec<&str> = ctx.user_content.split_whitespace().collect();
             match parts.first().copied() {
                 Some("/help") => {
-                    ctx.final_content = "OpenZ Rebranded AI Agent Command Menu:\n/help - Show this menu\n/history - Show history\n/clear - Reset session history\n/status - Print active model and configuration info\n/memory - Show or manage agent memory (/memory, /memory clear, /memory add <fact>)\n/skills - List active skills (/skills, /skills clear)\n/skill - Manage skills (/skill view <name>, /skill add <name> <content>, /skill delete <name>)\n/audit - Cryptographically verify session message chain integrity\n/delegate <goal> - Directly delegate a task to a focused subagent".to_string();
+                    ctx.final_content = "OpenZ Rebranded AI Agent Command Menu:\n/help - Show this menu\n/history - Show history\n/clear - Reset session history\n/status - Print active model and configuration info\n/memory - Show or manage agent memory (/memory, /memory clear, /memory add <fact>)\n/audit - Cryptographically verify session message chain integrity\n/delegate <goal> - Directly delegate a task to a focused subagent".to_string();
                     Ok(TurnState::Done)
                 }
                 Some("/history") => {
@@ -201,6 +134,7 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 }
                 Some("/clear" | "/restart") => {
                     ctx.session.messages.clear();
+                    crate::agent::agent_loop::build::invalidate_session_skill_catalog(ctx.session_key);
                     loop_ref.session_manager.save(&ctx.session).await?;
                     ctx.final_content = "Conversation history has been cleared.".to_string();
                     Ok(TurnState::Done)
@@ -228,14 +162,6 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 }
                 Some("/memory") => {
                     handle_memory(loop_ref, ctx, &parts).await?;
-                    Ok(TurnState::Done)
-                }
-                Some("/skills") => {
-                    handle_skills(ctx, &parts, profile_name);
-                    Ok(TurnState::Done)
-                }
-                Some("/skill") => {
-                    handle_skill(ctx, &parts, profile_name);
                     Ok(TurnState::Done)
                 }
                 Some("/delegate" | "/subagent") => {

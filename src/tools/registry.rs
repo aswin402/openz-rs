@@ -632,6 +632,40 @@ impl ToolRegistry {
                     .tool_allowed_by_active_policy_for_tool(tool.as_ref())
                     .then_some(tool);
             }
+            "curate_skill" => {
+                let tool: Arc<dyn Tool> = match self.context.as_ref() {
+                    Some((config, provider, session_manager)) => {
+                        let parent_tools = self.collect_parent_tools_excluding(&[
+                            "delegate_task",
+                            "parallel_research",
+                            "evaluator_optimizer_loop",
+                            "orchestrate_workflow",
+                            "curate_skill",
+                            "send_remote_input",
+                        ]);
+                        let orch = crate::tools::orchestrator::OrchestrateWorkflowTool::new(
+                            config.clone(),
+                            provider.clone(),
+                            session_manager.clone(),
+                            parent_tools,
+                            Self::active_cancellation_token(),
+                            self.active_capability_policy(),
+                        );
+                        Arc::new(
+                            crate::tools::self_management::CurateSkillTool::with_orchestrator(
+                                self.clone(),
+                                orch,
+                            ),
+                        )
+                    }
+                    None => Arc::new(crate::tools::self_management::CurateSkillTool::new(
+                        self.clone(),
+                    )),
+                };
+                return self
+                    .tool_allowed_by_active_policy_for_tool(tool.as_ref())
+                    .then_some(tool);
+            }
             _ => {}
         }
 

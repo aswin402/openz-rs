@@ -10,7 +10,7 @@ async fn test_curate_skills() {
 
     CONFIG_DIR_OVERRIDE
         .scope(temp_dir.clone(), async {
-            let tool = CurateSkillTool;
+            let tool = CurateSkillTool::default();
 
             // 1. Delete skill if exists
             let _ = tool
@@ -70,7 +70,7 @@ async fn test_curate_skills_aliases_and_case() {
 
     CONFIG_DIR_OVERRIDE
         .scope(temp_dir.clone(), async {
-            let tool = CurateSkillTool;
+            let tool = CurateSkillTool::default();
 
             let _ = tool
                 .call(&serde_json::json!({
@@ -136,7 +136,7 @@ async fn test_curate_skills_infers_add_without_explicit_action() {
 
     CONFIG_DIR_OVERRIDE
         .scope(temp_dir.clone(), async {
-            let tool = CurateSkillTool;
+            let tool = CurateSkillTool::default();
 
             let res = tool
                 .call(&serde_json::json!({
@@ -166,7 +166,7 @@ async fn test_curate_skills_snapshot_history_and_rollback() {
 
     CONFIG_DIR_OVERRIDE
         .scope(temp_dir.clone(), async {
-            let tool = CurateSkillTool;
+            let tool = CurateSkillTool::default();
 
             let _ = tool
                 .call(&serde_json::json!({
@@ -235,7 +235,7 @@ async fn test_curate_skill_view_patch_and_read_ref() {
 
     CONFIG_DIR_OVERRIDE
         .scope(temp_dir.clone(), async {
-            let tool = CurateSkillTool;
+            let tool = CurateSkillTool::default();
 
             let view_res = tool
                 .call(&serde_json::json!({
@@ -298,7 +298,7 @@ async fn test_curate_skill_supporting_files_and_session_search_fts5() {
 
     CONFIG_DIR_OVERRIDE
         .scope(temp_dir.clone(), async {
-            let skill_tool = CurateSkillTool;
+            let skill_tool = CurateSkillTool::default();
             skill_tool
                 .call(&serde_json::json!({
                     "action": "add",
@@ -385,4 +385,120 @@ async fn test_curate_skill_supporting_files_and_session_search_fts5() {
         .await;
 
     let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[tokio::test]
+async fn test_curate_skill_view_resolves_skill_dir_vars_and_mounts_allowed_tools() {
+    let temp_dir = std::env::temp_dir().join(format!(
+        "openz_skills_vars_mount_{}",
+        uuid::Uuid::new_v4()
+    ));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+
+    CONFIG_DIR_OVERRIDE
+        .scope(temp_dir.clone(), async {
+            let registry = crate::tools::ToolRegistry::new();
+            let skill_tool = CurateSkillTool::new(registry.clone());
+
+            skill_tool
+                .call(&serde_json::json!({
+                    "action": "add",
+                    "skill_name": "portable_audit_bundle",
+                    "content": "---\nname: portable_audit_bundle\ndescription: Portable bundle with script vars\ncontext: fork\nagent: Explore\nallowed-tools:\n  - openmedia_rasterize_svg\n  - Bash\n---\n# Portable Audit\nExecute ${SKILL_DIR}/scripts/audit.sh on $ARGUMENTS (base: {baseDir})."
+                }))
+                .await
+                .unwrap();
+
+            let view_res = skill_tool
+                .call(&serde_json::json!({
+                    "action": "view",
+                    "skill_name": "portable_audit_bundle",
+                    "task": "src/agent/skills.rs"
+                }))
+                .await
+                .unwrap();
+
+            assert_eq!(view_res["success"].as_bool(), Some(true));
+            assert_eq!(view_res["context"].as_str(), Some("fork"));
+            assert_eq!(view_res["agent"].as_str(), Some("researcher"));
+            let skill_dir = view_res["skill_dir"].as_str().expect("skill_dir present");
+            assert!(skill_dir.ends_with("portable_audit_bundle"));
+
+            let rendered = view_res["content"].as_str().unwrap();
+            assert!(rendered.contains(&format!("{skill_dir}/scripts/audit.sh")));
+            assert!(rendered.contains("on src/agent/skills.rs"));
+            assert!(!rendered.contains("${SKILL_DIR}"));
+            assert!(!rendered.contains("{baseDir}"));
+
+            let (mounted_tools, _) = registry.current_turn_scope();
+            assert!(mounted_tools.contains(&"openmedia_rasterize_svg".to_string()));
+            assert!(mounted_tools.contains(&"exec_command".to_string()));
+
+            // Patching using the expanded skill_dir returned by `view` succeeds on 1st try
+            // AND preserves portable ${SKILL_DIR} on disk!
+            let patch_res = skill_tool
+                .call(&serde_json::json!({
+                    "action": "patch",
+                    "skill_name": "portable_audit_bundle",
+                    "old_text": format!("Execute {skill_dir}/scripts/audit.sh"),
+                    "content": format!("Execute {skill_dir}/scripts/audit.sh --strict")
+                }))
+                .await
+                .unwrap();
+            let patched_raw = patch_res["content"].as_str().unwrap();
+            assert!(patched_raw.contains("Execute ${SKILL_DIR}/scripts/audit.sh --strict"));
+        })
+        .await;
+
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_curate_skill_fork_skips_leaf_concurrency_gate_deadlock() {
+    let meta = crate::tools::ToolMetadata::infer("curate_skill");
+    assert!(
+        crate::agent::agent_loop::run::tool_pipeline::is_delegating_or_batch_tool(
+            "curate_skill",
+            &meta,
+            &serde_json::json!({
+                "action": "fork",
+                "skill_name": "rust_unsafe_audit_forked",
+                "task": "src/logs/query.rs"
+            }),
+        )
+    );
+    assert!(
+        crate::agent::agent_loop::run::tool_pipeline::is_delegating_or_batch_tool(
+            "curate_skill",
+            &meta,
+            &serde_json::json!({
+                "action": "view",
+                "skill_name": "rust_unsafe_audit_forked",
+                "task": "src/logs/query.rs"
+            }),
+        )
+    );
+    assert!(
+        !crate::agent::agent_loop::run::tool_pipeline::is_delegating_or_batch_tool(
+            "curate_skill",
+            &meta,
+            &serde_json::json!({
+                "action": "patch",
+                "skill_name": "port_scanner_healthcheck",
+                "old_text": "old",
+                "content": "new"
+            }),
+        )
+    );
+    assert!(
+        !crate::agent::agent_loop::run::tool_pipeline::is_delegating_or_batch_tool(
+            "curate_skill",
+            &meta,
+            &serde_json::json!({
+                "action": "add",
+                "skill_name": "demo_skill",
+                "content": "# Demo"
+            }),
+        )
+    );
 }
