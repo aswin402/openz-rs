@@ -146,7 +146,9 @@
       "docs_mcp (docs_list_docsets, docs_install_docset, docs_search_docs, docs_read_doc_page, docs_search_rust_crate, docs_read_rust_docs)",
       "self_management (diagnose_tool, tool_catalog, openz_inventory, manage_servers, workflow_memory, curate_skill, optimize_tool_scope, manage_config, diagnose_system, manage_sessions, manage_backups)",
       "opencaveman (opencaveman)",
-      "browser (browser)"
+      "browser (browser)",
+      "lsp_client (lsp_query)",
+      "test_runner (test_runner)"
     ]
   },
   "project": {
@@ -155,7 +157,7 @@
     "package_manager": "cargo",
     "runtime": "rust",
     "stack": "rust-cli",
-    "version": "0.0.349"
+    "version": "0.0.350"
   },
   "scripts": {
     "build": "cargo build",

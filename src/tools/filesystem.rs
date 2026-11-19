@@ -1952,42 +1952,86 @@ impl Tool for ZenflowEditTool {
     }
 
     fn description(&self) -> &str {
-        "Edit a file transactionally. Takes a git snapshot before writing. If compilation/tests fail, it attempts to self-heal using the LLM. If healing fails, it automatically rolls back the changes."
+        "Edit one or multiple files transactionally with in-memory rollback snapshots. Verifies compilation/tests via compile_command, attempts LLM self-healing on errors, and atomically rolls back every file in the batch when verification fails."
     }
 
     fn parameters(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "path": { "type": "string", "description": "Path to the file to edit." },
-                "content": { "type": "string", "description": "Complete new content to write to the file." },
-                "compile_command": { "type": "string", "description": "Command to run to verify the build/test (e.g. 'cargo check', 'npm run build', 'pytest')." }
+                "path": { "type": "string", "description": "Path to the file to edit (single-file mode)." },
+                "content": { "type": "string", "description": "Complete new content to write to the file (single-file mode)." },
+                "edits": {
+                    "type": "array",
+                    "description": "Optional multi-file atomic batch [{path, content}] verified together against compile_command.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": { "type": "string" },
+                            "content": { "type": "string" }
+                        },
+                        "required": ["path", "content"]
+                    }
+                },
+                "compile_command": { "type": "string", "description": "Command to run to verify the build/test (e.g. 'cargo check', 'just check openz', 'bun test', 'npm run build', 'pytest')." }
             },
-            "required": ["path", "content", "compile_command"]
+            "required": ["compile_command"]
         })
     }
 
     async fn call(&self, arguments: &serde_json::Value) -> Result<serde_json::Value> {
-        let path_str = arguments
-            .get("path")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'path' parameter"))?;
-        let content = arguments
-            .get("content")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow!("Missing 'content' parameter"))?;
         let compile_cmd = arguments
             .get("compile_command")
+            .or_else(|| arguments.get("compileCommand"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow!("Missing 'compile_command' parameter"))?;
 
-        let path = resolve_path(path_str);
-        crate::config::loader::verify_safe_path(&path)?;
+        let mut batch: Vec<(std::path::PathBuf, String)> = Vec::new();
 
-        crate::core::heal::run_transactional_heal_edit(
+        match arguments.get("edits").and_then(|v| v.as_array()) {
+            Some(items) => {
+                for item in items {
+                    let item_path = item
+                        .get("path")
+                        .or_else(|| item.get("file_path"))
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| anyhow!("Each entry in 'edits' requires a 'path' string"))?;
+                    let item_content = item
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| {
+                            anyhow!("Each entry in 'edits' requires a 'content' string")
+                        })?;
+                    let resolved = resolve_path(item_path);
+                    crate::config::loader::verify_safe_path(&resolved)?;
+                    batch.push((resolved, item_content.to_string()));
+                }
+            }
+            None => {}
+        }
+
+        match (
+            arguments
+                .get("path")
+                .or_else(|| arguments.get("file_path"))
+                .and_then(|v| v.as_str()),
+            arguments.get("content").and_then(|v| v.as_str()),
+        ) {
+            (Some(path_str), Some(content_str)) => {
+                let resolved = resolve_path(path_str);
+                crate::config::loader::verify_safe_path(&resolved)?;
+                batch.push((resolved, content_str.to_string()));
+            }
+            _ => {}
+        }
+
+        (!batch.is_empty()).then_some(()).ok_or_else(|| {
+            anyhow!("zenflow_edit requires either ('path' and 'content') or a non-empty 'edits' array")
+        })?;
+
+        crate::core::heal::run_transactional_multi_heal_edit(
             self.provider.as_ref(),
-            &path,
-            content,
+            &batch,
             compile_cmd,
         )
         .await

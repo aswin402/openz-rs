@@ -160,6 +160,8 @@ pub(crate) fn compatibility_canonical_name(requested: &str) -> Option<&'static s
         "inventory" | "runtime_inventory" => Some("openz_inventory"),
         "catalog" | "list_tools" | "tool_search" | "search_tools" | "find_tools"
         | "discover_tools" => Some("tool_catalog"),
+        "lsp" | "go_to_definition" | "find_references" | "type_hover" => Some("lsp_query"),
+        "run_tests" | "unit_tests" => Some("test_runner"),
         _ => None,
     }
 }
@@ -439,6 +441,8 @@ const DOMAIN_INFERENCE_RULES: &[DomainRule] = &[
                 name,
                 "onpkg"
                     | "js_format"
+                    | "lsp_query"
+                    | "test_runner"
                     | "compile_template"
                     | "index_codebase"
                     | "query_code_graph"
@@ -715,8 +719,9 @@ impl ToolMetadata {
         let name = canonical_name.as_str();
         let domain = infer_tool_domain(name);
         let writes_disk = tool_writes_disk(name);
-        let spawns_process = matches!(name, "exec_command" | "python_sandbox")
-            || name.contains("browser")
+        let spawns_process =
+            matches!(name, "exec_command" | "python_sandbox" | "lsp_query" | "test_runner")
+                || name.contains("browser")
             || name.starts_with("cargo_")
             || name.starts_with("openmedia_video_")
             || name.starts_with("opendoc_convert")

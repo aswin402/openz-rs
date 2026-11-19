@@ -128,6 +128,98 @@ async fn test_git_manager_actions() -> Result<()> {
         .await?;
     assert_eq!(res["status"], "success");
 
+    // 9. Commit second revision and verify blame with line range
+    let res = tool
+        .call(&json!({
+            "action": "commit",
+            "message": "second commit",
+            "cwd": cwd_str
+        }))
+        .await?;
+    assert_eq!(res["status"], "success");
+
+    let res = tool
+        .call(&json!({
+            "action": "blame",
+            "file": "test.txt",
+            "start_line": 1,
+            "end_line": 1,
+            "cwd": cwd_str
+        }))
+        .await?;
+    assert_eq!(res["status"], "success");
+    assert!(res["stdout"].as_str().unwrap().contains("modified content"));
+
+    // 10. Create branch, switch back, and stash push/list/pop
+    let default_branch_out = Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(&temp_dir)
+        .output()
+        .await?;
+    let default_branch = String::from_utf8_lossy(&default_branch_out.stdout)
+        .trim()
+        .to_string();
+
+    let res = tool
+        .call(&json!({
+            "action": "create_branch",
+            "branch": "feat/coding-upgrades",
+            "cwd": cwd_str
+        }))
+        .await?;
+    assert_eq!(res["status"], "success");
+
+    // Reject flag-injection branch names
+    assert!(
+        tool.call(&json!({
+            "action": "create_branch",
+            "branch": "--orphan",
+            "cwd": cwd_str
+        }))
+        .await
+        .is_err()
+    );
+
+    let res = tool
+        .call(&json!({
+            "action": "switch",
+            "branch": default_branch,
+            "cwd": cwd_str
+        }))
+        .await?;
+    assert_eq!(res["status"], "success");
+
+    std::fs::write(&file_path, "work in progress")?;
+    let res = tool
+        .call(&json!({
+            "action": "stash",
+            "stash_action": "push",
+            "message": "wip-stash",
+            "cwd": cwd_str
+        }))
+        .await?;
+    assert_eq!(res["status"], "success");
+
+    let res = tool
+        .call(&json!({
+            "action": "stash",
+            "stash_action": "list",
+            "cwd": cwd_str
+        }))
+        .await?;
+    assert_eq!(res["status"], "success");
+    assert!(res["stdout"].as_str().unwrap().contains("wip-stash"));
+
+    let res = tool
+        .call(&json!({
+            "action": "stash",
+            "stash_action": "pop",
+            "cwd": cwd_str
+        }))
+        .await?;
+    assert_eq!(res["status"], "success");
+    assert_eq!(std::fs::read_to_string(&file_path)?, "work in progress");
+
     // Clean up
     let _ = std::fs::remove_dir_all(&temp_dir);
     Ok(())

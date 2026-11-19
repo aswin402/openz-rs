@@ -161,6 +161,10 @@ pub(crate) fn register_core_tools(
     registry.register(std::sync::Arc::new(crate::tools::open::OpenTool));
     registry.register(std::sync::Arc::new(crate::tools::watcher::FileWatcherTool));
     registry.register(std::sync::Arc::new(crate::tools::ast_grep::AstGrepTool));
+    registry.register(std::sync::Arc::new(crate::tools::lsp_client::LspQueryTool));
+    registry.register(std::sync::Arc::new(
+        crate::tools::test_runner::TestRunnerTool,
+    ));
     registry.register(std::sync::Arc::new(
         crate::tools::web_search::WebSearchTool::new(),
     ));

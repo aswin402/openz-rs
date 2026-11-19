@@ -5,7 +5,7 @@
 //! for repairing syntax, compilation, and test failures.
 
 use crate::agent::style::colors::{AURA_GOLD, AURA_PURPLE, COLOR_RESET, EMERALD_GREEN};
-use crate::core::process::{host_tokio_shell_command, quote_shell_arg};
+use crate::core::process::host_tokio_shell_command;
 use crate::providers::{GenerationSettings, LLMProvider};
 use crate::session::Message;
 use anyhow::{anyhow, Result};
@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 pub const ALLOWED_COMPILE_PREFIXES: &[&str] = &[
     "cargo ", "rustc ", "gcc ", "g++ ", "clang ", "clang++ ", "make ", "cmake ", "ninja ",
     "go ", "go build", "go test", "go run", "npm ", "npx ", "yarn ", "pnpm ", "node ",
+    "bun ", "bunx ", "just ", "uv ", "deno ", "zig ",
     "python ", "python3 ", "pip ", "pip3 ", "javac ", "java ", "mvn ", "gradle ", "swift ",
     "swiftc ", "dotnet ", "msbuild ", "pytest ", "jest ", "vitest ", "tsc ",
     "false", "true", "sh ", "bash ", "echo ",
@@ -30,7 +31,7 @@ pub fn validate_compile_command(cmd: &str) -> Result<()> {
     match is_allowed {
         true => Ok(()),
         false => Err(anyhow!(
-            "Compile command '{}' is not in the allowed list. Allowed: cargo, rustc, gcc, g++, clang, make, cmake, ninja, go, npm, npx, yarn, pnpm, node, python, javac, java, mvn, gradle, swift, dotnet, pytest, jest, vitest, tsc",
+            "Compile command '{}' is not in the allowed list. Allowed: cargo, rustc, gcc, g++, clang, make, cmake, ninja, go, npm, npx, yarn, pnpm, node, bun, bunx, just, uv, deno, zig, python, javac, java, mvn, gradle, swift, dotnet, pytest, jest, vitest, tsc",
             cmd
         )),
     }
@@ -124,61 +125,6 @@ impl Drop for FileBackupGuard {
             false => {
                 let _ = self.rollback();
             }
-        }
-    }
-}
-
-/// Optional git snapshot helper to protect worktrees during speculative code edits.
-pub struct GitSnapshot {
-    committed: bool,
-}
-
-impl GitSnapshot {
-    pub async fn try_create(path: &Path) -> Self {
-        let is_git = async {
-            let mut cmd = host_tokio_shell_command("git rev-parse --is-inside-work-tree");
-            let out = cmd.output().await.ok()?;
-            Some(out.status.success())
-        }
-        .await
-        .unwrap_or(false);
-
-        match is_git {
-            false => return Self { committed: false },
-            true => {}
-        }
-
-        let escaped = quote_shell_arg(&path.to_string_lossy());
-        let mut add_cmd = host_tokio_shell_command(&format!("git add -- {escaped}"));
-        let _ = add_cmd.output().await;
-
-        let mut commit_cmd =
-            host_tokio_shell_command("git commit -m \"Zenflow pre-edit backup\" --no-verify");
-        let committed = match commit_cmd.output().await {
-            Ok(out) => out.status.success(),
-            Err(_) => false,
-        };
-
-        Self { committed }
-    }
-
-    pub async fn on_success(self) {
-        match self.committed {
-            true => {
-                let mut reset_cmd = host_tokio_shell_command("git reset HEAD~1");
-                let _ = reset_cmd.output().await;
-            }
-            false => {}
-        }
-    }
-
-    pub async fn on_failure(self) {
-        match self.committed {
-            true => {
-                let mut reset_cmd = host_tokio_shell_command("git reset --mixed HEAD~1");
-                let _ = reset_cmd.output().await;
-            }
-            false => {}
         }
     }
 }
@@ -414,67 +360,179 @@ pub async fn run_compiler_auto_heal(
     }
 }
 
-/// Writes `new_content` to `file_path`, executes `compile_command`, and if compilation
-/// fails, attempts self-healing with the LLM. If healing succeeds, persists changes;
-/// otherwise rolls back changes.
-pub async fn run_transactional_heal_edit(
+/// Multi-file RAII backup and atomic rollback guard.
+///
+/// Snapshots original contents (or non-existence) for an entire batch of files
+/// in memory without creating temporary `git commit` / `git reset` mutations on
+/// the active branch.
+pub struct MultiFileBackupGuard {
+    guards: Vec<FileBackupGuard>,
+}
+
+impl MultiFileBackupGuard {
+    pub fn create(paths: &[PathBuf]) -> Result<Self> {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut guards = Vec::with_capacity(paths.len());
+        for path in paths {
+            let inserted = seen.insert(path.clone());
+            match inserted {
+                true => guards.push(FileBackupGuard::create(path, false)?),
+                false => {}
+            }
+        }
+        Ok(Self { guards })
+    }
+
+    pub fn defuse(&mut self) {
+        for guard in &mut self.guards {
+            guard.defuse();
+        }
+    }
+
+    pub fn rollback(&mut self) -> Result<()> {
+        for guard in self.guards.iter_mut().rev() {
+            guard.rollback()?;
+        }
+        Ok(())
+    }
+}
+
+fn select_heal_target_index(edits: &[(PathBuf, String)], compiler_output: &str) -> Option<usize> {
+    match edits.len() {
+        0 => None,
+        1 => Some(0),
+        _ => edits.iter().enumerate().find_map(|(idx, (path, _))| {
+            let full = path.to_string_lossy();
+            let base = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or_default();
+            let hit = compiler_output.contains(full.as_ref())
+                || (!base.is_empty() && compiler_output.contains(base));
+            hit.then_some(idx)
+        }),
+    }
+}
+
+/// Writes one or more `(path, content)` edits atomically, executes `compile_command`,
+/// attempts targeted LLM self-healing on compilation failure, and rolls back every
+/// modified or newly created file in the batch when verification fails.
+pub async fn run_transactional_multi_heal_edit(
     provider: &dyn LLMProvider,
-    file_path: &Path,
-    new_content: &str,
+    edits: &[(PathBuf, String)],
     compile_command: &str,
 ) -> Result<serde_json::Value> {
     validate_compile_command(compile_command)?;
+    (!edits.is_empty())
+        .then_some(())
+        .ok_or_else(|| anyhow!("zenflow_edit requires at least one file edit"))?;
 
-    let git_snapshot = GitSnapshot::try_create(file_path).await;
-    let mut backup = FileBackupGuard::create(file_path, false)?;
-
-    match file_path.parent() {
-        Some(parent) => std::fs::create_dir_all(parent)?,
-        None => {}
+    for (path, _) in edits {
+        match path
+            .extension()
+            .and_then(|e| e.to_str())
+            .filter(|ext| is_binary_file_extension(ext))
+        {
+            Some(ext) => {
+                return Err(anyhow!(
+                    "zenflow_edit only supports text/code source files, not binary format '.{ext}'"
+                ));
+            }
+            None => {}
+        }
     }
-    std::fs::write(file_path, new_content)?;
+
+    // Acquire exclusive per-file async locks in deterministic sorted path order
+    // so concurrent multi-file batches can never deadlock.
+    let mut sorted_paths: Vec<PathBuf> = edits.iter().map(|(p, _)| p.clone()).collect();
+    sorted_paths.sort();
+    sorted_paths.dedup();
+
+    let mut lock_guards = Vec::with_capacity(sorted_paths.len());
+    for p in &sorted_paths {
+        lock_guards.push(crate::tools::filesystem::acquire_file_mutation_lock(p).await);
+    }
+
+    let mut backup = MultiFileBackupGuard::create(&sorted_paths)?;
+    let mut current_edits = edits.to_vec();
+
+    for (path, content) in &current_edits {
+        match path.parent() {
+            Some(parent) => std::fs::create_dir_all(parent)?,
+            None => {}
+        }
+        std::fs::write(path, content)?;
+    }
 
     let (mut success, mut output_str) = run_compile_check(compile_command).await?;
+    let mut healed = false;
 
     match success {
         true => {}
-        false => match heal_code_with_llm(provider, file_path, new_content, &output_str)
-            .await
-            .ok()
-            .filter(|healed| !healed.is_empty())
-        {
-            Some(healed_content) => {
-                std::fs::write(file_path, &healed_content)?;
-                match run_compile_check(compile_command).await {
-                    Ok((h_success, h_output)) => {
-                        success = h_success;
-                        output_str = h_output;
+        false => match select_heal_target_index(&current_edits, &output_str) {
+            Some(target_idx) => {
+                let (target_path, target_content) = &current_edits[target_idx];
+                match heal_code_with_llm(provider, target_path, target_content, &output_str)
+                    .await
+                    .ok()
+                    .filter(|candidate| !candidate.is_empty())
+                {
+                    Some(healed_content) => {
+                        std::fs::write(target_path, &healed_content)?;
+                        current_edits[target_idx].1 = healed_content;
+                        match run_compile_check(compile_command).await {
+                            Ok((h_success, h_output)) => {
+                                healed = h_success;
+                                success = h_success;
+                                output_str = h_output;
+                            }
+                            Err(_) => {}
+                        }
                     }
-                    Err(_) => {}
+                    None => {}
                 }
             }
             None => {}
         },
     }
 
+    drop(lock_guards);
+
     match success {
         true => {
             backup.defuse();
-            git_snapshot.on_success().await;
             Ok(serde_json::json!({
                 "status": "success",
-                "message": "File written and verified successfully."
+                "files_verified": current_edits.len(),
+                "healed": healed,
+                "message": "File(s) written and verified successfully."
             }))
         }
         false => {
             let _ = backup.rollback();
-            git_snapshot.on_failure().await;
             Ok(serde_json::json!({
                 "status": "error",
+                "rolled_back_files": current_edits.len(),
                 "error": format!("Compilation failed, self-healing failed. Rolled back changes. Error output:\n{output_str}")
             }))
         }
     }
+}
+
+/// Writes `new_content` to `file_path`, executes `compile_command`, and when compilation
+/// fails, attempts self-healing with the LLM. Persists on success; rolls back on failure.
+pub async fn run_transactional_heal_edit(
+    provider: &dyn LLMProvider,
+    file_path: &Path,
+    new_content: &str,
+    compile_command: &str,
+) -> Result<serde_json::Value> {
+    run_transactional_multi_heal_edit(
+        provider,
+        &[(file_path.to_path_buf(), new_content.to_string())],
+        compile_command,
+    )
+    .await
 }
 
 #[cfg(test)]

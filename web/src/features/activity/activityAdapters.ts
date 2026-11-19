@@ -35,6 +35,7 @@ const READ_TOOLS = new Set([
   'list_dir',
   'list_directory',
   'code_outline',
+  'lsp_query',
   'doc_reader',
   'db_inspector',
   'openz_inventory',
@@ -250,6 +251,18 @@ export function formatBeuiToolTarget(
   if (lower === 'cargo_manager' || lower.startsWith('cargo_')) {
     const sub = firstStringField(rec, ['action', 'subcommand', 'package']);
     return sub ? `${toolName} · ${sub}` : toolName;
+  }
+
+  if (lower === 'test_runner') {
+    const fw = firstStringField(rec, ['framework', 'runner']) ?? 'auto';
+    const flt = firstStringField(rec, ['filter', 'target', 'cwd']);
+    return flt ? `test_runner (${fw}) · ${flt}` : `test_runner (${fw})`;
+  }
+
+  if (lower === 'lsp_query') {
+    const act = firstStringField(rec, ['action']) ?? 'query';
+    const fp = firstStringField(rec, ['file_path', 'path', 'query']);
+    return fp ? `lsp ${act} · ${fp}` : `lsp ${act}`;
   }
 
   if (delegatedActor) {

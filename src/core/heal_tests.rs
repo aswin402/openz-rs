@@ -3,6 +3,12 @@ use super::*;
 #[test]
 fn test_validate_compile_command() {
     assert!(validate_compile_command("cargo check").is_ok());
+    assert!(validate_compile_command("just check openz").is_ok());
+    assert!(validate_compile_command("bun test --cwd web").is_ok());
+    assert!(validate_compile_command("bunx tsc --noEmit").is_ok());
+    assert!(validate_compile_command("uv run pytest").is_ok());
+    assert!(validate_compile_command("deno test").is_ok());
+    assert!(validate_compile_command("zig build test").is_ok());
     assert!(validate_compile_command("npm run build").is_ok());
     assert!(validate_compile_command("python3 -m pytest").is_ok());
     assert!(validate_compile_command("false").is_ok());
@@ -68,5 +74,31 @@ fn test_file_backup_guard_defuse_preserves_modification() {
     }
 
     assert_eq!(std::fs::read_to_string(&target_file).unwrap(), "modified content");
+    let _ = std::fs::remove_dir_all(&temp_dir);
+}
+
+#[test]
+fn test_multi_file_backup_guard_rolls_back_modified_and_created_files() {
+    let temp_dir =
+        std::env::temp_dir().join(format!("multi_heal_guard_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp_dir).unwrap();
+    let existing = temp_dir.join("lib.rs");
+    let created = temp_dir.join("new_mod.rs");
+    std::fs::write(&existing, "pub fn v1() -> u32 { 1 }").unwrap();
+
+    {
+        let mut guard =
+            MultiFileBackupGuard::create(&[existing.clone(), created.clone()]).unwrap();
+        std::fs::write(&existing, "pub fn v1() -> u32 { broken }").unwrap();
+        std::fs::write(&created, "pub const NEW: bool = true;").unwrap();
+        assert!(created.exists());
+        guard.rollback().unwrap();
+    }
+
+    assert_eq!(
+        std::fs::read_to_string(&existing).unwrap(),
+        "pub fn v1() -> u32 { 1 }"
+    );
+    assert!(!created.exists());
     let _ = std::fs::remove_dir_all(&temp_dir);
 }

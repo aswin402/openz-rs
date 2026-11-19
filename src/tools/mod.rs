@@ -153,9 +153,11 @@ pub mod github;
 pub mod github_mcp;
 pub mod grep;
 pub mod js_format;
+pub mod lsp_client;
 pub mod onpkg;
 pub mod outline;
 pub mod rust_docs;
+pub mod test_runner;
 
 // ── Web & Network ──
 pub mod crawl;

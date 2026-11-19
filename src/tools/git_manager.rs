@@ -5,6 +5,30 @@ use tokio::process::Command;
 
 pub struct GitManagerTool;
 
+fn validate_safe_branch_name<'a>(raw: &'a str, field_label: &str) -> Result<&'a str> {
+    let trimmed = raw.trim();
+    let invalid = trimmed.is_empty()
+        || trimmed.starts_with('-')
+        || trimmed.contains("..")
+        || trimmed.chars().any(|c| {
+            c.is_whitespace() || matches!(c, '~' | '^' | ':' | '?' | '*' | '[' | '\\')
+        });
+    match invalid {
+        true => Err(anyhow!("Invalid {} '{}'", field_label, trimmed)),
+        false => Ok(trimmed),
+    }
+}
+
+fn parse_positive_line_arg(arguments: &Value, keys: &[&str]) -> Option<u64> {
+    keys.iter()
+        .find_map(|key| arguments.get(*key))
+        .and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+        })
+        .filter(|&n| n > 0)
+}
+
 #[async_trait::async_trait]
 impl Tool for GitManagerTool {
     fn name(&self) -> &str {
@@ -12,7 +36,7 @@ impl Tool for GitManagerTool {
     }
 
     fn description(&self) -> &str {
-        "Perform Git version control operations (status, diff, add, commit, log, branch, show) directly within the codebase workspace."
+        "Perform Git version control operations (status, diff, add, commit, log, branch, create_branch, switch, blame, stash, show) directly within the codebase workspace."
     }
 
     fn parameters(&self) -> Value {
@@ -21,7 +45,19 @@ impl Tool for GitManagerTool {
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["status", "diff", "add", "commit", "log", "branch", "show"],
+                    "enum": [
+                        "status",
+                        "diff",
+                        "add",
+                        "commit",
+                        "log",
+                        "branch",
+                        "create_branch",
+                        "switch",
+                        "blame",
+                        "stash",
+                        "show"
+                    ],
                     "description": "The Git subcommand/action to run (defaults to 'status')."
                 },
                 "files": {
@@ -31,9 +67,30 @@ impl Tool for GitManagerTool {
                         { "type": "string" }
                     ]
                 },
+                "file": {
+                    "type": "string",
+                    "description": "Target file path for 'blame' (or single-file 'add')."
+                },
+                "start_line": {
+                    "type": "integer",
+                    "description": "Optional 1-indexed start line for 'blame'."
+                },
+                "end_line": {
+                    "type": "integer",
+                    "description": "Optional 1-indexed end line for 'blame'."
+                },
+                "branch": {
+                    "type": "string",
+                    "description": "Target branch name for 'create_branch' or 'switch' (alias: name)."
+                },
+                "stash_action": {
+                    "type": "string",
+                    "enum": ["list", "push", "pop", "show"],
+                    "description": "Sub-action when action='stash' (defaults to 'list')."
+                },
                 "message": {
                     "type": "string",
-                    "description": "The commit message. Required for 'commit'."
+                    "description": "Commit message (required for 'commit', optional label for 'stash' push)."
                 },
                 "limit": {
                     "description": "Limit the number of commits shown in the log (integer or numeric string). Optional, defaults to 5.",
@@ -44,7 +101,7 @@ impl Tool for GitManagerTool {
                 },
                 "ref": {
                     "type": "string",
-                    "description": "Target commit hash, revision, or branch for 'show' or 'diff'."
+                    "description": "Target commit hash, revision, or base branch for 'show', 'diff', 'blame', or 'create_branch'."
                 },
                 "staged": {
                     "type": "boolean",
@@ -126,6 +183,110 @@ impl Tool for GitManagerTool {
             }
             "branch" | "branches" | "br" => {
                 cmd.args(["branch", "-a"]);
+            }
+            "create_branch" | "new_branch" => {
+                let raw_branch = arguments
+                    .get("branch")
+                    .or_else(|| arguments.get("name"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        anyhow!("Missing 'branch' argument for 'create_branch' action")
+                    })?;
+                let safe_branch = validate_safe_branch_name(raw_branch, "branch")?;
+                cmd.args(["checkout", "-b", safe_branch]);
+                match target_ref_opt {
+                    Some(base_ref) => {
+                        let safe_base = validate_safe_branch_name(base_ref, "ref")?;
+                        cmd.arg(safe_base);
+                    }
+                    None => {}
+                }
+            }
+            "switch" | "checkout_branch" => {
+                let raw_branch = arguments
+                    .get("branch")
+                    .or_else(|| arguments.get("name"))
+                    .or_else(|| arguments.get("ref"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("Missing 'branch' argument for 'switch' action"))?;
+                let safe_branch = validate_safe_branch_name(raw_branch, "branch")?;
+                cmd.args(["checkout", safe_branch]);
+            }
+            "blame" => {
+                let target_file = arguments
+                    .get("file")
+                    .or_else(|| arguments.get("file_path"))
+                    .and_then(Value::as_str)
+                    .or_else(|| {
+                        arguments
+                            .get("files")
+                            .and_then(Value::as_array)
+                            .and_then(|arr| arr.first())
+                            .and_then(Value::as_str)
+                    })
+                    .or_else(|| arguments.get("files").and_then(Value::as_str))
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty() && !s.starts_with('-'))
+                    .ok_or_else(|| anyhow!("Missing 'file' argument for 'blame' action"))?;
+
+                cmd.args(["blame", "-n"]);
+
+                let start_line = parse_positive_line_arg(arguments, &["start_line", "startLine"]);
+                let end_line = parse_positive_line_arg(arguments, &["end_line", "endLine"]);
+                match (start_line, end_line) {
+                    (Some(s), Some(e)) => {
+                        cmd.args(["-L", &format!("{},{}", s, e.max(s))]);
+                    }
+                    (Some(s), None) => {
+                        cmd.args(["-L", &format!("{},{}", s, s + 20)]);
+                    }
+                    (None, _) => {}
+                }
+
+                match target_ref_opt {
+                    Some(rev) => {
+                        let safe_rev = validate_safe_branch_name(rev, "ref")?;
+                        cmd.arg(safe_rev);
+                    }
+                    None => {}
+                }
+                cmd.args(["--", target_file]);
+            }
+            "stash" => {
+                let sub = arguments
+                    .get("stash_action")
+                    .or_else(|| arguments.get("mode"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("list")
+                    .trim()
+                    .to_ascii_lowercase();
+                match sub.as_str() {
+                    "list" => {
+                        cmd.args(["stash", "list"]);
+                    }
+                    "push" | "save" => {
+                        cmd.args(["stash", "push"]);
+                        match arguments
+                            .get("message")
+                            .or_else(|| arguments.get("msg"))
+                            .and_then(Value::as_str)
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                        {
+                            Some(msg) => {
+                                cmd.args(["-m", msg]);
+                            }
+                            None => {}
+                        }
+                    }
+                    "pop" => {
+                        cmd.args(["stash", "pop"]);
+                    }
+                    "show" => {
+                        cmd.args(["stash", "show", "-p"]);
+                    }
+                    _ => return Err(anyhow!("Unsupported stash_action '{}'", sub)),
+                }
             }
             "show" => {
                 cmd.args(["show", target_ref_opt.unwrap_or("HEAD")]);
