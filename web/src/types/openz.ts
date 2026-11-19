@@ -25,6 +25,12 @@ export interface ActivityNotice {
   timestamp: number;
 }
 
+export interface TurnNarrationSegment {
+  id: string;
+  content: string;
+  timestamp: number;
+}
+
 export interface OpenZMessage {
   id: string;
   role: "user" | "assistant" | "system" | "tool";
@@ -36,8 +42,12 @@ export interface OpenZMessage {
   securityPrompts?: SecurityPromptInfo[];
   /** Structured activity notices such as workflow matches, memory saves, and research context hits. */
   activityNotices?: ActivityNotice[];
+  /** Intermediate pre-tool status narrations folded into the live AgentActivity stream. */
+  narrationSegments?: TurnNarrationSegment[];
   /** Streaming chain-of-thought text (collapsible "Thinking" block). */
   reasoningContent?: string;
+  /** Tracks whether the latest streamed tokens belong to an active reasoning paragraph. */
+  reasoningRoundOpen?: boolean;
   isStreaming?: boolean;
   model?: string;
   /** True when this is a muted system/error notice. */

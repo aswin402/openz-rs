@@ -277,7 +277,11 @@ pub(crate) async fn compact_session_history(
 
             match k > 0 && k < len {
                 false => {
-                    ctx.session.messages = ctx.session.messages[k.min(len)..].to_vec();
+                    let split = k.min(len);
+                    ctx.session
+                        .archived_messages
+                        .extend_from_slice(&ctx.session.messages[..split]);
+                    ctx.session.messages = ctx.session.messages[split..].to_vec();
                     ctx.messages = ctx.session.messages.clone();
                     Ok(true)
                 }
@@ -452,6 +456,9 @@ pub(crate) async fn compact_session_history(
                         }
                     }
 
+                    ctx.session
+                        .archived_messages
+                        .extend_from_slice(&ctx.session.messages[..k]);
                     ctx.session.messages = ctx.session.messages[k..].to_vec();
                     let _ = super::build::handle(loop_ref, ctx).await?;
                     Ok(true)

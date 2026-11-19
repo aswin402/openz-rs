@@ -36,6 +36,7 @@ export const MessageScroller: React.FC<MessageScrollerProps> = ({
   const viewportRef = React.useRef<HTMLDivElement>(null)
   const contentRef = React.useRef<HTMLDivElement>(null)
   const lockedToBottomRef = React.useRef(true)
+  const programmaticScrollUntilRef = React.useRef(0)
   const prevSessionRef = React.useRef(sessionKey)
   const prevCountRef = React.useRef(itemCount)
   const [showJumpPill, setShowJumpPill] = React.useState(false)
@@ -50,8 +51,10 @@ export const MessageScroller: React.FC<MessageScrollerProps> = ({
     lockedToBottomRef.current = true
     setShowJumpPill(false)
     if (smooth) {
+      programmaticScrollUntilRef.current = Date.now() + 450
       el.scrollTo({ top: el.scrollHeight, behavior: "smooth" })
     } else {
+      programmaticScrollUntilRef.current = 0
       el.scrollTop = el.scrollHeight
     }
   }, [])
@@ -62,21 +65,28 @@ export const MessageScroller: React.FC<MessageScrollerProps> = ({
       prevSessionRef.current = sessionKey
       prevCountRef.current = itemCount
       lockedToBottomRef.current = true
+      setShowJumpPill(false)
       requestAnimationFrame(() => scrollToBottom(false))
     }
   }, [sessionKey, itemCount, scrollToBottom])
 
-  // New message appended
+  // New message appended or session history hydrated
   React.useEffect(() => {
     const el = viewportRef.current
     if (!el) return
-    const grew = itemCount > prevCountRef.current
+    const prevCount = prevCountRef.current
+    const grew = itemCount > prevCount
     prevCountRef.current = itemCount
 
     if (!grew || behaviorMode === "manual") return
 
     if (behaviorMode === "always-follow" || lockedToBottomRef.current) {
-      scrollToBottom(!isStreaming)
+      const isInitialHydration = prevCount === 0
+      if (isInitialHydration) {
+        requestAnimationFrame(() => scrollToBottom(false))
+      } else {
+        scrollToBottom(!isStreaming)
+      }
     } else {
       setShowJumpPill(true)
     }
@@ -113,6 +123,12 @@ export const MessageScroller: React.FC<MessageScrollerProps> = ({
     if (!el) return
     const distance = getDistanceFromBottom(el)
     const nearBottom = distance <= thresholdPx
+    if (!nearBottom && Date.now() < programmaticScrollUntilRef.current) {
+      return
+    }
+    if (nearBottom) {
+      programmaticScrollUntilRef.current = 0
+    }
     lockedToBottomRef.current = nearBottom
     setShowJumpPill(!nearBottom && itemCount > 0)
   }

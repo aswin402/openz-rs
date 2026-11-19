@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import type { AgentActivityStep } from '../../components/beui';
 import type { OpenZMessage } from '../../types';
 import {
+  deriveAssistantTurnPhase,
   filterInlineStepsForToolStyle,
   isMessageActivityWorking,
   shouldDisplayExpandedToolCalls,
@@ -68,26 +69,48 @@ describe('Zero-Duplication Tool Call Customization & Auto-Collapse', () => {
       }),
     ).toBe(true);
 
-    // Output starts streaming: auto-hides immediately
-    const streamingFinalOutput: OpenZMessage = {
+    // Inter-tool gap or pre-turn-end answer streaming on an agentic turn stays monotonically 'working'
+    const streamingMidTurnWithProse: OpenZMessage = {
       ...runningTurn,
-      content: 'Hey, I am Mivi.',
+      content: 'Live pull. Getting exact quote + earnings detail.',
       toolCalls: [
         { id: 't1', name: 'openz_inventory', status: 'success', args: { include_subagents: false } },
       ],
     };
 
-    const workingDuringOutput = isMessageActivityWorking(streamingFinalOutput);
-    expect(workingDuringOutput).toBe(false);
+    expect(deriveAssistantTurnPhase(streamingMidTurnWithProse)).toBe('working');
+    expect(isMessageActivityWorking(streamingMidTurnWithProse)).toBe(true);
+
+    // Turn settles (`isStreaming: false`): transitions monotonically once to 'complete' and auto-hides
+    const settledTurn: OpenZMessage = {
+      ...streamingMidTurnWithProse,
+      isStreaming: false,
+      content: 'Hey, I am Mivi.',
+    };
+
+    const workingAfterSettle = isMessageActivityWorking(settledTurn);
+    expect(deriveAssistantTurnPhase(settledTurn)).toBe('complete');
+    expect(workingAfterSettle).toBe(false);
     expect(
       shouldDisplayExpandedToolCalls({
         toolResultStyle: 'assistant-collapsed',
-        isActivityWorking: workingDuringOutput,
+        isActivityWorking: workingAfterSettle,
         showInlineActivity: true,
         activityAutoCollapse: true,
         isActivityExpanded: false,
       }),
     ).toBe(false);
+
+    // Direct plain-text reply without any agentic steps exits 'working' once text streams
+    const plainDirectReply: OpenZMessage = {
+      id: 'm2',
+      role: 'assistant',
+      content: 'Hello there!',
+      timestamp: 2000,
+      isStreaming: true,
+    };
+    expect(deriveAssistantTurnPhase(plainDirectReply)).toBe('idle');
+    expect(isMessageActivityWorking(plainDirectReply)).toBe(false);
 
     // Clicking "Completed N steps" expands interactive cards on demand
     expect(

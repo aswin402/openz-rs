@@ -513,6 +513,22 @@ export function buildMessageActivitySteps(
       });
     }
 
+    for (const narration of message.narrationSegments ?? []) {
+      const cleanedNarration = stripTerminalFormatting(narration.content).trim();
+      cleanedNarration &&
+        items.push({
+          id: narration.id,
+          kind: 'message',
+          contentType: 'reasoning',
+          title: cleanedNarration,
+          detail: cleanedNarration,
+          payload: cleanedNarration,
+          actor: message.model || undefined,
+          status: 'info',
+          timestamp: narration.timestamp,
+        });
+    }
+
     for (const tool of message.toolCalls ?? []) {
       const contentType = classifyToolContentType(tool.name);
       const delegatedActor = extractDelegatedSubagent(tool.name, tool.args);

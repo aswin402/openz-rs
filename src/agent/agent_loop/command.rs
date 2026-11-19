@@ -126,13 +126,19 @@ pub async fn handle(loop_ref: &AgentLoop, ctx: &mut TurnContext<'_>) -> Result<T
                 }
                 Some("/history") => {
                     let mut hist = String::new();
-                    for msg in &ctx.session.messages {
+                    for msg in ctx
+                        .session
+                        .archived_messages
+                        .iter()
+                        .chain(ctx.session.messages.iter())
+                    {
                         hist.push_str(&format!("[{}]: {}\n", msg.role, msg.content));
                     }
                     ctx.final_content = hist;
                     Ok(TurnState::Done)
                 }
                 Some("/clear" | "/restart") => {
+                    ctx.session.archived_messages.clear();
                     ctx.session.messages.clear();
                     crate::agent::agent_loop::build::invalidate_session_skill_catalog(ctx.session_key);
                     loop_ref.session_manager.save(&ctx.session).await?;

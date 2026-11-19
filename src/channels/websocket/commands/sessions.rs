@@ -117,7 +117,12 @@ pub(crate) async fn fetch_real_session_history(
     let load_key = ensure_webui_session_key(&resolved_key);
     match session_mgr.load_async(&load_key).await {
         Ok(session) => {
-            for (index, message) in session.messages.iter().enumerate() {
+            for (index, message) in session
+                .archived_messages
+                .iter()
+                .chain(session.messages.iter())
+                .enumerate()
+            {
                 let timestamp = message
                     .timestamp
                     .as_deref()
@@ -147,6 +152,7 @@ pub(crate) async fn clear_session_history_event(
     let load_key = ensure_webui_session_key(&resolved_key);
     match session_mgr.load_async(&load_key).await {
         Ok(mut session) => {
+            session.archived_messages.clear();
             session.messages.clear();
             let _ = session_mgr.save(&session).await;
         }

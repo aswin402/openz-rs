@@ -54,10 +54,15 @@ export const createChatSlice: StateCreator<
 
   selectSession: (chatId) => {
     const normalizedChatId = normalizeChatId(chatId);
+    if (!normalizedChatId) return;
     set({ activeView: 'chats' });
-    if (get().activeChatId !== normalizedChatId) {
+    const isDifferentChat = get().activeChatId !== normalizedChatId;
+    const chatMessages = get().messages[normalizedChatId] || [];
+    const targetSession = get().sessions.find((session) => session.id === normalizedChatId);
+    const needsHistoryHydration = chatMessages.length === 0 && !targetSession?.isDraft;
+
+    if (isDifferentChat || needsHistoryHydration) {
       rememberActiveChatId(normalizedChatId);
-      const chatMessages = get().messages[normalizedChatId] || [];
       const lastMsg = chatMessages[chatMessages.length - 1];
       const isTargetStreaming = Boolean(
         get().activeTurnIds[normalizedChatId] ||

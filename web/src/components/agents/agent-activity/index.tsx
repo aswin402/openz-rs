@@ -204,11 +204,13 @@ export function AgentActivity({
   }, []);
 
   useEffect(() => {
-    if (previousStatus.current === "working" && status === "complete") {
-      setOpen(!collapseOnComplete);
-    }
+    const shouldAutoSettleUncontrolled =
+      open === undefined &&
+      previousStatus.current === "working" &&
+      status === "complete";
+    shouldAutoSettleUncontrolled && setOpen(!collapseOnComplete);
     previousStatus.current = status;
-  }, [collapseOnComplete, setOpen, status]);
+  }, [collapseOnComplete, open, setOpen, status]);
 
   const toggle = () => {
     const next = !currentOpen;

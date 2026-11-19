@@ -75,7 +75,12 @@ fn format_indexable_message_text(msg: &Message) -> String {
 
 fn upsert_session_into_conn(conn: &Connection, session: &Session) -> Result<()> {
     let updated_str = session.updated_at.to_rfc3339();
-    let msg_len = session.messages.len();
+    let all_messages: Vec<&Message> = session
+        .archived_messages
+        .iter()
+        .chain(session.messages.iter())
+        .collect();
+    let msg_len = all_messages.len();
 
     let prev_state: Option<(String, usize)> = conn
         .query_row(
@@ -105,7 +110,7 @@ fn upsert_session_into_conn(conn: &Connection, session: &Session) -> Result<()> 
          VALUES (?1, ?2, ?3, ?4, ?5)",
     )?;
 
-    for (offset, msg) in session.messages[start_idx..].iter().enumerate() {
+    for (offset, msg) in all_messages[start_idx..].iter().enumerate() {
         let idx = start_idx + offset;
         let text = format_indexable_message_text(msg);
         match !text.trim().is_empty() {

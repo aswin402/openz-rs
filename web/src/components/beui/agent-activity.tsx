@@ -544,13 +544,16 @@ function splitReasoningParagraphs(raw: string): string[] {
     .split("\n\n")
     .map((chunk) => chunk.trim())
     .filter(Boolean)
-  if (blocks.length > 1) return blocks.slice(0, 6)
+  const hasMultipleBlocks = blocks.length > 1
   const lines = raw
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
-  if (lines.length <= 2) return [lines.join(" ")].filter(Boolean)
-  return lines.slice(0, 6)
+  return hasMultipleBlocks
+    ? blocks.slice(-12)
+    : lines.length <= 2
+      ? [lines.join(" ")].filter(Boolean)
+      : lines.slice(-12)
 }
 
 const OFFICIAL_CONTENT_TYPE_MAP: Record<
@@ -637,7 +640,7 @@ export function toBeuiOfficialActivityItems(
   for (const step of steps) {
     const contentType = resolveStepContentType(step)
 
-    if (step.kind === "reasoning") {
+    if (step.kind === "reasoning" || step.kind === "message") {
       const textSource = step.payload ?? step.detail ?? step.title
       const paragraphs = splitReasoningParagraphs(textSource)
       paragraphs.forEach((paragraph, idx) => {

@@ -73,6 +73,8 @@ impl Message {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Session {
     pub key: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub archived_messages: Vec<Message>,
     pub messages: Vec<Message>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -87,6 +89,7 @@ impl Session {
         let now = Utc::now();
         Session {
             key: key.to_string(),
+            archived_messages: Vec::new(),
             messages: Vec::new(),
             created_at: now,
             updated_at: now,
@@ -337,6 +340,8 @@ struct SessionSummaryParser {
     #[serde(default)]
     created_at: Option<DateTime<Utc>>,
     #[serde(default)]
+    archived_messages: Vec<SessionSummaryMessageParser>,
+    #[serde(default)]
     messages: Vec<SessionSummaryMessageParser>,
 }
 
@@ -557,15 +562,16 @@ impl SessionManager {
             match session {
                 Some(session) => {
                     let first_user = session
-                        .messages
+                        .archived_messages
                         .iter()
+                        .chain(session.messages.iter())
                         .find(|m| m.role == "user")
                         .map(|m| m.content.clone());
                     summaries.push(SessionSummary {
                         key: session.key,
                         updated_at: session.updated_at,
                         created_at: session.created_at.unwrap_or(session.updated_at),
-                        message_count: session.messages.len(),
+                        message_count: session.archived_messages.len() + session.messages.len(),
                         first_user_message: first_user,
                     });
                 }

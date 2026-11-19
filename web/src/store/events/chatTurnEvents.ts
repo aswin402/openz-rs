@@ -9,6 +9,7 @@ import { wsService } from '../../services/websocket';
 import {
   applyOrchestrationEvent,
   createWorkspaceNotice,
+  foldPendingContentIntoNarration,
   newMsgId,
   normalizeChatId,
   settleAssistantTurnMessages,
@@ -190,18 +191,48 @@ function appendStreamingAssistantDelta(
 ) {
   const { get } = ctx;
   const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
-  if (!isTurnEventCurrent({ chat_id: chatId, turn_id: payload.turn_id }, get().activeTurnIds)) return;
-  const chunk = payload.content || '';
-  upsertStreamingAssistantMessage(
-    ctx,
-    chatId,
-    (lastMsg) =>
-      field === 'content'
-        ? { ...lastMsg, content: lastMsg.content + chunk }
-        : { ...lastMsg, reasoningContent: (lastMsg.reasoningContent || '') + chunk },
-    field === 'content' ? { content: chunk } : { reasoningContent: chunk },
-    true,
+  const current = isTurnEventCurrent(
+    { chat_id: chatId, turn_id: payload.turn_id },
+    get().activeTurnIds,
   );
+  switch (current) {
+    case false:
+      return;
+    case true: {
+      const chunk = payload.content || '';
+      upsertStreamingAssistantMessage(
+        ctx,
+        chatId,
+        (lastMsg) => {
+          switch (field) {
+            case 'content':
+              return {
+                ...lastMsg,
+                content: lastMsg.content + chunk,
+                reasoningRoundOpen: false,
+              };
+            case 'reasoningContent': {
+              const folded = foldPendingContentIntoNarration(lastMsg);
+              const prevReasoning = folded.reasoningContent || '';
+              const paragraphBreak =
+                prevReasoning.length > 0 && folded.reasoningRoundOpen === false
+                  ? '\n\n'
+                  : '';
+              return {
+                ...folded,
+                reasoningContent: prevReasoning + paragraphBreak + chunk,
+                reasoningRoundOpen: true,
+              };
+            }
+          }
+        },
+        field === 'content'
+          ? { content: chunk, reasoningRoundOpen: false }
+          : { reasoningContent: chunk, reasoningRoundOpen: true },
+        true,
+      );
+    }
+  }
 }
 
 function settleActiveTurn(
@@ -287,30 +318,42 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
 
   wsService.on('tool_start', (payload) => {
     const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
-    if (!isTurnEventCurrent({ chat_id: chatId, turn_id: payload.turn_id }, get().activeTurnIds)) return;
-    const tool: ToolExecution = {
-      id: payload.tool_call_id || newMsgId('tool'),
-      name: payload.name || 'tool',
-      args: payload.args,
-      status: 'running',
-      startedAt: Date.now(),
-    };
-    upsertStreamingAssistantMessage(
-      ctx,
-      chatId,
-      (lastMsg) => {
-        const toolCalls = lastMsg.toolCalls || [];
-        const existingIdx = toolCalls.findIndex((t) => t.id === tool.id);
-        return {
-          ...lastMsg,
-          toolCalls:
-            existingIdx >= 0
-              ? toolCalls.map((t, i) => (i === existingIdx ? tool : t))
-              : [...toolCalls, tool],
-        };
-      },
-      { toolCalls: [tool] },
+    const current = isTurnEventCurrent(
+      { chat_id: chatId, turn_id: payload.turn_id },
+      get().activeTurnIds,
     );
+    switch (current) {
+      case false:
+        return;
+      case true: {
+        const startedAt = Date.now();
+        const tool: ToolExecution = {
+          id: payload.tool_call_id || newMsgId('tool'),
+          name: payload.name || 'tool',
+          args: payload.args,
+          status: 'running',
+          startedAt,
+        };
+        upsertStreamingAssistantMessage(
+          ctx,
+          chatId,
+          (lastMsg) => {
+            const folded = foldPendingContentIntoNarration(lastMsg, startedAt - 1);
+            const toolCalls = folded.toolCalls || [];
+            const existingIdx = toolCalls.findIndex((t) => t.id === tool.id);
+            return {
+              ...folded,
+              reasoningRoundOpen: false,
+              toolCalls:
+                existingIdx >= 0
+                  ? toolCalls.map((t, i) => (i === existingIdx ? tool : t))
+                  : [...toolCalls, tool],
+            };
+          },
+          { toolCalls: [tool], reasoningRoundOpen: false },
+        );
+      }
+    }
   });
 
   wsService.on('tool_end', (payload) => {
@@ -379,24 +422,37 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
 
   wsService.on('security_request', (payload) => {
     const chatId = normalizeChatId(payload.chat_id || get().activeChatId);
-    if (!isTurnEventCurrent({ chat_id: chatId, turn_id: payload.turn_id }, get().activeTurnIds)) return;
-    const prompt: SecurityPromptInfo = {
-      id: payload.req_id || newMsgId('sec'),
-      toolName: payload.tool_name || 'exec_command',
-      description: payload.description || 'Sensitive action requested',
-      arguments: payload.arguments,
-      status: 'pending',
-    };
-    dispatchSecurityRequestToast(prompt, buildTelemetryNavigation(ctx));
-    upsertStreamingAssistantMessage(
-      ctx,
-      chatId,
-      (lastMsg) => ({
-        ...lastMsg,
-        securityPrompts: [...(lastMsg.securityPrompts || []), prompt],
-      }),
-      { securityPrompts: [prompt] },
+    const current = isTurnEventCurrent(
+      { chat_id: chatId, turn_id: payload.turn_id },
+      get().activeTurnIds,
     );
+    switch (current) {
+      case false:
+        return;
+      case true: {
+        const prompt: SecurityPromptInfo = {
+          id: payload.req_id || newMsgId('sec'),
+          toolName: payload.tool_name || 'exec_command',
+          description: payload.description || 'Sensitive action requested',
+          arguments: payload.arguments,
+          status: 'pending',
+        };
+        dispatchSecurityRequestToast(prompt, buildTelemetryNavigation(ctx));
+        upsertStreamingAssistantMessage(
+          ctx,
+          chatId,
+          (lastMsg) => {
+            const folded = foldPendingContentIntoNarration(lastMsg);
+            return {
+              ...folded,
+              reasoningRoundOpen: false,
+              securityPrompts: [...(folded.securityPrompts || []), prompt],
+            };
+          },
+          { securityPrompts: [prompt], reasoningRoundOpen: false },
+        );
+      }
+    }
   });
 
   wsService.on('security_response_rejected', (payload) => {

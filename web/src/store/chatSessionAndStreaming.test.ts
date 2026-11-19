@@ -301,3 +301,307 @@ test('clearActiveSession and stopTurn use typed WebSocket commands without slash
     wsService.sendMessage = origSend;
   }
 });
+
+test('resumed session_history coalesces multi-round assistant tool iterations per turn without ghost bubbles or false-positive code errors', () => {
+  ensureRegistered();
+  const attachedChats: string[] = [];
+  const origAttach = wsService.attachChat.bind(wsService);
+  wsService.attachChat = ((chatId) => {
+    attachedChats.push(chatId);
+  }) as typeof wsService.attachChat;
+
+  try {
+    useOpenZStore.setState({
+      sessions: [
+        { id: 'ws:resume-multi', title: 'hii so whats new', createdAt: 1000, lastMessageAt: 9000, messageCount: 16, isDraft: false },
+      ],
+      activeChatId: 'ws:resume-multi',
+      messages: {},
+      activeTurnIds: {},
+      isStreaming: false,
+    });
+
+    // Even when activeChatId already matches, empty non-draft session hydrates on selectSession
+    useOpenZStore.getState().selectSession('ws_resume-multi');
+    expect(attachedChats).toEqual(['ws:resume-multi']);
+
+    const emit = (wsService as unknown as { emit: (event: string, payload: unknown) => void }).emit.bind(wsService);
+    emit('session_history', {
+      chat_id: 'ws_resume-multi',
+      messages: [
+        // Turn 1: User -> Assistant Round 1 (tools + partial note) -> Tool outputs -> Assistant Round 2 (tools) -> Tool outputs -> Assistant Final
+        { id: 'm0', role: 'user', content: 'Audit Cargo.toml and error handling', timestamp: 1000 },
+        {
+          id: 'm1',
+          role: 'assistant',
+          content: 'Inspecting workspace files first.',
+          timestamp: 1010,
+          extra: {
+            model: 'claude-sonnet-4-6',
+            reasoning_content: 'Plan round 1',
+            tool_calls: [
+              { id: 'call_r1_a', function: { name: 'read_file', arguments: '{"path":"src/lib.rs"}' } },
+              { id: 'call_r1_b', function: { name: 'grep_search', arguments: '{"query":"Result"}' } },
+            ],
+          },
+        },
+        {
+          id: 'm2',
+          role: 'tool',
+          // Contains `"error"` inside source file content — must NOT false-positive as tool failure!
+          content: '{"content":"pub fn parse() -> Result<(), &\'static str> { Err(\\"error\\") }"}',
+          timestamp: 1020,
+          extra: { tool_call_id: 'call_r1_a', name: 'read_file' },
+        },
+        {
+          id: 'm3',
+          role: 'tool',
+          content: '{"matches": 4}',
+          timestamp: 1030,
+          extra: { tool_call_id: 'call_r1_b', name: 'grep_search' },
+        },
+        {
+          id: 'm4',
+          role: 'assistant',
+          content: '',
+          timestamp: 1040,
+          extra: {
+            model: 'claude-sonnet-4-6',
+            reasoning_content: 'Plan round 2',
+            tool_calls: [
+              { id: 'call_r2_a', function: { name: 'exec_command', arguments: '{"command":"git status"}' } },
+            ],
+          },
+        },
+        {
+          id: 'm5',
+          role: 'tool',
+          content: '{"exit_code": 0, "stdout": "On branch main"}',
+          timestamp: 1050,
+          extra: { tool_call_id: 'call_r2_a', name: 'exec_command' },
+        },
+        {
+          id: 'm6',
+          role: 'assistant',
+          content: 'Audit complete: Cargo.toml and src/lib.rs are clean.',
+          timestamp: 1060,
+          extra: {
+            model: 'claude-sonnet-4-6',
+            reasoning_content: 'Synthesizing final summary',
+          },
+        },
+        // Turn 2: Direct Q&A without tools
+        { id: 'm7', role: 'user', content: 'Which branch was that?', timestamp: 2000 },
+        { id: 'm8', role: 'assistant', content: 'You are on `main`.', timestamp: 2010 },
+        // Turn 3: 3 empty-content tool rounds + 1 genuine tool error + final table answer
+        { id: 'm9', role: 'user', content: 'hii so whats new', timestamp: 3000 },
+        {
+          id: 'm10',
+          role: 'assistant',
+          content: '',
+          timestamp: 3010,
+          extra: {
+            reasoning_content: 'Checking git log',
+            tool_calls: [{ id: 'call_t3_1', function: { name: 'git_status', arguments: '{}' } }],
+          },
+        },
+        {
+          id: 'm11',
+          role: 'tool',
+          content: '{"branch":"main"}',
+          timestamp: 3020,
+          extra: { tool_call_id: 'call_t3_1', name: 'git_status' },
+        },
+        {
+          id: 'm12',
+          role: 'assistant',
+          content: '',
+          timestamp: 3030,
+          extra: {
+            reasoning_content: 'Checking protected file',
+            tool_calls: [{ id: 'call_t3_2', function: { name: 'read_file', arguments: '{"path":"/root/secret"}' } }],
+          },
+        },
+        {
+          id: 'm13',
+          role: 'tool',
+          content: '{"error":"Execution denied by user."}',
+          timestamp: 3040,
+          extra: { tool_call_id: 'call_t3_2', name: 'read_file' },
+        },
+        {
+          id: 'm14',
+          role: 'assistant',
+          content: '',
+          timestamp: 3050,
+          extra: {
+            reasoning_content: 'Checking CHANGELOG.md',
+            tool_calls: [{ id: 'call_t3_3', function: { name: 'read_file', arguments: '{"path":"CHANGELOG.md"}' } }],
+          },
+        },
+        {
+          id: 'm15',
+          role: 'tool',
+          content: '{"content":"## [0.0.345]"}',
+          timestamp: 3060,
+          extra: { tool_call_id: 'call_t3_3', name: 'read_file' },
+        },
+        {
+          id: 'm16',
+          role: 'assistant',
+          content: 'Hey Aswin. Three version layers, do not mix them.',
+          timestamp: 3070,
+        },
+      ],
+    });
+
+    const restored = useOpenZStore.getState().messages['ws:resume-multi'] || [];
+    // Exactly 3 user prompts + 3 coalesced assistant turns = 6 messages (no ghost bubbles!)
+    expect(restored.map((m) => m.role)).toEqual([
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+      'user',
+      'assistant',
+    ]);
+
+    // Verify Turn 1 routed pre-tool narration into narrationSegments, kept final answer clean, and ordered all 3 tools
+    const turn1Assistant = restored[1]!;
+    expect(turn1Assistant.content).toBe(
+      'Audit complete: Cargo.toml and src/lib.rs are clean.',
+    );
+    expect(turn1Assistant.narrationSegments?.map((s) => s.content)).toEqual([
+      'Inspecting workspace files first.',
+    ]);
+    expect(turn1Assistant.reasoningContent).toBe(
+      'Plan round 1\n\nPlan round 2\n\nSynthesizing final summary',
+    );
+    expect(turn1Assistant.toolCalls?.map((t) => t.name)).toEqual([
+      'read_file',
+      'grep_search',
+      'exec_command',
+    ]);
+    expect(turn1Assistant.toolCalls?.map((t) => t.status)).toEqual([
+      'success',
+      'success',
+      'success',
+    ]);
+    expect(turn1Assistant.timestamp).toBeLessThan(turn1Assistant.toolCalls![0]!.startedAt!);
+    expect(turn1Assistant.toolCalls![0]!.startedAt!).toBeLessThan(
+      turn1Assistant.toolCalls![1]!.startedAt!,
+    );
+    expect(turn1Assistant.toolCalls![1]!.startedAt!).toBeLessThan(
+      turn1Assistant.toolCalls![2]!.startedAt!,
+    );
+
+    // Verify Turn 2 preserved
+    expect(restored[2]?.content).toBe('Which branch was that?');
+    expect(restored[3]?.content).toBe('You are on `main`.');
+
+    // Verify Turn 3 coalesced all 3 tool rounds + final answer and accurately marked only the denied tool as error
+    const turn3Assistant = restored[5]!;
+    expect(turn3Assistant.content).toBe('Hey Aswin. Three version layers, do not mix them.');
+    expect(turn3Assistant.toolCalls).toHaveLength(3);
+    expect(turn3Assistant.toolCalls?.map((t) => t.status)).toEqual([
+      'success',
+      'error',
+      'success',
+    ]);
+    expect(turn3Assistant.toolCalls?.[1]?.error).toBe('Execution denied by user.');
+  } finally {
+    wsService.attachChat = origAttach;
+  }
+});
+
+test('live multi-round agentic turn keeps AgentActivity working monotonically across inter-tool gaps and folds pre-tool narration cleanly', async () => {
+  ensureRegistered();
+  const { isMessageActivityWorking } = await import('../features/chat/toolVisibility');
+  const { buildMessageActivitySteps } = await import('../features/activity/activityAdapters');
+
+  useOpenZStore.setState({
+    sessions: [
+      { id: 'ws:nvda-live', title: 'NVDA Research', createdAt: 1, lastMessageAt: 1, messageCount: 1, isDraft: false },
+    ],
+    activeChatId: 'ws:nvda-live',
+    messages: {
+      'ws:nvda-live': [
+        { id: 'u1', role: 'user', content: 'so can u research nvidia current stock value', timestamp: 10 },
+        { id: 'a1', role: 'assistant', content: '', timestamp: 11, isStreaming: true },
+      ],
+    },
+    activeTurnIds: {},
+    isStreaming: true,
+  });
+
+  const emit = (wsService as unknown as { emit: (event: string, payload: unknown) => void }).emit.bind(wsService);
+  const currentAssistant = () => useOpenZStore.getState().messages['ws:nvda-live']![1]!;
+
+  emit('turn_started', { chat_id: 'ws_nvda-live', turn_id: 'turn-nvda-1' });
+  expect(isMessageActivityWorking(currentAssistant())).toBe(true);
+
+  // Round 1: reasoning + tool_start + tool_end
+  emit('reasoning_delta', { chat_id: 'ws_nvda-live', turn_id: 'turn-nvda-1', content: 'Checking sources.' });
+  emit('tool_start', { chat_id: 'ws_nvda-live', turn_id: 'turn-nvda-1', tool_call_id: 'tc-1', name: 'web_search', args: { query: 'NVDA stock' } });
+  expect(isMessageActivityWorking(currentAssistant())).toBe(true);
+
+  emit('tool_end', { chat_id: 'ws_nvda-live', turn_id: 'turn-nvda-1', tool_call_id: 'tc-1', name: 'web_search', status: 'success', output: '{"results":[]}' });
+  // Inter-tool gap #1: must remain working (never flap to complete!)
+  expect(isMessageActivityWorking(currentAssistant())).toBe(true);
+
+  // Round 2: LLM streams pre-tool narration delta BEFORE calling next tool
+  emit('reasoning_delta', { chat_id: 'ws_nvda-live', turn_id: 'turn-nvda-1', content: 'Fetching quote.' });
+  emit('delta', {
+    chat_id: 'ws_nvda-live',
+    turn_id: 'turn-nvda-1',
+    content: 'Live pull. Getting exact quote + earnings detail.',
+  });
+  // Even while pre-tool narration sits in content before tool_start arrives, AgentActivity stays working!
+  expect(isMessageActivityWorking(currentAssistant())).toBe(true);
+
+  emit('tool_start', { chat_id: 'ws_nvda-live', turn_id: 'turn-nvda-1', tool_call_id: 'tc-2', name: 'web_fetch', args: { url: 'https://stockanalysis.com/stocks/nvda' } });
+  // Pre-tool narration folded out of content and into narrationSegments!
+  expect(currentAssistant().content).toBe('');
+  expect(currentAssistant().narrationSegments?.map((s) => s.content)).toEqual([
+    'Live pull. Getting exact quote + earnings detail.',
+  ]);
+  expect(isMessageActivityWorking(currentAssistant())).toBe(true);
+
+  emit('tool_end', { chat_id: 'ws_nvda-live', turn_id: 'turn-nvda-1', tool_call_id: 'tc-2', name: 'web_fetch', status: 'success', output: '{"fetched":1}' });
+  // Inter-tool gap #2: still monotonically working!
+  expect(isMessageActivityWorking(currentAssistant())).toBe(true);
+
+  // Round 3: Second pre-tool narration + bookmark persistence tool
+  emit('delta', {
+    chat_id: 'ws_nvda-live',
+    turn_id: 'turn-nvda-1',
+    content: 'Persisting evidence per skill protocol (tiered bookmarks + brief), then the briefing.',
+  });
+  expect(isMessageActivityWorking(currentAssistant())).toBe(true);
+  emit('tool_start', { chat_id: 'ws_nvda-live', turn_id: 'turn-nvda-1', tool_call_id: 'tc-3', name: 'knowledge_source', args: { action: 'add' } });
+  expect(currentAssistant().content).toBe('');
+  expect(currentAssistant().narrationSegments).toHaveLength(2);
+  emit('tool_end', { chat_id: 'ws_nvda-live', turn_id: 'turn-nvda-1', tool_call_id: 'tc-3', name: 'knowledge_source', status: 'success', output: '{"status":"ok"}' });
+  expect(isMessageActivityWorking(currentAssistant())).toBe(true);
+
+  // Final synthesis round: streams clean final Markdown answer without pre-tool narration pollution
+  emit('delta', {
+    chat_id: 'ws_nvda-live',
+    turn_id: 'turn-nvda-1',
+    content: '**NVDA — live, Nov 18 2026**\n\n**$150.86**, −2.96% today.',
+  });
+  expect(isMessageActivityWorking(currentAssistant())).toBe(true);
+
+  // Turn completes: transitions monotonically once from working -> complete
+  emit('turn_end', { chat_id: 'ws_nvda-live', turn_id: 'turn-nvda-1' });
+  const finalMsg = currentAssistant();
+  expect(isMessageActivityWorking(finalMsg)).toBe(false);
+  expect(finalMsg.content).toBe('**NVDA — live, Nov 18 2026**\n\n**$150.86**, −2.96% today.');
+  expect(finalMsg.reasoningContent).toBe('Checking sources.\n\nFetching quote.');
+
+  const steps = buildMessageActivitySteps([finalMsg], { chronological: true, limit: 250 });
+  expect(steps.filter((s) => s.kind === 'message').map((s) => s.title)).toEqual([
+    'Live pull. Getting exact quote + earnings detail.',
+    'Persisting evidence per skill protocol (tiered bookmarks + brief), then the briefing.',
+  ]);
+});

@@ -317,4 +317,44 @@ mod summary_tests {
         let _ = fs::remove_dir_all(&dir);
         Ok(())
     }
+
+    #[tokio::test]
+    async fn archived_messages_preserved_in_summaries_and_save_reload() -> Result<()> {
+        let dir = std::env::temp_dir().join(format!(
+            "openz_archived_history_test_{}",
+            uuid::Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dir)?;
+        let manager = SessionManager::new(dir.clone());
+
+        let mut session = Session::new("ws:compacted-1");
+        session.add_message("user", "First historical prompt");
+        session.add_message("assistant", "First historical answer");
+        session.add_message("user", "Recent prompt");
+        session.add_message("assistant", "Recent answer");
+
+        // Simulate compaction moving the first turn into archived_messages
+        session
+            .archived_messages
+            .extend_from_slice(&session.messages[..2]);
+        session.messages = session.messages[2..].to_vec();
+
+        manager.save(&session).await?;
+
+        let loaded = manager.load("ws:compacted-1")?;
+        assert_eq!(loaded.archived_messages.len(), 2);
+        assert_eq!(loaded.messages.len(), 2);
+        assert!(loaded.verify_hash_chain().is_ok());
+
+        let summaries = manager.list_summaries();
+        assert_eq!(summaries.len(), 1);
+        assert_eq!(summaries[0].message_count, 4);
+        assert_eq!(
+            summaries[0].first_user_message.as_deref(),
+            Some("First historical prompt")
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        Ok(())
+    }
 }

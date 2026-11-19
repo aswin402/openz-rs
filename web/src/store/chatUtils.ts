@@ -275,29 +275,110 @@ export function settleOrchestrationRuns(
   return changed ? settled : runs;
 }
 
-export function mergeAssistantFinalIntoToolTurn(messages: OpenZMessage[], nextMessage: OpenZMessage): boolean {
-  if (nextMessage.role !== 'assistant') return false;
-  if (nextMessage.toolCalls && nextMessage.toolCalls.length > 0) return false;
-  if (nextMessage.activityNotices && nextMessage.activityNotices.length > 0) return false;
+function joinDistinctBlocks(first?: string, second?: string): string {
+  const left = (first ?? '').trim();
+  const right = (second ?? '').trim();
+  return !left
+    ? (second ?? '')
+    : !right || left === right
+      ? (first ?? '')
+      : `${(first ?? '').trimEnd()}\n\n${(second ?? '').trimStart()}`;
+}
 
+export function foldPendingContentIntoNarration(
+  message: OpenZMessage,
+  timestamp = Date.now(),
+): OpenZMessage {
+  const pendingText = message.content.trim();
+  return pendingText.length > 0
+    ? {
+        ...message,
+        content: '',
+        reasoningRoundOpen: false,
+        narrationSegments: [
+          ...(message.narrationSegments ?? []),
+          {
+            id: newMsgId('narration'),
+            content: pendingText,
+            timestamp,
+          },
+        ],
+      }
+    : message;
+}
+
+function findTurnAssistantIndex(messages: ReadonlyArray<OpenZMessage>): number {
   for (let i = messages.length - 1; i >= 0; i -= 1) {
     const candidate = messages[i];
-    if (candidate.role === 'user') return false;
-    if (candidate.role !== 'assistant') continue;
-    if (!candidate.toolCalls || candidate.toolCalls.length === 0) return false;
-    if (candidate.content.trim().length > 0) return false;
-
-    messages[i] = {
-      ...candidate,
-      content: nextMessage.content,
-      timestamp: nextMessage.timestamp || candidate.timestamp,
-      model: nextMessage.model || candidate.model,
-      reasoningContent: nextMessage.reasoningContent || candidate.reasoningContent,
-    };
-    return true;
+    const isHardBoundary =
+      candidate.role === 'user' || (candidate.role === 'system' && !candidate.isNotice);
+    const matchedIdx = isHardBoundary ? -1 : candidate.role === 'assistant' ? i : -2;
+    switch (matchedIdx) {
+      case -2:
+        break;
+      default:
+        return matchedIdx;
+    }
   }
+  return -1;
+}
 
-  return false;
+export function mergeAssistantFinalIntoToolTurn(
+  messages: OpenZMessage[],
+  nextMessage: OpenZMessage,
+): boolean {
+  const isStandaloneNotice = Boolean(
+    nextMessage.isNotice && !nextMessage.content && !(nextMessage.toolCalls?.length),
+  );
+  const canAttemptMerge = nextMessage.role === 'assistant' && !isStandaloneNotice;
+  const targetIdx = canAttemptMerge ? findTurnAssistantIndex(messages) : -1;
+  switch (targetIdx >= 0) {
+    case false:
+      return false;
+    case true: {
+      const rawCandidate = messages[targetIdx];
+      const nextContinuesWork = Boolean(
+        (nextMessage.toolCalls?.length ?? 0) > 0 ||
+          (nextMessage.narrationSegments?.length ?? 0) > 0,
+      );
+      const candidate = nextContinuesWork
+        ? foldPendingContentIntoNarration(
+            rawCandidate,
+            nextMessage.toolCalls?.[0]?.startedAt ?? nextMessage.timestamp,
+          )
+        : rawCandidate;
+
+      const mergedToolCalls = [
+        ...(candidate.toolCalls ?? []),
+        ...(nextMessage.toolCalls ?? []),
+      ];
+      const mergedNotices = [
+        ...(candidate.activityNotices ?? []),
+        ...(nextMessage.activityNotices ?? []),
+      ];
+      const mergedNarrations = [
+        ...(candidate.narrationSegments ?? []),
+        ...(nextMessage.narrationSegments ?? []),
+      ];
+      const mergedReasoning = joinDistinctBlocks(
+        candidate.reasoningContent,
+        nextMessage.reasoningContent,
+      );
+
+      messages[targetIdx] = {
+        ...candidate,
+        content: joinDistinctBlocks(candidate.content, nextMessage.content),
+        timestamp: candidate.timestamp || nextMessage.timestamp,
+        model: nextMessage.model || candidate.model,
+        reasoningContent: mergedReasoning || undefined,
+        toolCalls: mergedToolCalls.length > 0 ? mergedToolCalls : undefined,
+        activityNotices: mergedNotices.length > 0 ? mergedNotices : undefined,
+        narrationSegments: mergedNarrations.length > 0 ? mergedNarrations : undefined,
+        isNotice: Boolean(candidate.isNotice && nextMessage.isNotice),
+      };
+      return true;
+    }
+  }
 }
 
 export function settleAssistantTurnMessages(

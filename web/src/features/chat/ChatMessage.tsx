@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -360,7 +360,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
     if (isUser || activityStyle === 'panel-only') return [];
     const allSteps = buildMessageActivitySteps([message], {
       chronological: true,
-      limit: 64,
+      limit: 250,
     });
     return filterInlineStepsForToolStyle(allSteps, toolResultStyle);
   }, [isUser, activityStyle, message, toolResultStyle]);
@@ -369,6 +369,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
     !isUser &&
       (inlineActivitySteps.length > 0 ||
         (message.toolCalls?.length ?? 0) > 0 ||
+        (message.narrationSegments?.length ?? 0) > 0 ||
         isActivityWorking),
   );
 
@@ -377,17 +378,10 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
     activityStyle !== 'panel-only' &&
     (activityStyle === 'streaming-only' ? isActivityWorking : hasAnyTurnActivity);
 
-  const [isActivityExpanded, setIsActivityExpanded] = useState<boolean>(
-    () => !activityAutoCollapse,
-  );
-  const previousWorkingRef = useRef<boolean>(isActivityWorking);
-
-  useEffect(() => {
-    if (previousWorkingRef.current && !isActivityWorking && activityAutoCollapse) {
-      setIsActivityExpanded(false);
-    }
-    previousWorkingRef.current = isActivityWorking;
-  }, [isActivityWorking, activityAutoCollapse]);
+  const [userPinnedOpen, setUserPinnedOpen] = useState<boolean | null>(null);
+  const isActivityExpanded = isActivityWorking
+    ? (userPinnedOpen ?? true)
+    : (userPinnedOpen ?? !activityAutoCollapse);
 
   const showExpandedToolCards = shouldDisplayExpandedToolCalls({
     toolResultStyle,
@@ -675,7 +669,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
                 autoCollapse={activityAutoCollapse}
                 showDetails={activityShowDetails}
                 open={isActivityExpanded}
-                onOpenChange={setIsActivityExpanded}
+                onOpenChange={setUserPinnedOpen}
                 title={
                   !isActivityWorking &&
                   inlineActivitySteps.length === 0 &&
