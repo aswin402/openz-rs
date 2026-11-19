@@ -3,7 +3,6 @@
 import * as React from "react";
 import {
   AlertTriangle,
-  ArrowUpRight,
   Check,
   ChevronDown,
   ExternalLink,
@@ -808,65 +807,105 @@ export const KokonutApprovalCard: React.FC<{
   onDeny: () => void;
   className?: string;
 }> = ({ prompt, state = "pending", onAllow, onDeny, className }) => {
+  const [inspectOpen, setInspectOpen] = React.useState(true);
   const argsPreview =
     typeof prompt.arguments === "string"
       ? prompt.arguments
       : JSON.stringify(prompt.arguments ?? {}, null, 2);
 
   return (
-    <div
+    <motion.div
+      initial={{ opacity: 0, y: 6, scale: 0.99 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ type: "spring", stiffness: 360, damping: 28 }}
       className={cn(
-        "w-full max-w-xl overflow-hidden rounded-2xl border border-warning/35 bg-card/90 p-3.5 text-xs shadow-sm",
+        "w-full max-w-xl overflow-hidden rounded-2xl border border-warning/35 bg-card/85 p-3.5 text-xs shadow-md backdrop-blur-xl",
         className,
       )}
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-xl border border-warning/35 bg-warning/12 text-warning">
-            <AlertTriangle className="size-3.5" />
+        <div className="flex items-center gap-2.5">
+          <span className="inline-flex size-8 shrink-0 items-center justify-center rounded-xl border border-warning/35 bg-warning/12 text-warning">
+            <AlertTriangle className="size-4" />
           </span>
           <div>
-            <div className="font-semibold text-foreground">
-              Approve {prompt.toolName}
+            <div className="flex items-center gap-1.5 font-semibold text-foreground">
+              <span>Approve {prompt.toolName}</span>
             </div>
             <div className="text-[11px] text-muted-foreground">
               {prompt.description || "SecurityGuard human-in-the-loop verification"}
             </div>
           </div>
         </div>
-        <span className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-foreground/[0.04] px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
-          <ShieldCheck className="size-3 text-primary" />
+        <span
+          className={cn(
+            "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px]",
+            state === "approved"
+              ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-500"
+              : state === "denied"
+                ? "border-destructive/35 bg-destructive/10 text-destructive"
+                : "border-warning/35 bg-warning/10 text-warning",
+          )}
+        >
+          <ShieldCheck className="size-3" />
           <span>{state}</span>
         </span>
       </div>
 
-      <div className="mt-2.5 rounded-xl border border-border/60 bg-background/70 p-2.5 font-mono text-[11px] text-foreground/85">
-        <div className="mb-1 flex items-center gap-1.5 text-[10px] text-muted-foreground">
+      <div className="mt-2.5 overflow-hidden rounded-xl border border-border/60 bg-background/70 font-mono text-[11px] text-foreground/85">
+        <button
+          type="button"
+          onClick={() => setInspectOpen((o) => !o)}
+          className="flex w-full items-center gap-1.5 px-2.5 py-1.5 text-left text-[10px] text-muted-foreground hover:bg-foreground/[0.03]"
+        >
           <Terminal className="size-3 text-primary" />
-          <span>{prompt.toolName}</span>
-          <ArrowUpRight className="ml-auto size-3 opacity-60" />
-        </div>
-        <pre className="max-h-32 overflow-auto whitespace-pre-wrap">{argsPreview}</pre>
+          <span className="font-semibold text-foreground/90">{prompt.toolName}</span>
+          <span className="ml-auto text-[9.5px] opacity-75">
+            {inspectOpen ? "Hide payload" : "Inspect payload"}
+          </span>
+          <ChevronDown
+            className={cn(
+              "size-3 transition-transform",
+              inspectOpen && "rotate-180",
+            )}
+          />
+        </button>
+        <AnimatePresence initial={false}>
+          {inspectOpen && (
+            <motion.pre
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.16 }}
+              className="max-h-36 overflow-auto border-t border-border/50 px-2.5 py-2 whitespace-pre-wrap"
+            >
+              {argsPreview}
+            </motion.pre>
+          )}
+        </AnimatePresence>
       </div>
 
       {state === "pending" && (
         <div className="mt-3 flex items-center justify-end gap-2">
-          <button
+          <motion.button
             type="button"
+            whileTap={{ scale: 0.96 }}
             onClick={onDeny}
-            className="rounded-lg border border-border/70 bg-transparent px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
+            className="rounded-xl border border-border/70 bg-transparent px-3 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
           >
             Deny
-          </button>
-          <button
+          </motion.button>
+          <motion.button
             type="button"
+            whileTap={{ scale: 0.96 }}
             onClick={onAllow}
-            className="rounded-lg bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-primary px-3.5 py-1.5 text-xs font-semibold text-primary-foreground shadow-xs transition-opacity hover:opacity-90"
           >
-            Allow Execution
-          </button>
+            <Check className="size-3.5" />
+            <span>Allow Execution</span>
+          </motion.button>
         </div>
       )}
-    </div>
+    </motion.div>
   );
 };

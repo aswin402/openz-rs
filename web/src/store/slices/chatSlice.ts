@@ -194,9 +194,10 @@ export const createChatSlice: StateCreator<
           {
             id: newMsgId('err'),
             role: 'assistant' as const,
-            content: `⚠️ **Connection Error**: ${errorMessage}`,
+            content: `Connection error: ${errorMessage}`,
             timestamp: Date.now(),
             isNotice: true,
+            isError: true,
           },
         ],
       };

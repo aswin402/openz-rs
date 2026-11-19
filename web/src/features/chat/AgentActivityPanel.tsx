@@ -17,6 +17,11 @@ import {
 } from 'lucide-react';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
+import {
+  KokonutSmoothDrawer,
+  SpectrumStatusBadge,
+} from '../../components/registries/modernRegistries';
+import { useUiCustomizationStore } from '../../store/useUiCustomizationStore';
 import { cn } from '../../lib/utils';
 import { wsService } from '../../services/websocket';
 import { OrchestrationRunPanel } from '../../shared/ui/OrchestrationRunPanel';
@@ -37,6 +42,7 @@ import {
 export { buildMessageActivitySteps };
 
 interface AgentActivityPanelProps {
+  open?: boolean;
   messages?: OpenZMessage[];
   isStreaming?: boolean;
   orchestrationRuns?: OrchestrationRunState[];
@@ -139,12 +145,14 @@ function extractCommandLabel(tool: ToolExecution): string {
 }
 
 export const AgentActivityPanel: React.FC<AgentActivityPanelProps> = ({
+  open = true,
   onClose,
 }) => {
   const [activeTab, setActiveTab] = useState<ActivityDrawerTab>('all');
   const [logScope, setLogScope] = useState<LogsScopeFilter>('all');
   const [essentialOnly, setEssentialOnly] = useState<boolean>(true);
   const [query, setQuery] = useState('');
+  const drawerMotionStyle = useUiCustomizationStore((s) => s.drawerMotionStyle);
 
   const activeChatId = useOpenZStore((s) => s.activeChatId);
   const sessions = useOpenZStore((s) => s.sessions);
@@ -165,11 +173,13 @@ export const AgentActivityPanel: React.FC<AgentActivityPanelProps> = ({
   }, [activeChatId]);
 
   useEffect(() => {
-    refreshAll();
-  }, [refreshAll]);
+    if (open) {
+      refreshAll();
+    }
+  }, [open, refreshAll]);
 
   useEffect(() => {
-    if (!onClose) return undefined;
+    if (!open || !onClose) return undefined;
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         onClose();
@@ -177,7 +187,7 @@ export const AgentActivityPanel: React.FC<AgentActivityPanelProps> = ({
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
+  }, [open, onClose]);
 
   const registeredSubagentNames = useMemo(
     () => new Set((runtimeInventory?.subagents ?? []).map((a) => a.name.toLowerCase())),
@@ -423,17 +433,16 @@ export const AgentActivityPanel: React.FC<AgentActivityPanelProps> = ({
   const totalSubagentCount = visibleOrchRuns.length + visibleSubagents.length;
 
   return (
-    <>
-      {onClose && (
-        <button
-          type="button"
-          aria-label="Close activity drawer backdrop"
-          onClick={onClose}
-          className="fixed inset-0 z-30 bg-background/55 backdrop-blur-xs xl:hidden"
-        />
-      )}
-
-      <aside className="fixed inset-y-0 right-0 z-40 flex h-full w-full max-w-[380px] shrink-0 flex-col border-l border-border/65 bg-sidebar/95 shadow-2xl backdrop-blur-xl xl:static xl:z-auto xl:w-[368px]">
+    <KokonutSmoothDrawer
+      open={open}
+      onClose={onClose}
+      side="right"
+      styleVariant={drawerMotionStyle}
+      showBackdrop={Boolean(onClose)}
+      backdropClassName="z-30 bg-background/55 backdrop-blur-xs xl:hidden"
+      ariaLabel="Runtime activity drawer"
+      className="fixed inset-y-0 right-0 z-40 flex h-full w-full max-w-[380px] shrink-0 flex-col border-l border-border/65 bg-sidebar/95 shadow-2xl backdrop-blur-xl xl:static xl:z-auto xl:w-[368px]"
+    >
         {/* Header */}
         <div className="flex items-center justify-between gap-2 border-b border-border/50 px-3.5 py-3">
           <div className="min-w-0">
@@ -441,18 +450,10 @@ export const AgentActivityPanel: React.FC<AgentActivityPanelProps> = ({
               <span className="truncate text-sm font-semibold text-foreground">
                 Activity
               </span>
-              <Badge
-                variant={runningCount > 0 ? 'warning' : 'outline'}
-                className="gap-1 px-1.5 py-0 text-[10px]"
-              >
-                <span
-                  className={cn(
-                    'size-1.5 rounded-full',
-                    runningCount > 0 ? 'animate-pulse bg-warning' : 'bg-muted-foreground',
-                  )}
-                />
-                <span>{runningCount > 0 ? `${runningCount} Running` : 'Idle'}</span>
-              </Badge>
+              <SpectrumStatusBadge
+                tone={runningCount > 0 ? 'running' : 'idle'}
+                label={runningCount > 0 ? `${runningCount} Running` : 'Idle'}
+              />
             </div>
             <div className="truncate text-[11px] text-muted-foreground">
               Background jobs, subagents &amp; live logs
@@ -820,7 +821,6 @@ export const AgentActivityPanel: React.FC<AgentActivityPanelProps> = ({
             </section>
           )}
         </div>
-      </aside>
-    </>
+    </KokonutSmoothDrawer>
   );
 };

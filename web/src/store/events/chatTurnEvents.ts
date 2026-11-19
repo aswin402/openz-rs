@@ -26,6 +26,7 @@ import {
   type TelemetryNavigationHandlers,
 } from '../useToastStore';
 import { asString, isRecord } from '../../shared/lib/format';
+import { distillErrorMessage } from '../../shared/lib/errorDistiller';
 
 export function buildTelemetryNavigation({
   set,
@@ -531,11 +532,16 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
   });
 
   wsService.on('error', (payload) => {
-    const detail = payload.detail || 'Gateway error occurred.';
+    const rawDetail = String(payload.detail || 'Gateway error occurred.');
+    const distilled = distillErrorMessage(rawDetail);
+    const conciseToastMessage = distilled.provider
+      ? `${distilled.title} (${distilled.provider}${distilled.httpCode ? ` · ${distilled.httpCode}` : ''}) — ${distilled.summary}`
+      : `${distilled.title} — ${distilled.summary}`;
+
     dispatchWorkspaceEventToast(
       'global',
       'error',
-      String(detail),
+      conciseToastMessage,
       buildTelemetryNavigation(ctx),
     );
     if (!payload.chat_id && (get().activeView !== 'chats' || get().isSettingsOpen)) {
@@ -545,7 +551,7 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
         : activeView === 'agents' || activeView === 'skills' || activeView === 'knowledge' || activeView === 'inventory'
           ? activeView
           : 'global';
-      set({ workspaceNotice: createWorkspaceNotice(scope, 'error', String(detail)) });
+      set({ workspaceNotice: createWorkspaceNotice(scope, 'error', conciseToastMessage) });
       return;
     }
     const settled = settleActiveTurn(
@@ -568,10 +574,11 @@ export function registerChatTurnEvents(ctx: StoreEventContext) {
     const errorMsg: OpenZMessage = {
       id: newMsgId('err'),
       role: 'assistant',
-      content: `⚠️ **Error**: ${detail}`,
+      content: rawDetail,
       timestamp: Date.now(),
       isStreaming: false,
       isNotice: true,
+      isError: true,
     };
 
     const isEmptyPlaceholder =

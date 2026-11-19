@@ -12,6 +12,8 @@ import {
 } from 'lucide-react';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
+import { KokonutSmoothDrawer } from './registries/modernRegistries';
+import { useUiCustomizationStore } from '../store/useUiCustomizationStore';
 import {
   classifyLogScope,
   normalizeWsSessionId,
@@ -94,6 +96,7 @@ export const LogsDrawer: React.FC = () => {
   const logs = useOpenZStore((s) => s.logs);
   const activeChatId = useOpenZStore((s) => s.activeChatId);
   const sessions = useOpenZStore((s) => s.sessions);
+  const drawerMotionStyle = useUiCustomizationStore((s) => s.drawerMotionStyle);
 
   const [scopeTab, setScopeTab] = useState<LogsScopeTab>('session');
   const [essentialOnly, setEssentialOnly] = useState<boolean>(true);
@@ -238,8 +241,6 @@ export const LogsDrawer: React.FC = () => {
     }
   };
 
-  if (!isLogsOpen) return null;
-
   const levelOptions = essentialOnly ? LEVEL_FILTERS_ESSENTIAL : LEVEL_FILTERS_VERBOSE;
   const scopeCategories = CATEGORIES_BY_SCOPE[scopeTab];
 
@@ -265,7 +266,15 @@ export const LogsDrawer: React.FC = () => {
   })();
 
   return (
-    <div className="fixed inset-y-0 right-0 z-50 flex w-full max-w-lg flex-col border-l border-border bg-card shadow-2xl">
+    <KokonutSmoothDrawer
+      open={isLogsOpen}
+      onClose={() => setIsLogsOpen(false)}
+      side="right"
+      styleVariant={drawerMotionStyle}
+      showBackdrop
+      ariaLabel="Runtime and session logs drawer"
+      className="fixed inset-y-0 right-0 z-50 flex w-full max-w-lg flex-col border-l border-border/75 bg-card/95 shadow-2xl backdrop-blur-2xl"
+    >
       {/* Header */}
       <div className="flex h-13 items-center justify-between border-b border-border/50 px-4">
         <div className="flex min-w-0 items-center gap-2 text-sm font-semibold text-foreground">
@@ -618,6 +627,6 @@ export const LogsDrawer: React.FC = () => {
           </div>
         )}
       </div>
-    </div>
+    </KokonutSmoothDrawer>
   );
 };

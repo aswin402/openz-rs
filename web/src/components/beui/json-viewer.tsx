@@ -1,11 +1,11 @@
 import * as React from "react"
-import { Braces, Check, ChevronDown, ChevronRight, Copy } from "lucide-react"
+import { Braces, Check, ChevronDown, ChevronRight, Copy, Search } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
-export type BeuiJsonViewerVariant = "tree" | "lined" | "compact"
+export type BeuiJsonViewerVariant = "tree" | "uiarc-inspector" | "lined" | "compact"
 
 export interface BeuiJsonViewerProps {
   value: unknown
@@ -20,15 +20,38 @@ function JsonNode({
   val,
   depth,
   defaultDepth,
+  showTypePills = false,
+  filterQuery = "",
 }: {
   name?: string
   val: unknown
   depth: number
   defaultDepth: number
+  showTypePills?: boolean
+  filterQuery?: string
 }) {
   const [open, setOpen] = React.useState(depth < defaultDepth)
+  const lowerQuery = filterQuery.trim().toLowerCase()
 
   if (val === null || typeof val !== "object") {
+    const valStr = String(val)
+    if (
+      lowerQuery &&
+      !(name ?? "").toLowerCase().includes(lowerQuery) &&
+      !valStr.toLowerCase().includes(lowerQuery)
+    ) {
+      return null
+    }
+    const typeLabel =
+      val === null
+        ? "null"
+        : typeof val === "string"
+          ? "str"
+          : typeof val === "number"
+            ? "num"
+            : typeof val === "boolean"
+              ? "bool"
+              : "val"
     const rendered =
       typeof val === "string" ? (
         <span className="text-syntax-str">&quot;{val}&quot;</span>
@@ -41,8 +64,13 @@ function JsonNode({
       )
 
     return (
-      <div className="flex items-baseline gap-1.5 py-0.5 font-mono text-[11px]">
+      <div className="flex items-baseline gap-1.5 rounded px-1 py-0.5 font-mono text-[11px] hover:bg-foreground/[0.035]">
         {name !== undefined && <span className="text-foreground/85">{name}:</span>}
+        {showTypePills && (
+          <span className="rounded bg-foreground/[0.05] px-1 py-0 text-[9px] text-muted-foreground">
+            {typeLabel}
+          </span>
+        )}
         <span className="break-all">{rendered}</span>
       </div>
     )
@@ -58,7 +86,7 @@ function JsonNode({
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex items-center gap-1 py-0.5 text-left hover:text-primary"
+        className="flex items-center gap-1 rounded px-1 py-0.5 text-left hover:bg-foreground/[0.035] hover:text-primary"
       >
         {open ? (
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
@@ -66,8 +94,8 @@ function JsonNode({
           <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
         )}
         {name !== undefined && <span className="text-foreground/90">{name}:</span>}
-        <span className="text-muted-foreground">
-          {isArr ? `Array(${entries.length})` : `{${entries.length}}`}
+        <span className="rounded bg-foreground/[0.05] px-1.5 py-0 text-[9.5px] text-muted-foreground">
+          {isArr ? `arr[${entries.length}]` : `obj{${entries.length}}`}
         </span>
       </button>
 
@@ -80,6 +108,8 @@ function JsonNode({
               val={child}
               depth={depth + 1}
               defaultDepth={defaultDepth}
+              showTypePills={showTypePills}
+              filterQuery={filterQuery}
             />
           ))}
         </div>
@@ -89,7 +119,7 @@ function JsonNode({
 }
 
 /**
- * @beui/json-viewer — Interactive collapsible JSON tree & formatted payload inspector.
+ * @beui/json-viewer + `@uiarc/json-viewer` — Interactive collapsible JSON tree & payload inspector.
  */
 export const BeuiJsonViewer: React.FC<BeuiJsonViewerProps> = ({
   value,
@@ -99,6 +129,7 @@ export const BeuiJsonViewer: React.FC<BeuiJsonViewerProps> = ({
   className,
 }) => {
   const [copied, setCopied] = React.useState(false)
+  const [filterQuery, setFilterQuery] = React.useState("")
 
   const parsed = React.useMemo(() => {
     if (typeof value === "string") {
@@ -158,9 +189,30 @@ export const BeuiJsonViewer: React.FC<BeuiJsonViewerProps> = ({
         </Button>
       </div>
 
-      {variant === "tree" && parsed !== null && typeof parsed === "object" ? (
+      {variant === "uiarc-inspector" && (
+        <div className="flex items-center gap-1.5 border-b border-border/45 bg-background/50 px-3 py-1">
+          <Search className="size-3 text-muted-foreground" />
+          <input
+            type="text"
+            value={filterQuery}
+            onChange={(e) => setFilterQuery(e.target.value)}
+            placeholder="Filter keys or values…"
+            className="w-full bg-transparent font-mono text-[10.5px] text-foreground placeholder:text-muted-foreground/70 focus:outline-none"
+          />
+        </div>
+      )}
+
+      {(variant === "tree" || variant === "uiarc-inspector") &&
+      parsed !== null &&
+      typeof parsed === "object" ? (
         <div className="max-h-60 overflow-auto p-3">
-          <JsonNode val={parsed} depth={0} defaultDepth={defaultDepth} />
+          <JsonNode
+            val={parsed}
+            depth={0}
+            defaultDepth={defaultDepth}
+            showTypePills={variant === "uiarc-inspector"}
+            filterQuery={filterQuery}
+          />
         </div>
       ) : (
         <pre

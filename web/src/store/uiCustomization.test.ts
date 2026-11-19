@@ -42,6 +42,27 @@ import {
   isComparisonTableHeaders,
 } from '../components/registries/rareAndCommunity';
 import {
+  DOCK_TOOLBAR_STYLE_OPTIONS,
+  DRAWER_MOTION_STYLE_OPTIONS,
+  LOADING_STATE_STYLE_OPTIONS,
+  MEMORY_CHIPS_STYLE_OPTIONS,
+  NAV_MENU_STYLE_OPTIONS,
+  NOTIFICATION_CENTER_STYLE_OPTIONS,
+  TOKEN_ALTERNATIVES_STYLE_OPTIONS,
+  extractTurnMemoryChips,
+} from '../components/registries/modernRegistries';
+import { GLOBAL_BADGE_STYLE_OPTIONS } from '../components/ui/badge';
+import {
+  distillErrorMessage,
+  formatCompactRetryDelay,
+  isLikelyErrorNoticeText,
+} from '../shared/lib/errorDistiller';
+import {
+  THEME_TRANSITION_STYLE_OPTIONS,
+  computeThemeClipKeyframes,
+  normalizeThemeTransitionStyle,
+} from '../shared/lib/themeTransition';
+import {
   ACTIVITY_DENSITY_OPTIONS,
   ACTIVITY_MAX_HEIGHT_OPTIONS,
   ACTIVITY_ORB_OPTIONS,
@@ -172,6 +193,13 @@ describe('useUiCustomizationStore (@beui + shadcn/ui v5)', () => {
     expect(state.recommendationStyle).toBe('assistant-rec');
     expect(state.agentHandoffStyle).toBe('assistant-handoff');
     expect(state.backgroundInboxStyle).toBe('assistant-inbox');
+    expect(state.dockToolbarStyle).toBe('kokonut-spring');
+    expect(state.drawerMotionStyle).toBe('kokonut-smooth');
+    expect(state.navMenuStyle).toBe('spectrum-card');
+    expect(state.notificationCenterStyle).toBe('uiarc-center');
+    expect(state.tokenAlternativesStyle).toBe('compact-popover');
+    expect(state.memoryChipsStyle).toBe('assistant-chips');
+    expect(state.loadingStateStyle).toBe('assistant-shimmer');
     expect(state.toastNotifyWorkflow).toBe(true);
     expect(state.toastNotifySkill).toBe(true);
     expect(state.toastNotifySelfImprovement).toBe(true);
@@ -504,11 +532,13 @@ describe('zero-regex @beui parsers & adapters', () => {
     expect(TOOL_CALL_STYLE_OPTIONS.length).toBe(6);
     expect(TOOL_CALL_STYLE_OPTIONS[0]?.id).toBe('beui-activity');
     expect(APPROVAL_CARD_STYLE_OPTIONS.length).toBe(4);
-    expect(BEUI_LOADER_OPTIONS.length).toBe(22);
-    expect(BEUI_ALERT_STYLE_OPTIONS.length).toBe(4);
+    expect(BEUI_LOADER_OPTIONS.length).toBe(23);
+    expect(BEUI_ALERT_STYLE_OPTIONS.length).toBe(5);
     expect(normalizeBeuiLoaderVariant('helix')).toBe('helix');
+    expect(normalizeBeuiLoaderVariant('tweenly-wave')).toBe('tweenly-wave');
     expect(normalizeBeuiLoaderVariant('unknown')).toBe('dot-matrix');
     expect(normalizeAlertStyle('beui-bordered')).toBe('beui-bordered');
+    expect(normalizeAlertStyle('uiarc-alert')).toBe('uiarc-alert');
     expect(normalizeAlertStyle('unknown')).toBe('beui-alert');
     expect(normalizeToolResultStyle('beui-activity')).toBe('beui-activity');
     expect(normalizeToolResultStyle('beui-card')).toBe('assistant-collapsed');
@@ -744,7 +774,7 @@ describe('zero-regex @beui parsers & adapters', () => {
     useToastStore.getState().resetToastStore();
     useUiCustomizationStore.getState().resetAllCustomization();
 
-    expect(TOAST_VARIANT_OPTIONS.length).toBe(13);
+    expect(TOAST_VARIANT_OPTIONS.length).toBe(16);
     expect(TOAST_VARIANT_OPTIONS.map((opt) => opt.id)).toEqual([
       'beui-stack',
       'beui-motion',
@@ -759,6 +789,9 @@ describe('zero-regex @beui parsers & adapters', () => {
       'brutalist-outline',
       'micro-badge',
       'rare-toast',
+      'uiarc-toast',
+      'uiarc-toast-stack',
+      'spectrum-toast-stack',
     ]);
     expect(TOAST_POSITION_OPTIONS.length).toBe(6);
     expect(TOAST_POSITION_OPTIONS.map((opt) => opt.id)).toEqual([
@@ -1040,7 +1073,7 @@ describe('zero-regex @beui parsers & adapters', () => {
       'Notifications & Alerts',
       'Code, Tools & Data',
     ]);
-    expect(STUDIO_MENU_ITEMS.length).toBe(50);
+    expect(STUDIO_MENU_ITEMS.length).toBe(57);
 
     const uniqueIds = new Set(STUDIO_MENU_ITEMS.map((item) => item.id));
     expect(uniqueIds.size).toBe(STUDIO_MENU_ITEMS.length);
@@ -1053,13 +1086,18 @@ describe('zero-regex @beui parsers & adapters', () => {
 
     const separatedIds = [
       'badge-style',
+      'dock-toolbar',
+      'drawer-motion',
+      'nav-menu',
       'delete-button',
       'avatars',
       'user-avatars',
       'chat-width',
       'prompt-input',
+      'token-alternatives',
       'send-button',
       'recommendation-card',
+      'loading-state',
       'thinking-loader',
       'reasoning-text',
       'agent-activity',
@@ -1068,6 +1106,7 @@ describe('zero-regex @beui parsers & adapters', () => {
       'agent-handoff',
       'timeline',
       'animated-toast-stack',
+      'notification-center',
       'toast-placement',
       'telemetry-badges',
       'background-inbox',
@@ -1078,6 +1117,7 @@ describe('zero-regex @beui parsers & adapters', () => {
       'artifact-card',
       'web-search',
       'retrieval-chunks',
+      'memory-chips',
       'research-report',
       'inline-citations',
       'math-block',
@@ -1092,13 +1132,21 @@ describe('zero-regex @beui parsers & adapters', () => {
       expect(useUiCustomizationStore.getState().activeCustomizeSection).toBe(sectionId);
     }
 
-    expect(BEUI_LOADER_OPTIONS.length).toBe(22);
+    expect(BEUI_LOADER_OPTIONS.length).toBe(23);
     expect(ACTIVITY_ORB_OPTIONS.length).toBe(10);
     expect(ACTIVITY_VARIANT_OPTIONS.length).toBe(6);
-    expect(TOAST_VARIANT_OPTIONS.length).toBe(13);
+    expect(TOAST_VARIANT_OPTIONS.length).toBe(16);
     expect(INLINE_NOTICE_STYLE_OPTIONS.length).toBe(7);
     expect(TOOL_CALL_STYLE_OPTIONS.length).toBe(6);
     expect(APPROVAL_CARD_STYLE_OPTIONS.length).toBe(4);
+    expect(GLOBAL_BADGE_STYLE_OPTIONS.length).toBe(6);
+    expect(DOCK_TOOLBAR_STYLE_OPTIONS.length).toBe(3);
+    expect(DRAWER_MOTION_STYLE_OPTIONS.length).toBe(3);
+    expect(NAV_MENU_STYLE_OPTIONS.length).toBe(3);
+    expect(TOKEN_ALTERNATIVES_STYLE_OPTIONS.length).toBe(3);
+    expect(LOADING_STATE_STYLE_OPTIONS.length).toBe(3);
+    expect(MEMORY_CHIPS_STYLE_OPTIONS.length).toBe(3);
+    expect(NOTIFICATION_CENTER_STYLE_OPTIONS.length).toBe(3);
   });
 
   test('extracts file trees, artifacts, web searches, retrieval chunks, handoffs, spec sheets, and comparison tables without regex', () => {
@@ -1150,5 +1198,82 @@ describe('zero-regex @beui parsers & adapters', () => {
     expect(isComparisonTableHeaders(['Feature', 'Option A', 'Option B'])).toBe(true);
     expect(isComparisonTableHeaders(['Name', 'Latency', 'Status'])).toBe(false);
     expect(isSpecSheetTable(['Property', 'Value'], [['Runtime', 'Tokio'], ['Tools', '229']])).toBe(true);
+
+    const memoryChips = extractTurnMemoryChips(
+      [
+        {
+          id: 'm-recall',
+          name: 'recall_memory',
+          status: 'success',
+          args: { query: 'TurnState monotonic phase' },
+        },
+        {
+          id: 'm-save',
+          name: 'smart_memory_store',
+          status: 'success',
+          args: { topic: 'Floating composer dock' },
+        },
+        {
+          id: 'm-src',
+          name: 'knowledge_source',
+          status: 'success',
+          args: { title: 'NVIDIA Q3 briefing' },
+        },
+      ],
+      [
+        {
+          id: 'n-mem',
+          kind: 'memory',
+          title: 'Memory saved',
+          detail: 'Floating composer dock',
+          timestamp: 1000,
+        },
+      ],
+    );
+    expect(memoryChips.map((c) => c.action)).toEqual(['recalled', 'saved', 'source']);
+    expect(memoryChips.length).toBe(3);
+  });
+
+  test('distills verbose HTTP 429 JSON provider error payloads into minimal summaries and computes directional/radial theme keyframes without regex', () => {
+    const rawGoogle429 = `⚠️ **Error**: Provider 'google_ai_studio' error (HTTP 429): All retries exhausted (3 attempts). Last error: [{ "error": { "code": 429, "message": "You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://aistudio.google.com/docs/rate-limits.\\nPlease retry in 21h42m14.36328899s.", "status": "RESOURCE_EXHAUSTED", "details": [ { "@type": "type.googleapis.com/google.rpc.Help", "links": [ { "description": "Learn more about Gemini API quotas", "url": "https://aistudio.google.com/docs/rate-limits" } ] }, { "@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [ { "quotaDimensions": { "location": "global", "model": "gemini-2.5-flash" }, "quotaValue": "20" } ] }, { "@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "78134s" } ] } }]`;
+
+    expect(isLikelyErrorNoticeText(rawGoogle429)).toBe(true);
+    expect(isLikelyErrorNoticeText('Normal conversational reply')).toBe(false);
+    expect(formatCompactRetryDelay('78134s')).toBe('21h 42m');
+    expect(formatCompactRetryDelay('21h42m14.36328899s')).toBe('21h 42m');
+
+    const distilled = distillErrorMessage(rawGoogle429);
+    expect(distilled.isError).toBe(true);
+    expect(distilled.title).toBe('Rate limit exceeded');
+    expect(distilled.provider).toBe('google_ai_studio');
+    expect(distilled.httpCode).toBe(429);
+    expect(distilled.statusTag).toBe('RESOURCE_EXHAUSTED');
+    expect(distilled.model).toBe('gemini-2.5-flash');
+    expect(distilled.retryAfter).toBe('21h 42m');
+    expect(distilled.helpUrl).toBe('https://aistudio.google.com/docs/rate-limits');
+    expect(distilled.summary).toBe(
+      'You exceeded your current quota, please check your plan and billing details.',
+    );
+    expect(distilled.hasExtraDetail).toBe(true);
+
+    expect(useUiCustomizationStore.getState().themeTransitionStyle).toBe('circle-origin');
+    expect(THEME_TRANSITION_STYLE_OPTIONS.length).toBe(5);
+    expect(normalizeThemeTransitionStyle('wipe-side')).toBe('wipe-side');
+    expect(normalizeThemeTransitionStyle('circle-center')).toBe('circle-center');
+    expect(normalizeThemeTransitionStyle('invalid')).toBe('circle-origin');
+
+    const originFrames = computeThemeClipKeyframes('circle-origin', 1440, 900, { x: 1410, y: 360 });
+    expect(originFrames.usesClipPath).toBe(true);
+    expect(Array.isArray(originFrames.keyframes.clipPath)).toBe(true);
+    expect((originFrames.keyframes.clipPath as string[])[0]).toBe('circle(0px at 1410px 360px)');
+
+    const centerFrames = computeThemeClipKeyframes('circle-center', 1000, 800, null);
+    expect((centerFrames.keyframes.clipPath as string[])[0]).toBe('circle(0px at 500px 400px)');
+
+    const rightWipe = computeThemeClipKeyframes('wipe-side', 1000, 800, null, true);
+    expect(rightWipe.keyframes.clipPath).toEqual(['inset(0% 0% 0% 100%)', 'inset(0% 0% 0% 0%)']);
+
+    const leftWipe = computeThemeClipKeyframes('wipe-side', 1000, 800, null, false);
+    expect(leftWipe.keyframes.clipPath).toEqual(['inset(0% 100% 0% 0%)', 'inset(0% 0% 0% 0%)']);
   });
 });

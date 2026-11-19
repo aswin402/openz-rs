@@ -16,9 +16,11 @@ import {
   Globe,
   RefreshCw,
   Search,
+  Settings2,
   Sigma,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { distillErrorMessage } from "@/shared/lib/errorDistiller";
 import type { ToolExecution } from "@/types";
 import {
   CollapsibleRoot as Collapsible,
@@ -312,22 +314,22 @@ export const ERROR_STATE_STYLE_OPTIONS: ReadonlyArray<{
 }> = [
   {
     id: "assistant-quiet",
-    title: "Assistant-UI Quiet Failure Banner (Default)",
+    title: "Minimal Frosted Error Pill (Default)",
     description:
-      "assistant-ui/elements/error-state — Calm low-noise error banner with integrated one-click Retry.",
+      "assistant-ui/elements/error-state — Compact frosted pill distilling HTTP/JSON errors into a clean summary with collapsible Details & Retry.",
     isDefault: true,
   },
   {
-    id: "diagnostic-card",
-    title: "Expandable Diagnostic Error Card",
+    id: "minimal-inline",
+    title: "Whisper Single-Line Notice",
     description:
-      "Structured error frame with collapsible stack/output trace for fast debugging.",
+      "Borderless single-row status dot, concise summary, and inline Details / Retry actions.",
   },
   {
-    id: "minimal-inline",
-    title: "Minimal Single-Line Error",
+    id: "diagnostic-card",
+    title: "Structured Diagnostic Card",
     description:
-      "Hairline inline indicator with subtle red dot and Retry action.",
+      "Compact card header with provider/HTTP/model tags and expandable formatted JSON trace.",
   },
 ];
 
@@ -336,39 +338,112 @@ export interface ErrorStateElementProps {
   message: string;
   detail?: string;
   onRetry?: () => void;
+  onOpenSettings?: () => void;
   variant?: ErrorStateStyleChoice;
   className?: string;
 }
 
 export const ErrorStateElement: React.FC<ErrorStateElementProps> = ({
-  title = "Step encountered an error",
+  title,
   message,
   detail,
   onRetry,
+  onOpenSettings,
   variant = "assistant-quiet",
   className,
 }) => {
   const [showDetail, setShowDetail] = React.useState(false);
+  const [copied, setCopied] = React.useState(false);
+
+  const distilled = React.useMemo(
+    () => distillErrorMessage(detail || message, title),
+    [detail, message, title],
+  );
+
+  const showProviderAction =
+    Boolean(onOpenSettings) &&
+    (distilled.httpCode === 401 ||
+      distilled.httpCode === 402 ||
+      distilled.httpCode === 403 ||
+      distilled.httpCode === 429);
+
+  const handleCopyTrace = () => {
+    if (typeof navigator !== "undefined" && navigator.clipboard) {
+      navigator.clipboard.writeText(distilled.rawDetail).catch(() => {});
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1600);
+    }
+  };
 
   if (variant === "minimal-inline") {
     return (
-      <div
-        className={cn(
-          "my-1.5 flex flex-wrap items-center gap-2 text-xs text-destructive not-prose",
-          className,
-        )}
-      >
-        <span className="size-1.5 shrink-0 rounded-full bg-destructive" />
-        <span className="min-w-0 flex-1 truncate">{message}</span>
-        {onRetry && (
-          <button
-            type="button"
-            onClick={onRetry}
-            className="inline-flex items-center gap-1 font-medium text-foreground/85 hover:text-primary"
-          >
-            <RefreshCw className="size-3" />
-            <span>Retry</span>
-          </button>
+      <div className={cn("my-1 max-w-full space-y-1.5 text-xs not-prose", className)}>
+        <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+          <span className="size-1.5 shrink-0 rounded-full bg-destructive" />
+          <span className="font-semibold text-foreground/95">{distilled.title}</span>
+          {distilled.httpCode && (
+            <span className="rounded bg-destructive/12 px-1.5 py-0 font-mono text-[10px] text-destructive">
+              {distilled.httpCode}
+            </span>
+          )}
+          {distilled.provider && (
+            <span className="font-mono text-[10.5px] text-muted-foreground">
+              {distilled.provider}
+            </span>
+          )}
+          <span className="min-w-0 max-w-xl truncate text-muted-foreground">
+            — {distilled.summary}
+          </span>
+          {distilled.retryAfter && (
+            <span className="font-mono text-[10px] text-warning">
+              retry {distilled.retryAfter}
+            </span>
+          )}
+          {distilled.hasExtraDetail && (
+            <button
+              type="button"
+              onClick={() => setShowDetail((s) => !s)}
+              className="font-mono text-[10.5px] text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              {showDetail ? "Hide" : "Details"}
+            </button>
+          )}
+          {showProviderAction && (
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className="inline-flex items-center gap-1 font-medium text-foreground/85 hover:text-primary"
+            >
+              <Settings2 className="size-3" />
+              <span>Providers</span>
+            </button>
+          )}
+          {onRetry && (
+            <button
+              type="button"
+              onClick={onRetry}
+              className="inline-flex items-center gap-1 font-medium text-foreground/85 hover:text-primary"
+            >
+              <RefreshCw className="size-3" />
+              <span>Retry</span>
+            </button>
+          )}
+        </div>
+
+        {showDetail && distilled.hasExtraDetail && (
+          <div className="relative max-w-2xl rounded-xl border border-border/60 bg-card/85 p-2.5 backdrop-blur-md">
+            <button
+              type="button"
+              onClick={handleCopyTrace}
+              className="absolute top-2 right-2 inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/80 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground hover:text-foreground"
+            >
+              {copied ? <Check className="size-2.5 text-success" /> : <Copy className="size-2.5" />}
+              <span>{copied ? "Copied" : "Copy"}</span>
+            </button>
+            <pre className="max-h-40 overflow-auto pr-14 font-mono text-[10.5px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
+              {distilled.rawDetail}
+            </pre>
+          </div>
         )}
       </div>
     );
@@ -378,33 +453,85 @@ export const ErrorStateElement: React.FC<ErrorStateElementProps> = ({
     <div
       data-slot="error-state"
       className={cn(
-        "my-2 w-full rounded-xl border border-destructive/25 bg-destructive/[0.06] px-3.5 py-2.5 text-xs not-prose",
+        "my-1.5 max-w-full rounded-2xl border border-border/65 bg-card/75 px-3 py-2 text-xs shadow-2xs backdrop-blur-xl not-prose",
+        variant === "assistant-quiet" ? "w-fit" : "w-full max-w-2xl",
         className,
       )}
     >
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2">
-          <AlertCircle className="size-4 shrink-0 text-destructive" />
-          <div className="min-w-0">
-            <div className="font-medium text-foreground">{title}</div>
-            <div className="truncate text-[11.5px] text-muted-foreground">{message}</div>
-          </div>
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <span className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-destructive/12 text-destructive">
+            <AlertCircle className="size-3.5" />
+          </span>
+          <span className="font-semibold text-foreground">{distilled.title}</span>
+
+          {distilled.provider && (
+            <span className="rounded-full border border-border/60 bg-foreground/[0.04] px-2 py-0 font-mono text-[10px] text-muted-foreground">
+              {distilled.provider}
+            </span>
+          )}
+          {distilled.httpCode && (
+            <span className="rounded-full border border-destructive/25 bg-destructive/10 px-1.5 py-0 font-mono text-[10px] font-medium text-destructive">
+              HTTP {distilled.httpCode}
+            </span>
+          )}
+          {distilled.model && (
+            <span className="rounded-full border border-border/55 bg-foreground/[0.03] px-2 py-0 font-mono text-[10px] text-muted-foreground">
+              {distilled.model}
+            </span>
+          )}
+          {distilled.retryAfter && (
+            <span className="rounded-full border border-warning/30 bg-warning/10 px-2 py-0 font-mono text-[10px] text-warning">
+              Retry in {distilled.retryAfter}
+            </span>
+          )}
+
+          <span className="min-w-0 max-w-xl truncate text-[11.5px] text-muted-foreground">
+            {distilled.summary}
+          </span>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {variant === "diagnostic-card" && detail && (
+
+        <div className="flex shrink-0 items-center gap-1">
+          {distilled.helpUrl && (
+            <a
+              href={distilled.helpUrl}
+              target="_blank"
+              rel="noreferrer"
+              title="Open provider quota documentation"
+              className="inline-flex h-6 items-center gap-1 rounded-full px-2 text-[10.5px] text-muted-foreground transition-colors hover:bg-foreground/[0.05] hover:text-foreground"
+            >
+              <span>Docs</span>
+              <ExternalLink className="size-2.5" />
+            </a>
+          )}
+          {distilled.hasExtraDetail && (
             <button
               type="button"
               onClick={() => setShowDetail((s) => !s)}
-              className="rounded-md px-2 py-1 font-mono text-[10.5px] text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground"
+              aria-expanded={showDetail}
+              className="inline-flex h-6 items-center gap-1 rounded-full border border-border/55 bg-background/55 px-2 font-mono text-[10px] text-muted-foreground transition-colors hover:border-border hover:text-foreground"
             >
-              {showDetail ? "Hide trace" : "Trace"}
+              <ChevronRight
+                className={cn("size-3 transition-transform", showDetail && "rotate-90")}
+              />
+              <span>{showDetail ? "Hide" : "Details"}</span>
+            </button>
+          )}
+          {showProviderAction && (
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              className="inline-flex h-6 items-center gap-1 rounded-full border border-border/60 bg-background/65 px-2.5 text-[10.5px] font-medium text-foreground/90 transition-colors hover:border-primary/40 hover:text-primary"
+            >
+              <Settings2 className="size-3" />
+              <span>Providers</span>
             </button>
           )}
           {onRetry && (
             <button
               type="button"
               onClick={onRetry}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-border/70 bg-card/90 px-2.5 py-1 text-[11px] font-medium text-foreground transition-colors hover:border-primary/40 hover:text-primary"
+              className="inline-flex h-6 items-center gap-1 rounded-full border border-border/65 bg-background/80 px-2.5 text-[10.5px] font-medium text-foreground transition-colors hover:border-primary/40 hover:text-primary"
             >
               <RefreshCw className="size-3" />
               <span>Retry</span>
@@ -413,10 +540,25 @@ export const ErrorStateElement: React.FC<ErrorStateElementProps> = ({
         </div>
       </div>
 
-      {variant === "diagnostic-card" && showDetail && detail && (
-        <pre className="mt-2 max-h-40 overflow-auto rounded-lg border border-border/50 bg-background/75 p-2.5 font-mono text-[10.5px] whitespace-pre-wrap text-muted-foreground">
-          {detail}
-        </pre>
+      {showDetail && distilled.hasExtraDetail && (
+        <div className="relative mt-2 rounded-xl border border-border/55 bg-background/70 p-2.5">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <span className={cn(mono, "text-[10px] uppercase tracking-wider text-muted-foreground")}>
+              {distilled.statusTag || "Diagnostic payload"}
+            </span>
+            <button
+              type="button"
+              onClick={handleCopyTrace}
+              className="inline-flex items-center gap-1 rounded-md border border-border/55 bg-card/80 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground transition-colors hover:text-foreground"
+            >
+              {copied ? <Check className="size-2.5 text-success" /> : <Copy className="size-2.5" />}
+              <span>{copied ? "Copied" : "Copy"}</span>
+            </button>
+          </div>
+          <pre className="max-h-44 overflow-auto font-mono text-[10.5px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
+            {distilled.rawDetail}
+          </pre>
+        </div>
       )}
     </div>
   );

@@ -62,6 +62,11 @@ import {
 import { useThemeStore, type Theme } from '../../store/useThemeStore';
 import { useResolvedTheme } from '../../shared/lib/theme';
 import {
+  THEME_TRANSITION_STYLE_OPTIONS,
+  runThemeViewTransition,
+  type ThemeTransitionStyleChoice,
+} from '../../shared/lib/themeTransition';
+import {
   buildThemeSampleSvgDataUri,
   extractGatewayEndpointLabel,
   resolveModelContextWindow,
@@ -127,6 +132,10 @@ import {
   normalizeToastPosition,
 } from '../../components/beui';
 import { OpenZFoxIcon } from '../../components/OpenZFoxIcon';
+import {
+  ClassicThemeToggleIcon,
+  SpectrumNavListCard,
+} from '../../components/registries/modernRegistries';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
@@ -166,9 +175,33 @@ export const STUDIO_MENU_ITEMS: StudioMenuEntry[] = [
     id: 'badge-style',
     group: 'Appearance',
     label: 'Badge Style',
-    pkg: '@openz/badge',
-    description: 'Global badge aesthetic across Minimal Hairline, Soft Capsule, Monospace Tag, and Tinted.',
+    pkg: '@uiarc/badge',
+    description: '6 global badge styles across Minimal Hairline, Soft Capsule, Monospace Tag, Tinted, UIArc Badge, and Spectrum Status.',
     icon: Tag,
+  },
+  {
+    id: 'dock-toolbar',
+    group: 'Appearance',
+    label: 'Dock Toolbar',
+    pkg: '@kokonutui/toolbar',
+    description: 'Floating right dock toolbar with spring pill selection glide, Rare-UI notification bell, and Classic theme toggle.',
+    icon: PanelRight,
+  },
+  {
+    id: 'drawer-motion',
+    group: 'Appearance',
+    label: 'Drawer Motion',
+    pkg: '@kokonutui/smooth-drawer',
+    description: 'Spring-damped drawer physics across Agent Activity, Live Logs, and Notification Center drawers.',
+    icon: Columns2,
+  },
+  {
+    id: 'nav-menu',
+    group: 'Appearance',
+    label: 'Navigation Menu',
+    pkg: '@spectrumui/nav-list-card',
+    description: 'Animated vertical navigation menu style across Customize UI and Gateway Settings sidebars.',
+    icon: ListChecks,
   },
   {
     id: 'avatars',
@@ -206,9 +239,17 @@ export const STUDIO_MENU_ITEMS: StudioMenuEntry[] = [
     id: 'prompt-input',
     group: 'Composer & Chat',
     label: 'Prompt Input',
-    pkg: '@beui/prompt-input',
-    description: 'Composer surface across @beui, Rare-UI Prompt Box, and KokonutUI AI Prompt.',
+    pkg: '@tweenly/ai-input',
+    description: 'Floating composer surface across @beui, Tweenly Fluid AI Input, Rare-UI Prompt Box, and KokonutUI AI Prompt.',
     icon: Send,
+  },
+  {
+    id: 'token-alternatives',
+    group: 'Composer & Chat',
+    label: 'Token Alternatives',
+    pkg: '@kokonutui/ai-token-alternatives',
+    description: 'Interactive model and caveman token budget comparison chips inside the floating composer.',
+    icon: Cpu,
   },
   {
     id: 'send-button',
@@ -283,19 +324,27 @@ export const STUDIO_MENU_ITEMS: StudioMenuEntry[] = [
     icon: Sparkles,
   },
   {
+    id: 'loading-state',
+    group: 'Agent & Reasoning',
+    label: 'Loading State',
+    pkg: 'assistant-ui/loading-state',
+    description: 'Pre-first-token assistant loading indicator across assistant-ui, KokonutUI AI Loading, and Tweenly AI Thinking.',
+    icon: Loader,
+  },
+  {
     id: 'thinking-loader',
     group: 'Agent & Reasoning',
     label: 'Thinking Loader',
     pkg: '@beui/loader',
-    description: '22 animated loader indicators across @beui/loader, BeautifulUI, KokonutUI, AICSS, and thinking-orbs.',
+    description: '23 animated loader indicators across @beui/loader, Tweenly Wave, BeautifulUI, KokonutUI, AICSS, and thinking-orbs.',
     icon: Loader,
   },
   {
     id: 'reasoning-text',
     group: 'Agent & Reasoning',
     label: 'Reasoning Text',
-    pkg: '@beui/reasoning-text',
-    description: 'Chain-of-thought disclosure across @beui, AICSS Thinking-Reasoning, and BeautifulUI Thinking State.',
+    pkg: '@tweenly/ai-thinking',
+    description: 'Chain-of-thought disclosure across @beui, Tweenly AI Thinking, KokonutUI AI Loading, AICSS, and BeautifulUI.',
     icon: Brain,
   },
   {
@@ -358,9 +407,17 @@ export const STUDIO_MENU_ITEMS: StudioMenuEntry[] = [
     id: 'animated-toast-stack',
     group: 'Notifications & Alerts',
     label: 'Toast Stack',
-    pkg: '@beui/animated-toast-stack',
-    description: '13 layered spring notification styles across @beui and Rare-UI Toast.',
+    pkg: 'rare-ui/toast',
+    description: '16 layered spring notification styles across @beui, Rare-UI Toast, UIArc Toast Stack, and Spectrum Toast Stack.',
     icon: Bell,
+  },
+  {
+    id: 'notification-center',
+    group: 'Notifications & Alerts',
+    label: 'Notification Center',
+    pkg: '@uiarc/notification-center',
+    description: 'Notification history center across UIArc Notification Center, Tweenly Notification Feed, and BEUI Minimal.',
+    icon: Inbox,
   },
   {
     id: 'toast-placement',
@@ -547,11 +604,19 @@ export const STUDIO_MENU_ITEMS: StudioMenuEntry[] = [
     icon: Table2,
   },
   {
+    id: 'memory-chips',
+    group: 'Code, Tools & Data',
+    label: 'Memory Chips',
+    pkg: 'assistant-ui/memory-chips',
+    description: 'Inline memory fact, graph entity, and skill recall chips rendered above assistant turns.',
+    icon: Database,
+  },
+  {
     id: 'json-viewer',
     group: 'Code, Tools & Data',
     label: 'JSON Viewer',
-    pkg: '@beui/json-viewer',
-    description: 'Interactive collapsible JSON tree inspector for tool arguments and structured outputs.',
+    pkg: '@uiarc/json-viewer',
+    description: 'Interactive collapsible JSON tree and searchable UIArc JSON Inspector for structured tool payloads.',
     icon: Braces,
   },
 ];
@@ -676,16 +741,26 @@ export const UiStudioModal: React.FC = () => {
     MENU_ITEMS.find((m) => m.id === activeSection) ?? MENU_ITEMS[0];
   const ActiveIcon = activeMeta.icon;
 
-  const handleSelectMode = (mode: Theme) => {
-    setThemeMode(mode);
+  const handleSelectMode = (mode: Theme, overrideStyle?: ThemeTransitionStyleChoice) => {
+    runThemeViewTransition(
+      () => {
+        setThemeMode(mode);
+      },
+      { style: overrideStyle ?? state.themeTransitionStyle },
+    );
   };
 
   const handleChooseGlobalTheme = (themeId: string, explicitMode?: 'dark' | 'light') => {
-    const family = selectThemePreset(themeId);
-    if (!family) return;
-    if (explicitMode) {
-      setThemeMode(explicitMode);
-    }
+    runThemeViewTransition(
+      () => {
+        const family = selectThemePreset(themeId);
+        if (!family) return;
+        if (explicitMode) {
+          setThemeMode(explicitMode);
+        }
+      },
+      { style: state.themeTransitionStyle },
+    );
   };
 
   const handleResetAll = () => {
@@ -796,6 +871,16 @@ export const UiStudioModal: React.FC = () => {
           <Button
             type="button"
             variant="ghost"
+            size="icon-sm"
+            onClick={() => handleSelectMode(resolvedMode === 'dark' ? 'light' : 'dark')}
+            title={resolvedMode === 'dark' ? 'Switch to Light mode' : 'Switch to Dark mode'}
+            aria-label={resolvedMode === 'dark' ? 'Switch to Light mode' : 'Switch to Dark mode'}
+          >
+            <ClassicThemeToggleIcon isDark={resolvedMode === 'dark'} />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
             size="sm"
             onClick={() => {
               setIsOpen(false);
@@ -857,11 +942,12 @@ export const UiStudioModal: React.FC = () => {
               const items = filteredMenu.filter((m) => m.group === groupName);
               if (items.length === 0) return null;
               return (
-                <div key={groupName} className="flex shrink-0 gap-1 md:mb-4 md:flex-col md:gap-0.5">
-                  <div className="hidden px-2.5 pb-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground/75 md:block">
+                <div key={groupName} className="flex shrink-0 gap-1 md:mb-4 md:flex-col md:gap-1">
+                  <div className="hidden px-2.5 pb-1 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground/75 md:block">
                     {groupName}
                   </div>
-                  <div className="flex gap-1 md:flex-col md:border-l md:border-border/60 md:pl-2">
+                  {/* Mobile horizontal pills */}
+                  <div className="flex gap-1 md:hidden">
                     {items.map((item) => {
                       const Icon = item.icon;
                       const active = item.id === activeSection;
@@ -871,7 +957,7 @@ export const UiStudioModal: React.FC = () => {
                           type="button"
                           onClick={() => setActiveSection(item.id)}
                           className={cn(
-                            'flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors md:w-full',
+                            'flex shrink-0 items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-xs transition-colors',
                             active
                               ? 'bg-primary/15 font-semibold text-primary'
                               : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
@@ -887,6 +973,20 @@ export const UiStudioModal: React.FC = () => {
                         </button>
                       );
                     })}
+                  </div>
+                  {/* Desktop @spectrumui/nav-list-card */}
+                  <div className="hidden md:block">
+                    <SpectrumNavListCard
+                      items={items.map((item) => ({
+                        id: item.id,
+                        label: item.label,
+                        icon: item.icon,
+                      }))}
+                      activeId={activeSection}
+                      onSelect={(id) => setActiveSection(id as CustomizeUiSectionId)}
+                      variant={state.navMenuStyle}
+                      layoutGroupId={`studio-nav-${groupName}`}
+                    />
                   </div>
                 </div>
               );
@@ -956,6 +1056,55 @@ export const UiStudioModal: React.FC = () => {
                         </button>
                       );
                     })}
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/80 bg-card p-4">
+                  <div>
+                    <div className="text-xs font-semibold text-foreground">
+                      Theme Transition Animation
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Choose directional side curtain, center horizon bloom, or radial click-origin reveal
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <div className="inline-flex flex-wrap rounded-lg border border-border bg-muted/40 p-0.5 text-xs">
+                      {THEME_TRANSITION_STYLE_OPTIONS.map((opt) => {
+                        const active = state.themeTransitionStyle === opt.id;
+                        return (
+                          <button
+                            key={opt.id}
+                            type="button"
+                            title={opt.description}
+                            onClick={() => applyCustomization({ themeTransitionStyle: opt.id })}
+                            className={cn(
+                              'rounded-md px-2.5 py-1.5 font-medium transition-colors',
+                              active
+                                ? 'bg-card text-foreground shadow-2xs'
+                                : 'text-muted-foreground hover:text-foreground',
+                            )}
+                          >
+                            {opt.shortLabel}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() =>
+                        handleSelectMode(
+                          resolvedMode === 'dark' ? 'light' : 'dark',
+                          state.themeTransitionStyle,
+                        )
+                      }
+                      title="Test the selected theme transition animation"
+                    >
+                      <Sparkles className="size-3.5 text-primary" />
+                      <span>Preview</span>
+                    </Button>
                   </div>
                 </div>
 
@@ -1088,6 +1237,12 @@ export const UiStudioModal: React.FC = () => {
                       id: 'kokonut-ai-prompt',
                       title: 'KokonutUI Studio Prompt',
                       desc: '@kokonutui/ai-prompt — Low-noise hairline studio bar that elevates on focus.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'tweenly-ai-input',
+                      title: 'Tweenly Fluid AI Input',
+                      desc: '@tweenly/ai-input — Frosted floating composer with spring focus ring and glow halo.',
                       isDefault: false,
                     },
                   ] as const
@@ -1799,6 +1954,18 @@ export const UiStudioModal: React.FC = () => {
                       id: 'minimal-whisper',
                       title: 'Minimal Whisper Line',
                       desc: 'Unboxed single-line thought summary with zero border.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'tweenly-thinking',
+                      title: 'Tweenly AI Thinking Wave',
+                      desc: '@tweenly/ai-thinking — Harmonic equalizer wave pill with expandable thought stream.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'kokonut-loading',
+                      title: 'KokonutUI AI Loading Stages',
+                      desc: '@kokonutui/ai-loading — Orbital ring spinner with live rotating reasoning phase ticker.',
                       isDefault: false,
                     },
                   ] as const
@@ -3038,6 +3205,12 @@ export const UiStudioModal: React.FC = () => {
                       id: 'compact',
                       title: 'BEUI Single-Line Compact JSON',
                       desc: 'Minified JSON representation for dense tool telemetry.',
+                      isDefault: false,
+                    },
+                    {
+                      id: 'uiarc-inspector',
+                      title: 'UIArc JSON Inspector',
+                      desc: '@uiarc/json-viewer — Searchable JSON inspector with live key/value filter and primitive type tags.',
                       isDefault: false,
                     },
                   ] as const

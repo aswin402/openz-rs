@@ -12,6 +12,7 @@ import {
   KokonutAiLoading,
   ThinkingOrbsCanvas,
 } from "@/components/registries/thinkingOrbs"
+import { TweenlyAiThinkingWave } from "@/components/registries/modernRegistries"
 
 export { loaderMessages, type LoaderMessages }
 
@@ -20,6 +21,7 @@ export type ExtendedLoaderVariant =
   | "beautiful-loading"
   | "beautiful-orbit"
   | "kokonut-ai-loading"
+  | "tweenly-wave"
   | "aicss-orb-loader"
   | "thinking-orbs-mini"
 
@@ -43,6 +45,9 @@ export const BeuiLoader: React.FC<BeuiLoaderProps> = ({
   }
   if (variant === "kokonut-ai-loading") {
     return <KokonutAiLoading size={size} className={className} />
+  }
+  if (variant === "tweenly-wave") {
+    return <TweenlyAiThinkingWave size={size} className={className} />
   }
   if (variant === "aicss-orb-loader") {
     return <AicssOrb variant="morph" isActive size={size} className={className} />
@@ -218,6 +223,13 @@ export const BEUI_LOADER_OPTIONS: ReadonlyArray<BeuiLoaderOptionDescriptor> = [
     category: "physics",
     description: "thinking-orbs — 2D HTML5 Canvas multi-harmonic wave ring.",
   },
+  {
+    id: "tweenly-wave",
+    title: "Tweenly Fluid Spring Wave",
+    shortLabel: "Tweenly",
+    category: "physics",
+    description: "@tweenly/ai-thinking — Harmonic 4-dot vertical spring wave.",
+  },
 ]
 
 const VALID_LOADER_VARIANTS: Readonly<Record<BeuiLoaderVariant, true>> = {
@@ -241,6 +253,7 @@ const VALID_LOADER_VARIANTS: Readonly<Record<BeuiLoaderVariant, true>> = {
   "beautiful-loading": true,
   "beautiful-orbit": true,
   "kokonut-ai-loading": true,
+  "tweenly-wave": true,
   "aicss-orb-loader": true,
   "thinking-orbs-mini": true,
 }

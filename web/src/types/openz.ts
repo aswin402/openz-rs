@@ -52,6 +52,8 @@ export interface OpenZMessage {
   model?: string;
   /** True when this is a muted system/error notice. */
   isNotice?: boolean;
+  /** True when this notice represents a runtime, provider, or gateway error. */
+  isError?: boolean;
   attachments?: ChatAttachment[];
 }
 

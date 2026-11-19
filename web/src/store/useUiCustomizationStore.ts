@@ -24,6 +24,15 @@ import type {
   DeleteButtonStyleChoice,
   InlineCitationStyleChoice,
 } from "../components/registries/rareAndCommunity";
+import type {
+  DockToolbarStyleChoice,
+  DrawerMotionStyleChoice,
+  LoadingStateStyleChoice,
+  MemoryChipsStyleChoice,
+  NavMenuStyleChoice,
+  NotificationCenterStyleChoice,
+  TokenAlternativesStyleChoice,
+} from "../components/registries/modernRegistries";
 import {
   normalizeAlertStyle,
   normalizeBeuiLoaderVariant,
@@ -71,6 +80,10 @@ import {
   type ResolvedThemePalette,
   type ThemeAppearanceMode,
 } from "../shared/lib/colorEngine";
+import {
+  normalizeThemeTransitionStyle,
+  type ThemeTransitionStyleChoice,
+} from "../shared/lib/themeTransition";
 import type { Theme } from "./useThemeStore";
 
 export const UI_CUSTOMIZATION_STORAGE_KEY = "openz-ui-customization";
@@ -154,11 +167,15 @@ export type GatewaySettingsSectionId = "agent" | "caveman" | "providers" | "chan
 export type CustomizeUiSectionId =
   | "theme"
   | "badge-style"
+  | "dock-toolbar"
+  | "drawer-motion"
+  | "nav-menu"
   | "avatars"
   | "user-avatars"
   | "chat-width"
   | "delete-button"
   | "prompt-input"
+  | "token-alternatives"
   | "send-button"
   | "model-selector"
   | "prompt-suggestions"
@@ -168,6 +185,7 @@ export type CustomizeUiSectionId =
   | "message-card"
   | "message-actions"
   | "streaming-response"
+  | "loading-state"
   | "thinking-loader"
   | "reasoning-text"
   | "agent-activity"
@@ -179,6 +197,7 @@ export type CustomizeUiSectionId =
   | "timeline"
   | "animated-toast-stack"
   | "toast-placement"
+  | "notification-center"
   | "telemetry-badges"
   | "background-inbox"
   | "alert-collapsible"
@@ -193,6 +212,7 @@ export type CustomizeUiSectionId =
   | "tool-approval"
   | "web-search"
   | "retrieval-chunks"
+  | "memory-chips"
   | "research-report"
   | "inline-citations"
   | "citations"
@@ -205,7 +225,15 @@ export type CustomizeUiSectionId =
 
 export interface UiCustomizationSnapshot {
   activeThemeId: string;
+  themeTransitionStyle: ThemeTransitionStyleChoice;
   badgeStyle: GlobalBadgeStyle;
+  dockToolbarStyle: DockToolbarStyleChoice;
+  drawerMotionStyle: DrawerMotionStyleChoice;
+  navMenuStyle: NavMenuStyleChoice;
+  notificationCenterStyle: NotificationCenterStyleChoice;
+  tokenAlternativesStyle: TokenAlternativesStyleChoice;
+  memoryChipsStyle: MemoryChipsStyleChoice;
+  loadingStateStyle: LoadingStateStyleChoice;
   deleteButtonStyle: DeleteButtonStyleChoice;
   chatWidth: ChatWidthChoice;
   promptInputStyle: BeuiPromptInputVariant;
@@ -273,7 +301,15 @@ export interface UiCustomizationSnapshot {
 
 export const DEFAULT_CUSTOMIZATION: UiCustomizationSnapshot = {
   activeThemeId: "obsidian-ember",
+  themeTransitionStyle: "circle-origin",
   badgeStyle: "minimal",
+  dockToolbarStyle: "kokonut-spring",
+  drawerMotionStyle: "kokonut-smooth",
+  navMenuStyle: "spectrum-card",
+  notificationCenterStyle: "uiarc-center",
+  tokenAlternativesStyle: "compact-popover",
+  memoryChipsStyle: "assistant-chips",
+  loadingStateStyle: "assistant-shimmer",
   deleteButtonStyle: "rare-confirm",
   chatWidth: "standard",
   promptInputStyle: "elevated",
@@ -396,6 +432,12 @@ export function sanitizeCustomizationSnapshot(
     if (key === "alertStyle") {
       if (typeof val === "string") {
         clean.alertStyle = normalizeAlertStyle(val);
+      }
+      continue;
+    }
+    if (key === "themeTransitionStyle") {
+      if (typeof val === "string") {
+        clean.themeTransitionStyle = normalizeThemeTransitionStyle(val);
       }
       continue;
     }

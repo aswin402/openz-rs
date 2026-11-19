@@ -14,6 +14,11 @@ import {
 import { buildMessageActivitySteps } from '../activity/activityAdapters';
 import { SecurityGuardPrompt } from '../../components/SecurityGuardPrompt';
 import {
+  AssistantLoadingStateElement,
+  MemoryChipsElement,
+  extractTurnMemoryChips,
+} from '../../components/registries/modernRegistries';
+import {
   AgentHandoffElement,
   ArtifactCardElement,
   ErrorStateElement,
@@ -61,6 +66,7 @@ import { useOpenZStore } from '../../store/useOpenZStore';
 import { resolveNoticeJumpAction } from '../../store/useToastStore';
 import { useUiCustomizationStore } from '../../store/useUiCustomizationStore';
 import { extractCodeLanguage, formatFileSize } from '../../shared/lib/format';
+import { isLikelyErrorNoticeText } from '../../shared/lib/errorDistiller';
 import { cn } from '../../lib/utils';
 import {
   FileText,
@@ -154,6 +160,7 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
   const setIsMemoryOpen = useOpenZStore((s) => s.setIsMemoryOpen);
   const setIsActivityPanelOpen = useOpenZStore((s) => s.setIsActivityPanelOpen);
   const setIsLogsOpen = useOpenZStore((s) => s.setIsLogsOpen);
+  const setIsSettingsOpen = useOpenZStore((s) => s.setIsSettingsOpen);
 
   const chatWidth = useUiCustomizationStore((s) => s.chatWidth);
   const thinkingAnimation = useUiCustomizationStore((s) => s.thinkingAnimation);
@@ -187,10 +194,13 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
   const artifactCardStyle = useUiCustomizationStore((s) => s.artifactCardStyle);
   const webSearchStyle = useUiCustomizationStore((s) => s.webSearchStyle);
   const retrievalChunksStyle = useUiCustomizationStore((s) => s.retrievalChunksStyle);
+  const memoryChipsStyle = useUiCustomizationStore((s) => s.memoryChipsStyle);
+  const loadingStateStyle = useUiCustomizationStore((s) => s.loadingStateStyle);
   const agentHandoffStyle = useUiCustomizationStore((s) => s.agentHandoffStyle);
   const messageActionsStyle = useUiCustomizationStore((s) => s.messageActionsStyle);
   const showMessageActions = useUiCustomizationStore((s) => s.showMessageActions);
   const setQuotedReplyText = useUiCustomizationStore((s) => s.setQuotedReplyText);
+  const setActiveGatewaySection = useUiCustomizationStore((s) => s.setActiveGatewaySection);
 
   const [isEditing, setIsEditing] = useState(false);
   const [draftEdit, setDraftEdit] = useState(message.content);
@@ -448,6 +458,10 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
     () => (isUser ? [] : extractTurnAgentHandoffs(visibleToolCalls)),
     [isUser, visibleToolCalls],
   );
+  const turnMemoryChips = useMemo(
+    () => (isUser ? [] : extractTurnMemoryChips(visibleToolCalls, message.activityNotices)),
+    [isUser, visibleToolCalls, message.activityNotices],
+  );
   const terminalFailedTool = useMemo(
     () =>
       !isUser && !isActivityWorking && !message.content.trim()
@@ -484,6 +498,29 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
     [setActiveView, setIsActivityPanelOpen, setIsLogsOpen, setIsMemoryOpen],
   );
 
+  const isStandaloneErrorTurn =
+    !isUser &&
+    !message.isStreaming &&
+    !(message.toolCalls && message.toolCalls.length > 0) &&
+    (Boolean(message.isError) || isLikelyErrorNoticeText(message.content));
+
+  if (isStandaloneErrorTurn) {
+    return (
+      <ChatTrackRow chatWidth={chatWidth} className="py-1">
+        <ErrorStateElement
+          message={message.content}
+          detail={message.content}
+          variant={errorStateStyle}
+          onRetry={() => regenerateMessage(message.id)}
+          onOpenSettings={() => {
+            setActiveGatewaySection('providers');
+            setIsSettingsOpen(true);
+          }}
+        />
+      </ChatTrackRow>
+    );
+  }
+
   if (message.isNotice || message.role === 'system' || message.role === 'tool') {
     if (!message.content && visibleTelemetryNotices.length > 0) {
       if (inlineNoticeStyle === 'toast-only') return null;
@@ -498,9 +535,10 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
       );
     }
     if (!message.content) return null;
+
     return (
-      <ChatTrackRow chatWidth={chatWidth} className="py-1">
-        <BeuiAlert tone="info" styleVariant={alertStyle}>
+      <ChatTrackRow chatWidth={chatWidth} className="py-0.5">
+        <BeuiAlert tone="info" compact styleVariant={alertStyle} className="w-fit max-w-full">
           {message.content}
         </BeuiAlert>
       </ChatTrackRow>
@@ -646,13 +684,26 @@ export const ChatMessage: React.FC<ChatMessageProps> = React.memo(({ message }) 
 
             {!showInlineActivity && !message.content && message.isStreaming && (
               <div className="select-none py-0.5">
-                <ReasoningText
-                  isStreaming
-                  label="Thinking…"
-                  variant={thinkingAnimation}
-                  loaderVariant={thinkingLoader}
-                />
+                <AssistantLoadingStateElement variant={loadingStateStyle} />
               </div>
+            )}
+
+            {!isUser && activityStyle === 'panel-only' && Boolean(message.reasoningContent) && (
+              <ReasoningText
+                text={message.reasoningContent!}
+                isStreaming={Boolean(message.isStreaming)}
+                variant={thinkingAnimation}
+                loaderVariant={thinkingLoader}
+                className="mb-2"
+              />
+            )}
+
+            {!isActivityWorking && turnMemoryChips.length > 0 && (
+              <MemoryChipsElement
+                chips={turnMemoryChips}
+                variant={memoryChipsStyle}
+                onInspectMemory={() => setIsMemoryOpen(true)}
+              />
             )}
 
             {showInlineActivity && (

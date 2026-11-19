@@ -18,6 +18,7 @@ import type { ChatAttachment } from "@/types"
 
 export type BeuiPromptInputVariant =
   | "elevated"
+  | "tweenly-ai-input"
   | "split"
   | "minimal"
   | "rare-prompt-box"
@@ -89,14 +90,16 @@ export const BeuiPromptInput: React.FC<BeuiPromptInputProps> = ({
 
   const shellCls =
     variant === "split"
-      ? "rounded-2xl border border-border bg-background/95 shadow-xs focus-within:border-primary/55"
+      ? "rounded-2xl border border-border/65 bg-background/78 shadow-lg shadow-foreground/5 backdrop-blur-xl focus-within:border-primary/55"
       : variant === "minimal"
-        ? "rounded-xl border border-border/75 bg-card/85 focus-within:border-primary/50"
+        ? "rounded-xl border border-border/65 bg-background/75 shadow-md shadow-foreground/5 backdrop-blur-xl focus-within:border-primary/50"
         : variant === "rare-prompt-box"
-          ? "rounded-3xl border border-border/65 bg-card/90 shadow-lg backdrop-blur-xl focus-within:border-primary/45 focus-within:ring-2 focus-within:ring-primary/12"
+          ? "rounded-3xl border border-border/60 bg-background/75 shadow-xl shadow-foreground/5 backdrop-blur-2xl focus-within:border-primary/45 focus-within:ring-2 focus-within:ring-primary/12"
           : variant === "kokonut-ai-prompt"
-            ? "rounded-2xl border border-border/60 bg-foreground/[0.03] shadow-2xs focus-within:border-primary/45 focus-within:bg-card"
-            : "rounded-2xl border border-border/85 bg-card shadow-xs focus-within:border-primary/55"
+            ? "rounded-2xl border border-border/60 bg-background/75 shadow-lg shadow-foreground/5 backdrop-blur-xl focus-within:border-primary/45"
+            : variant === "tweenly-ai-input"
+              ? "rounded-[22px] border border-border/65 bg-background/75 shadow-xl shadow-foreground/5 backdrop-blur-2xl ring-1 ring-inset ring-foreground/[0.04] transition-all duration-200 focus-within:border-primary/50 focus-within:shadow-primary/10 focus-within:ring-primary/20"
+              : "rounded-2xl border border-border/60 bg-background/75 shadow-lg shadow-foreground/5 backdrop-blur-xl focus-within:border-primary/55"
 
   return (
     <div

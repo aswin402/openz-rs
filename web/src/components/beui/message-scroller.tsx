@@ -14,6 +14,7 @@ export interface MessageScrollerProps {
   thresholdPx?: number
   className?: string
   contentClassName?: string
+  jumpPillClassName?: string
   children: React.ReactNode
 }
 
@@ -31,6 +32,7 @@ export const MessageScroller: React.FC<MessageScrollerProps> = ({
   thresholdPx = 140,
   className,
   contentClassName,
+  jumpPillClassName,
   children,
 }) => {
   const viewportRef = React.useRef<HTMLDivElement>(null)
@@ -146,7 +148,12 @@ export const MessageScroller: React.FC<MessageScrollerProps> = ({
       </div>
 
       {showJumpPill && (
-        <div className="pointer-events-none absolute right-0 bottom-3 left-0 z-20 flex justify-center">
+        <div
+          className={cn(
+            "pointer-events-none absolute right-0 bottom-3 left-0 z-20 flex justify-center",
+            jumpPillClassName
+          )}
+        >
           <Button
             type="button"
             variant="outline"

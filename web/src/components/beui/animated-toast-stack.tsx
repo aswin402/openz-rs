@@ -31,6 +31,11 @@ import {
   type DeleteButtonStyleChoice,
 } from "@/components/registries/rareAndCommunity"
 import {
+  type DrawerMotionStyleChoice,
+  type NotificationCenterStyleChoice,
+} from "@/components/registries/modernRegistries"
+import { AnimatePresence, motion } from "motion/react"
+import {
   Alert as OfficialBeuiAlert,
   AlertAction,
   AlertClose,
@@ -82,6 +87,9 @@ export type BeuiToastVariant =
   | "brutalist-outline"
   | "micro-badge"
   | "rare-toast"
+  | "uiarc-toast"
+  | "uiarc-toast-stack"
+  | "spectrum-toast-stack"
 
 export type BeuiCanonicalToastPosition =
   | "top-start"
@@ -409,7 +417,28 @@ export const TOAST_VARIANT_OPTIONS: ReadonlyArray<
     title: "Rare-UI Motion Capsule Toast",
     shortLabel: "Rare UI",
     description:
-      "swamimalode07/rare-ui/toast — Smooth monochrome hairline capsule with subtle primary dot and quiet dismiss.",
+      "swamimalode07/rare-ui/toast — Smooth frosted capsule with live status ping dot, inline CTA, and quiet dismiss.",
+  },
+  {
+    id: "uiarc-toast",
+    title: "UIArc Specular Glass Toast",
+    shortLabel: "UIArc",
+    description:
+      "@uiarc/toast — Layered specular glass notification card with inset highlight ring and crisp action pill.",
+  },
+  {
+    id: "uiarc-toast-stack",
+    title: "UIArc Layered Toast Stack",
+    shortLabel: "UIArc Stack",
+    description:
+      "@uiarc/toast-stack — High-density stacked glass cards with category badge, progress rail, and hover fan-out.",
+  },
+  {
+    id: "spectrum-toast-stack",
+    title: "SpectrumUI Status Toast Stack",
+    shortLabel: "Spectrum",
+    description:
+      "@spectrumui/toast-stack — Monochrome architectural toast deck accented by pulsing semantic status dots.",
   },
 ]
 
@@ -427,6 +456,9 @@ const VALID_TOAST_VARIANTS: Readonly<Record<BeuiToastVariant, true>> = {
   "brutalist-outline": true,
   "micro-badge": true,
   "rare-toast": true,
+  "uiarc-toast": true,
+  "uiarc-toast-stack": true,
+  "spectrum-toast-stack": true,
 }
 
 export function normalizeToastVariant(raw: unknown): BeuiToastVariant {
@@ -770,7 +802,15 @@ function resolveToastVariantSurfaceClass(
       meta.cardBorderClass
     ),
     "rare-toast":
-      "w-[336px] max-w-[calc(100vw-2rem)] rounded-full border border-border/65 bg-card/95 px-3.5 py-2 shadow-xl backdrop-blur-xl",
+      "w-[344px] max-w-[calc(100vw-2rem)] rounded-full border border-border/60 bg-background/85 px-3.5 py-2 shadow-xl shadow-foreground/5 backdrop-blur-2xl",
+    "uiarc-toast":
+      "w-[348px] max-w-[calc(100vw-2rem)] rounded-2xl border border-border/70 bg-card/85 p-3 shadow-xl backdrop-blur-2xl ring-1 ring-inset ring-foreground/[0.06]",
+    "uiarc-toast-stack": cn(
+      "w-[352px] max-w-[calc(100vw-2rem)] rounded-2xl border bg-background/85 p-3 shadow-2xl backdrop-blur-2xl ring-1 ring-inset ring-foreground/[0.05]",
+      meta.cardBorderClass
+    ),
+    "spectrum-toast-stack":
+      "w-[348px] max-w-[calc(100vw-2rem)] rounded-xl border border-border/75 bg-card/95 p-3 shadow-lg backdrop-blur-xl",
   }
   return map[variant]
 }
@@ -1336,6 +1376,89 @@ function mapItemToOfficialMotionStatus(item: BeuiToastItem): OfficialMotionToast
   return "info"
 }
 
+const RareToastBody: React.FC<ToastVariantBodyProps> = ({
+  item,
+  meta,
+  actionLabel,
+  onTriggerAction,
+  onDismiss,
+}) => (
+  <div className="flex items-center gap-2.5 text-xs">
+    <span className="relative inline-flex size-2 shrink-0 items-center justify-center">
+      <span className={cn("absolute size-3 animate-ping rounded-full opacity-45", meta.dotClass)} />
+      <span className={cn("relative size-2 rounded-full", meta.dotClass)} />
+    </span>
+    <div className="min-w-0 flex-1 truncate">
+      <span className="font-semibold text-foreground">{item.title}</span>
+      {item.detail && (
+        <span className="ml-1.5 text-muted-foreground">· {item.detail}</span>
+      )}
+    </div>
+    {item.onAction && actionLabel && (
+      <button
+        type="button"
+        onClick={onTriggerAction}
+        className="shrink-0 rounded-full border border-primary/30 bg-primary/12 px-2 py-0.5 text-[10px] font-semibold text-primary hover:bg-primary/20"
+      >
+        {actionLabel}
+      </button>
+    )}
+    <button
+      type="button"
+      onClick={onDismiss}
+      aria-label="Dismiss notification"
+      className="shrink-0 rounded-full p-1 text-muted-foreground hover:bg-foreground/10 hover:text-foreground"
+    >
+      <X className="size-3" />
+    </button>
+  </div>
+)
+
+const SpectrumToastBody: React.FC<ToastVariantBodyProps> = ({
+  item,
+  meta,
+  actionLabel,
+  timeText,
+  onTriggerAction,
+  onDismiss,
+}) => (
+  <div className="flex items-start gap-2.5 text-xs">
+    <span className="relative mt-1 inline-flex size-2 shrink-0 items-center justify-center">
+      <span className={cn("absolute size-3 animate-ping rounded-full opacity-40", meta.dotClass)} />
+      <span className={cn("relative size-2 rounded-full", meta.dotClass)} />
+    </span>
+    <div className="min-w-0 flex-1">
+      <div className="flex items-center justify-between gap-2">
+        <span className="truncate font-semibold text-foreground">{item.title}</span>
+        <span className="shrink-0 font-mono text-[9.5px] text-muted-foreground">{timeText}</span>
+      </div>
+      {item.detail && (
+        <div className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
+          {item.detail}
+        </div>
+      )}
+      {item.onAction && actionLabel && (
+        <button
+          type="button"
+          onClick={onTriggerAction}
+          className="mt-1.5 inline-flex items-center gap-1 font-medium text-primary hover:underline"
+        >
+          <span>{actionLabel}</span>
+          <ArrowUpRight className="size-3" />
+        </button>
+      )}
+    </div>
+    <button
+      type="button"
+      onClick={onDismiss}
+      aria-label="Dismiss notification"
+      className="rounded-md p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+    >
+      <X className="size-3" />
+    </button>
+  </div>
+)
+
 const TOAST_VARIANT_RENDERERS: Record<
   BeuiToastVariant,
   React.FC<ToastVariantBodyProps>
@@ -1352,7 +1475,10 @@ const TOAST_VARIANT_RENDERERS: Record<
   "soft-tinted": (props) => <StandardCardBody {...props} tonalSurface />,
   "brutalist-outline": BrutalistOutlineBody,
   "micro-badge": MicroBadgeBody,
-  "rare-toast": CompactPillsBody,
+  "rare-toast": RareToastBody,
+  "uiarc-toast": (props) => <StandardCardBody {...props} linkAction />,
+  "uiarc-toast-stack": (props) => <StandardCardBody {...props} />,
+  "spectrum-toast-stack": SpectrumToastBody,
 }
 
 export interface AnimatedToastStackProps {
@@ -2150,6 +2276,8 @@ export interface BeuiNotificationCenterPopoverProps {
   backgroundTasks?: ReadonlyArray<BackgroundInboxTask>
   backgroundInboxStyle?: BackgroundInboxStyleChoice
   deleteButtonStyle?: DeleteButtonStyleChoice
+  notificationCenterStyle?: NotificationCenterStyleChoice
+  drawerMotionStyle?: DrawerMotionStyleChoice
   toastEnabled: boolean
   toastVariant?: BeuiToastVariant
   toastPosition?: BeuiToastPosition
@@ -2161,7 +2289,8 @@ export interface BeuiNotificationCenterPopoverProps {
 }
 
 /**
- * Minimal Workspace Notification History Popover anchored from the top-right rail.
+ * Workspace Notification Center (`@uiarc/notification-center`, `@tweenly/notification-feed`,
+ * and BEUI Minimal) with `@kokonutui/smooth-drawer` spring entrance.
  */
 export const BeuiNotificationCenterPopover: React.FC<
   BeuiNotificationCenterPopoverProps
@@ -2172,139 +2301,296 @@ export const BeuiNotificationCenterPopover: React.FC<
   backgroundTasks = [],
   backgroundInboxStyle = "assistant-inbox",
   deleteButtonStyle = "rare-confirm",
+  notificationCenterStyle = "uiarc-center",
+  drawerMotionStyle = "kokonut-smooth",
   toastEnabled,
   onToggleEnabled,
   onClearHistory,
 }) => {
-  if (!open) return null
+  const [tab, setTab] = React.useState<"all" | "alerts" | "skills">("all")
+
+  const filteredHistory = React.useMemo(() => {
+    if (tab === "alerts") {
+      return history.filter(
+        (h) =>
+          h.category === "error" ||
+          h.category === "security" ||
+          h.status === "error" ||
+          h.status === "warning"
+      )
+    }
+    if (tab === "skills") {
+      return history.filter(
+        (h) =>
+          h.category === "skill" ||
+          h.category === "self_improvement" ||
+          h.category === "memory"
+      )
+    }
+    return history
+  }, [history, tab])
+
+  const motionTransition =
+    drawerMotionStyle === "instant"
+      ? { duration: 0 }
+      : drawerMotionStyle === "snappy-slide"
+        ? { duration: 0.16, ease: "easeOut" as const }
+        : { type: "spring" as const, stiffness: 360, damping: 30, mass: 0.8 }
 
   return (
-    <>
-      <button
-        type="button"
-        aria-label="Close notifications popover"
-        onClick={onClose}
-        className="fixed inset-0 z-40 bg-transparent"
-      />
-      <div
-        role="dialog"
-        aria-label="Notifications"
-        className="t-popover fixed top-14 right-14 z-50 flex max-h-[min(480px,calc(100vh-5rem))] w-[340px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border/75 bg-popover/90 text-popover-foreground shadow-2xl backdrop-blur-2xl"
-      >
-        <div className="flex items-center justify-between gap-2 border-b border-border/55 px-3.5 py-2.5">
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-lg border border-primary/30 bg-primary/12 text-primary">
-              {toastEnabled ? (
-                <Bell className="size-3.5" />
-              ) : (
-                <BellOff className="size-3.5" />
-              )}
-            </span>
-            <span className="truncate text-xs font-semibold text-foreground">
-              Notifications
-            </span>
-            {history.length > 0 && (
-              <Badge variant="secondary" className="px-1.5 py-0 font-mono text-[10px]">
-                {history.length}
-              </Badge>
-            )}
-          </div>
-
-          <div className="flex shrink-0 items-center gap-2">
-            {history.length > 0 && (
-              <RareDeleteButton
-                variant={deleteButtonStyle}
-                iconOnly={false}
-                label="Clear"
-                onDelete={onClearHistory}
-                ariaLabel="Clear notifications"
-              />
-            )}
-            <Switch
-              checked={toastEnabled}
-              onCheckedChange={onToggleEnabled}
-              aria-label="Enable live notifications"
-            />
-          </div>
-        </div>
-
-        <div className="flex-1 space-y-2 overflow-y-auto p-2.5">
-          {backgroundTasks.length > 0 && (
-            <BackgroundInboxElement
-              tasks={backgroundTasks}
-              variant={backgroundInboxStyle}
-            />
-          )}
-          {history.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-1.5 py-7 text-center">
-              <span className="inline-flex size-8 items-center justify-center rounded-xl border border-border/65 bg-muted/35 text-muted-foreground">
-                <Bell className="size-3.5" />
-              </span>
-              <div className="text-xs font-medium text-foreground">
-                No notifications yet
+    <AnimatePresence>
+      {open && (
+        <>
+          <button
+            type="button"
+            aria-label="Close notifications popover"
+            onClick={onClose}
+            className="fixed inset-0 z-40 bg-transparent"
+          />
+          <motion.div
+            key="notification-center-popover"
+            role="dialog"
+            aria-label="Notifications"
+            initial={
+              drawerMotionStyle === "instant"
+                ? false
+                : { opacity: 0, y: -8, scale: 0.97 }
+            }
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={
+              drawerMotionStyle === "instant"
+                ? { opacity: 0 }
+                : { opacity: 0, y: -6, scale: 0.97 }
+            }
+            transition={motionTransition}
+            className="t-popover fixed top-14 right-14 z-50 flex max-h-[min(520px,calc(100vh-5rem))] w-[364px] max-w-[calc(100vw-2rem)] flex-col overflow-hidden rounded-2xl border border-border/70 bg-popover/85 text-popover-foreground shadow-2xl backdrop-blur-2xl ring-1 ring-inset ring-foreground/[0.05]"
+          >
+            <div className="flex items-center justify-between gap-2 border-b border-border/55 px-3.5 py-2.5">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-lg border border-primary/30 bg-primary/12 text-primary">
+                  {toastEnabled ? (
+                    <Bell className="size-3.5" />
+                  ) : (
+                    <BellOff className="size-3.5" />
+                  )}
+                </span>
+                <span className="truncate text-xs font-semibold text-foreground">
+                  {notificationCenterStyle === "tweenly-feed"
+                    ? "Activity Feed"
+                    : "Notification Center"}
+                </span>
+                {history.length > 0 && (
+                  <Badge variant="secondary" className="px-1.5 py-0 font-mono text-[10px]">
+                    {history.length}
+                  </Badge>
+                )}
               </div>
-              <p className="max-w-[220px] text-[11px] text-muted-foreground">
-                Skill updates, workflow runs, and self-improvement events appear here.
-              </p>
+
+              <div className="flex shrink-0 items-center gap-2">
+                {history.length > 0 && (
+                  <RareDeleteButton
+                    variant={deleteButtonStyle}
+                    iconOnly={false}
+                    label="Clear"
+                    onDelete={onClearHistory}
+                    ariaLabel="Clear notifications"
+                  />
+                )}
+                <Switch
+                  checked={toastEnabled}
+                  onCheckedChange={onToggleEnabled}
+                  aria-label="Enable live notifications"
+                />
+              </div>
             </div>
-          ) : (
-            history.map((item) => {
-              const meta =
-                TOAST_CATEGORY_META[item.category] ?? TOAST_CATEGORY_META.system
-              const Icon = meta.icon
-              return (
-                <div
-                  key={item.id}
-                  className="group flex items-start gap-2.5 rounded-xl border border-border/60 bg-card/70 p-2.5 text-xs transition hover:border-border hover:bg-card"
-                >
-                  <span
-                    className={cn(
-                      "mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-lg border",
-                      meta.iconWrapClass
-                    )}
-                  >
-                    <Icon className="size-3.5" />
+
+            {notificationCenterStyle === "uiarc-center" && (
+              <div className="flex items-center gap-1 border-b border-border/45 bg-muted/25 px-3 py-1.5 text-[11px]">
+                {(
+                  [
+                    { id: "all", label: "All", count: history.length },
+                    {
+                      id: "alerts",
+                      label: "Alerts",
+                      count: history.filter(
+                        (h) =>
+                          h.category === "error" ||
+                          h.category === "security" ||
+                          h.status === "error"
+                      ).length,
+                    },
+                    {
+                      id: "skills",
+                      label: "Memory",
+                      count: history.filter(
+                        (h) =>
+                          h.category === "skill" ||
+                          h.category === "self_improvement" ||
+                          h.category === "memory"
+                      ).length,
+                    },
+                  ] as const
+                ).map((t) => {
+                  const active = tab === t.id
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setTab(t.id)}
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded-lg px-2 py-1 font-medium transition-colors",
+                        active
+                          ? "bg-card text-foreground shadow-2xs"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      <span>{t.label}</span>
+                      <span className="font-mono text-[9.5px] opacity-75">
+                        {t.count}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            <div className="flex-1 space-y-2 overflow-y-auto p-2.5">
+              {backgroundTasks.length > 0 && (
+                <BackgroundInboxElement
+                  tasks={backgroundTasks}
+                  variant={backgroundInboxStyle}
+                />
+              )}
+              {filteredHistory.length === 0 ? (
+                <div className="flex flex-col items-center justify-center gap-1.5 py-7 text-center">
+                  <span className="inline-flex size-8 items-center justify-center rounded-xl border border-border/65 bg-muted/35 text-muted-foreground">
+                    <Bell className="size-3.5" />
                   </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between gap-1.5">
-                      <span className="font-mono text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
-                        {meta.shortTag}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground/75">
-                        {formatShortTime(item.createdAt)}
-                      </span>
-                    </div>
-                    <div className="mt-0.5 font-semibold text-foreground">
-                      {item.title}
-                      {item.count && item.count > 1 ? ` (×${item.count})` : ""}
-                    </div>
-                    {item.detail && (
-                      <div className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
-                        {item.detail}
-                      </div>
-                    )}
-                    {item.onAction && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          item.onAction?.()
-                          onClose()
-                        }}
-                        className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-semibold text-primary hover:underline"
-                      >
-                        <span>
-                          {item.actionLabel ?? meta.defaultActionLabel ?? "Inspect"}
-                        </span>
-                        <ArrowUpRight className="size-2.5" />
-                      </button>
-                    )}
+                  <div className="text-xs font-medium text-foreground">
+                    No notifications yet
                   </div>
+                  <p className="max-w-[220px] text-[11px] text-muted-foreground">
+                    Skill updates, workflow runs, and self-improvement events appear here.
+                  </p>
                 </div>
-              )
-            })
-          )}
-        </div>
-      </div>
-    </>
+              ) : notificationCenterStyle === "tweenly-feed" ? (
+                <div className="relative ml-2 space-y-2.5 border-l border-border/65 pl-3.5 py-1">
+                  {filteredHistory.map((item, idx) => {
+                    const meta =
+                      TOAST_CATEGORY_META[item.category] ?? TOAST_CATEGORY_META.system
+                    return (
+                      <motion.div
+                        key={item.id}
+                        initial={{ opacity: 0, x: 8 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{
+                          duration: 0.2,
+                          delay: Math.min(idx * 0.03, 0.24),
+                        }}
+                        className="relative rounded-xl border border-border/55 bg-card/65 p-2.5 text-xs transition hover:border-border hover:bg-card"
+                      >
+                        <span
+                          className={cn(
+                            "absolute -left-[19px] top-3.5 size-2 rounded-full ring-2 ring-popover",
+                            meta.dotClass
+                          )}
+                        />
+                        <div className="flex items-center justify-between gap-1.5">
+                          <span className="font-mono text-[9px] font-semibold uppercase tracking-wider text-primary/90">
+                            {meta.shortTag}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground/75">
+                            {formatShortTime(item.createdAt)}
+                          </span>
+                        </div>
+                        <div className="mt-0.5 font-semibold text-foreground">
+                          {item.title}
+                          {item.count && item.count > 1 ? ` (×${item.count})` : ""}
+                        </div>
+                        {item.detail && (
+                          <div className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
+                            {item.detail}
+                          </div>
+                        )}
+                        {item.onAction && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              item.onAction?.()
+                              onClose()
+                            }}
+                            className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-semibold text-primary hover:underline"
+                          >
+                            <span>
+                              {item.actionLabel ?? meta.defaultActionLabel ?? "Inspect"}
+                            </span>
+                            <ArrowUpRight className="size-2.5" />
+                          </button>
+                        )}
+                      </motion.div>
+                    )
+                  })}
+                </div>
+              ) : (
+                filteredHistory.map((item) => {
+                  const meta =
+                    TOAST_CATEGORY_META[item.category] ?? TOAST_CATEGORY_META.system
+                  const Icon = meta.icon
+                  return (
+                    <div
+                      key={item.id}
+                      className="group flex items-start gap-2.5 rounded-xl border border-border/60 bg-card/70 p-2.5 text-xs transition hover:border-border hover:bg-card"
+                    >
+                      <span
+                        className={cn(
+                          "mt-0.5 inline-flex size-6 shrink-0 items-center justify-center rounded-lg border",
+                          meta.iconWrapClass
+                        )}
+                      >
+                        <Icon className="size-3.5" />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-1.5">
+                          <span className="font-mono text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
+                            {meta.shortTag}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground/75">
+                            {formatShortTime(item.createdAt)}
+                          </span>
+                        </div>
+                        <div className="mt-0.5 font-semibold text-foreground">
+                          {item.title}
+                          {item.count && item.count > 1 ? ` (×${item.count})` : ""}
+                        </div>
+                        {item.detail && (
+                          <div className="mt-0.5 line-clamp-2 text-[11px] text-muted-foreground">
+                            {item.detail}
+                          </div>
+                        )}
+                        {item.onAction && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              item.onAction?.()
+                              onClose()
+                            }}
+                            className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-semibold text-primary hover:underline"
+                          >
+                            <span>
+                              {item.actionLabel ?? meta.defaultActionLabel ?? "Inspect"}
+                            </span>
+                            <ArrowUpRight className="size-2.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
   )
 }

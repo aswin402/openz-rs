@@ -7,8 +7,8 @@ import {
   BeuiModelSelector,
   BeuiPromptInput,
 } from '../../components/beui';
+import { KokonutTokenAlternatives } from '../../components/registries/modernRegistries';
 import { Button } from '../../components/ui/button';
-import { Zap } from 'lucide-react';
 import type { ChatAttachment, OpenZMessage } from '../../types';
 import {
   attachmentFitsQuota,
@@ -16,10 +16,7 @@ import {
   DEFAULT_ATTACHMENT_POLICY,
 } from '../../types/attachments';
 import { formatFileSize } from '../../shared/lib/format';
-import {
-  formatCavemanSavingsBadge,
-  getCavemanLevelOption,
-} from '../../shared/lib/cavemanLevels';
+import { formatCavemanSavingsBadge } from '../../shared/lib/cavemanLevels';
 import {
   estimateConversationTokens,
   mimePolicyToAcceptAttr,
@@ -29,7 +26,13 @@ import { cn } from '../../lib/utils';
 
 const EMPTY_MSGS: OpenZMessage[] = [];
 
-export const ChatInput: React.FC = () => {
+export interface ChatInputProps {
+  embeddedInFloatingDock?: boolean;
+}
+
+export const ChatInput: React.FC<ChatInputProps> = ({
+  embeddedInFloatingDock = false,
+}) => {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
@@ -68,11 +71,13 @@ export const ChatInput: React.FC = () => {
   const cavemanLevel = useOpenZStore((s) => s.cavemanLevel);
   const cavemanStats = useOpenZStore((s) => s.cavemanStats);
   const toggleCavemanMode = useOpenZStore((s) => s.toggleCavemanMode);
+  const setCavemanLevel = useOpenZStore((s) => s.setCavemanLevel);
   const streamingMode = useOpenZStore((s) => s.streamingMode);
   const toggleStreamingMode = useOpenZStore((s) => s.toggleStreamingMode);
 
   const chatWidth = useUiCustomizationStore((s) => s.chatWidth);
   const promptInputStyle = useUiCustomizationStore((s) => s.promptInputStyle);
+  const tokenAlternativesStyle = useUiCustomizationStore((s) => s.tokenAlternativesStyle);
   const sendButtonStyle = useUiCustomizationStore((s) => s.sendButtonStyle);
   const modelSelectorStyle = useUiCustomizationStore((s) => s.modelSelectorStyle);
   const contextUsageStyle = useUiCustomizationStore((s) => s.contextUsageStyle);
@@ -262,9 +267,10 @@ export const ChatInput: React.FC = () => {
   );
 
   const canSend = !isStreaming && (input.trim().length > 0 || attachments.length > 0);
+  const savingsLabel = formatCavemanSavingsBadge(cavemanStats);
 
-  return (
-    <ChatTrackRow chatWidth={chatWidth} className="pb-3.5" centerClassName="relative">
+  const composerBody = (
+    <>
       <input
         ref={fileInputRef}
         type="file"
@@ -315,31 +321,14 @@ export const ChatInput: React.FC = () => {
               onLoadAllForProvider={requestProviderModels}
             />
 
-            <Button
-              type="button"
-              variant={cavemanMode ? 'outline' : 'ghost'}
-              size="xs"
-              onClick={toggleCavemanMode}
-              className={cn(
-                'h-6 px-2 text-[10px]',
-                cavemanMode
-                  ? 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary'
-                  : 'text-muted-foreground',
-              )}
-              title={
-                cavemanMode
-                  ? `Caveman ON (${getCavemanLevelOption(cavemanLevel).shortBadge}) — configure mode in Settings`
-                  : 'Turn ON Caveman mode (configure mode in Settings)'
-              }
-            >
-              <Zap className="size-3" />
-              <span>
-                Caveman {cavemanMode ? 'ON' : 'OFF'}
-                {cavemanMode && formatCavemanSavingsBadge(cavemanStats)
-                  ? ` · ⛏${formatCavemanSavingsBadge(cavemanStats)}`
-                  : ''}
-              </span>
-            </Button>
+            <KokonutTokenAlternatives
+              enabled={cavemanMode}
+              activeLevel={cavemanLevel}
+              savingsBadge={savingsLabel ? `⛏${savingsLabel}` : null}
+              variant={tokenAlternativesStyle}
+              onToggleEnabled={toggleCavemanMode}
+              onSelectLevel={(level) => setCavemanLevel(level)}
+            />
 
             <Button
               type="button"
@@ -347,7 +336,7 @@ export const ChatInput: React.FC = () => {
               size="xs"
               onClick={toggleStreamingMode}
               className={cn(
-                'h-6 px-2 text-[10px]',
+                'h-6 rounded-full px-2.5 text-[10px]',
                 streamingMode
                   ? 'border-primary/35 bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary'
                   : 'text-muted-foreground',
@@ -367,6 +356,16 @@ export const ChatInput: React.FC = () => {
           />
         }
       />
+    </>
+  );
+
+  if (embeddedInFloatingDock) {
+    return composerBody;
+  }
+
+  return (
+    <ChatTrackRow chatWidth={chatWidth} className="pb-3.5" centerClassName="relative">
+      {composerBody}
     </ChatTrackRow>
   );
 };

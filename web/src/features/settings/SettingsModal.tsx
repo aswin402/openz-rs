@@ -41,6 +41,7 @@ import { ChannelsTab } from './ChannelsTab';
 import { ProvidersTab } from './ProvidersTab';
 import { BeuiAlert } from '../../components/beui';
 import { OpenZFoxIcon } from '../../components/OpenZFoxIcon';
+import { SpectrumNavListCard } from '../../components/registries/modernRegistries';
 import { Badge } from '../../components/ui/badge';
 import { Button } from '../../components/ui/button';
 import { cn } from '../../lib/utils';
@@ -86,6 +87,7 @@ export const SettingsModal: React.FC = () => {
 
   const activeSection = useUiCustomizationStore((s) => s.activeGatewaySection);
   const setActiveSection = useUiCustomizationStore((s) => s.setActiveGatewaySection);
+  const navMenuStyle = useUiCustomizationStore((s) => s.navMenuStyle);
   const setIsCustomizeOpen = useUiCustomizationStore((s) => s.setIsCustomizeOpen);
   const exportBackupJson = useUiCustomizationStore((s) => s.exportBackupJson);
   const importBackupJson = useUiCustomizationStore((s) => s.importBackupJson);
@@ -435,7 +437,8 @@ export const SettingsModal: React.FC = () => {
             <div className="hidden px-2.5 pb-1.5 text-[10.5px] font-semibold uppercase tracking-wider text-muted-foreground/75 md:block">
               Configuration
             </div>
-            <div className="flex gap-1 md:flex-col md:border-l md:border-border/60 md:pl-2">
+            {/* Mobile horizontal pills */}
+            <div className="flex gap-1 md:hidden">
               {NAV_SECTIONS.map((sec) => {
                 const Icon = sec.icon;
                 const active = activeSection === sec.id;
@@ -445,7 +448,7 @@ export const SettingsModal: React.FC = () => {
                     type="button"
                     onClick={() => setActiveSection(sec.id)}
                     className={cn(
-                      'flex shrink-0 items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs transition-colors md:w-full',
+                      'flex shrink-0 items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs transition-colors',
                       active
                         ? 'bg-primary/15 font-semibold text-primary'
                         : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground',
@@ -461,6 +464,20 @@ export const SettingsModal: React.FC = () => {
                   </button>
                 );
               })}
+            </div>
+            {/* Desktop @spectrumui/nav-list-card */}
+            <div className="hidden md:block">
+              <SpectrumNavListCard
+                items={NAV_SECTIONS.map((sec) => ({
+                  id: sec.id,
+                  label: sec.label,
+                  icon: sec.icon,
+                }))}
+                activeId={activeSection}
+                onSelect={(id) => setActiveSection(id as GatewaySettingsSectionId)}
+                variant={navMenuStyle}
+                layoutGroupId="gateway-settings-nav"
+              />
             </div>
           </nav>
 

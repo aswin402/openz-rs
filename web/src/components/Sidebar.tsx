@@ -3,6 +3,7 @@ import { useOpenZStore } from '../store/useOpenZStore';
 import { useUiCustomizationStore } from '../store/useUiCustomizationStore';
 import { OpenZBrandLogo } from './OpenZFoxIcon';
 import { RareDeleteButton } from './registries/rareAndCommunity';
+import { SpectrumStatusBadge } from './registries/modernRegistries';
 import { cn } from '../lib/utils';
 import {
   MessageSquare,
@@ -191,7 +192,7 @@ export const Sidebar: React.FC = () => {
             )}
             title="Inspect Gateway & MCP servers"
           >
-            <span className="flex items-center gap-2">
+            {collapsed ? (
               <span
                 className={cn(
                   'size-2.5 shrink-0 rounded-full',
@@ -202,8 +203,20 @@ export const Sidebar: React.FC = () => {
                       : 'bg-destructive',
                 )}
               />
-              {!collapsed && <span className="font-medium capitalize">{connectionStatus}</span>}
-            </span>
+            ) : (
+              <SpectrumStatusBadge
+                tone={
+                  connectionStatus === 'connected'
+                    ? 'online'
+                    : connectionStatus === 'connecting'
+                      ? 'warning'
+                      : 'error'
+                }
+                label={
+                  connectionStatus.charAt(0).toUpperCase() + connectionStatus.slice(1)
+                }
+              />
+            )}
             {!collapsed && (
               <span>
                 {mcpStats.loaded}/{mcpStats.total} MCP

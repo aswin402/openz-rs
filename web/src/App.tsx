@@ -1,16 +1,18 @@
 import React, { useEffect, useMemo } from 'react';
-import { useOpenZStore, type WorkspaceView } from './store/useOpenZStore';
+import { useOpenZStore } from './store/useOpenZStore';
 import type { OpenZMessage, OrchestrationRunState } from './types';
 import { useThemeStore } from './store/useThemeStore';
 import { useResolvedTheme } from './shared/lib/theme';
+import { runThemeViewTransition } from './shared/lib/themeTransition';
 import {
   resolveActivePalette,
   useUiCustomizationStore,
 } from './store/useUiCustomizationStore';
 import { useToastStore } from './store/useToastStore';
 import { Sidebar } from './components/Sidebar';
+import { FloatingComposerDock } from './components/FloatingComposerDock';
+import { WorkspaceRightDock } from './components/WorkspaceRightDock';
 import { ChatMessage } from './features/chat/ChatMessage';
-import { ChatInput } from './features/chat/ChatInput';
 import { HeroWelcome } from './components/HeroWelcome';
 import { DashboardView } from './components/DashboardView';
 import { KnowledgeView } from './features/knowledge/KnowledgeView';
@@ -38,7 +40,6 @@ import {
   Activity,
   Archive,
   Bell,
-  BellOff,
   BookOpen,
   Bot,
   BrainCircuit,
@@ -46,7 +47,6 @@ import {
   LayoutDashboard,
   Menu,
   MessageSquare,
-  Moon,
   Palette,
   PanelRightClose,
   PanelRightOpen,
@@ -54,7 +54,6 @@ import {
   ScrollText,
   Settings,
   Sparkles,
-  Sun,
   SunMoon,
   User,
   Zap,
@@ -88,6 +87,7 @@ export const App: React.FC = () => {
   const setTheme = useThemeStore((s) => s.setTheme);
 
   const activeThemeId = useUiCustomizationStore((s) => s.activeThemeId);
+  const themeTransitionStyle = useUiCustomizationStore((s) => s.themeTransitionStyle);
   const scrollerBehavior = useUiCustomizationStore((s) => s.scrollerBehavior);
   const toastEnabled = useUiCustomizationStore((s) => s.toastEnabled);
   const toastVariant = useUiCustomizationStore((s) => s.toastVariant);
@@ -96,6 +96,8 @@ export const App: React.FC = () => {
   const toastMaxVisible = useUiCustomizationStore((s) => s.toastMaxVisible);
   const backgroundInboxStyle = useUiCustomizationStore((s) => s.backgroundInboxStyle);
   const deleteButtonStyle = useUiCustomizationStore((s) => s.deleteButtonStyle);
+  const notificationCenterStyle = useUiCustomizationStore((s) => s.notificationCenterStyle);
+  const drawerMotionStyle = useUiCustomizationStore((s) => s.drawerMotionStyle);
   const applyCustomization = useUiCustomizationStore((s) => s.applyCustomization);
   const setIsCustomizeOpen = useUiCustomizationStore((s) => s.setIsCustomizeOpen);
   const setActiveCustomizeSection = useUiCustomizationStore((s) => s.setActiveCustomizeSection);
@@ -140,8 +142,13 @@ export const App: React.FC = () => {
 
   const handleQuickThemeToggle = React.useCallback(() => {
     const nextMode = palette.mode === 'dark' ? 'light' : 'dark';
-    setTheme(nextMode);
-  }, [palette.mode, setTheme]);
+    runThemeViewTransition(
+      () => {
+        setTheme(nextMode);
+      },
+      { style: themeTransitionStyle },
+    );
+  }, [palette.mode, setTheme, themeTransitionStyle]);
 
   const commandItems = useMemo<BeuiCommandItem[]>(() => {
     const base: BeuiCommandItem[] = [
@@ -370,31 +377,32 @@ export const App: React.FC = () => {
 
         {/* Right-Side Minimal Icons Dock — automatically hidden while Activity or Logs drawer is open */}
         {!isActivityPanelOpen && !isLogsOpen && (
-          <WorkspaceQuickActions
+          <WorkspaceRightDock
             activeView={activeView}
             activityOpen={isActivityPanelOpen}
             notificationsOpen={isToastCenterOpen}
             toastEnabled={toastEnabled}
             unreadCount={toastUnreadCount}
+            isDarkTheme={palette.mode === 'dark'}
+            themeLabel={palette.mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
             onViewChange={setActiveView}
             onCustomizeOpen={() => setIsCustomizeOpen(true)}
             onNotificationsToggle={toggleToastCenter}
             onThemeToggle={handleQuickThemeToggle}
-            themeLabel={palette.mode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            themeIcon={palette.mode === 'dark' ? Sun : Moon}
             onActivityToggle={() => toggleActivityPanel()}
           />
         )}
 
         <div className="relative flex flex-1 overflow-hidden">
           {activeView === 'chats' ? (
-            <div className="flex h-full min-w-0 flex-1 flex-col overflow-hidden">
+            <div className="relative flex h-full min-w-0 flex-1 flex-col overflow-hidden">
               <MessageScroller
                 sessionKey={activeChatId}
                 itemCount={activeMessages.length}
                 isStreaming={isAnyStreaming}
                 behaviorMode={scrollerBehavior}
-                contentClassName="space-y-3"
+                contentClassName="space-y-3 pb-36 md:pb-40"
+                jumpPillClassName="bottom-32 md:bottom-36"
               >
                 {activeMessages.length === 0 ? (
                   <HeroWelcome />
@@ -403,9 +411,7 @@ export const App: React.FC = () => {
                 )}
               </MessageScroller>
 
-              <div className="shrink-0 bg-background pr-[6px] pt-1">
-                <ChatInput />
-              </div>
+              <FloatingComposerDock />
             </div>
           ) : (
             <div
@@ -418,14 +424,13 @@ export const App: React.FC = () => {
             </div>
           )}
 
-          {isActivityPanelOpen && (
-            <AgentActivityPanel
-              messages={activeMessages}
-              isStreaming={isAnyStreaming}
-              orchestrationRuns={activeOrchestrationRuns}
-              onClose={() => setIsActivityPanelOpen(false)}
-            />
-          )}
+          <AgentActivityPanel
+            open={isActivityPanelOpen}
+            messages={activeMessages}
+            isStreaming={isAnyStreaming}
+            orchestrationRuns={activeOrchestrationRuns}
+            onClose={() => setIsActivityPanelOpen(false)}
+          />
         </div>
       </div>
 
@@ -465,6 +470,8 @@ export const App: React.FC = () => {
           })}
         backgroundInboxStyle={backgroundInboxStyle}
         deleteButtonStyle={deleteButtonStyle}
+        notificationCenterStyle={notificationCenterStyle}
+        drawerMotionStyle={drawerMotionStyle}
         toastEnabled={toastEnabled}
         onToggleEnabled={(enabled) => applyCustomization({ toastEnabled: enabled })}
         onClearHistory={clearToastHistory}
@@ -485,155 +492,6 @@ export const App: React.FC = () => {
           maxVisible={toastMaxVisible}
         />
       )}
-    </div>
-  );
-};
-
-interface QuickActionItem {
-  id: string;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-  action: () => void;
-  active: boolean;
-  badgeCount?: number;
-}
-
-const WorkspaceQuickActions: React.FC<{
-  activeView: WorkspaceView;
-  activityOpen: boolean;
-  notificationsOpen: boolean;
-  toastEnabled: boolean;
-  unreadCount: number;
-  onViewChange: (view: WorkspaceView) => void;
-  onCustomizeOpen: () => void;
-  onNotificationsToggle: () => void;
-  onThemeToggle: () => void;
-  themeLabel: string;
-  themeIcon: React.ComponentType<{ className?: string }>;
-  onActivityToggle: () => void;
-}> = ({
-  activeView,
-  activityOpen,
-  notificationsOpen,
-  toastEnabled,
-  unreadCount,
-  onViewChange,
-  onCustomizeOpen,
-  onNotificationsToggle,
-  onThemeToggle,
-  themeLabel,
-  themeIcon,
-  onActivityToggle,
-}) => {
-  const actions: QuickActionItem[] = [
-    {
-      id: 'dashboard',
-      label: 'Dashboard',
-      icon: LayoutDashboard,
-      action: () => onViewChange('dashboard'),
-      active: activeView === 'dashboard',
-    },
-    {
-      id: 'chats',
-      label: 'Chat',
-      icon: MessageSquare,
-      action: () => onViewChange('chats'),
-      active: activeView === 'chats',
-    },
-    {
-      id: 'agents',
-      label: 'Agents',
-      icon: Bot,
-      action: () => onViewChange('agents'),
-      active: activeView === 'agents',
-    },
-    {
-      id: 'skills',
-      label: 'Skills',
-      icon: BookOpen,
-      action: () => onViewChange('skills'),
-      active: activeView === 'skills',
-    },
-    {
-      id: 'knowledge',
-      label: 'Knowledge',
-      icon: BrainCircuit,
-      action: () => onViewChange('knowledge'),
-      active: activeView === 'knowledge',
-    },
-    {
-      id: 'inventory',
-      label: 'Inventory',
-      icon: Archive,
-      action: () => onViewChange('inventory'),
-      active: activeView === 'inventory',
-    },
-    {
-      id: 'notifications',
-      label: toastEnabled ? 'Notifications' : 'Notifications (muted)',
-      icon: toastEnabled ? Bell : BellOff,
-      action: onNotificationsToggle,
-      active: notificationsOpen,
-      badgeCount: unreadCount,
-    },
-    {
-      id: 'customize',
-      label: 'Customize UI',
-      icon: Palette,
-      action: onCustomizeOpen,
-      active: false,
-    },
-    {
-      id: 'theme',
-      label: themeLabel,
-      icon: themeIcon,
-      action: onThemeToggle,
-      active: false,
-    },
-    {
-      id: 'activity',
-      label: activityOpen ? 'Hide activity' : 'Show activity',
-      icon: activityOpen ? PanelRightClose : PanelRightOpen,
-      action: onActivityToggle,
-      active: activeView === 'chats' && activityOpen,
-    },
-  ];
-
-  return (
-    <div
-      className={cn(
-        'absolute top-3 z-30 flex flex-col items-center gap-1 rounded-xl border border-border/60 bg-background/75 p-1 shadow-lg shadow-foreground/5 backdrop-blur-md transition-[right] duration-200 md:top-4',
-        activeView === 'chats' && activityOpen
-          ? 'right-3 lg:right-[332px]'
-          : 'right-3 md:right-4',
-      )}
-    >
-      {actions.map((item) => {
-        const Icon = item.icon;
-        return (
-          <button
-            key={item.id}
-            type="button"
-            onClick={item.action}
-            className={cn(
-              'group relative flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground transition hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
-              item.active && 'bg-primary/15 text-primary',
-            )}
-            aria-label={item.label}
-          >
-            <Icon className="h-4 w-4" />
-            {item.badgeCount && item.badgeCount > 0 ? (
-              <span className="pointer-events-none absolute right-1 top-1 flex h-2 w-2 rounded-full bg-primary ring-2 ring-background" />
-            ) : null}
-            <span
-              data-openz-custom-hint="true"
-              className="pointer-events-none absolute right-full top-1/2 mr-2 hidden -translate-y-1/2 whitespace-nowrap rounded-lg border border-border/80 bg-popover/95 px-2.5 py-1 text-[11px] font-medium text-popover-foreground shadow-lg backdrop-blur-md group-hover:block"
-            >
-              {item.label}
-            </span>
-          </button>
-        );
-      })}
     </div>
   );
 };

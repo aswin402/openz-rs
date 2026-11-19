@@ -36,6 +36,7 @@ export type BeuiAlertTone = AlertVariant
 
 export type BeuiAlertStyleVariant =
   | "beui-alert"
+  | "uiarc-alert"
   | "beui-bordered"
   | "beui-accent"
   | "compact-pill"
@@ -56,6 +57,13 @@ export const BEUI_ALERT_STYLE_OPTIONS: ReadonlyArray<BeuiAlertStyleDescriptor> =
     description:
       "Official @beui/alert soft semantic tint with spring layout physics, icon morphing, and animated dismiss.",
     isDefault: true,
+  },
+  {
+    id: "uiarc-alert",
+    title: "UIArc Specular Glass Callout",
+    shortLabel: "UIArc",
+    description:
+      "@uiarc/alert — Layered frosted glass surface with glowing icon badge, inner top highlight, and spring dismiss.",
   },
   {
     id: "beui-bordered",
@@ -82,6 +90,7 @@ export const BEUI_ALERT_STYLE_OPTIONS: ReadonlyArray<BeuiAlertStyleDescriptor> =
 
 const VALID_ALERT_STYLES: Readonly<Record<BeuiAlertStyleVariant, true>> = {
   "beui-alert": true,
+  "uiarc-alert": true,
   "beui-bordered": true,
   "beui-accent": true,
   "compact-pill": true,
@@ -150,6 +159,8 @@ export const BeuiAlert: React.FC<BeuiAlertProps> = ({
       contentClassName={cn(isCompact && "items-center gap-2")}
       className={cn(
         resolvedStyle === "beui-alert" && "border border-border/45",
+        resolvedStyle === "uiarc-alert" &&
+          "rounded-2xl border border-border/70 bg-card/80 shadow-md shadow-foreground/5 backdrop-blur-xl ring-1 ring-inset ring-foreground/[0.06]",
         resolvedStyle === "beui-bordered" && BORDERED_BY_TONE[tone],
         resolvedStyle === "beui-accent" && ACCENT_RAIL_BY_TONE[tone],
         isCompact && "rounded-lg border border-border/55 px-3 py-2 text-xs",

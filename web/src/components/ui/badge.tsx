@@ -4,7 +4,13 @@ import { Slot } from "radix-ui"
 
 import { cn } from "@/lib/utils"
 
-export type GlobalBadgeStyle = "minimal" | "subtle-pill" | "tinted" | "mono-tag"
+export type GlobalBadgeStyle =
+  | "minimal"
+  | "subtle-pill"
+  | "tinted"
+  | "mono-tag"
+  | "uiarc-badge"
+  | "spectrum-status"
 
 export interface BadgeStyleDescriptor {
   id: GlobalBadgeStyle
@@ -20,6 +26,18 @@ export const GLOBAL_BADGE_STYLE_OPTIONS: ReadonlyArray<BadgeStyleDescriptor> = [
     description:
       "Ultra-clean low-contrast hairline surface with subtle typography and zero heavy fills.",
     isDefault: true,
+  },
+  {
+    id: "uiarc-badge",
+    title: "UIArc Specular Glass Badge",
+    description:
+      "@uiarc/badge — Frosted specular top-edge highlight with crisp subtle border across status pills.",
+  },
+  {
+    id: "spectrum-status",
+    title: "SpectrumUI Live Status Pill",
+    description:
+      "@spectrumui/status-badge — Rounded capsule status pill with semantic leading indicator dot.",
   },
   {
     id: "subtle-pill",

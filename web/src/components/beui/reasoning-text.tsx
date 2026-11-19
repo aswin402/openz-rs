@@ -15,6 +15,8 @@ export type BeuiReasoningVariant =
   | "timeline"
   | "aicss-reasoning"
   | "beautiful-thinking"
+  | "tweenly-thinking"
+  | "kokonut-loading"
   | "minimal-whisper"
 
 export interface ReasoningTextProps {
@@ -79,19 +81,32 @@ export const ReasoningText: React.FC<ReasoningTextProps> = ({
     )
   }
 
-  if (effectiveVariant === "compact" || effectiveVariant === "minimal-whisper") {
+  if (
+    effectiveVariant === "compact" ||
+    effectiveVariant === "minimal-whisper" ||
+    effectiveVariant === "tweenly-thinking" ||
+    effectiveVariant === "kokonut-loading"
+  ) {
+    const forcedLoader: BeuiLoaderVariant =
+      effectiveVariant === "tweenly-thinking"
+        ? "tweenly-wave"
+        : effectiveVariant === "kokonut-loading"
+          ? "kokonut-ai-loading"
+          : loaderVariant
     return (
       <div
         className={cn(
           effectiveVariant === "minimal-whisper"
             ? "flex items-center gap-2 py-0.5 text-xs text-muted-foreground"
-            : "flex items-center gap-2 rounded-lg border border-border/55 bg-muted/25 px-2.5 py-1.5 text-xs text-muted-foreground",
+            : effectiveVariant === "tweenly-thinking"
+              ? "inline-flex items-center gap-2.5 rounded-full border border-border/60 bg-foreground/[0.035] px-3 py-1.5 text-xs text-foreground/85"
+              : "flex items-center gap-2 rounded-lg border border-border/55 bg-muted/25 px-2.5 py-1.5 text-xs text-muted-foreground",
           className
         )}
       >
         {isStreaming ? (
           <ThinkingLoaderBadge
-            variant={loaderVariant}
+            variant={forcedLoader}
             size={14}
             className="shrink-0 text-primary"
           />
